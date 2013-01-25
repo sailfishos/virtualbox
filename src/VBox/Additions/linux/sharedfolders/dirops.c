@@ -451,7 +451,7 @@ static int sf_instantiate(struct inode *parent, struct dentry *dentry,
     sf_init_inode(sf_g, inode, info);
     sf_new_i->path = path;
     SET_INODE_INFO(inode, sf_new_i);
-    sf_new_i->force_restat = 1;
+    sf_new_i->force_restat = 0;
     sf_new_i->force_reread = 0;
 
     d_instantiate(dentry, inode);

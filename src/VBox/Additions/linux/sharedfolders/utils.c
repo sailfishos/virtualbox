@@ -244,6 +244,7 @@ int sf_inode_revalidate(struct dentry *dentry)
             return 0;
     }
 
+    sf_i->force_restat = 0;
     err = sf_stat(__func__, sf_g, sf_i->path, &info, 1);
     if (err)
         return err;
