@@ -302,7 +302,6 @@ static int sf_reg_open(struct inode *inode, struct file *file)
          * O_CREAT, O_TRUNC: inherent true (file was just created). Not sure
          * about the access flags (SHFL_CF_ACCESS_*).
          */
-        sf_i->force_restat = 1;
         sf_r->handle = sf_i->handle;
         sf_i->handle = SHFL_HANDLE_NIL;
         sf_i->file = file;
@@ -378,6 +377,7 @@ static int sf_reg_open(struct inode *inode, struct file *file)
     rc = vboxCallCreate(&client_handle, &sf_g->map, sf_i->path, &params);
     if (RT_FAILURE(rc))
     {
+        sf_i->force_restat = 1;
         LogFunc(("vboxCallCreate failed flags=%d,%#x rc=%Rrc\n",
                   file->f_flags, params.CreateFlags, rc));
         kfree(sf_r);
@@ -398,9 +398,11 @@ static int sf_reg_open(struct inode *inode, struct file *file)
             default:
                 break;
         }
+        sf_i->force_restat = 1;
     }
+    else
+        sf_init_inode(sf_g, inode, &params.Info);
 
-    sf_i->force_restat = 1;
     sf_r->handle = params.Handle;
     sf_i->file = file;
     file->private_data = sf_r;

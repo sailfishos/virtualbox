@@ -458,7 +458,7 @@ static int sf_instantiate(struct inode *parent, struct dentry *dentry,
 #else
     dentry->d_op = &sf_dentry_ops;
 #endif
-    sf_new_i->force_restat = 1;
+    sf_new_i->force_restat = 0;
     sf_new_i->force_reread = 0;
 
     d_instantiate(dentry, inode);
