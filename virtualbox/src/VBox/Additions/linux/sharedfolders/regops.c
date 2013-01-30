@@ -294,21 +294,6 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         return -ENOMEM;
     }
 
-    /* Already open? */
-    if (sf_i->handle != SHFL_HANDLE_NIL)
-    {
-        /*
-         * This inode was created with sf_create_aux(). Check the CreateFlags:
-         * O_CREAT, O_TRUNC: inherent true (file was just created). Not sure
-         * about the access flags (SHFL_CF_ACCESS_*).
-         */
-        sf_r->handle = sf_i->handle;
-        sf_i->handle = SHFL_HANDLE_NIL;
-        sf_i->file = file;
-        file->private_data = sf_r;
-        return 0;
-    }
-
     RT_ZERO(params);
     params.Handle = SHFL_HANDLE_NIL;
     /* We check the value of params.Handle afterwards to find out if
@@ -371,6 +356,19 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         params.CreateFlags |= SHFL_CF_ACCESS_APPEND;
     }
 
+    /* Already open? */
+    if (sf_i->handle != SHFL_HANDLE_NIL)
+    {
+        /*
+         * This inode was created with sf_create_aux(). Check the CreateFlags:
+         * O_CREAT, O_TRUNC: inherent true (file was just created). Not sure
+         * about the access flags (SHFL_CF_ACCESS_*).
+         */
+        sf_r->handle = sf_i->handle;
+        sf_i->handle = SHFL_HANDLE_NIL;
+        goto out;
+    }
+
     params.Info.Attr.fMode = inode->i_mode;
     LogFunc(("sf_reg_open: calling vboxCallCreate, file %s, flags=%#x, %#x\n",
               sf_i->path->String.utf8 , file->f_flags, params.CreateFlags));
@@ -404,7 +402,10 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         sf_init_inode(sf_g, inode, &params.Info);
 
     sf_r->handle = params.Handle;
-    sf_i->file = file;
+  out:
+    sf_r->createflags = params.CreateFlags;
+    INIT_LIST_HEAD(&sf_r->head);
+    list_add(&sf_r->head, &sf_i->handles);
     file->private_data = sf_r;
     return rc_linux;
 }
@@ -440,14 +441,16 @@ static int sf_reg_release(struct inode *inode, struct file *file)
         && filemap_fdatawrite(inode->i_mapping) != -EIO)
         filemap_fdatawait(inode->i_mapping);
 #endif
+
+    list_del(&sf_r->head);
+
     rc = vboxCallClose(&client_handle, &sf_g->map, sf_r->handle);
     if (RT_FAILURE(rc))
         LogFunc(("vboxCallClose failed rc=%Rrc\n", rc));
 
-    kfree(sf_r);
-    sf_i->file = NULL;
     sf_i->handle = SHFL_HANDLE_NIL;
     file->private_data = NULL;
+    kfree(sf_r);
     return 0;
 }
 
@@ -600,6 +603,26 @@ struct inode_operations sf_reg_iops =
 
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+/* Helper function to pick a suitable handle for pagecache operations.
+ * It picks the most recently opened handle for this inode that has the
+ * requested flags (SHFL_CF_ACCESS_READ or SHFL_CF_ACCESS_WRITE).
+ * Handles with SHFL_CF_ACCESS_APPEND are not suitable for paged use
+ * so they are always skipped.
+ */
+static struct sf_reg_info *sf_select_handle(struct inode *inode, u32 flags)
+{
+    struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
+    struct sf_reg_info *sf_r;
+
+    list_for_each_entry(sf_r, &sf_i->handles, head)
+    {
+        if (   sf_r->handle != SHFL_HANDLE_NIL
+            && (sf_r->createflags & (flags | SHFL_CF_ACCESS_APPEND)) == flags)
+            return sf_r;
+    }
+    return NULL;
+}
+
 static int sf_readpage(struct file *file, struct page *page)
 {
     struct inode *inode = file->f_dentry->d_inode;
@@ -636,9 +659,7 @@ sf_writepage(struct page *page, struct writeback_control *wbc)
     struct address_space *mapping = page->mapping;
     struct inode *inode = mapping->host;
     struct sf_glob_info *sf_g = GET_GLOB_INFO(inode->i_sb);
-    struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
-    struct file *file = sf_i->file;
-    struct sf_reg_info *sf_r = file->private_data;
+    struct sf_reg_info *sf_r;
     char *buf;
     uint32_t nwritten = PAGE_SIZE;
     int end_index = inode->i_size >> PAGE_SHIFT;
@@ -646,6 +667,15 @@ sf_writepage(struct page *page, struct writeback_control *wbc)
     int err;
 
     TRACE();
+
+    sf_r = sf_select_handle(inode, SHFL_CF_ACCESS_WRITE);
+    if (unlikely(!sf_r))
+    {
+        /* At least the handle of whoever wrote to the page should
+         * still be available; see the wait in sf_reg_release() */
+        WARN_ONCE(1, "vboxsf: could not find handle for writepage");
+        return -EBADF;
+    }
 
     if (page->index >= end_index)
         nwritten = inode->i_size & (PAGE_SIZE-1);
