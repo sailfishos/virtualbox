@@ -341,25 +341,22 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         }
     }
 
-    if (!(params.CreateFlags & SHFL_CF_ACCESS_READWRITE))
+    switch (file->f_flags & O_ACCMODE)
     {
-        switch (file->f_flags & O_ACCMODE)
-        {
-            case O_RDONLY:
-                params.CreateFlags |= SHFL_CF_ACCESS_READ;
-                break;
+        case O_RDONLY:
+            params.CreateFlags |= SHFL_CF_ACCESS_READ;
+            break;
 
-            case O_WRONLY:
-                params.CreateFlags |= SHFL_CF_ACCESS_WRITE;
-                break;
+        case O_WRONLY:
+            params.CreateFlags |= SHFL_CF_ACCESS_WRITE;
+            break;
 
-            case O_RDWR:
-                params.CreateFlags |= SHFL_CF_ACCESS_READWRITE;
-                break;
+        case O_RDWR:
+            params.CreateFlags |= SHFL_CF_ACCESS_READWRITE;
+            break;
 
-            default:
-                BUG ();
-        }
+        default:
+            BUG ();
     }
 
     if (file->f_flags & O_APPEND)
