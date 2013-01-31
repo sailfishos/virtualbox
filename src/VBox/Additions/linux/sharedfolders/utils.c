@@ -71,6 +71,7 @@ static void sf_timespec_from_ftime(RTTIMESPEC *ts, struct timespec *tv)
 void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
                    PSHFLFSOBJINFO info)
 {
+    struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
     PSHFLFSOBJATTR attr;
     int mode;
 
@@ -165,6 +166,49 @@ void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
     sf_ftime_from_timespec(&inode->i_atime, &info->AccessTime);
     sf_ftime_from_timespec(&inode->i_ctime, &info->ChangeTime);
     sf_ftime_from_timespec(&inode->i_mtime, &info->ModificationTime);
+
+    if (attr->enmAdditional == SHFLFSOBJATTRADD_UNIX)
+    {
+        sf_i->host_dev = attr->u.Unix.INodeIdDevice;
+        sf_i->host_ino = attr->u.Unix.INodeId;
+    }
+}
+
+/* Check if the host-side inode is likely to have had content changes,
+ * so that we should throw away the cached pages. */
+void sf_revalidate_mapping(struct inode *inode, PSHFLFSOBJINFO info)
+{
+    struct timespec mtime;
+    PSHFLFSOBJATTR attr = &info->Attr;
+
+    TRACE();
+
+    if (i_size_read(inode) != info->cbObject)
+    {
+        spin_lock(&inode->i_lock);
+        truncate_setsize(inode, info->cbObject);
+        spin_unlock(&inode->i_lock);
+        goto out_invalid;
+    }
+
+    sf_ftime_from_timespec(&mtime, &info->ModificationTime);
+    if (timespec_compare(&inode->i_mtime, &mtime))
+        goto out_invalid;
+
+    if (attr->enmAdditional == SHFLFSOBJATTRADD_UNIX)
+    {
+        struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
+        if (   (sf_i->host_dev && sf_i->host_dev != attr->u.Unix.INodeIdDevice)
+            || (sf_i->host_ino && sf_i->host_ino != attr->u.Unix.INodeId))
+            goto out_invalid;
+    }
+
+    return;
+
+  out_invalid:
+    invalidate_inode_pages2(inode->i_mapping);
+    inode->i_generation++;
+    return;
 }
 
 int sf_stat(const char *caller, struct sf_glob_info *sf_g,
@@ -250,6 +294,7 @@ int sf_inode_revalidate(struct dentry *dentry)
         return err;
 
     dentry->d_time = jiffies;
+    sf_revalidate_mapping(dentry->d_inode, &info);
     sf_init_inode(sf_g, dentry->d_inode, &info);
     return 0;
 }

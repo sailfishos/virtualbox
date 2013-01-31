@@ -147,6 +147,13 @@ static ssize_t sf_reg_read(struct file *file, char *buf, size_t size, loff_t *of
     if (!size)
         return 0;
 
+    /* Try reading from the page cache */
+    if (sf_r->generation == inode->i_generation)
+        return do_sync_read(file, buf, size, off);
+    else
+        printk("vboxsf: doing direct read, generation %u != %u\n",
+               sf_r->generation, inode->i_generation);
+
     tmp = alloc_bounce_buffer(&tmp_size, size, __PRETTY_FUNCTION__);
     if (!tmp)
         return -ENOMEM;
@@ -263,6 +270,18 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
         total_bytes_written += nwritten;
         if (nwritten != to_write)
             break;
+    }
+
+    /* force-invalidate the corresponding part of the page cache */
+    err = invalidate_inode_pages2_range(inode->i_mapping,
+                *off >> PAGE_CACHE_SHIFT,
+                (*off + total_bytes_written - 1) >> PAGE_CACHE_SHIFT);
+    if (err)
+    {
+        printk("vboxsf: could not invalidate inode page cache for %s\n",
+               sf_i->path->String.utf8);
+        /** @todo fall back on pagecache write here? */
+        inode->i_generation++; /* disable pagecache reads for current fds */
     }
 
     *off += total_bytes_written;
@@ -408,11 +427,15 @@ static int sf_reg_open(struct inode *inode, struct file *file)
         sf_i->force_restat = 1;
     }
     else
+    {
+        sf_revalidate_mapping(inode, &params.Info);
         sf_init_inode(sf_g, inode, &params.Info);
+    }
 
     sf_r->handle = params.Handle;
   out:
     sf_r->createflags = params.CreateFlags;
+    sf_r->generation = inode->i_generation;
     INIT_LIST_HEAD(&sf_r->head);
     list_add(&sf_r->head, &sf_i->handles);
     file->private_data = sf_r;
@@ -673,6 +696,15 @@ static int sf_readpage(struct file *file, struct page *page)
     int ret;
 
     TRACE();
+
+    sf_r = sf_select_handle(inode, SHFL_CF_ACCESS_READ);
+    if (unlikely(!sf_r))
+    {
+        struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
+        WARN(1, "vboxsf: could not find handle for readpage for %s",
+             sf_i->path->String.utf8);
+        sf_r = file->private_data;
+    }
 
     buf = kmap(page);
     ret = sf_reg_read_aux(__func__, sf_g, sf_r, buf, &nread, off);
