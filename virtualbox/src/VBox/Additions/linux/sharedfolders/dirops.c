@@ -450,9 +450,9 @@ static int sf_instantiate(struct inode *parent, struct dentry *dentry,
         goto fail1;
     }
 
+    SET_INODE_INFO(inode, sf_new_i);
     sf_init_inode(sf_g, inode, info);
     sf_new_i->path = path;
-    SET_INODE_INFO(inode, sf_new_i);
 
     dentry->d_time = jiffies;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 38)
