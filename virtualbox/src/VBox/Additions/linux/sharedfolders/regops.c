@@ -21,8 +21,8 @@
 
 #include "vfsmod.h"
 
-static void *alloc_bounce_buffer(size_t *tmp_sizep, PRTCCPHYS physp, size_t
-                                 xfer_size, const char *caller)
+static void *
+alloc_bounce_buffer(size_t *tmp_sizep, size_t xfer_size, const char *caller)
 {
     size_t tmp_size;
     void *tmp;
@@ -45,7 +45,6 @@ static void *alloc_bounce_buffer(size_t *tmp_sizep, PRTCCPHYS physp, size_t
     }
 
     *tmp_sizep = tmp_size;
-    *physp = virt_to_phys(tmp);
     return tmp;
 }
 
@@ -56,37 +55,61 @@ static void free_bounce_buffer(void *tmp)
 
 
 /* fops */
+
+/* Input buf must be physically contiguous memory */
 static int sf_reg_read_aux(const char *caller, struct sf_glob_info *sf_g,
                            struct sf_reg_info *sf_r, void *buf,
                            uint32_t *nread, uint64_t pos)
 {
-    /** @todo bird: yes, kmap() and kmalloc() input only. Since the buffer is
-     *        contiguous in physical memory (kmalloc or single page), we should
-     *        use a physical address here to speed things up. */
-    int rc = vboxCallRead(&client_handle, &sf_g->map, sf_r->handle,
-                          pos, nread, buf, false /* already locked? */);
-    if (RT_FAILURE(rc))
+    if (VbglR0CanUsePhysPageList())
     {
-        LogFunc(("vboxCallRead failed. caller=%s, rc=%Rrc\n", caller, rc));
-        return -EPROTO;
+        int rc = VbglR0SfReadPhysCont(&client_handle, &sf_g->map, sf_r->handle,
+                                      pos, nread, virt_to_phys(buf));
+        if (RT_FAILURE(rc))
+        {
+            LogFunc(("VbglR0SfReadPhysCont failed. caller=%s, rc=%Rrc\n",
+                     caller, rc));
+            return -EPROTO;
+        }
+    }
+    else
+    {
+        int rc = vboxCallRead(&client_handle, &sf_g->map, sf_r->handle,
+                              pos, nread, buf, false /* already locked? */);
+        if (RT_FAILURE(rc))
+        {
+            LogFunc(("vboxCallRead failed. caller=%s, rc=%Rrc\n", caller, rc));
+            return -EPROTO;
+        }
     }
     return 0;
 }
 
+/* Input buf must be physically contiguous memory */
 static int sf_reg_write_aux(const char *caller, struct sf_glob_info *sf_g,
                             struct sf_reg_info *sf_r, void *buf,
                             uint32_t *nwritten, uint64_t pos)
 {
-    /** @todo bird: yes, kmap() and kmalloc() input only. Since the buffer is
-     *        contiguous in physical memory (kmalloc or single page), we should
-     *        use a physical address here to speed things up. */
-    int rc = vboxCallWrite(&client_handle, &sf_g->map, sf_r->handle,
-                           pos, nwritten, buf, false /* already locked? */);
-    if (RT_FAILURE(rc))
+    if (VbglR0CanUsePhysPageList())
     {
-        LogFunc(("vboxCallWrite failed. caller=%s, rc=%Rrc\n",
-                    caller, rc));
-        return -EPROTO;
+        int rc = VbglR0SfWritePhysCont(&client_handle, &sf_g->map, sf_r->handle,
+                                    pos, nwritten, virt_to_phys(buf));
+        if (RT_FAILURE(rc))
+        {
+            LogFunc(("VbglR0SfWritePhysCont failed. caller=%s, rc=%Rrc\n",
+                     caller, rc));
+            return -EPROTO;
+        }
+    }
+    else
+    {
+        int rc = vboxCallWrite(&client_handle, &sf_g->map, sf_r->handle,
+                           pos, nwritten, buf, false /* already locked? */);
+        if (RT_FAILURE(rc))
+        {
+            LogFunc(("vboxCallWrite failed. caller=%s, rc=%Rrc\n", caller, rc));
+            return -EPROTO;
+        }
     }
     return 0;
 }
@@ -104,7 +127,6 @@ static ssize_t sf_reg_read(struct file *file, char *buf, size_t size, loff_t *of
 {
     int err;
     void *tmp;
-    RTCCPHYS tmp_phys;
     size_t tmp_size;
     size_t left = size;
     ssize_t total_bytes_read = 0;
@@ -125,7 +147,7 @@ static ssize_t sf_reg_read(struct file *file, char *buf, size_t size, loff_t *of
     if (!size)
         return 0;
 
-    tmp = alloc_bounce_buffer(&tmp_size, &tmp_phys, size, __PRETTY_FUNCTION__);
+    tmp = alloc_bounce_buffer(&tmp_size, size, __PRETTY_FUNCTION__);
     if (!tmp)
         return -ENOMEM;
 
@@ -179,7 +201,6 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
 {
     int err;
     void *tmp;
-    RTCCPHYS tmp_phys;
     size_t tmp_size;
     size_t left = size;
     ssize_t total_bytes_written = 0;
@@ -212,7 +233,7 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
     if (!size)
         return 0;
 
-    tmp = alloc_bounce_buffer(&tmp_size, &tmp_phys, size, __PRETTY_FUNCTION__);
+    tmp = alloc_bounce_buffer(&tmp_size, size, __PRETTY_FUNCTION__);
     if (!tmp)
         return -ENOMEM;
 
@@ -232,16 +253,7 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
             goto fail;
         }
 
-#if 1
-        if (VbglR0CanUsePhysPageList())
-        {
-            err = VbglR0SfWritePhysCont(&client_handle, &sf_g->map, sf_r->handle,
-                                        pos, &nwritten, tmp_phys);
-            err = RT_FAILURE(err) ? -EPROTO : 0;
-        }
-        else
-#endif
-            err = sf_reg_write_aux(__func__, sf_g, sf_r, tmp, &nwritten, pos);
+        err = sf_reg_write_aux(__func__, sf_g, sf_r, tmp, &nwritten, pos);
         if (err)
             goto fail;
 
