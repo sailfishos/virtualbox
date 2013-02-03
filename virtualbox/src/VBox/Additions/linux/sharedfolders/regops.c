@@ -689,7 +689,7 @@ static int sf_readpage(struct file *file, struct page *page)
 {
     struct inode *inode = file->f_dentry->d_inode;
     struct sf_glob_info *sf_g = GET_GLOB_INFO(inode->i_sb);
-    struct sf_reg_info *sf_r = file->private_data;
+    struct sf_reg_info *sf_r;
     uint32_t nread = PAGE_SIZE;
     char *buf;
     loff_t off = ((loff_t)page->index) << PAGE_SHIFT;
@@ -722,6 +722,87 @@ static int sf_readpage(struct file *file, struct page *page)
     SetPageUptodate(page);
     unlock_page(page);
     return 0;
+}
+
+/*
+ * Read a list of pages into the page cache.
+ * This is only used for readahead, so it's ok to give up.
+ * The caller will fall back on readpage() for the important pages.
+ */
+static int sf_readpages(struct file *file, struct address_space *mapping,
+                        struct list_head *pages, unsigned nr_pages)
+{
+    struct inode *inode = file->f_dentry->d_inode;
+    struct sf_glob_info *sf_g = GET_GLOB_INFO(inode->i_sb);
+    struct sf_reg_info *sf_r;
+    struct page *physbuf = 0;
+    int bufsize;
+    pgoff_t buf_startindex = 0;
+    pgoff_t pages_in_buf = 0;
+    int err = 0;
+
+    TRACE();
+
+    if (nr_pages <= 1)
+        return 0; /* either nothing to do or not worth batching */
+
+    sf_r = sf_select_handle(inode, SHFL_CF_ACCESS_READ);
+    if (unlikely(!sf_r))
+    {
+        struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
+        WARN(1, "vboxsf: could not find handle for readpages for %s",
+             sf_i->path->String.utf8);
+        sf_r = file->private_data;
+    }
+
+    /*
+     * Performance really depends on the number of calls we make to the host, so
+     * allocate a physically contiguous buffer to read multiple pages per call.
+     */
+    /* first try to get everything in one read */
+    bufsize = PAGE_SIZE * (list_entry(pages->next, struct page, lru)->index
+                           - list_entry(pages->prev, struct page, lru)->index);
+    if (bufsize > 32 * PAGE_SIZE)
+        bufsize = 32 * PAGE_SIZE;  /* don't go crazy though */
+
+    physbuf = alloc_pages_exact(bufsize, GFP_KERNEL);
+    if (!physbuf)
+        return -ENOMEM; /* Memory pressure - best not to readahead at all */
+
+    while (!list_empty(pages))
+    {
+        struct page *page = list_first_entry(pages, struct page, lru);
+        loff_t off = (loff_t) page->index << PAGE_SHIFT;
+        list_del(&page->lru);
+        if (add_to_page_cache_lru(page, mapping, page->index, GFP_KERNEL))
+        {
+            page_cache_release(page);
+            continue;
+        }
+        page_cache_release(page);
+
+        /* read the next chunk if needed */
+        if (page->index >= buf_startindex + pages_in_buf)
+        {
+            uint32_t nread = bufsize;
+            err = sf_reg_read_aux(__func__, sf_g, sf_r, physbuf, &nread, off);
+            if (err || nread == 0)
+                break;
+            buf_startindex = page->index;
+            pages_in_buf = nread >> PAGE_SHIFT;
+            /* fix up possible partial page at end */
+            if (nread != PAGE_ALIGN(nread))
+            {
+                pages_in_buf++;
+                memset(physbuf + nread, 0, (pages_in_buf << PAGE_SHIFT) - nread);
+            }
+        }
+        copy_page(page_address(page),
+                  physbuf + ((page->index - buf_startindex) << PAGE_SHIFT));
+    }
+
+    free_pages_exact(physbuf, bufsize);
+    return err;
 }
 
 static int
@@ -828,5 +909,6 @@ struct address_space_operations sf_reg_aops =
     .prepare_write = simple_prepare_write,
     .commit_write  = simple_commit_write,
 # endif
+    .readpages     = sf_readpages,
 };
 #endif
