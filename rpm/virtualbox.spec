@@ -85,7 +85,7 @@ Source13:       %{name}-sysconfig.vbox
 Source14:       vboxservice.service
 # added by lbt to provide yasm from curl -O https://www.virtualbox.org/export/43504/vbox/trunk/tools/linux.x86/bin/yasm
 Source50:       yasm
-Source98:       %{name}-%{version}-rpmlintrc
+Source98:       rpmlintrc
 #rework init scripts to fit suse needs
 Patch1:         vbox-vboxdrv-init-script.diff
 Patch2:         vbox-vboxadd-init-script.diff
