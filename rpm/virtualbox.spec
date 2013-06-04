@@ -171,6 +171,9 @@ VirtualBox guest addition tools.
 %setup -q -n %{name} -c
 mv %{name}-%{version}/%{name}/* .
 
+# use the packaged kBuild rather than the bundled one
+rm -rf kBuild
+
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
