@@ -69,7 +69,6 @@ Group:          System/Emulators/PC
 Url:            http://www.virtualbox.org/
 
 Source0:        %{name}-%{version}.tar.bz2
-Source1:        %{name}-%{version}-UserManual.pdf
 Source2:        %{name}-60-vboxdrv.rules
 Source3:        %{name}-60-vboxguest.rules
 Source4:        %{name}-default.virtualbox
@@ -186,8 +185,7 @@ VirtualBox guest addition tools.
 %patch206 -p1
 %patch207 -p1
 # patch 249 not enabled, it's only included for people who want to debug
-#copy user manual
-%__cp %{S:1} UserManual.pdf
+
 #copy kbuild config
 %__cp %{S:10} LocalConfig.kmk
 # lbt's yasm
