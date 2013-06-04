@@ -1,0 +1,7 @@
+# Leave binaries out of the upstream checkins.
+# They can still be recovered via the pristine-tar commits.
+kBuild/bin
+tools/bin
+tools/*/bin
+tools/*/nasm
+src/VBox/Main/webservice/jaxlibs/*.jar
