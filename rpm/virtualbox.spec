@@ -67,11 +67,7 @@ Summary:        VirtualBox is an Emulator
 License:        GPL-2.0+
 Group:          System/Emulators/PC
 Url:            http://www.virtualbox.org/
-#
-# so you don't need to repack virtualbox by hand, just add new release of VirtualBox-x.x.x.tar.bz2 and line below with
-# script virtualbox-patch-source.sh will do the job :)
-# WARNING: This is not a comment, but the real command to repack souce
-#%(bash %{_sourcedir}/virtualbox-patch-source.sh VirtualBox-%{version}.tar.bz2)
+
 Source0:        VirtualBox-%{version}.tar.bz2
 Source1:        %{name}-%{version}-UserManual.pdf
 Source2:        %{name}-60-vboxdrv.rules
@@ -91,7 +87,6 @@ Source14:       vboxservice.service
 # added by lbt to provide yasm from curl -O https://www.virtualbox.org/export/43504/vbox/trunk/tools/linux.x86/bin/yasm
 Source50:       yasm
 Source98:       %{name}-%{version}-rpmlintrc
-Source99:       %{name}-patch-source.sh
 #rework init scripts to fit suse needs
 Patch1:         vbox-vboxdrv-init-script.diff
 Patch2:         vbox-vboxadd-init-script.diff
