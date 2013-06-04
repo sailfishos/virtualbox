@@ -292,7 +292,7 @@ echo "entering guest-tools install section"
 echo "entering systemd install section"
 ###########################################
 %__install -d -m 755  %{buildroot}%{_unitdir}/basic.target.wants/
-%__install -m 755 vboxservice.service  %{buildroot}%{_unitdir}/vboxservice.service
+%__install -m 644 vboxservice.service  %{buildroot}%{_unitdir}/vboxservice.service
 ln -sf ../vboxservice.service %{buildroot}%{_unitdir}/basic.target.wants/
 
 
