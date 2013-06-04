@@ -116,7 +116,6 @@ Patch249:       vbox-slow-logging.diff
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 #PreReq:         pwdutils permissions
 Requires:       %{name}-host-kmp = %version
-#Recommends:     %{name}-gui = %version
 #rename from ose version:
 Provides:       %{name}-ose = %version
 Obsoletes:      %{name}-ose < %version
@@ -132,8 +131,6 @@ GNU Public License (GPL).
 Summary:        Guest kernel modules for VirtualBox
 Group:          System/Emulators/PC
 Requires:	kernel-adaptation-pc == %{kernel_version}
-#SUSE specify macro to define guest kmp package
-#%{?suse_kernel_module_package:%suse_kernel_module_package -p %{S:8} -n %{name}-guest -f %{S:6} kdump um xen xenpae}
 
 %description guest-modules
 This package contains the kernel-module for VirtualBox.
@@ -143,9 +140,6 @@ Summary:        VirtualBox X11 drivers for mouse and video
 Group:          System/X11/Servers/XF86_4
 Requires:       %{name}-guest-modules = %version
 #Supplements:    modalias(pci:v000080EEd0000BEEFsv*sd*bc*sc*i*)
-#rename from xorg-x11-driver-virtualbox-ose:
-#Provides:       xorg-x11-driver-virtualbox-ose = %version
-#Obsoletes:      xorg-x11-driver-virtualbox-ose < %version
 
 %description guest-x11
 VirtualBox
@@ -156,9 +150,6 @@ Summary:        VirtualBox guest tools
 Group:          System/Emulators/PC
 Requires:       %{name}-guest-modules = %version
 #Supplements:    modalias(pci:v000080EEd0000BEEFsv*sd*bc*sc*i*)
-#rename from "ose" version:
-#Provides:       %{name}-ose-guest-tools = %version
-#Obsoletes:      %{name}-ose-guest-tools < %version
 
 %description guest-tools
 VirtualBox guest addition tools.
@@ -178,8 +169,6 @@ rm -rf kBuild
 %patch4 -p1
 %patch6 -p1
 %patch8 -p1
-#Y%patch100 
-#Y%patch101
 %patch103
 %patch104 -p1
 %patch201 -p1
@@ -234,8 +223,6 @@ source env.sh
 #
 #  	VBOX_PATH_PACKAGE_DOCS set propper path for link to pdf in .desktop file
 # 	VBOX_WITH_REGISTRATION_REQUEST= VBOX_WITH_UPDATE_REQUEST= just disable some functionality in gui
-
-#cp tools/linux.x86/bin/yasm %{buildroot}/yasm
 
 echo "build basic parts"
 /usr/bin/kmk %{?_smp_mflags} VBOX_GCC_WERR= KBUILD_VERBOSE=2 VBOX_WITH_REGISTRATION_REQUEST= VBOX_WITH_UPDATE_REQUEST= TOOL_YASM_AS=yasm VBOX_PATH_PACKAGE_DOCS=/usr/share/doc/packages/virtualbox VBOX_ONLY_ADDITIONS=1 vboxsf-mod vboxvideo_drm-mod mount VBoxControl VBoxService
