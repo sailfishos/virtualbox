@@ -1,0 +1,16 @@
+# /etc/default/virtualbox
+#
+# -------------------------------------------------------------------------------------------------
+# In the "SHUTDOWN_USERS" list all users for which a check for runnings VMs should be done during
+# shutdown of "vboxdrv" resp. the server:
+# SHUTDOWN_USERS="foo bar"
+#
+# Set "SHUTDOWN" to one of "poweroff", "acpibutton" or "savestate" depending on which of the
+# shutdown methods for running VMs are wanted:
+# SHUTDOWN="poweroff"
+# SHUTDOWN="acpibutton"
+# SHUTDOWN="savestate"
+# -------------------------------------------------------------------------------------------------
+#
+#SHUTDOWN_USERS="foo bar"
+#SHUTDOWN="savestate"

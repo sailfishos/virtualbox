@@ -1,0 +1,47 @@
+diff --git a/src/VBox/Additions/linux/sharedfolders/regops.c b/src/VBox/Additions/linux/sharedfolders/regops.c
+index c39fc97..7f73a67 100644
+--- a/src/VBox/Additions/linux/sharedfolders/regops.c
++++ b/src/VBox/Additions/linux/sharedfolders/regops.c
+@@ -63,6 +63,8 @@ static int sf_reg_read_aux(const char *caller, struct sf_glob_info *sf_g,
+ {
+     if (VbglR0CanUsePhysPageList())
+     {
++        TRACE();
++        printk("vboxsf starting phys read\n");
+         int rc = VbglR0SfReadPhysCont(&client_handle, &sf_g->map, sf_r->handle,
+                                       pos, nread, virt_to_phys(buf));
+         if (RT_FAILURE(rc))
+@@ -71,6 +73,7 @@ static int sf_reg_read_aux(const char *caller, struct sf_glob_info *sf_g,
+                      caller, rc));
+             return -EPROTO;
+         }
++        printk("vboxsf ended phys read\n");
+     }
+     else
+     {
+diff --git a/src/VBox/Additions/linux/sharedfolders/vfsmod.h b/src/VBox/Additions/linux/sharedfolders/vfsmod.h
+index c7df740..043c478 100644
+--- a/src/VBox/Additions/linux/sharedfolders/vfsmod.h
++++ b/src/VBox/Additions/linux/sharedfolders/vfsmod.h
+@@ -157,5 +157,21 @@ int sf_get_volume_info(struct super_block *sb,STRUCT_STATFS *stat);
+ # define SET_INODE_INFO(i, sf_i) (i)->u.generic_ip = sf_i
+ #endif
+ 
++#undef LogFunc
++#define LogFunc__(format, args...) do { \
++    if (strstr(format, "%Rrc")) { \
++        char *printkformat = kstrdup("%s: " format, GFP_KERNEL); \
++        char *p = printkformat; \
++        while ((p = strstr(p, "%Rrc"))) \
++            p[1] = 'd'; \
++        printk(printkformat, __func__, ##args); \
++        kfree(printkformat); \
++    } else { \
++        printk("%s: " format, __func__, ##args); \
++    } \
++} while (0)
++/* This strips the extra parentheses that are used with the real LogFunc */
++#define LogFunc(...) LogFunc__ __VA_ARGS__
++
+ #endif
+ 

@@ -1,0 +1,20 @@
+Index: VirtualBox-4.1.8_OSE/Config.kmk
+===================================================================
+--- VirtualBox-4.1.8_OSE.orig/Config.kmk
++++ VirtualBox-4.1.8_OSE/Config.kmk
+@@ -3368,10 +3368,13 @@ TEMPLATE_VBOXR3HARDENEDEXE_LDFLAGS.darwi
+ ifeq ($(KBUILD_TARGET),linux)
+ # not necessary except USE_LIB_PCAP is defined in SUPR3HardenedMain.cpp
+ # TEMPLATE_VBOXR3HARDENEDEXE_LIBS += cap
++ TEMPLATE_VBOXR3HARDENEDEXE_CXXFLAGS.linux = $(TEMPLATE_VBOXR3EXE_CXXFLAGS.linux) -fPIE
++ TEMPLATE_VBOXR3HARDENEDEXE_CFLAGS.linux = $(TEMPLATE_VBOXR3EXE_CFLAGS.linux) -fPIE
++ TEMPLATE_VBOXR3HARDENEDEXE_LDFLAGS.linux = $(TEMPLATE_VBOXR3EXE_LDFLAGS.linux) -pie
+ endif
+ ifn1of ($(KBUILD_TARGET), win os2)
+- TEMPLATE_VBOXR3HARDENEDEXE_LDFLAGS       = $(filter-out '$(VBOX_GCC_RPATH_OPT)%,$(TEMPLATE_VBOXR3EXE_LDFLAGS))
+- TEMPLATE_VBOXR3HARDENEDEXE_LDFLAGS.linux = $(filter-out $(VBOX_GCC_ORIGIN_OPT),$(TEMPLATE_VBOXR3EXE_LDFLAGS.linux))
++ TEMPLATE_VBOXR3HARDENEDEXE_LDFLAGS       = $(filter-out '$(VBOX_GCC_RPATH_OPT)%,$(TEMPLATE_VBOXR3EXE_LDFLAGS)) -pie
++ TEMPLATE_VBOXR3HARDENEDEXE_LDFLAGS.linux = $(filter-out $(VBOX_GCC_ORIGIN_OPT),$(TEMPLATE_VBOXR3EXE_LDFLAGS.linux)) -pie
+ endif
+ 
+ #

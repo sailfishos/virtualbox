@@ -1,0 +1,7 @@
+%defattr (-,root,root)
+%dir /lib/modules/%2-%1/
+%dir /lib/modules/%2-%1/updates
+/lib/modules/%2-%1/updates/vboxdrv.ko
+/lib/modules/%2-%1/updates/vboxnetadp.ko
+/lib/modules/%2-%1/updates/vboxnetflt.ko
+/lib/modules/%2-%1/updates/vboxpci.ko

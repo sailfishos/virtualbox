@@ -1,0 +1,123 @@
+commit c1e45e725b91bc4e03d7e3acc94673ea7b16d762
+Author: Richard Braakman <richard.braakman@jollamobile.com>
+Date:   Tue Jan 29 21:48:13 2013 +0200
+
+    [vboxsf] support writable mmap
+    
+    This is mainly so that guest processes can use the shared folder as a backing
+    for database files and such. Don't expect coherence if a file is simultaneously
+    mmapped on the host and guest sides.
+
+diff --git a/src/VBox/Additions/linux/sharedfolders/regops.c b/src/VBox/Additions/linux/sharedfolders/regops.c
+index a0586bd..c3b314e 100644
+--- a/src/VBox/Additions/linux/sharedfolders/regops.c
++++ b/src/VBox/Additions/linux/sharedfolders/regops.c
+@@ -16,7 +16,7 @@
+  */
+ 
+ /*
+- * Limitations: only COW memory mapping is supported
++ * Limitations: MAP_SHARED mmap does not notice changes made on the host.
+  */
+ 
+ #include "vfsmod.h"
+@@ -501,7 +501,7 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
+     /* Don't use GFP_HIGHUSER as long as sf_reg_read_aux() calls vboxCallRead()
+      * which works on virtual addresses. On Linux cannot reliably determine the
+      * physical address for high memory, see rtR0MemObjNativeLockKernel(). */
+-    page = alloc_page(GFP_USER);
++    page = find_or_create_page(inode->i_mapping, vmf->pgoff, GFP_USER);
+     if (!page) {
+         LogRelFunc(("failed to allocate page\n"));
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
+@@ -522,7 +522,8 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
+     if (err)
+     {
+         kunmap(page);
+-        put_page(page);
++        unlock_page(page);
++        page_cache_release(page);
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
+         return VM_FAULT_SIGBUS;
+ #else
+@@ -546,7 +547,9 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
+         memset(buf + nread, 0, PAGE_SIZE - nread);
+ 
+     flush_dcache_page(page);
++    SetPageUptodate(page);
+     kunmap(page);
++    unlock_page(page);
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
+     vmf->page = page;
+     return 0;
+@@ -556,24 +559,51 @@ static struct page *sf_reg_nopage(struct vm_area_struct *vma, unsigned long vadd
+ #endif
+ }
+ 
++/**
++ * Prepare for a mmap page to be made writable.
++ * Check that the page is still there, and lock it if necessary to keep it there.
++ * Part of MAP_SHARED support.
++ *
++ * @returns VM_FAULT_LOCKED if the page is ready, otherwise VM_FAULT_NOPAGE.
++ */
++static int sf_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
++{
++    struct page *page = vmf->page;
++    struct inode *inode = vma->vm_file->f_path.dentry->d_inode;
++    loff_t size;
++
++    TRACE();
++
++    lock_page(page);
++    size = i_size_read(inode);
++    if (page->mapping != inode->i_mapping || page_offset(page) > size)
++    {
++        /* file was truncated */
++        unlock_page(page);
++        return VM_FAULT_NOPAGE;
++    }
++
++    wait_on_page_writeback(page);
++    return VM_FAULT_LOCKED;
++}
++
+ static struct vm_operations_struct sf_vma_ops =
+ {
+ #if LINUX_VERSION_CODE > KERNEL_VERSION(2, 6, 25)
+-    .fault = sf_reg_fault
++    .fault = sf_reg_fault,
+ #else
+-     .nopage = sf_reg_nopage
++     .nopage = sf_reg_nopage,
+ #endif
++    .page_mkwrite = sf_page_mkwrite
+ };
+ 
+ static int sf_reg_mmap(struct file *file, struct vm_area_struct *vma)
+ {
+-    TRACE();
+-    if (vma->vm_flags & VM_SHARED)
+-    {
+-        LogFunc(("shared mmapping not available\n"));
+-        return -EINVAL;
+-    }
++    struct sf_reg_info *sf_r = file->private_data;
+ 
++    TRACE();
++    if (sf_r->createflags & SHFL_CF_ACCESS_APPEND)
++        return -EINVAL; /* can't simulate page operations */
+     vma->vm_ops = &sf_vma_ops;
+     return 0;
+ }
+@@ -701,8 +731,8 @@ sf_writepage(struct page *page, struct writeback_control *wbc)
+         goto out;
+     }
+ 
+-    if (off > inode->i_size)
+-        inode->i_size = off;
++    if (off + nwritten > inode->i_size)
++        inode->i_size = off + nwritten;
+ 
+     if (PageError(page))
+         ClearPageError(page);

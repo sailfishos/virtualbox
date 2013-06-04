@@ -1,0 +1,307 @@
+#!/bin/sh
+#
+# chkconfig: - 91 35
+# description: Starts and stops vbox autostart VMs.
+# Based on
+# http://www.amiryan.org/2009/11/04/virtualbox-init-d-service-autostart-scriptu
+#
+# By Richard Bos <rbos at opensuse dot org> - May 2010
+
+### BEGIN INIT INFO
+# Provides: vboxes
+# Required-Start: $network vboxdrv
+# Required-Stop: $network $named
+# Default-Start: 3 5
+# Default-Stop: 0 1 2 3 4 5 6
+# Short-Description: Autostart Virtual Box VMs
+# Description: Autostart Virtual Box VMs that are mentioned in /etc/sysconfig/vbox file
+### END INIT INFO
+
+# Shell functions sourced from /etc/rc.status:
+#      rc_check         check and set local and overall rc status
+#      rc_status        check and set local and overall rc status
+#      rc_status -v     be verbose in local rc status and clear it afterwards
+#      rc_status -v -r  ditto and clear both the local and overall rc status
+#      rc_status -s     display "skipped" and exit with status 3
+#      rc_status -u     display "unused" and exit with status 3
+#      rc_failed        set local and overall rc status to failed
+#      rc_failed <num>  set local and overall rc status to <num>
+#      rc_reset         clear both the local and overall rc status
+#      rc_exit          exit appropriate to overall rc status
+#      rc_active        checks whether a service is activated by symlinks
+. /etc/rc.status
+
+# Reset status of this service
+rc_reset
+
+# Return values acc. to LSB for all commands but status:
+# 0       - success
+# 1       - generic or unspecified error
+# 2       - invalid or excess argument(s)
+# 3       - unimplemented feature (e.g. "reload")
+# 4       - user had insufficient privileges
+# 5       - program is not installed
+# 6       - program is not configured
+# 7       - program is not running
+# 8--199  - reserved (8--99 LSB, 100--149 distrib, 150--199 appl)
+#
+# Note that starting an already running service, stopping
+# or restarting a not-running service as well as the restart
+# with force-reload (in case signaling is not supported) are
+# considered a success.
+
+VBOXMGR_BIN=/usr/lib/virtualbox/VBoxManage
+if [[ ! -x $VBOXMGR_BIN ]]; then
+  echo "$VBOXMGR_BIN does not exist"
+  if [ "$1" = "stop" ]; then
+    exit 0;
+  else
+    exit 6
+  fi;
+fi
+
+VBOXHeadLess_BIN=/usr/lib/virtualbox/VBoxHeadless
+if [[ ! -x $VBOXHeadLess_BIN ]]; then
+  echo "$VBOXHeadLess_BIN does not exist"
+  if [ "$1" = "start" ]; then
+    exit 6;
+  else
+    exit 0
+  fi;
+fi
+
+PRG=$(basename $0)
+SERVICE="Virtualbox machines"
+
+[ -r /etc/sysconfig/vbox ] && . /etc/sysconfig/vbox
+
+start() {
+
+  N=1
+  for VBOX in $VBOX_AUTOSTART; do
+
+    if grep -q \; <<< "$VBOX"; then
+      VBOX_NAME[$N]=$(cut -d\; -f1 <<< "$VBOX")
+      VBOX_USER[$N]=$(cut -d\; -f2 <<< "$VBOX")
+    else
+      VBOX_NAME[$N]="$VBOX"
+      VBOX_USER[$N]=""
+    fi
+    N=$(($N+1)) 
+  done
+
+  VBOXES=${#VBOX_NAME[*]}
+
+  if [ $VBOXES -eq 0 ]; then
+    # The virtual machines have to be configured in /etc/sysconfig/vbox
+    echo -n "Starting $SERVICE: no virtual machines configured"
+    rc_status -u
+  else
+
+    N=1
+    echo -n "Starting $SERVICE: "
+    while [[ $N -le $VBOXES ]]; do
+      if [[ $N -lt $VBOXES ]]; then
+        echo -n "${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]}), "
+      else
+        echo "${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]})"
+      fi
+      N=$(($N+1)) 
+    done
+
+    N=1
+    while [[ $N -le $VBOXES ]]; do
+
+      if [[ -n "${VBOX_USER[$N]}" ]]; then
+
+        if grep --quiet --word-regexp ${VBOX_USER[$N]} /etc/passwd; then
+
+          # The tag "Name:" occurs in multiple sections.  Require at least 7 blanks
+          # with an additional flexible amount of spaces.  At the moment of writing
+          # 13 spaces are needed.
+          VBOX_RUNNING=$(su ${VBOX_USER[$N]} -c "VBoxManage list --long runningvms"  |
+            sed -n 's/^Name:[[:blank:]]\{7\} *//p' | grep -w "${VBOX_NAME[$N]}")
+
+          if [[ -z "$VBOX_RUNNING" ]]; then
+
+            VBOX_PRESENT=$(su ${VBOX_USER[$N]} -c "$VBOXMGR_BIN list --long vms" |
+              sed -n 's/^Name:[[:blank:]]\{7\} *//p' | grep -w "${VBOX_NAME[$N]}")
+
+            if [[ -n "$VBOX_PRESENT" ]]; then
+
+              # VBoxManage startvm does not result in a VM with working networking
+              # su ${VBOX_USER[$N]} -c "$VBOXMGR_BIN -q startvm "${VBOX_NAME[$N]}" -type headless" > /tmp/$PRG.$$ 2>&1
+              # Start virtualbox in Headless mode
+              su ${VBOX_USER[$N]} -c "$VBOXHeadLess_BIN --startvm "${VBOX_NAME[$N]}"" > /tmp/$PRG.$$ 2>&1 &
+              RETVAL=$?
+
+              if [[ $RETVAL == 0 ]]; then
+                echo -n " Starting virtual machine: ${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]})"
+                rc_status -v -r
+              else
+                echo -n " Starting virtual machine: ${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]}) failed with the following output: "
+                rc_failed; rc_status -v -r
+                # Give the VBOXHeadLess_BIN some time to write the output file
+                sleep 2
+                cat /tmp/$PRG.$$
+              fi
+
+              rm /tmp/$PRG.$$
+
+            else
+              echo -n " Virtual machine: ${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]}) does not exist"
+              rc_status -s -r
+            fi
+
+          else
+            echo -n " Virtual machine: ${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]}) is already running"
+            rc_status -v -r
+          fi
+
+        else
+          echo -n " Virtual machine: ${VBOX_NAME[$N]}, VBOX_USER: ${VBOX_USER[$N]} does not exist"
+          rc_status -s -r
+        fi
+
+      else
+        echo -n " Virtual machine: ${VBOX_NAME[$N]}: VBOX_USER not configured"
+        rc_status -s -r
+      fi
+
+      N=$(($N+1))
+    done
+  fi
+}
+
+stop() {
+
+  for VBOX in $VBOX_AUTOSTART; do
+
+    if grep -q \; <<< "$VBOX"; then
+      VBOX_USER=$(cut -d\; -f2 <<< "$VBOX")
+
+      # Only add the user to the list, if not present yet
+      if ! grep -qw "$VBOX_USER" <<< "$VBOX_USERS"; then
+        VBOX_USERS="$VBOX_USERS $VBOX_USER"
+      fi
+    fi
+  done
+
+  N=1
+  for VBOX_USER in $VBOX_USERS; do
+    VBOX_RUNNING=$(su $VBOX_USER -c "$VBOXMGR_BIN list --long runningvms" |
+      sed -n 's/^Name:[[:blank:]]\{7\} *//p')
+    for VBOX in $VBOX_RUNNING; do
+      VBOX_NAME[$N]="$VBOX"
+      VBOX_USER[$N]="$VBOX_USER"
+      N=$(($N+1)) 
+    done
+  done
+
+  VBOXES=${#VBOX_NAME[*]}
+
+  if [[ $VBOXES -eq 0 ]]; then
+    echo -n "Shutting down $SERVICE: no virtual machines running."
+    rc_status -s -r
+  else
+
+    echo -n "Shutting down $SERVICE: "
+    N=1
+    while [[ $N -le $VBOXES ]]; do
+      if [[ $N -lt $VBOXES ]]; then
+        echo -n "${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]}), "
+      else
+        echo "${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]})"
+      fi
+      N=$(($N+1)) 
+    done
+
+    N=1
+    while [[ $N -le $VBOXES ]]; do
+
+      echo -n " ${VBOX_NAME[$N]}: "
+      su ${VBOX_USER[$N]} -c "$VBOXMGR_BIN -q controlvm "${VBOX_NAME[$N]}" savestate"
+      RETVAL=$?
+
+      echo -n " Shutting down virtual machine: ${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]})"
+      if [[ $RETVAL == $? ]]; then
+        rc_status -v -r
+      else
+        rc_failed; rc_status -v -r
+      fi
+      N=$(($N+1)) 
+    done
+  fi
+}
+
+status() {
+
+  for VBOX in $VBOX_AUTOSTART; do
+
+    if grep -q \; <<< "$VBOX"; then
+      VBOX_USER=$(cut -d\; -f2 <<< "$VBOX")
+
+      # Only add the user to the list, if not present yet
+      if ! grep -qw "$VBOX_USER" <<< "$VBOX_USERS"; then
+        VBOX_USERS="$VBOX_USERS $VBOX_USER"
+      fi
+    fi
+  done
+
+  N=1
+  for VBOX_USER in $VBOX_USERS; do
+    # The tag "Name:" occurs in multiple sections.  Require at least 7 blanks
+    # with an additional flexible amount of spaces.  At the moment of writing
+    # 13 spaces are needed.
+    VBOX_RUNNING=$(su $VBOX_USER -c "$VBOXMGR_BIN list --long runningvms" |
+      sed -n 's/^Name:[[:blank:]]\{7\} *//p')
+    for VBOX in $VBOX_RUNNING; do
+      VBOX_NAME[$N]="$VBOX"
+      VBOX_USER[$N]="$VBOX_USER"
+      N=$(($N+1)) 
+    done
+  done
+
+  VBOXES=${#VBOX_NAME[*]}
+
+  if [[ $VBOXES -eq 0 ]]; then
+    echo -n "$SERVICE: no virtual machines running."
+    rc_status -s -r
+  else
+    N=1
+    while [[ $N -le $VBOXES ]]; do
+      # The long sed line changes the output from:
+      #    running (since 2010-04-25T14:51:57.373000000)
+      # to:
+      #    running (since 2010-04-25 14:51:57)
+      #
+      STATE=$(su ${VBOX_USER[$N]} -c "$VBOXMGR_BIN showvminfo "${VBOX_NAME[$N]}"" |
+        sed -n 's/State: *//p' |
+        sed 's/\([0-9][0-9]\)\.[0-9]\{9\}/\1/;s/\([0-9][0-9]\)T\([0-9][0-9]\)/\1 \2/')
+      printf " %-56s %s" "${VBOX_NAME[$N]} (user: ${VBOX_USER[$N]}):" "$STATE"
+      rc_status -v
+      N=$(($N+1))
+    done
+  fi
+}
+
+case "$1" in
+  start)
+        start
+        ;;
+  stop)
+        stop
+        ;;
+  restart|force-reload)
+        stop
+        start
+        ;;
+  status)
+        status
+        ;;
+  *)
+        echo "Usage: $PRG {start|stop|restart|force-reload|status}" >&2
+        exit 3
+        ;;
+esac
+

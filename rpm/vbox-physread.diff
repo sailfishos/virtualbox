@@ -1,0 +1,230 @@
+commit 1d3a5cd2f8d4d061e7aa82f08a3470a074f1f66b
+Author: Richard Braakman <richard.braakman@jollamobile.com>
+Date:   Sun Feb 3 11:30:43 2013 +0200
+
+    vboxsf: speed up reads by using multipage transfers
+
+diff --git a/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.c b/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.c
+index 03af236..b49e217 100644
+--- a/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.c
++++ b/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.c
+@@ -524,6 +524,53 @@ DECLVBGL(int) VbglR0SfWritePhysCont(PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHAND
+ 
+ }
+ 
++DECLVBGL(int) VbglR0SfReadPhysCont(PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFile, uint64_t offset, uint32_t *pcbBuffer, RTCCPHYS PhysBuffer)
++{
++    uint32_t            cbToRead = *pcbBuffer;
++    uint32_t            cPages   = RT_ALIGN_32((PhysBuffer & PAGE_OFFSET_MASK) + cbToRead, PAGE_SIZE) >> PAGE_SHIFT;
++    uint32_t            cbData   = sizeof(VBoxSFRead) + RT_UOFFSETOF(HGCMPageListInfo, aPages[cPages]);
++    VBoxSFRead         *pData    = (VBoxSFRead *)RTMemTmpAlloc(cbData);
++    HGCMPageListInfo   *pPgLst   = (HGCMPageListInfo *)(pData + 1);
++    uint32_t            iPage;
++    int                 rc;
++
++    if (RT_UNLIKELY(!pData))
++        return VERR_NO_TMP_MEMORY;
++
++    VBOX_INIT_CALL(&pData->callInfo, READ, pClient);
++
++    pData->root.type                      = VMMDevHGCMParmType_32bit;
++    pData->root.u.value32                 = pMap->root;
++
++    pData->handle.type                    = VMMDevHGCMParmType_64bit;
++    pData->handle.u.value64               = hFile;
++    pData->offset.type                    = VMMDevHGCMParmType_64bit;
++    pData->offset.u.value64               = offset;
++    pData->cb.type                        = VMMDevHGCMParmType_32bit;
++    pData->cb.u.value32                   = cbToRead;
++    pData->buffer.type                    = VMMDevHGCMParmType_PageList;
++    pData->buffer.u.PageList.size         = cbToRead;
++    pData->buffer.u.PageList.offset       = sizeof(VBoxSFRead);
++
++    pPgLst->flags = VBOX_HGCM_F_PARM_DIRECTION_FROM_HOST;
++    pPgLst->offFirstPage = (uint16_t)(PhysBuffer & PAGE_OFFSET_MASK);
++    pPgLst->cPages = cPages;
++    PhysBuffer &= ~(RTCCPHYS)PAGE_OFFSET_MASK;
++    for (iPage = 0; iPage < cPages; iPage++, PhysBuffer += PAGE_SIZE)
++        pPgLst->aPages[iPage] = PhysBuffer;
++
++    rc = VbglHGCMCall (pClient->handle, &pData->callInfo, cbData);
++    if (RT_SUCCESS (rc))
++    {
++        rc = pData->callInfo.result;
++        *pcbBuffer = pData->cb.u.value32;
++    }
++
++    RTMemTmpFree(pData);
++    return rc;
++
++}
++
+ DECLVBGL(int) vboxCallFlush(PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFile)
+ {
+     int rc = VINF_SUCCESS;
+diff --git a/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h b/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h
+index 3947a13..4d7e4a9 100644
+--- a/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h
++++ b/src/VBox/Additions/common/VBoxGuestLib/VBoxGuestR0LibSharedFolders.h
+@@ -174,6 +174,7 @@ DECLVBGL(int) vboxCallFlush (PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFil
+ DECLVBGL(int) vboxCallRead (PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFile, uint64_t offset, uint32_t *pcbBuffer, uint8_t *pBuffer, bool fLocked);
+ DECLVBGL(int) vboxCallWrite (PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFile, uint64_t offset, uint32_t *pcbBuffer, uint8_t *pBuffer, bool fLocked);
+ DECLVBGL(int) VbglR0SfWritePhysCont(PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFile, uint64_t offset, uint32_t *pcbBuffer, RTCCPHYS PhysBuffer);
++DECLVBGL(int) VbglR0SfReadPhysCont(PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFile, uint64_t offset, uint32_t *pcbBuffer, RTCCPHYS PhysBuffer);
+ 
+ DECLVBGL(int) vboxCallLock (PVBSFCLIENT pClient, PVBSFMAP pMap, SHFLHANDLE hFile, uint64_t offset, uint64_t cbSize, uint32_t fLock);
+ 
+diff --git a/src/VBox/Additions/linux/sharedfolders/regops.c b/src/VBox/Additions/linux/sharedfolders/regops.c
+index db1641b..a0586bd 100644
+--- a/src/VBox/Additions/linux/sharedfolders/regops.c
++++ b/src/VBox/Additions/linux/sharedfolders/regops.c
+@@ -21,8 +21,8 @@
+ 
+ #include "vfsmod.h"
+ 
+-static void *alloc_bounce_buffer(size_t *tmp_sizep, PRTCCPHYS physp, size_t
+-                                 xfer_size, const char *caller)
++static void *
++alloc_bounce_buffer(size_t *tmp_sizep, size_t xfer_size, const char *caller)
+ {
+     size_t tmp_size;
+     void *tmp;
+@@ -45,7 +45,6 @@ static void *alloc_bounce_buffer(size_t *tmp_sizep, PRTCCPHYS physp, size_t
+     }
+ 
+     *tmp_sizep = tmp_size;
+-    *physp = virt_to_phys(tmp);
+     return tmp;
+ }
+ 
+@@ -56,37 +55,61 @@ static void free_bounce_buffer(void *tmp)
+ 
+ 
+ /* fops */
++
++/* Input buf must be physically contiguous memory */
+ static int sf_reg_read_aux(const char *caller, struct sf_glob_info *sf_g,
+                            struct sf_reg_info *sf_r, void *buf,
+                            uint32_t *nread, uint64_t pos)
+ {
+-    /** @todo bird: yes, kmap() and kmalloc() input only. Since the buffer is
+-     *        contiguous in physical memory (kmalloc or single page), we should
+-     *        use a physical address here to speed things up. */
+-    int rc = vboxCallRead(&client_handle, &sf_g->map, sf_r->handle,
+-                          pos, nread, buf, false /* already locked? */);
+-    if (RT_FAILURE(rc))
++    if (VbglR0CanUsePhysPageList())
++    {
++        int rc = VbglR0SfReadPhysCont(&client_handle, &sf_g->map, sf_r->handle,
++                                      pos, nread, virt_to_phys(buf));
++        if (RT_FAILURE(rc))
++        {
++            LogFunc(("VbglR0SfReadPhysCont failed. caller=%s, rc=%Rrc\n",
++                     caller, rc));
++            return -EPROTO;
++        }
++    }
++    else
+     {
+-        LogFunc(("vboxCallRead failed. caller=%s, rc=%Rrc\n", caller, rc));
+-        return -EPROTO;
++        int rc = vboxCallRead(&client_handle, &sf_g->map, sf_r->handle,
++                              pos, nread, buf, false /* already locked? */);
++        if (RT_FAILURE(rc))
++        {
++            LogFunc(("vboxCallRead failed. caller=%s, rc=%Rrc\n", caller, rc));
++            return -EPROTO;
++        }
+     }
+     return 0;
+ }
+ 
++/* Input buf must be physically contiguous memory */
+ static int sf_reg_write_aux(const char *caller, struct sf_glob_info *sf_g,
+                             struct sf_reg_info *sf_r, void *buf,
+                             uint32_t *nwritten, uint64_t pos)
+ {
+-    /** @todo bird: yes, kmap() and kmalloc() input only. Since the buffer is
+-     *        contiguous in physical memory (kmalloc or single page), we should
+-     *        use a physical address here to speed things up. */
+-    int rc = vboxCallWrite(&client_handle, &sf_g->map, sf_r->handle,
+-                           pos, nwritten, buf, false /* already locked? */);
+-    if (RT_FAILURE(rc))
++    if (VbglR0CanUsePhysPageList())
+     {
+-        LogFunc(("vboxCallWrite failed. caller=%s, rc=%Rrc\n",
+-                    caller, rc));
+-        return -EPROTO;
++        int rc = VbglR0SfWritePhysCont(&client_handle, &sf_g->map, sf_r->handle,
++                                    pos, nwritten, virt_to_phys(buf));
++        if (RT_FAILURE(rc))
++        {
++            LogFunc(("VbglR0SfWritePhysCont failed. caller=%s, rc=%Rrc\n",
++                     caller, rc));
++            return -EPROTO;
++        }
++    }
++    else
++    {
++        int rc = vboxCallWrite(&client_handle, &sf_g->map, sf_r->handle,
++                           pos, nwritten, buf, false /* already locked? */);
++        if (RT_FAILURE(rc))
++        {
++            LogFunc(("vboxCallWrite failed. caller=%s, rc=%Rrc\n", caller, rc));
++            return -EPROTO;
++        }
+     }
+     return 0;
+ }
+@@ -104,7 +127,6 @@ static ssize_t sf_reg_read(struct file *file, char *buf, size_t size, loff_t *of
+ {
+     int err;
+     void *tmp;
+-    RTCCPHYS tmp_phys;
+     size_t tmp_size;
+     size_t left = size;
+     ssize_t total_bytes_read = 0;
+@@ -125,7 +147,7 @@ static ssize_t sf_reg_read(struct file *file, char *buf, size_t size, loff_t *of
+     if (!size)
+         return 0;
+ 
+-    tmp = alloc_bounce_buffer(&tmp_size, &tmp_phys, size, __PRETTY_FUNCTION__);
++    tmp = alloc_bounce_buffer(&tmp_size, size, __PRETTY_FUNCTION__);
+     if (!tmp)
+         return -ENOMEM;
+ 
+@@ -179,7 +201,6 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
+ {
+     int err;
+     void *tmp;
+-    RTCCPHYS tmp_phys;
+     size_t tmp_size;
+     size_t left = size;
+     ssize_t total_bytes_written = 0;
+@@ -212,7 +233,7 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
+     if (!size)
+         return 0;
+ 
+-    tmp = alloc_bounce_buffer(&tmp_size, &tmp_phys, size, __PRETTY_FUNCTION__);
++    tmp = alloc_bounce_buffer(&tmp_size, size, __PRETTY_FUNCTION__);
+     if (!tmp)
+         return -ENOMEM;
+ 
+@@ -232,16 +253,7 @@ static ssize_t sf_reg_write(struct file *file, const char *buf, size_t size, lof
+             goto fail;
+         }
+ 
+-#if 1
+-        if (VbglR0CanUsePhysPageList())
+-        {
+-            err = VbglR0SfWritePhysCont(&client_handle, &sf_g->map, sf_r->handle,
+-                                        pos, &nwritten, tmp_phys);
+-            err = RT_FAILURE(err) ? -EPROTO : 0;
+-        }
+-        else
+-#endif
+-            err = sf_reg_write_aux(__func__, sf_g, sf_r, tmp, &nwritten, pos);
++        err = sf_reg_write_aux(__func__, sf_g, sf_r, tmp, &nwritten, pos);
+         if (err)
+             goto fail;
+ 

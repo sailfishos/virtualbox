@@ -1,0 +1,27 @@
+* Wed Mar 13 2013 David Greaves <david@dgreaves.com> - 4.2.4
+- Add the systemd vboxservice.service to enable time-sync in guests
+
+* Thu Feb 14 2013 David Greaves <david@dgreaves.com> - 4.2.4
+- Do depmod -a for required kernel
+
+* Fri Feb 01 2013  Richard Braakman <richard.braakman@jollamobile.com> - 4.2.4
+- Ensure build failure if guest modules do not compile
+- [vboxsf]
+  Bugfixes to shared folders module
+  Enable writable mmap (needed by zypper, building kernel, probably more)
+  Performance improvements, it is now about 40% slower than guest-native
+  Use page cache when reading
+
+* Mon Nov 05 2012  Maciej Blomberg <maciej.blomberg@jollamobile.com> - 4.2.4
+- Upgraded to upstream 4.2.4
+- All previous patches broken
+
+* Sat Oct 06 2012  David Greaves <david@dgreaves.com> - 4.1.18
+- Move mount.vboxsf to /sbin so it's picked up by mount -t
+- Create vboxsf group in preparation for support of automount
+
+* Wed Oct 03 2012  David Greaves <david@dgreaves.com> - 4.1.18
+- Guest only packaging to provide vboxfs, mount.vboxsf,
+  VBoxControl and VBoxService
+- Most suse packaging removed
+- Requires precise kernel version match.

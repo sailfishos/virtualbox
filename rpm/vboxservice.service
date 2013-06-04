@@ -1,0 +1,9 @@
+[Unit]
+Description=VBoxService daemon for various aspects of guest control and time sync
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/VBoxService -f
+
+[Install]
+WantedBy=basic.target

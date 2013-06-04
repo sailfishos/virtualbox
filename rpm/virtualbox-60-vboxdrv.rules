@@ -1,0 +1,5 @@
+KERNEL=="vboxdrv", NAME="vboxdrv", OWNER="root", GROUP="root", MODE="0600"
+#these two lines give access permission to vboxusers to properly work with usb nodes, this could be security risk (bnc#664520) !!
+#
+#SUBSYSTEM=="usb_device",ATTR{devnum}=="?*",ATTR{busnum}=="?*",SYMLINK+="vboxusb/$attr{busnum}/$attr{devnum}",RUN+="/usr/bin/setfacl -m g:vboxusers:6 /dev/vboxusb/$attr{busnum}/$attr{devnum}"
+#SUBSYSTEM=="usb",ENV{DEVTYPE}=="usb_device",ATTR{devnum}=="?*",ATTR{busnum}=="?*",SYMLINK+="vboxusb/$attr{busnum}/$attr{devnum}",RUN+="/usr/bin/setfacl -m g:vboxusers:6 /dev/vboxusb/$attr{busnum}/$attr{devnum}"

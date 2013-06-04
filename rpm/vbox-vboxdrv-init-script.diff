@@ -1,0 +1,89 @@
+diff -Naur VirtualBox-4.2.4-orig/src/VBox/Installer/linux/vboxdrv.sh.in VirtualBox-4.2.4/src/VBox/Installer/linux/vboxdrv.sh.in
+--- VirtualBox-4.2.4-orig/src/VBox/Installer/linux/vboxdrv.sh.in	2012-10-29 21:58:09.000000000 +0200
++++ VirtualBox-4.2.4/src/VBox/Installer/linux/vboxdrv.sh.in	2012-10-29 21:59:31.337352017 +0200
+@@ -193,13 +193,6 @@
+         fi
+     fi
+     # ensure permissions
+-    if ! chown :%GROUP% $DEVICE 2>/dev/null; then
+-        rmmod vboxpci 2>/dev/null
+-        rmmod vboxnetadp 2>/dev/null
+-        rmmod vboxnetflt 2>/dev/null
+-        rmmod vboxdrv 2>/dev/null
+-        failure "Cannot change group %GROUP% for device $DEVICE"
+-    fi
+     if ! $MODPROBE vboxnetflt > /dev/null 2>&1; then
+         failure "modprobe vboxnetflt failed. Please use 'dmesg' to find out why"
+     fi
+@@ -297,70 +290,8 @@
+ # setup_script
+ setup()
+ {
+-    stop
+-    DKMS=`which dkms 2>/dev/null`
+-    if [ -n "$DKMS" ]; then
+-      begin_msg "Uninstalling old VirtualBox DKMS kernel modules"
+-      $DODKMS uninstall vboxhost vboxdrv vboxnetflt vboxnetadp > $LOG
+-      succ_msg
+-    fi
+-    if find /lib/modules/`uname -r` -name "vboxpci\.*" 2>/dev/null|grep -q vboxpci; then
+-        begin_msg "Removing old VirtualBox pci kernel module"
+-        find /lib/modules/`uname -r` -name "vboxpci\.*" 2>/dev/null|xargs rm -f 2>/dev/null
+-        succ_msg
+-    fi  
+-    if find /lib/modules/`uname -r` -name "vboxnetadp\.*" 2>/dev/null|grep -q vboxnetadp; then
+-        begin_msg "Removing old VirtualBox netadp kernel module"
+-        find /lib/modules/`uname -r` -name "vboxnetadp\.*" 2>/dev/null|xargs rm -f 2>/dev/null
+-        succ_msg
+-    fi  
+-    if find /lib/modules/`uname -r` -name "vboxnetflt\.*" 2>/dev/null|grep -q vboxnetflt; then
+-        begin_msg "Removing old VirtualBox netflt kernel module"
+-        find /lib/modules/`uname -r` -name "vboxnetflt\.*" 2>/dev/null|xargs rm -f 2>/dev/null
+-        succ_msg
+-    fi  
+-    if find /lib/modules/`uname -r` -name "vboxdrv\.*" 2>/dev/null|grep -q vboxdrv; then
+-        begin_msg "Removing old VirtualBox kernel module"
+-        find /lib/modules/`uname -r` -name "vboxdrv\.*" 2>/dev/null|xargs rm -f 2>/dev/null
+-        succ_msg
+-    fi
+-    if [ -n "$DKMS" ]; then
+-      begin_msg "Trying to register the VirtualBox kernel modules using DKMS"
+-      if ! $DODKMS install vboxhost $VERSION >> $LOG; then
+-        fail_msg "Failed, trying without DKMS"
+-        DKMS=""
+-      fi
+-    fi
+-    if [ -z "$DKMS" ]; then
+-      begin_msg "Recompiling VirtualBox kernel modules"
+-      if ! $BUILDINTMP \
+-          --save-module-symvers /tmp/vboxdrv-Module.symvers \
+-          --module-source "$MODULE_SRC/vboxdrv" \
+-          --no-print-directory install >> $LOG 2>&1; then
+-          failure "Look at $LOG to find out what went wrong"
+-      fi
+-      if ! $BUILDINTMP \
+-          --use-module-symvers /tmp/vboxdrv-Module.symvers \
+-          --module-source "$MODULE_SRC/vboxnetflt" \
+-          --no-print-directory install >> $LOG 2>&1; then
+-          failure "Look at $LOG to find out what went wrong"
+-      fi
+-      if ! $BUILDINTMP \
+-          --use-module-symvers /tmp/vboxdrv-Module.symvers \
+-          --module-source "$MODULE_SRC/vboxnetadp" \
+-          --no-print-directory install >> $LOG 2>&1; then
+-          failure "Look at $LOG to find out what went wrong"
+-      fi
+-      if ! $BUILDINTMP \
+-          --use-module-symvers /tmp/vboxdrv-Module.symvers \
+-          --module-source "$MODULE_SRC/vboxpci" \
+-          --no-print-directory install >> $LOG 2>&1; then
+-          failure "Look at $LOG to find out what went wrong"
+-      fi
+-    fi
+-    rm -f /etc/vbox/module_not_compiled
++    begin_msg "Recompiling VirtualBox vboxadd kernel module, NOT. It has been packaged."
+     succ_msg
+-    start
+ }
+ 
+ dmnstatus()

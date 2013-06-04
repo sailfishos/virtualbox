@@ -1,0 +1,13 @@
+Index: VirtualBox-4.0.0_OSE/src/VBox/Devices/PC/vbox.dsl
+===================================================================
+--- VirtualBox-4.0.0_OSE.orig/src/VBox/Devices/PC/vbox.dsl
++++ VirtualBox-4.0.0_OSE/src/VBox/Devices/PC/vbox.dsl
+@@ -778,7 +778,7 @@ DefinitionBlock ("DSDT.aml", "DSDT", 1,
+                 Device (SMC)
+                 {
+                     Name (_HID, EisaId ("APP0001"))
+-                    Name (_CID, "smc-napa")
++                    Name (_CID, "smcnapa")
+ 
+                     Method (_STA, 0, NotSerialized)
+                     {

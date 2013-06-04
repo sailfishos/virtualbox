@@ -1,0 +1,22 @@
+Index: VirtualBox-4.1.8_OSE/src/VBox/Installer/linux/vboxweb-service.sh.in
+===================================================================
+--- VirtualBox-4.1.8_OSE.orig/src/VBox/Installer/linux/vboxweb-service.sh.in
++++ VirtualBox-4.1.8_OSE/src/VBox/Installer/linux/vboxweb-service.sh.in
+@@ -20,7 +20,7 @@
+ # Provides:       vboxweb-service
+ # Required-Start: vboxdrv
+ # Required-Stop:  vboxdrv
+-# Default-Start:  2 3 4 5
++# Default-Start:  2 3 5
+ # Default-Stop:   0 1 6
+ # Description:    VirtualBox web service API
+ ### END INIT INFO
+@@ -50,7 +50,7 @@ if [ -f /etc/redhat-release ]; then
+     PIDFILE="/var/lock/subsys/vboxweb-service"
+ elif [ -f /etc/SuSE-release ]; then
+     system=suse
+-    PIDFILE="/var/lock/subsys/vboxweb-service"
++    PIDFILE="/var/run/vboxweb-service"
+ elif [ -f /etc/debian_version ]; then
+     system=debian
+     PIDFILE="/var/run/vboxweb-service"

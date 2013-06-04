@@ -1,0 +1,6 @@
+%defattr (-,root,root) 
+%dir /lib/modules/%2-%1/
+%dir /lib/modules/%2-%1/updates
+/lib/modules/%2-%1/updates/vboxsf.ko
+/lib/modules/%2-%1/updates/vboxvideo.ko
+/lib/modules/%2-%1/updates/vboxguest.ko

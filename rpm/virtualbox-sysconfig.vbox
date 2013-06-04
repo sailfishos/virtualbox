@@ -1,0 +1,23 @@
+## Path:         System/Virtual Machines/VBox
+## Description:  Virtual box machines to autostart during boot
+## Type:         string
+## Default:      ""
+#
+# Configuration file for the script /etc/init.d/vboxes
+#
+# The variable VBOX_AUTOSTART holds the virtual machines to be started during
+# boot time.  One entry must contain the virtual machine name and the
+# virtual machine owner. They are separated with a ";".  Multiple entries 
+# (virtual machines) are separated with a space.
+#
+# Examples:
+#   MachineName1;user1
+#
+#   One virtual machine:
+#   openSUSE_Factory;vbox
+#
+#   Multiple virtual machines:
+#   openSUSE_Factory;vbox openSUSE_stable;suse
+#
+VBOX_AUTOSTART=""
+

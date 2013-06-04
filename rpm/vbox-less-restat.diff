@@ -1,0 +1,71 @@
+commit bce05d945b143926548b8f8d289dfa3ec02f3788
+Author: Richard Braakman <richard.braakman@jollamobile.com>
+Date:   Fri Jan 25 11:33:47 2013 +0200
+
+    linux sharedfolders: remove redundant statting
+    
+    There's no need to force a restat right after filling a new inode with stat
+    information. Also, open() can use the stat info it gets with the handle
+    instead of statting again.
+    
+    In addition, sf_inode_revalidate should actually set force_restat back to 0
+    when statting.
+
+diff --git a/src/VBox/Additions/linux/sharedfolders/dirops.c b/src/VBox/Additions/linux/sharedfolders/dirops.c
+index f7f558a..d0d7b85 100644
+--- a/src/VBox/Additions/linux/sharedfolders/dirops.c
++++ b/src/VBox/Additions/linux/sharedfolders/dirops.c
+@@ -458,7 +458,7 @@ static int sf_instantiate(struct inode *parent, struct dentry *dentry,
+ #else
+     dentry->d_op = &sf_dentry_ops;
+ #endif
+-    sf_new_i->force_restat = 1;
++    sf_new_i->force_restat = 0;
+     sf_new_i->force_reread = 0;
+ 
+     d_instantiate(dentry, inode);
+diff --git a/src/VBox/Additions/linux/sharedfolders/regops.c b/src/VBox/Additions/linux/sharedfolders/regops.c
+index 37adbcb..1ba03e3 100644
+--- a/src/VBox/Additions/linux/sharedfolders/regops.c
++++ b/src/VBox/Additions/linux/sharedfolders/regops.c
+@@ -302,7 +302,6 @@ static int sf_reg_open(struct inode *inode, struct file *file)
+          * O_CREAT, O_TRUNC: inherent true (file was just created). Not sure
+          * about the access flags (SHFL_CF_ACCESS_*).
+          */
+-        sf_i->force_restat = 1;
+         sf_r->handle = sf_i->handle;
+         sf_i->handle = SHFL_HANDLE_NIL;
+         sf_i->file = file;
+@@ -378,6 +377,7 @@ static int sf_reg_open(struct inode *inode, struct file *file)
+     rc = vboxCallCreate(&client_handle, &sf_g->map, sf_i->path, &params);
+     if (RT_FAILURE(rc))
+     {
++        sf_i->force_restat = 1;
+         LogFunc(("vboxCallCreate failed flags=%d,%#x rc=%Rrc\n",
+                   file->f_flags, params.CreateFlags, rc));
+         kfree(sf_r);
+@@ -398,9 +398,11 @@ static int sf_reg_open(struct inode *inode, struct file *file)
+             default:
+                 break;
+         }
++        sf_i->force_restat = 1;
+     }
++    else
++        sf_init_inode(sf_g, inode, &params.Info);
+ 
+-    sf_i->force_restat = 1;
+     sf_r->handle = params.Handle;
+     sf_i->file = file;
+     file->private_data = sf_r;
+diff --git a/src/VBox/Additions/linux/sharedfolders/utils.c b/src/VBox/Additions/linux/sharedfolders/utils.c
+index aa9c396..7ba8276 100644
+--- a/src/VBox/Additions/linux/sharedfolders/utils.c
++++ b/src/VBox/Additions/linux/sharedfolders/utils.c
+@@ -238,6 +238,7 @@ int sf_inode_revalidate(struct dentry *dentry)
+             return 0;
+     }
+ 
++    sf_i->force_restat = 0;
+     err = sf_stat(__func__, sf_g, sf_i->path, &info, 1);
+     if (err)
+         return err;

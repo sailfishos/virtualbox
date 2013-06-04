@@ -1,0 +1,8 @@
+Requires: kernel-%1
+Provides: virtualbox-guest-kmp = %version
+#rename from ose version:
+Provides: virtualbox-ose-guest-kmp-%1 = %version
+Obsoletes: virtualbox-ose-guest-kmp-%1 < %version
+#host (vboxdrv) and guest (vboxguest) kmp exports the same symbol (RTMemFreeEx)
+#which break loading modules using modprobe (bnc#661740)
+Conflicts: virtualbox-ose-host-kmp

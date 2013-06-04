@@ -1,0 +1,47 @@
+--- VirtualBox-4.0.2_OSE.orig/src/libs/xpcom18a4/python/gen_python_deps.py	2011-01-14 20:15:09.000000000 +0000
++++ VirtualBox-4.0.2_OSE/src/libs/xpcom18a4/python/gen_python_deps.py	2011-02-07 05:36:42.427567000 +0000
+@@ -68,7 +68,7 @@
+     else:
+         multi = 1
+ 
+-    if multi == 0:
++    if not multi:
+         prefixes = ["/usr"]
+         versions = [str(sys.version_info[0])+'.'+str(sys.version_info[1])]
+ 
+@@ -86,22 +86,23 @@
+     for v in versions:
+         for p in prefixes:
+             c = checkPair(p, v, dllpre, dllsuff, bitness_magic)
+-            if c is not None:
++            if c:
+                 known[v] = c
+                 break
+-    keys = known.keys()
+-    # we want default to be the lowest versioned Python
+-    keys.sort()
+-    d = None
+     # We need separator other than newline, to sneak through $(shell)
+     sep = "|"
+-    for k in keys:
+-        if d is None:
+-            d = k
+-        vers = k.replace('.', '')
+-        print_vars(vers, known[k], sep, bitness_magic)
+-    if d is not None:
+-        print_vars("DEF", known[d], sep, bitness_magic)
++
++    if not known:
++        # this type of problem should be detected in configure
++        # print_vars("DEF", defaultpaths, sep, bitness_magic)
++        pass
++    if multi:
++        for ver, paths in known.items():
++            print_vars(ver.replace('.', ''), paths, sep, bitness_magic)
++    else:
++        ver = versions[0]
++        paths = known[ver]
++        print_vars(ver.replace('.', ''), paths, sep, bitness_magic)
+ 
+ if __name__ == '__main__':
+     main(sys.argv)
