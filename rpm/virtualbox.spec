@@ -292,8 +292,6 @@ groupadd -r vboxsf || true
 %clean
 [ -d "%{buildroot}" -a "%{buildroot}" != "" ] && %__rm -rf "%{buildroot}"
 
-%files
-
 %files guest-tools
 %defattr(-, root, root)
 %{_bindir}/VBoxControl
