@@ -56,7 +56,7 @@ BuildRequires:  udev
 #BuildRequires:  xorg-x11-devel
 #BuildRequires:  xorg-x11-server
 #BuildRequires:  xorg-x11-server-sdk
-#BuildRequires:  yasm
+BuildRequires:  yasm
 #BuildRequires:  zlib-devel-static
 # and just for the macro:
 BuildRequires:   systemd
@@ -83,8 +83,6 @@ Source12:       %{name}-vboxes
 Source13:       %{name}-sysconfig.vbox
 # added by lbt as the Mer systemd service
 Source14:       vboxservice.service
-# added by lbt to provide yasm from curl -O https://www.virtualbox.org/export/43504/vbox/trunk/tools/linux.x86/bin/yasm
-Source50:       yasm
 Source98:       rpmlintrc
 #rework init scripts to fit suse needs
 Patch1:         vbox-vboxdrv-init-script.diff
@@ -195,10 +193,6 @@ rm -rf kBuild
 
 #copy kbuild config
 %__cp %{S:10} LocalConfig.kmk
-# lbt's yasm
-mkdir -p tools/linux.x86/bin
-%__cp %{S:50} tools/linux.x86/bin/yasm
-chmod 755 tools/linux.x86/bin/yasm
 %__cp %{S:14} vboxservice.service 
 #
 ##########################
@@ -244,7 +238,7 @@ source env.sh
 #cp tools/linux.x86/bin/yasm %{buildroot}/yasm
 
 echo "build basic parts"
-/usr/bin/kmk %{?_smp_mflags} VBOX_GCC_WERR= KBUILD_VERBOSE=2 VBOX_WITH_REGISTRATION_REQUEST= VBOX_WITH_UPDATE_REQUEST= TOOL_YASM_AS=`pwd`/tools/linux.x86/bin/yasm VBOX_PATH_PACKAGE_DOCS=/usr/share/doc/packages/virtualbox VBOX_ONLY_ADDITIONS=1 vboxsf-mod vboxvideo_drm-mod mount VBoxControl VBoxService
+/usr/bin/kmk %{?_smp_mflags} VBOX_GCC_WERR= KBUILD_VERBOSE=2 VBOX_WITH_REGISTRATION_REQUEST= VBOX_WITH_UPDATE_REQUEST= TOOL_YASM_AS=yasm VBOX_PATH_PACKAGE_DOCS=/usr/share/doc/packages/virtualbox VBOX_ONLY_ADDITIONS=1 vboxsf-mod vboxvideo_drm-mod mount VBoxControl VBoxService
 
 
 # build kernel modules for guest and host (check novel-kmp package as example)
