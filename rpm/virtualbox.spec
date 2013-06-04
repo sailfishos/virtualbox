@@ -84,35 +84,6 @@ Source13:       %{name}-sysconfig.vbox
 # added by lbt as the Mer systemd service
 Source14:       vboxservice.service
 Source98:       rpmlintrc
-#rework init scripts to fit suse needs
-Patch1:         vbox-vboxdrv-init-script.diff
-Patch2:         vbox-vboxadd-init-script.diff
-Patch3:         vbox-vboxweb-init-script.diff
-#fix return values which trigger post build checks and coused build error - should goes to upstream
-Patch4:         vbox-ret-in-nonvoid-fnc.diff
-#fix build : "Error 4001 - String must be entirely alphanumeric"
-#with renaming we probably break some macosx functionality however ths is just quick fix
-#file :http://www.virtualbox.org/browser/trunk/src/VBox/Devices/PC/vbox.ds
-#see thread : http://lists.freebsd.org/pipermail/freebsd-acpi/2010-October/006795.html
-Patch6:         vbox-smc-napa.diff
-#fix build of Python and dev package on openSUSE 11.3
-Patch8:         vbox-python-detection.diff
-#PATCH-FIX-OPENSUSE implement messagebox (VBoxPermissionMessage app), which is displayed, when user
-#try to start VirtualBox and is not memeber of vboxusers group
-#PATCH-FIX-OPENSUSE Do not include build dates on binaries, makes build-compare happier
-#YPatch101:       vbox-default-os-type.diff
-#disable update in vbox gui
-Patch103:       vbox-disable-updates.diff
-#use pie/fPIE for setuid binaries (bnc#743143) 
-Patch104:       vbox-fpie.diff
-Patch201:       vbox-less-restat.diff
-Patch202:       vbox-handles.diff
-Patch203:       vbox-physread.diff
-Patch204:       vbox-mmap.diff
-Patch205:       vbox-mmap-02.diff
-Patch206:       vbox-pagecache.diff
-Patch207:       vbox-readpages.diff
-Patch249:       vbox-slow-logging.diff
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 #PreReq:         pwdutils permissions
 Requires:       %{name}-host-kmp = %version
@@ -162,23 +133,6 @@ mv %{name}-%{version}/%{name}/* .
 
 # use the packaged kBuild rather than the bundled one
 rm -rf kBuild
-
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
-%patch6 -p1
-%patch8 -p1
-%patch103
-%patch104 -p1
-%patch201 -p1
-%patch202 -p1
-%patch203 -p1
-%patch204 -p1
-%patch205 -p1
-%patch206 -p1
-%patch207 -p1
-# patch 249 not enabled, it's only included for people who want to debug
 
 #copy kbuild config
 %__cp %{S:10} LocalConfig.kmk
