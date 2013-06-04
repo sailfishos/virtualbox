@@ -68,7 +68,7 @@ License:        GPL-2.0+
 Group:          System/Emulators/PC
 Url:            http://www.virtualbox.org/
 
-Source0:        VirtualBox-%{version}.tar.bz2
+Source0:        %{name}-%{version}.tar.bz2
 Source1:        %{name}-%{version}-UserManual.pdf
 Source2:        %{name}-60-vboxdrv.rules
 Source3:        %{name}-60-vboxguest.rules
@@ -167,7 +167,7 @@ Requires:       %{name}-guest-modules = %version
 VirtualBox guest addition tools.
 ###########################################
 %prep
-%setup -q -n VirtualBox-%{version}
+%setup -q -n %{name}-%{version}/%{name}
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
@@ -210,7 +210,7 @@ done
 eval "sed \$(echo "\$pass" | sed -e "s/--output=/>/g;s/--append=/>/g;s/--output/>/g;s/--append/>>/g");"
 EOF
 chmod +x ./kmk_sed
-echo "SED = $RPM_BUILD_DIR/VirtualBox-%{version}/kmk_sed"  >> LocalConfig.kmk
+echo "SED = $RPM_BUILD_DIR/%{name}-%{version}/%{name}/kmk_sed"  >> LocalConfig.kmk
 ####workaround kmk_sed --^
 ##########################
 #
