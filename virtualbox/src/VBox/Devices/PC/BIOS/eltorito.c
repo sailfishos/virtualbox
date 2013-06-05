@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -145,11 +145,11 @@ void BIOSCALL int13_eltorito(disk_regs_t r)
     
     switch (GET_AH()) {
 
-    // FIXME ElTorito Various. Should be implemented
+    // FIXME ElTorito Various. Not implemented in many real BIOSes.
     case 0x4a: // ElTorito - Initiate disk emu
     case 0x4c: // ElTorito - Initiate disk emu and boot
     case 0x4d: // ElTorito - Return Boot catalog
-        BX_PANIC("%s: call with AX=%04x. Please report\n", __func__, AX);
+        BX_INFO("%s: call with AX=%04x not implemented.\n", __func__, AX);
         goto int13_fail;
         break;
 
@@ -585,13 +585,16 @@ void BIOSCALL int13_cdemu(disk_regs_t r)
                           // FIXME ElTorito Harddisk. should send the HD count
 
         switch (cdemu->media) {
-        case 0x01: SET_BL( 0x02 ); break;
-        case 0x02: SET_BL( 0x04 ); break;
-        case 0x03: SET_BL( 0x06 ); break;
+        case 0x01: SET_BL( 0x02 ); break;   /* 1.2 MB  */
+        case 0x02: SET_BL( 0x04 ); break;   /* 1.44 MB */
+        case 0x03: SET_BL( 0x05 ); break;   /* 2.88 MB */
         }
 
-        DI = (uint16_t)&diskette_param_table;   // @todo: or really DPT2?
-        ES = 0xF000;                            // @todo: how to make this relocatable?
+        /* Only set the DPT pointer for emulated floppies. */
+        if (cdemu->media < 4) {
+            DI = (uint16_t)&diskette_param_table;   // @todo: should this depend on emulated medium?
+            ES = 0xF000;                            // @todo: how to make this relocatable?
+        }
         goto int13_success;
         break;
 

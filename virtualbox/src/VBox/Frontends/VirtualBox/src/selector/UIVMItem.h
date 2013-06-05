@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -64,6 +64,9 @@ public:
     bool canSwitchTo() const;
     bool switchTo();
 
+    bool reconfigurable() const { return m_fReconfigurable; }
+    bool hasDetails() const { return m_fHasDetails; }
+
     static bool isItemEditable(UIVMItem *pItem);
     static bool isItemSaved(UIVMItem *pItem);
     static bool isItemPoweredOff(UIVMItem *pItem);
@@ -93,6 +96,9 @@ private:
     ULONG m_cSnaphot;
 
     ULONG m_pid;
+
+    bool m_fReconfigurable;
+    bool m_fHasDetails;
 };
 
 /* Make the pointer of this class public to the QVariant framework */

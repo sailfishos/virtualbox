@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2007 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -831,13 +831,10 @@ void Display::SetVideoModeHint(ULONG aDisplay, BOOL aEnabled,
                                ULONG aWidth, ULONG aHeight, ULONG aBitsPerPixel)
 {
     PPDMIVMMDEVPORT pVMMDevPort = gVMMDev->getVMMDevPort ();
-    NOREF(aEnabled);
-    NOREF(aChangeOrigin);
-    NOREF(aOriginX);
-    NOREF(aOriginY);
 
     if (pVMMDevPort)
-        pVMMDevPort->pfnRequestDisplayChange(pVMMDevPort, aWidth, aHeight, aBitsPerPixel, aDisplay);
+        pVMMDevPort->pfnRequestDisplayChange(pVMMDevPort, aWidth, aHeight, aBitsPerPixel,
+                                             aDisplay, aOriginX, aOriginY, aEnabled, aChangeOrigin);
 }
 
 static bool vbvaPartialRead (uint8_t **ppu8, uint32_t *pcb, uint32_t cbRecord, VBVAMEMORY *pVbvaMemory)

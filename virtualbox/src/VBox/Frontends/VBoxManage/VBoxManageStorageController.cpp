@@ -101,6 +101,8 @@ int handleStorageAttach(HandlerArg *a)
     Bstr bstrUsername;
     Bstr bstrPassword;
     Bstr bstrInitiator;
+    Bstr bstrIso;
+    Utf8Str strIso;
     bool fIntNet = false;
 
     RTGETOPTUNION ValueUnion;
@@ -138,7 +140,7 @@ int handleStorageAttach(HandlerArg *a)
                 break;
             }
 
-            case 'm':   // medium <none|emptydrive|uuid|filename|host:<drive>|iSCSI>
+            case 'm':   // medium <none|emptydrive|additions|uuid|filename|host:<drive>|iSCSI>
             {
                 if (ValueUnion.psz)
                     pszMedium = ValueUnion.psz;
@@ -482,9 +484,25 @@ int handleStorageAttach(HandlerArg *a)
 
                         if (pszMedium)
                         {
+                            if (!RTStrICmp(pszMedium, "additions"))
+                            {
+                                ComPtr<ISystemProperties> pProperties;
+                                CHECK_ERROR(a->virtualBox,
+                                            COMGETTER(SystemProperties)(pProperties.asOutParam()));
+                                CHECK_ERROR(pProperties, COMGETTER(DefaultAdditionsISO)(bstrIso.asOutParam()));
+                                strIso = Utf8Str(bstrIso);
+                                if (strIso.isEmpty())
+                                    throw Utf8Str("Cannot find the Guest Additions ISO image\n");
+                                pszMedium = strIso.c_str();
+                                if (devTypeRequested == DeviceType_Null)
+                                    devTypeRequested = DeviceType_DVD;
+                            }
                             ComPtr<IMedium> pExistingMedium;
-                            rc = findMedium(a, pszMedium, deviceType, true /* fSilent */,
-                                            pExistingMedium);
+                            rc = openMedium(a, pszMedium, deviceType,
+                                            AccessMode_ReadWrite,
+                                            pExistingMedium,
+                                            false /* fForceNewUuidOnOpen */,
+                                            true /* fSilent */);
                             if (SUCCEEDED(rc) && pExistingMedium)
                             {
                                 if (    (deviceType == DeviceType_DVD)
@@ -601,7 +619,7 @@ int handleStorageAttach(HandlerArg *a)
                     Bstr("InitiatorSecret").detachTo(names.appendedRaw());
                     bstrPassword.detachTo(values.appendedRaw());
                 }
-                if (!bstrPassword.isEmpty())
+                if (!bstrInitiator.isEmpty())
                 {
                     Bstr("InitiatorName").detachTo(names.appendedRaw());
                     bstrInitiator.detachTo(values.appendedRaw());
@@ -637,9 +655,9 @@ int handleStorageAttach(HandlerArg *a)
                 else
                 {
                     Bstr bstrMedium(pszMedium);
-                    rc = findOrOpenMedium(a, pszMedium, devTypeRequested,
-                                          AccessMode_ReadWrite, pMedium2Mount,
-                                          fSetNewUuid, NULL);
+                    rc = openMedium(a, pszMedium, devTypeRequested,
+                                    AccessMode_ReadWrite, pMedium2Mount,
+                                    fSetNewUuid, false /* fSilent */);
                     if (FAILED(rc) || !pMedium2Mount)
                         throw Utf8StrFmt("Invalid UUID or filename \"%s\"", pszMedium);
                 }

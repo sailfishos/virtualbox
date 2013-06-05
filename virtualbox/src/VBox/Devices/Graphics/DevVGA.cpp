@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1813,7 +1813,7 @@ static int vga_draw_text(VGAState *s, bool full_update, bool fFailOnResize, bool
     cx_max_upd = -1;
     cx_min_upd = width;
 
-    for(cy = 0; cy < height; cy = cy + (1 << dscan)) {
+    for(cy = 0; cy < (height - dscan); cy = cy + (1 << dscan)) {
         d1 = dest;
         src = s1;
         cx_min = width;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2007 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -320,8 +320,10 @@ DECLINLINE(uint64_t) tmCpuTickGetInternal(PVMCPU pVCpu, bool fCheckTimers)
         else
             u64 = ASMReadTSC();
 
-        /* Never return a value lower than what the guest has already seen. */
-        if (u64 < pVCpu->tm.s.u64TSCLastSeen)
+        /* Always return a value higher than what the guest has already seen. */
+        if (RT_LIKELY(u64 > pVCpu->tm.s.u64TSCLastSeen))
+            pVCpu->tm.s.u64TSCLastSeen = u64;
+        else
         {
             STAM_COUNTER_INC(&pVM->tm.s.StatTSCUnderflow);
             pVCpu->tm.s.u64TSCLastSeen += 64;   /* @todo choose a good increment here */

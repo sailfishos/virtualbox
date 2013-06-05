@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,6 +28,13 @@ class CMachine;
 class UIGraphicsToolBar;
 class UIGraphicsZoomButton;
 
+/* Machine-item enumeration flags: */
+enum UIGChooserItemMachineEnumerationFlag
+{
+    UIGChooserItemMachineEnumerationFlag_Unique       = RT_BIT(0),
+    UIGChooserItemMachineEnumerationFlag_Inaccessible = RT_BIT(1)
+};
+
 /* Graphics machine item
  * for graphics selector model/view architecture: */
 class UIGChooserItemMachine : public UIGChooserItem, public UIVMItem
@@ -43,17 +50,23 @@ public:
     enum { Type = UIGChooserItemType_Machine };
     int type() const { return Type; }
 
-    /* Constructor/destructor: */
+    /* Constructor (new item): */
     UIGChooserItemMachine(UIGChooserItem *pParent, const CMachine &machine, int iPosition = -1);
+    /* Constructor (new item copy): */
     UIGChooserItemMachine(UIGChooserItem *pParent, UIGChooserItemMachine *pCopyFrom, int iPosition = -1);
+    /* Destructor: */
     ~UIGChooserItemMachine();
 
     /* API: Basic stuff: */
     QString name() const;
+    QString fullName() const;
+    QString definition() const;
     bool isLockedMachine() const;
 
-    /* API: Update stuff: */
-    void updateToolTip();
+    /* API: Machine-item enumeration stuff: */
+    static void enumerateMachineItems(const QList<UIGChooserItem*> &il,
+                                      QList<UIGChooserItemMachine*> &ol,
+                                      int iEnumerationFlags = 0);
 
 private:
 
@@ -66,42 +79,38 @@ private:
         MachineItemData_MinorSpacing,
         MachineItemData_TextSpacing,
         /* Pixmaps: */
-        MachineItemData_Pixmap,
-        MachineItemData_StatePixmap,
         MachineItemData_SettingsButtonPixmap,
         MachineItemData_StartButtonPixmap,
         MachineItemData_PauseButtonPixmap,
         MachineItemData_CloseButtonPixmap,
-        /* Fonts: */
-        MachineItemData_NameFont,
-        MachineItemData_SnapshotNameFont,
-        MachineItemData_StateTextFont,
-        /* Text: */
-        MachineItemData_Name,
-        MachineItemData_SnapshotName,
-        MachineItemData_StateText,
         /* Sizes: */
-        MachineItemData_PixmapSize,
-        MachineItemData_StatePixmapSize,
-        MachineItemData_NameSize,
-        MachineItemData_MinimumNameWidth,
-        MachineItemData_MaximumNameWidth,
-        MachineItemData_SnapshotNameSize,
-        MachineItemData_MinimumSnapshotNameWidth,
-        MachineItemData_MaximumSnapshotNameWidth,
-        MachineItemData_FirstRowMaximumWidth,
-        MachineItemData_StateTextSize,
         MachineItemData_ToolBarSize
     };
 
     /* Data provider: */
     QVariant data(int iKey) const;
 
+    /* Helpers: Update stuff: */
+    void updatePixmaps();
+    void updatePixmap();
+    void updateStatePixmap();
+    void updateName();
+    void updateSnapshotName();
+    void updateFirstRowMaximumWidth();
+    void updateMinimumNameWidth();
+    void updateMinimumSnapshotNameWidth();
+    void updateMaximumNameWidth();
+    void updateMaximumSnapshotNameWidth();
+    void updateVisibleName();
+    void updateVisibleSnapshotName();
+    void updateStateText();
+
     /* Helper: Translate stuff: */
     void retranslateUi();
 
     /* Helpers: Basic stuff: */
     void startEditing();
+    void updateToolTip();
 
     /* Helpers: Children stuff: */
     void addItem(UIGChooserItem *pItem, int iPosition);
@@ -110,9 +119,13 @@ private:
     QList<UIGChooserItem*> items(UIGChooserItemType type) const;
     bool hasItems(UIGChooserItemType type) const;
     void clearItems(UIGChooserItemType type);
+    void updateAll(const QString &strId);
+    void removeAll(const QString &strId);
+    UIGChooserItem* searchForItem(const QString &strSearchTag, int iItemSearchFlags);
+    UIGChooserItemMachine* firstMachineItem();
+    void sortItems();
 
     /* Helpers: Layout stuff: */
-    void updateSizeHint();
     void updateLayout();
     int minimumWidthHint() const;
     int minimumHeightHint() const;
@@ -125,7 +138,10 @@ private:
     void resetDragToken();
     QMimeData* createMimeData();
 
-    /* Handler: Mouse stuff: */
+    /* Handler: Resize handling stuff: */
+    void resizeEvent(QGraphicsSceneResizeEvent *pEvent);
+
+    /* Handler: Mouse handling stuff: */
     void mousePressEvent(QGraphicsSceneMouseEvent *pEvent);
 
     /* Helpers: Paint stuff: */
@@ -138,16 +154,40 @@ private:
     /* Helpers: Prepare stuff: */
     void prepare();
 
+    /* Helper: Machine-item enumeration stuff: */
+    static bool contains(const QList<UIGChooserItemMachine*> &list,
+                         UIGChooserItemMachine *pItem);
+
     /* Variables: */
     UIGraphicsToolBar *m_pToolBar;
     UIGraphicsZoomButton *m_pSettingsButton;
     UIGraphicsZoomButton *m_pStartButton;
     UIGraphicsZoomButton *m_pPauseButton;
     UIGraphicsZoomButton *m_pCloseButton;
-    int m_iCornerRadius;
     int m_iHighlightLightness;
     int m_iHoverLightness;
     int m_iHoverHighlightLightness;
+    /* Cached values: */
+    QFont m_nameFont;
+    QFont m_snapshotNameFont;
+    QFont m_stateTextFont;
+    QPixmap m_pixmap;
+    QPixmap m_statePixmap;
+    QString m_strName;
+    QString m_strVisibleName;
+    QString m_strSnapshotName;
+    QString m_strVisibleSnapshotName;
+    QString m_strStateText;
+    QSize m_pixmapSize;
+    QSize m_statePixmapSize;
+    QSize m_visibleNameSize;
+    QSize m_visibleSnapshotNameSize;
+    QSize m_stateTextSize;
+    int m_iFirstRowMaximumWidth;
+    int m_iMinimumNameWidth;
+    int m_iMaximumNameWidth;
+    int m_iMinimumSnapshotNameWidth;
+    int m_iMaximumSnapshotNameWidth;
 };
 
 #endif /* __UIGChooserItemMachine_h__ */

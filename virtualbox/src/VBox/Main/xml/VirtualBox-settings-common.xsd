@@ -482,10 +482,11 @@
       </xsd:restriction>
     </xsd:simpleType>
   </xsd:attribute>
+  <!-- This should be in sync with VBOX_VIDEO_MAX_SCREENS in VBoxVideoVBE.h -->
   <xsd:attribute name="monitorCount" default="1">
     <xsd:simpleType>
       <xsd:restriction base="xsd:unsignedInt">
-        <xsd:maxInclusive value="8"/>
+        <xsd:maxInclusive value="64"/>
       </xsd:restriction>
     </xsd:simpleType>
   </xsd:attribute>

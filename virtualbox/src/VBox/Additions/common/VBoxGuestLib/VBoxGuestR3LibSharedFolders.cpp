@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -198,6 +198,11 @@ VBGLR3DECL(int) VbglR3SharedFolderGetMappings(uint32_t u32ClientId, bool fAutoMo
         RTMemFree(ppaMappingsTemp);
         ppaMappingsTemp = NULL;
     }
+
+    /* In this case, just return success with 0 mappings */
+    if (   rc == VERR_INVALID_PARAMETER
+        && fAutoMountOnly)
+        rc = VINF_SUCCESS;
 
     *ppaMappings = ppaMappingsTemp;
 

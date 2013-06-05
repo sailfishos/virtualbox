@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -298,43 +298,74 @@ out:
  */
 static int vhdLocatorUpdate(PVHDIMAGE pImage, PVHDPLE pLocator, const char *pszFilename)
 {
-    int      rc;
-    uint32_t cb, cbMaxLen = RT_BE2H_U32(pLocator->u32DataSpace) * VHD_SECTOR_SIZE;
+    int      rc = VINF_SUCCESS;
+    uint32_t cb, cbMaxLen = RT_BE2H_U32(pLocator->u32DataSpace);
     void     *pvBuf = RTMemTmpAllocZ(cbMaxLen);
     char     *pszTmp;
 
     if (!pvBuf)
-    {
-        rc = VERR_NO_MEMORY;
-        goto out;
-    }
+        return VERR_NO_MEMORY;
 
     switch (RT_BE2H_U32(pLocator->u32Code))
     {
         case VHD_PLATFORM_CODE_WI2R:
-            /* Update plain relative name. */
-            cb = (uint32_t)strlen(pszFilename);
-            if (cb > cbMaxLen)
+        {
+            if (RTPathStartsWithRoot(pszFilename))
             {
-                rc = VERR_FILENAME_TOO_LONG;
-                goto out;
+                /* Convert to relative path. */
+                char szPath[RTPATH_MAX];
+                rc = RTPathCalcRelative(szPath, sizeof(szPath), pImage->pszFilename,
+                                        pszFilename);
+                if (RT_SUCCESS(rc))
+                {
+                    /* Update plain relative name. */
+                    cb = (uint32_t)strlen(szPath);
+                    if (cb > cbMaxLen)
+                    {
+                        rc = VERR_FILENAME_TOO_LONG;
+                        break;
+                    }
+                    memcpy(pvBuf, szPath, cb);
+                }
             }
-            memcpy(pvBuf, pszFilename, cb);
+            else
+            {
+                /* Update plain relative name. */
+                cb = (uint32_t)strlen(pszFilename);
+                if (cb > cbMaxLen)
+                {
+                    rc = VERR_FILENAME_TOO_LONG;
+                    break;
+                }
+                memcpy(pvBuf, pszFilename, cb);
+            }
             pLocator->u32DataLength = RT_H2BE_U32(cb);
             break;
+        }
         case VHD_PLATFORM_CODE_WI2K:
             /* Update plain absolute name. */
             rc = RTPathAbs(pszFilename, (char *)pvBuf, cbMaxLen);
-            if (RT_FAILURE(rc))
-                goto out;
-            pLocator->u32DataLength = RT_H2BE_U32((uint32_t)strlen((const char *)pvBuf));
+            if (RT_SUCCESS(rc))
+                pLocator->u32DataLength = RT_H2BE_U32((uint32_t)strlen((const char *)pvBuf));
             break;
         case VHD_PLATFORM_CODE_W2RU:
-            /* Update unicode relative name. */
-            rc = vhdFilenameToUtf16(pszFilename, (uint16_t *)pvBuf, cbMaxLen, &cb, false);
-            if (RT_FAILURE(rc))
-                goto out;
-            pLocator->u32DataLength = RT_H2BE_U32(cb);
+            if (RTPathStartsWithRoot(pszFilename))
+            {
+                /* Convert to relative path. */
+                char szPath[RTPATH_MAX];
+                rc = RTPathCalcRelative(szPath, sizeof(szPath), pImage->pszFilename,
+                                        pszFilename);
+                if (RT_SUCCESS(rc))
+                    rc = vhdFilenameToUtf16(szPath, (uint16_t *)pvBuf, cbMaxLen, &cb, false);
+            }
+            else
+            {
+                /* Update unicode relative name. */
+                rc = vhdFilenameToUtf16(pszFilename, (uint16_t *)pvBuf, cbMaxLen, &cb, false);
+            }
+
+            if (RT_SUCCESS(rc))
+                pLocator->u32DataLength = RT_H2BE_U32(cb);
             break;
         case VHD_PLATFORM_CODE_W2KU:
             /* Update unicode absolute name. */
@@ -342,30 +373,30 @@ static int vhdLocatorUpdate(PVHDIMAGE pImage, PVHDPLE pLocator, const char *pszF
             if (!pszTmp)
             {
                 rc = VERR_NO_MEMORY;
-                goto out;
+                break;
             }
             rc = RTPathAbs(pszFilename, pszTmp, cbMaxLen);
             if (RT_FAILURE(rc))
             {
                 RTMemTmpFree(pszTmp);
-                goto out;
+                break;
             }
             rc = vhdFilenameToUtf16(pszTmp, (uint16_t *)pvBuf, cbMaxLen, &cb, false);
             RTMemTmpFree(pszTmp);
-            if (RT_FAILURE(rc))
-                goto out;
-            pLocator->u32DataLength = RT_H2BE_U32(cb);
+            if (RT_SUCCESS(rc))
+                pLocator->u32DataLength = RT_H2BE_U32(cb);
             break;
         default:
             rc = VERR_NOT_IMPLEMENTED;
-            goto out;
+            break;
     }
-    rc = vdIfIoIntFileWriteSync(pImage->pIfIo, pImage->pStorage,
-                                RT_BE2H_U64(pLocator->u64DataOffset),
-                                pvBuf, RT_BE2H_U32(pLocator->u32DataSpace) * VHD_SECTOR_SIZE,
-                                NULL);
 
-out:
+    if (RT_SUCCESS(rc))
+        rc = vdIfIoIntFileWriteSync(pImage->pIfIo, pImage->pStorage,
+                                    RT_BE2H_U64(pLocator->u64DataOffset),
+                                    pvBuf, cb,
+                                    NULL);
+
     if (pvBuf)
         RTMemTmpFree(pvBuf);
     return rc;
@@ -792,8 +823,28 @@ static int vhdOpenImage(PVHDIMAGE pImage, unsigned uOpenFlags)
 
     rc = vdIfIoIntFileReadSync(pImage->pIfIo, pImage->pStorage, pImage->uCurrentEndOfFile,
                                &vhdFooter, sizeof(VHDFooter), NULL);
-    if (memcmp(vhdFooter.Cookie, VHD_FOOTER_COOKIE, VHD_FOOTER_COOKIE_SIZE) != 0)
-        return VERR_VD_VHD_INVALID_HEADER;
+    if (RT_SUCCESS(rc))
+    {
+        if (memcmp(vhdFooter.Cookie, VHD_FOOTER_COOKIE, VHD_FOOTER_COOKIE_SIZE) != 0)
+        {
+            /*
+             * There is also a backup header at the beginning in case the image got corrupted.
+             * Such corrupted images are detected here to let the open handler repair it later.
+             */
+            rc = vdIfIoIntFileReadSync(pImage->pIfIo, pImage->pStorage, 0,
+                                       &vhdFooter, sizeof(VHDFooter), NULL);
+            if (RT_SUCCESS(rc))
+            {
+                if (memcmp(vhdFooter.Cookie, VHD_FOOTER_COOKIE, VHD_FOOTER_COOKIE_SIZE) != 0)
+                    rc = VERR_VD_VHD_INVALID_HEADER;
+                else
+                    rc = VERR_VD_IMAGE_CORRUPTED;
+            }
+        }
+    }
+
+    if (RT_FAILURE(rc))
+        return rc;
 
     switch (RT_BE2H_U32(vhdFooter.DiskType))
     {
@@ -938,29 +989,26 @@ static void vhdSetDiskGeometry(PVHDIMAGE pImage, uint64_t cbSize)
 static uint32_t vhdAllocateParentLocators(PVHDIMAGE pImage, VHDDynamicDiskHeader *pDDH, uint64_t u64Offset)
 {
     PVHDPLE pLocator = pDDH->ParentLocatorEntry;
-    /* Relative Windows path. */
-    pLocator->u32Code = RT_H2BE_U32(VHD_PLATFORM_CODE_WI2R);
-    pLocator->u32DataSpace = RT_H2BE_U32(VHD_RELATIVE_MAX_PATH / VHD_SECTOR_SIZE);
-    pLocator->u64DataOffset = RT_H2BE_U64(u64Offset);
-    u64Offset += VHD_RELATIVE_MAX_PATH;
-    pLocator++;
-    /* Absolute Windows path. */
-    pLocator->u32Code = RT_H2BE_U32(VHD_PLATFORM_CODE_WI2K);
-    pLocator->u32DataSpace = RT_H2BE_U32(VHD_ABSOLUTE_MAX_PATH / VHD_SECTOR_SIZE);
-    pLocator->u64DataOffset = RT_H2BE_U64(u64Offset);
-    u64Offset += VHD_ABSOLUTE_MAX_PATH;
-    pLocator++;
-    /* Unicode relative Windows path. */
-    pLocator->u32Code = RT_H2BE_U32(VHD_PLATFORM_CODE_W2RU);
-    pLocator->u32DataSpace = RT_H2BE_U32(VHD_RELATIVE_MAX_PATH * sizeof(RTUTF16) / VHD_SECTOR_SIZE);
-    pLocator->u64DataOffset = RT_H2BE_U64(u64Offset);
-    u64Offset += VHD_RELATIVE_MAX_PATH * sizeof(RTUTF16);
-    pLocator++;
+
+    /*
+     * The VHD spec states that the DataSpace field holds the number of sectors
+     * required to store the parent locator path.
+     * As it turned out VPC and Hyper-V store the amount of bytes reserved for the
+     * path and not the number of sectors.
+     */
+
     /* Unicode absolute Windows path. */
     pLocator->u32Code = RT_H2BE_U32(VHD_PLATFORM_CODE_W2KU);
-    pLocator->u32DataSpace = RT_H2BE_U32(VHD_ABSOLUTE_MAX_PATH * sizeof(RTUTF16) / VHD_SECTOR_SIZE);
+    pLocator->u32DataSpace = RT_H2BE_U32(VHD_ABSOLUTE_MAX_PATH * sizeof(RTUTF16));
     pLocator->u64DataOffset = RT_H2BE_U64(u64Offset);
-    return u64Offset + VHD_ABSOLUTE_MAX_PATH * sizeof(RTUTF16);
+    pLocator++;
+    u64Offset += VHD_ABSOLUTE_MAX_PATH * sizeof(RTUTF16);
+    /* Unicode relative Windows path. */
+    pLocator->u32Code = RT_H2BE_U32(VHD_PLATFORM_CODE_W2RU);
+    pLocator->u32DataSpace = RT_H2BE_U32(VHD_RELATIVE_MAX_PATH * sizeof(RTUTF16));
+    pLocator->u64DataOffset = RT_H2BE_U64(u64Offset);
+    u64Offset += VHD_RELATIVE_MAX_PATH * sizeof(RTUTF16);
+    return u64Offset;
 }
 
 /**
@@ -1221,13 +1269,26 @@ static int vhdCheckIfValid(const char *pszFilename, PVDINTERFACE pVDIfsDisk,
 
     rc = vdIfIoIntFileReadSync(pIfIo, pStorage, cbFile - sizeof(VHDFooter),
                                &vhdFooter, sizeof(VHDFooter), NULL);
-    if (RT_FAILURE(rc) || (memcmp(vhdFooter.Cookie, VHD_FOOTER_COOKIE, VHD_FOOTER_COOKIE_SIZE) != 0))
-        rc = VERR_VD_VHD_INVALID_HEADER;
-    else
+    if (RT_SUCCESS(rc))
     {
-        *penmType = VDTYPE_HDD;
-        rc = VINF_SUCCESS;
+        if (memcmp(vhdFooter.Cookie, VHD_FOOTER_COOKIE, VHD_FOOTER_COOKIE_SIZE) != 0)
+        {
+            /*
+             * There is also a backup header at the beginning in case the image got corrupted.
+             * Such corrupted images are detected here to let the open handler repair it later.
+             */
+            rc = vdIfIoIntFileReadSync(pIfIo, pStorage, 0,
+                                       &vhdFooter, sizeof(VHDFooter), NULL);
+            if (   RT_FAILURE(rc)
+                || (memcmp(vhdFooter.Cookie, VHD_FOOTER_COOKIE, VHD_FOOTER_COOKIE_SIZE) != 0))
+                   rc = VERR_VD_VHD_INVALID_HEADER;
+        }
+
+        if (RT_SUCCESS(rc))
+            *penmType = VDTYPE_HDD;
     }
+    else
+        rc = VERR_VD_VHD_INVALID_HEADER;
 
     vdIfIoIntFileClose(pIfIo, pStorage);
 
@@ -1891,7 +1952,9 @@ static int vhdSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
     int rc;
 
     /* Image must be opened and the new flags must be valid. */
-    if (!pImage || (uOpenFlags & ~(VD_OPEN_FLAGS_READONLY | VD_OPEN_FLAGS_INFO | VD_OPEN_FLAGS_ASYNC_IO | VD_OPEN_FLAGS_SHAREABLE | VD_OPEN_FLAGS_SEQUENTIAL)))
+    if (!pImage || (uOpenFlags & ~(  VD_OPEN_FLAGS_READONLY | VD_OPEN_FLAGS_INFO
+                                   | VD_OPEN_FLAGS_ASYNC_IO | VD_OPEN_FLAGS_SHAREABLE
+                                   | VD_OPEN_FLAGS_SEQUENTIAL | VD_OPEN_FLAGS_SKIP_CONSISTENCY_CHECKS)))
     {
         rc = VERR_INVALID_PARAMETER;
         goto out;
@@ -2450,7 +2513,7 @@ static int vhdAsyncWrite(void *pBackendData, uint64_t uOffset, size_t cbWrite,
                 rc = vdIfIoIntFileWriteMetaAsync(pImage->pIfIo, pImage->pStorage,
                                                  pImage->uCurrentEndOfFile,
                                                  pExpand->au8Bitmap,
-                                                 pImage->cbDataBlockBitmap, pIoCtx,
+                                                 pImage->cDataBlockBitmapSectors * VHD_SECTOR_SIZE, pIoCtx,
                                                  vhdAsyncExpansionDataBlockBitmapComplete,
                                                  pExpand);
                 if (RT_SUCCESS(rc))
@@ -2471,7 +2534,7 @@ static int vhdAsyncWrite(void *pBackendData, uint64_t uOffset, size_t cbWrite,
                  * Write the new block at the current end of the file.
                  */
                 rc = vdIfIoIntFileWriteUserAsync(pImage->pIfIo, pImage->pStorage,
-                                                 pImage->uCurrentEndOfFile + pImage->cbDataBlockBitmap,
+                                                 pImage->uCurrentEndOfFile + pImage->cDataBlockBitmapSectors * VHD_SECTOR_SIZE,
                                                  pIoCtx, cbWrite,
                                                  vhdAsyncExpansionDataComplete,
                                                  pExpand);
@@ -2511,7 +2574,7 @@ static int vhdAsyncWrite(void *pBackendData, uint64_t uOffset, size_t cbWrite,
                  * Set the new end of the file and link the new block into the BAT.
                  */
                 pImage->pBlockAllocationTable[cBlockAllocationTableEntry] = pImage->uCurrentEndOfFile / VHD_SECTOR_SIZE;
-                pImage->uCurrentEndOfFile += pImage->cbDataBlockBitmap + pImage->cbDataBlock;
+                pImage->uCurrentEndOfFile += pImage->cDataBlockBitmapSectors * VHD_SECTOR_SIZE + pImage->cbDataBlock;
 
                 /* Update the footer. */
                 rc = vdIfIoIntFileWriteMetaAsync(pImage->pIfIo, pImage->pStorage,

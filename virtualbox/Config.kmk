@@ -5,9 +5,9 @@
 # This file gets included by all makefiles through the
 # include $(KBUILD_PATH)/header.kmk statement.
 #
-
+ 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2013 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -196,7 +196,7 @@ VBOX_VERSION_MINOR = 2
 # This is the current build number. It should be increased every time we publish a
 # new build. The define is available in every source file. Only even build numbers
 # will be published, odd numbers are set during development.
-VBOX_VERSION_BUILD = 4
+VBOX_VERSION_BUILD = 12
 # The raw version string. This *must not* contain any other information/fields than
 # major, minor and build revision (as it is now) -- also will be used for host/guest version
 # comparison.
@@ -416,6 +416,8 @@ else ifdef VBOX_WITH_VDMA
 endif
 # Disable the Intel PXE ROM (uses Etherboot).
 VBOX_WITH_INTEL_PXE =
+# not yet!
+VBOX_WITHOUT_IPXE=1
 # Enable EFI support
 VBOX_WITH_EFI = 1
 # Enable EFI/Ovmf support
@@ -454,6 +456,10 @@ ifeq ($(KBUILD_TARGET),linux)
 endif
 # Enable performance API.
 VBOX_WITH_RESOURCE_USAGE_API = 1
+# Use VBoxVolInfo for getting FS dependecies.
+if1of ($(KBUILD_TARGET), linux)
+ VBOX_WITH_DEVMAPPER = 1
+endif
 # Enable BusLogic SCSI host adapter
 VBOX_WITH_BUSLOGIC = 1
 # Enable LsiLogic SCSI host adapter
@@ -472,6 +478,8 @@ if1of ($(KBUILD_TARGET), darwin freebsd linux solaris win)
 endif
 # Emulated USB smart card reader
 VBOX_WITH_USB_CARDREADER = 1
+# Emulated USB webcam
+VBOX_WITH_USB_VIDEO = 1
 ## @}
 
 
@@ -547,6 +555,10 @@ VBOX_WITH_KCHMVIEWER = 1
 VBOX_WITH_TESTSUITE = 1
 # Build the testcases.
 VBOX_WITH_TESTCASES = 1
+# Enable this to build vditool even if VBOX_WITH_TESTCASES is disabled
+VBOX_WITH_VDITOOL =
+# Enable this to build vbox-img even if VBOX_WITH_TESTCASES is disabled
+VBOX_WITH_VBOX_IMG =
 # Enables the ffmpeg module for recording test runs.
 # TODO: Enable this for normal build server builds?
 #if1of ($(KBUILD_TARGET), linux)
@@ -560,6 +572,8 @@ VBOX_WITH_SHARED_CLIPBOARD = 1
 VBOX_WITH_GUEST_PROPS = 1
 # Enable this to prevent the guest from writing guest properties.
 VBOX_WITH_GUEST_PROPS_RDONLY_GUEST =
+# Compile the host channel
+VBOX_WITH_HOST_CHANNEL = 1
 # Enable the guest control service.
 if1of ($(KBUILD_TARGET), darwin freebsd linux solaris win)
  VBOX_WITH_GUEST_CONTROL = 1
@@ -581,11 +595,8 @@ if1of ($(KBUILD_TARGET), darwin linux solaris win)
  #VBOX_WITH_DRAG_AND_DROP_GH = 1
 endif
 # Enable support for VRDP redirection of Windows Media Player content
-# !!!Only for development builds!!!
-ifneq ($(int-mod $(VBOX_VERSION_BUILD),2),0)
- ifeq ($(KBUILD_TARGET),win)
-#  VBOX_WITH_MMR = 1
- endif
+ifeq ($(KBUILD_TARGET),win)
+ VBOX_WITH_MMR = 1
 endif
 ## @}
 
@@ -1005,6 +1016,7 @@ ifdef VBOX_OSE
  VBOX_WITH_DOCS_TRANSLATIONS=1
  VBOX_WITH_TESTSUITE=
  VBOX_WITH_INTEL_PXE=
+ VBOX_WITH_DEVMAPPER=
  ## @todo remove once the iPXE code is in public tree
  VBOX_WITHOUT_IPXE=1
  VBOX_WITH_FFMPEG=
@@ -2614,10 +2626,6 @@ SDK_VBOX_OPENSSL_ORDERDEPS ?= $(crypto-headers_1_TARGET)
 SDK_VBOX_OPENSSL_LIBS ?= \
 	$(PATH_STAGE_LIB)/VBox-libssl$(VBOX_SUFF_LIB) \
 	$(PATH_STAGE_LIB)/VBox-libcrypto$(VBOX_SUFF_LIB)
-# Build entire openssl library, not just the minimal subset.
-ifn1of ($(KBUILD_TARGET), win) ## @todo elimiate this stuff, not worth saving 5 seconds of build time.
- VBOX_OPENSSL_ALL = 1
-endif
 
 SDK_VBOX_OPENSSL2      = What you should be using.
 SDK_VBOX_OPENSSL2_EXTENDS = VBOX_OPENSSL
@@ -3559,6 +3567,7 @@ endif
 #
 TEMPLATE_VBOXR3STATIC                  = VBox Static Ring 3 EXE
 TEMPLATE_VBOXR3STATIC_EXTENDS          = VBOXR3EXE
+TEMPLATE_VBOXR3STATIC_DEFS             = IN_RT_STATIC $(TEMPLATE_VBOXR3EXE_DEFS)
 ifeq ($(KBUILD_TARGET),win)
  TEMPLATE_VBOXR3STATIC_CFLAGS          = $(filter-out -MD$(VBOX_VCC_CRT_TYPE), $(TEMPLATE_VBOXR3EXE_CFLAGS)) -MT$(VBOX_VCC_CRT_TYPE)
  TEMPLATE_VBOXR3STATIC_CXXFLAGS        = $(filter-out -MD$(VBOX_VCC_CRT_TYPE), $(TEMPLATE_VBOXR3EXE_CFLAGS)) -MT$(VBOX_VCC_CRT_TYPE)
@@ -5188,7 +5197,7 @@ endif
 SVN                    ?= svn$(HOSTSUFF_EXE)
 VBOX_SVN_REV_KMK        = $(PATH_OUT)/revision.kmk
 ifndef VBOX_SVN_REV
- VBOX_SVN_REV_FALLBACK := $(patsubst %:,,  $Rev: 81684 $  )
+ VBOX_SVN_REV_FALLBACK := $(patsubst %:,,  $Rev: 84980 $  )
  VBOX_SVN_DEP          := $(wildcard $(PATH_ROOT)/.svn/entries)
  ifeq ($(which $(SVN)),)
   VBOX_SVN_DEP         :=
@@ -5273,6 +5282,11 @@ else
 	$(PATH_DEVTOOLS)/linux.x86/jdk1.6.0_27 \
 	/usr/lib/jvm/java-6-sun  \
 	/usr/lib/jvm/java-6-openjdk \
+	/usr/lib/jvm/java-6-openjdk-i386 \
+	/usr/lib/jvm/java-6-openjdk-amd64 \
+	/usr/lib/jvm/java-7-openjdk-i386 \
+	/usr/lib/jvm/java-7-openjdk-amd64 \
+	/usr/lib/jvm/default-java \
 	\
 	/usr/lib/jvm/sun-jdk-1.6 \
 	) /usr/lib/jvm/java-6-sun)
@@ -5333,4 +5347,4 @@ st stat status:
 quick:
 	$(MAKE) VBOX_QUICK=1
 
- 
+

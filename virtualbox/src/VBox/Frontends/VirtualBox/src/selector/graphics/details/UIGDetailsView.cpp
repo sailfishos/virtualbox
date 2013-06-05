@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,51 +18,83 @@
  */
 
 /* Qt includes: */
+#include <QApplication>
 #include <QScrollBar>
 
 /* GUI includes: */
 #include "UIGDetailsView.h"
-#include "UIGChooserModel.h"
 
 UIGDetailsView::UIGDetailsView(QWidget *pParent)
     : QGraphicsView(pParent)
+    , m_iMinimumWidthHint(0)
+    , m_iMinimumHeightHint(0)
 {
-    /* Fix palette: */
-    QPalette pal = palette();
-    pal.setColor(QPalette::Base, QColor(240, 240, 240));
-    setPalette(pal);
+    /* Prepare palette: */
+    preparePalette();
 
-    /* Scrollbars policy: */
+    /* Setup frame: */
+    setFrameShape(QFrame::NoFrame);
+    setFrameShadow(QFrame::Plain);
+    setAlignment(Qt::AlignLeft | Qt::AlignTop);
+
+    /* Setup scroll-bars policy: */
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     /* Update scene-rect: */
     updateSceneRect();
 }
 
-void UIGDetailsView::sltHandleRootItemResized(const QSizeF &size, int iMinimumWidth)
+void UIGDetailsView::sltMinimumWidthHintChanged(int iMinimumWidthHint)
 {
-    /* Update scene-rect: */
-    updateSceneRect(size);
+    /* Is there something changed? */
+    if (m_iMinimumWidthHint == iMinimumWidthHint)
+        return;
 
-    /* Set minimum width: */
-    setMinimumWidth(2 * frameWidth() + iMinimumWidth +
-                    verticalScrollBar()->sizeHint().width());
-}
+    /* Remember new value: */
+    m_iMinimumWidthHint = iMinimumWidthHint;
+    if (m_iMinimumWidthHint <= 0)
+        m_iMinimumWidthHint = 1;
 
-void UIGDetailsView::resizeEvent(QResizeEvent*)
-{
+    /* Set minimum view width according passed width-hint: */
+    setMinimumWidth(2 * frameWidth() + iMinimumWidthHint + verticalScrollBar()->sizeHint().width());
+
     /* Update scene-rect: */
     updateSceneRect();
+}
+
+void UIGDetailsView::sltMinimumHeightHintChanged(int iMinimumHeightHint)
+{
+    /* Is there something changed? */
+    if (m_iMinimumHeightHint == iMinimumHeightHint)
+        return;
+
+    /* Remember new value: */
+    m_iMinimumHeightHint = iMinimumHeightHint;
+    if (m_iMinimumHeightHint <= 0)
+        m_iMinimumHeightHint = 1;
+
+    /* Update scene-rect: */
+    updateSceneRect();
+}
+
+void UIGDetailsView::preparePalette()
+{
+    /* Setup palette: */
+    QPalette pal = qApp->palette();
+    pal.setColor(QPalette::Base, pal.color(QPalette::Active, QPalette::Window));
+    setPalette(pal);
+}
+
+void UIGDetailsView::resizeEvent(QResizeEvent *pEvent)
+{
+    /* Call to base-class: */
+    QGraphicsView::resizeEvent(pEvent);
     /* Notify listeners: */
     emit sigResized();
 }
 
-void UIGDetailsView::updateSceneRect(const QSizeF &sizeHint /* = QSizeF() */)
+void UIGDetailsView::updateSceneRect()
 {
-    QPointF topLeft = QPointF(0, 0);
-    QSizeF rectSize = viewport()->size();
-    if (!sizeHint.isNull())
-        rectSize = rectSize.expandedTo(sizeHint);
-    setSceneRect(QRectF(topLeft, rectSize));
+    setSceneRect(0, 0, m_iMinimumWidthHint, m_iMinimumHeightHint);
 }
 

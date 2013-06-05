@@ -894,6 +894,10 @@
         <source>Shared &amp;Clipboard</source>
         <translation>О&amp;бщий буфер обмена</translation>
     </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>UIApplianceEditorWidget</name>
@@ -2388,6 +2392,22 @@ p, li { white-space: pre-wrap; }
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
         <translation>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation>Войти в группу</translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation>Выйти из группы</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation>Скрыть содержимое</translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation>Показать содержимое</translation>
     </message>
 </context>
 <context>
@@ -6764,7 +6784,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source> Would you like to force mounting of this medium?</source>
-        <translation> Не желаете ли произвести силовое подключение данного устройства?</translation>
+        <translation> Желаете принудительно подключить данное устройство?</translation>
     </message>
     <message>
         <source>Unable to unmount the %1 &lt;nobr&gt;&lt;b&gt;%2&lt;/b&gt;&lt;/nobr&gt; from the machine &lt;b&gt;%3&lt;/b&gt;.</source>
@@ -6772,7 +6792,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source> Would you like to force unmounting of this medium?</source>
-        <translation> Не желаете ли произвести силовое отключение данного устройства?</translation>
+        <translation> Желаете принудительно отключить данное устройство?</translation>
     </message>
     <message>
         <source>Force Unmount</source>
@@ -8770,7 +8790,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Choose a virtual hard drive file to copy...</source>
-        <translation>Выбрать файл виртуального жёстко диска...</translation>
+        <translation>Выбрать файл виртуального жёсткого диска...</translation>
     </message>
     <message>
         <source>Hard drive file type</source>
@@ -8826,7 +8846,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Choose a location for new virtual hard drive file...</source>
-        <translation>Выбрать местоположение нового виртуального жёстко диска...</translation>
+        <translation>Выбрать местоположение нового виртуального жёсткого диска...</translation>
     </message>
     <message>
         <source>%1_copy</source>
@@ -9221,7 +9241,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Choose a location for new virtual hard drive file...</source>
-        <translation>Выбрать местоположение нового виртуального жёстко диска...</translation>
+        <translation>Выбрать местоположение нового виртуального жёсткого диска...</translation>
     </message>
     <message>
         <source>Select the size of the virtual hard drive in megabytes. This size is the limit on the amount of file data that a virtual machine will be able to store on the hard drive.</source>

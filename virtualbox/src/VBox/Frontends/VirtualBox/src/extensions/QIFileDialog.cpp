@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2009 Oracle Corporation
+ * Copyright (C) 2009-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -403,6 +403,16 @@ QString QIFileDialog::getSaveFileName (const QString &aStartWith,
                                        bool           fConfirmOverwrite /* = false */)
 {
 #if defined Q_WS_WIN
+
+    /* Further code (WinAPI call to GetSaveFileName() in other thread)
+     * seems not necessary any more since the MS COM issue has been fixed,
+     * we can just call for the default QFileDialog::getSaveFileName(): */
+    Q_UNUSED(aResolveSymlinks);
+    QFileDialog::Options o;
+    if (!fConfirmOverwrite)
+        o |= QFileDialog::DontConfirmOverwrite;
+    return QFileDialog::getSaveFileName(aParent, aCaption, aStartWith,
+                                        aFilters, aSelectedFilter, o);
 
     /**
      *  QEvent class reimplementation to carry Win32 API native dialog's

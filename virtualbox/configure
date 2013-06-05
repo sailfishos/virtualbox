@@ -3,7 +3,7 @@
 # libraries VBox OSE depends on.
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2013 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -43,7 +43,7 @@ which_wrapper()
   fi
 }
 
-OS=`uname -s | sed -e 's/GNU\/Linux/Linux/g' | tr [:upper:] [:lower:]`
+OS=`uname -s | sed -e 's/GNU\/Linux/Linux/g' | tr '[:upper:]' '[:lower:]'`
 case "$OS" in
   linux)
     ;;
@@ -84,6 +84,7 @@ WITH_X11=1
 WITH_ALSA=1
 WITH_PULSE=1
 WITH_DBUS=1
+WITH_DEVMAPPER=1
 WITH_KMODS=1
 WITH_OPENGL=1
 WITH_HARDENING=1
@@ -125,6 +126,8 @@ INCZ=""
 LIBZ="-lz"
 INCVNCSERVER=""
 LIBVNCSERVER="-lvncserver"
+INCDEVMAPPER=""
+LIBDEVMAPPER="-ldevmapper"
 CXX_FLAGS=""
 if [ "$OS" = "freebsd" ]; then
   INCCURL="-I/usr/local/include"
@@ -736,6 +739,58 @@ check_libidl()
     else
       log_success "found version $libidl_ver"
       cnf_append "VBOX_LIBIDL_CONFIG" "`which_wrapper libIDL-config`"
+    fi
+  fi
+}
+
+
+#
+# Check for libdevmapper, needed by the VBoxVolInfo
+#
+check_libdevmapper()
+{
+  test_header libdevmapper
+  cat > $ODIR.tmp_src.cc << EOF
+#include <cstdio>
+extern "C" {
+#define private
+#include <libdevmapper.h>
+int main()
+{
+  char version[80];
+
+  if (!dm_get_library_version(version, sizeof(version)))
+  {
+    printf("dm_get_library_version() failed.\n");
+    return 1;
+  }
+
+  const char* v=version;
+  unsigned int major = 0, minor = 0, micro = 0;
+
+  for (; *v !='.' && *v != '\0'; v++) major = major*10 + *v-'0';
+  if (*v == '.') v++;
+  for (; *v !='.' && *v != '\0'; v++) minor = minor*10 + *v-'0';
+  if (*v == '.') v++;
+  for (; *v !='.' && *v != '\0'; v++) micro = micro*10 + *v-'0';
+
+  printf("found version %s", version);
+  if (major*10000 + minor*100 + micro >= 10200)
+  {
+    printf(", OK.\n");
+    return 0;
+  }
+  else
+  {
+    printf(", expected version 1.02 or higher\n");
+    return 1;
+  }
+}
+}
+EOF
+  if test_compile "$LIBDEVMAPPER $INCDEVMAPPER" libdevmapper libdevmapper; then
+    if test_execute; then
+      cnf_append "VBOX_WITH_DEVMAPPER" "1"
     fi
   fi
 }
@@ -1614,7 +1669,8 @@ EOF
   echo "compiling the following source file:" >> $LOG
   cat $ODIR.tmp_src.c >> $LOG
   echo "using the following command line:" >> $LOG
-  echo "$CC -O -Wall -o $ODIR.tmp_out $ODIR.tmp_src.c -nostdinc -I$LINUX/include" >> $LOG
+  echo "$CC -O -Wall -o $ODIR.tmp_out $ODIR.tmp_src.c -nostdinc -I$LINUX/include " \
+      "-I$LINUX/include/generated/uapi" >> $LOG
   $CC -O -Wall -o $ODIR.tmp_out $ODIR.tmp_src.c -nostdinc -I$LINUX/include \
       -I$LINUX/include/generated/uapi >> $LOG 2>&1
   if [ $? -ne 0 ]; then
@@ -1830,7 +1886,7 @@ EOF
   fi
   for p in $PYTHONDIR; do
     for d in $SUPPYTHONLIBS; do
-      for b in lib64 lib/64 lib; do
+      for b in lib/x86_64-linux-gnu lib/i386-linux-gnu lib64 lib/64 lib; do
         echo "compiling the following source file:" >> $LOG
         cat $ODIR.tmp_src.cc >> $LOG
         echo "using the following command line:" >> $LOG
@@ -2124,6 +2180,7 @@ EOF
 [ "$OS" = "linux" -o "$OS" = "freebsd" ] && echo "  --enable-vde             enable VDE networking"
 cat << EOF
   --disable-udptunnel      disable UDP tunnel networking
+  --disable-devmapper      disable device mapper library access
   --disable-hardening      don't be strict about /dev/vboxdrv access
   --build-libxml2          build libxml2 from sources
 EOF
@@ -2310,6 +2367,9 @@ for option in $*; do
       ;;
     --enable-vde)
       WITH_VDE=1
+      ;;
+    --disable-devmapper)
+      WITH_DEVMAPPER=0
       ;;
     --build-debug|-d)
       BUILD_TYPE=debug
@@ -2546,6 +2606,11 @@ if [ "$OS" = "linux" ]; then
   fi
   if [ $WITH_DBUS -eq 0 ]; then
     cnf_append "VBOX_WITH_DBUS" ""
+  fi
+  if [ $WITH_DEVMAPPER -eq 1 ]; then
+    check_libdevmapper
+  else
+    cnf_append "VBOX_WITH_DEVMAPPER" ""
   fi
   check_libcap
   check_compiler_h

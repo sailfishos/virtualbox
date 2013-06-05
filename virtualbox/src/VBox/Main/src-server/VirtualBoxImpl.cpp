@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1514,13 +1514,13 @@ void sanitiseMachineFilename(Utf8Str &strName)
      * *nix, or be otherwise difficult for shells to handle (I would have
      * preferred to remove the space and brackets too).  We also remove all
      * characters which need UTF-16 surrogate pairs for Windows's benefit. */
-#ifdef RT_STRICT
     RTUNICP aCpSet[] =
         { ' ', ' ', '(', ')', '-', '.', '0', '9', 'A', 'Z', 'a', 'z', '_', '_',
           0xa0, 0xd7af, '\0' };
-#endif
     char *pszName = strName.mutableRaw();
-    Assert(RTStrPurgeComplementSet(pszName, aCpSet, '_') >= 0);
+    int cReplacements = RTStrPurgeComplementSet(pszName, aCpSet, '_');
+    Assert(cReplacements >= 0);
+    NOREF(cReplacements);
     /* No leading dot or dash. */
     if (pszName[0] == '.' || pszName[0] == '-')
         pszName[0] = '_';
@@ -1939,6 +1939,7 @@ STDMETHODIMP VirtualBox::OpenMedium(IN_BSTR aLocation,
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
+    Guid id(aLocation);
     ComObjPtr<Medium> pMedium;
 
     // have to get write lock as the whole find/update sequence must be done
@@ -1951,18 +1952,22 @@ STDMETHODIMP VirtualBox::OpenMedium(IN_BSTR aLocation,
     switch (deviceType)
     {
         case DeviceType_HardDisk:
-            rc = findHardDiskByLocation(aLocation,
-                                   false, /* aSetError */
-                                   &pMedium);
+            if (!id.isEmpty())
+                rc = findHardDiskById(id, false /* setError */, &pMedium);
+            else
+                rc = findHardDiskByLocation(aLocation,
+                                            false, /* aSetError */
+                                            &pMedium);
         break;
 
         case DeviceType_Floppy:
         case DeviceType_DVD:
-            rc = findDVDOrFloppyImage(deviceType,
-                                 NULL, /* guid */
-                                 aLocation,
-                                 false, /* aSetError */
-                                 &pMedium);
+            if (!id.isEmpty())
+                rc = findDVDOrFloppyImage(deviceType, &id, Utf8Str::Empty,
+                                          false /* setError */, &pMedium);
+            else
+                rc = findDVDOrFloppyImage(deviceType, NULL, aLocation,
+                                          false /* setError */, &pMedium);
 
             // enforce read-only for DVDs even if caller specified ReadWrite
             if (deviceType == DeviceType_DVD)
@@ -1972,7 +1977,6 @@ STDMETHODIMP VirtualBox::OpenMedium(IN_BSTR aLocation,
         default:
             return setError(E_INVALIDARG, "Device type must be HardDisk, DVD or Floppy %d", deviceType);
     }
-
 
     if (pMedium.isNull())
     {
@@ -2977,8 +2981,8 @@ struct SnapshotEvent : public VirtualBox::CallbackEvent
 
     virtual HRESULT prepareEventDesc(IEventSource* aSource, VBoxEventDesc& aEvDesc)
     {
-        return aEvDesc.init(aSource, VBoxEventType_OnSnapshotTaken,
-                            machineId.toUtf16().raw(), snapshotId.toUtf16().raw());
+        return aEvDesc.init(aSource, mWhat, machineId.toUtf16().raw(),
+                            snapshotId.toUtf16().raw());
     }
 
     Guid machineId;
@@ -3870,6 +3874,48 @@ HRESULT VirtualBox::checkMediaForConflicts(const Guid &aId,
     }
 
     return S_OK;
+}
+
+/**
+ * Checks whether the given UUID is already in use by one medium for the
+ * given device type.
+ *
+ * @returns true if the UUID is already in use
+ *          fale otherwise
+ * @param   aId           The UUID to check.
+ * @param   deviceType    The device type the UUID is going to be checked for
+ *                        conflicts.
+ */
+bool VirtualBox::isMediaUuidInUse(const Guid &aId, DeviceType_T deviceType)
+{
+    AssertReturn(!aId.isEmpty(), E_FAIL);
+
+    AutoReadLock alock(getMediaTreeLockHandle() COMMA_LOCKVAL_SRC_POS);
+
+    HRESULT rc = S_OK;
+    bool fInUse = false;
+
+    ComObjPtr<Medium> pMediumFound;
+
+    switch (deviceType)
+    {
+        case DeviceType_HardDisk:
+            rc = findHardDiskById(aId, false /* aSetError */, &pMediumFound);
+            break;
+        case DeviceType_DVD:
+            rc = findDVDOrFloppyImage(DeviceType_DVD, &aId, Utf8Str::Empty, false /* aSetError */, &pMediumFound);
+            break;
+        case DeviceType_Floppy:
+            rc = findDVDOrFloppyImage(DeviceType_Floppy, &aId, Utf8Str::Empty, false /* aSetError */, &pMediumFound);
+            break;
+        default:
+            AssertMsgFailed(("Invalid device type %d\n", deviceType));
+    }
+
+    if (SUCCEEDED(rc) && pMediumFound)
+        fInUse = true;
+
+    return fInUse;
 }
 
 /**

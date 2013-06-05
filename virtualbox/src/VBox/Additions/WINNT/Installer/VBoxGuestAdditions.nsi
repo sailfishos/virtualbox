@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2012 Oracle Corporation
+; Copyright (C) 2012-2013 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -78,6 +78,7 @@ VIAddVersionKey "InternalName"      "${PRODUCT_OUTPUT}"
 
 !include "nsProcess.nsh"
 !include "Library.nsh"
+!include "Sections.nsh"
 !include "strstr.nsh"         ; Function "strstr"
 !include "servicepack.nsh"    ; Function "GetServicePack"
 !include "winver.nsh"         ; Function for determining Windows version
@@ -239,9 +240,10 @@ Var g_bOnlyExtract                      ; Cmd line: Only extract all files, do *
 Var g_bPostInstallStatus                ; Cmd line: Post the overall installation status to some external program (VBoxTray)
 
 ; Platform parts of this installer
+!include "VBoxGuestAdditionsLog.nsh"
 !include "VBoxGuestAdditionsCommon.nsh"
 !if $%BUILD_TARGET_ARCH% == "x86"       ; 32-bit only
-!include "VBoxGuestAdditionsNT4.nsh"
+  !include "VBoxGuestAdditionsNT4.nsh"
 !endif
 !include "VBoxGuestAdditionsW2KXP.nsh"
 !include "VBoxGuestAdditionsVista.nsh"
@@ -435,6 +437,7 @@ usage:
                     /uninstall$\t$\tJust uninstalls the Guest Additions and exits$\r$\n \
                     /with_autologon$\tInstalls auto-logon support$\r$\n \
                     /with_d3d$\tInstalls D3D support$\r$\n \
+                    /with_vboxmmr$\tInstalls multimedia redirection support$\r$\n \
                     /xres=X$\t$\tSets the guest's display resolution (width in pixels)$\r$\n \
                     /yres=Y$\t$\tSets the guest's display resolution (height in pixels)$\r$\n \
                     $\r$\n \
@@ -450,13 +453,12 @@ usage:
 
 done:
 
-  IfSilent 0 +2
-    LogText "Installer is in silent mode!"
-
-  LogText "Property: XRes: $g_iScreenX"
-  LogText "Property: YRes: $g_iScreenY"
-  LogText "Property: BPP: $g_iScreenBpp"
-  LogText "Property: Logging enabled: $g_bLogEnable"
+!ifdef _DEBUG
+  ${LogVerbose} "Property: XRes: $g_iScreenX"
+  ${LogVerbose} "Property: YRes: $g_iScreenY"
+  ${LogVerbose} "Property: BPP: $g_iScreenBpp"
+  ${LogVerbose} "Property: Logging enabled: $g_bLogEnable"
+!endif
 
 exit:
 
@@ -548,8 +550,10 @@ FunctionEnd
 Function CheckForInstalledComponents
 
   Push $0
+  Push $1
 
-  DetailPrint "Checking for installed components ..."
+  ${LogVerbose} "Checking for installed components ..."
+  StrCpy $1 ""
 
   Call SetAppMode64
 
@@ -557,18 +561,40 @@ Function CheckForInstalledComponents
   ; regardless whether the user used "/with_autologon" or not
   ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\WinLogon" "GinaDLL"
   ${If} $0 == "VBoxGINA.dll"
-    StrCpy $g_bWithAutoLogon "true"
-  ${EndIf}
-  
-  ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}" ""
-  ${If} $0 == "VBoxCredProv.dll"
-    StrCpy $g_bWithAutoLogon "true"  
-  ${EndIf}
-  
-  ${If} $g_bWithAutoLogon == "true"
-    DetailPrint "Found already installed auto-logon support ..."
+    StrCpy $1 "GINA"
+  ${Else}
+    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}" ""
+    ${If} $0 == "VBoxCredProv"
+      StrCpy $1 "Credential Provider"
+    ${EndIf}
   ${EndIf}
 
+!ifdef _DEBUG
+  ${LogVerbose} "Auto-logon module: $0"
+!endif
+
+  ${IfNot} $1 == ""
+    ${LogVerbose} "Auto-logon support ($1) was installed previously"
+    StrCpy $g_bWithAutoLogon "true" ; Force update
+  ${Else}
+    ${LogVerbose} "Auto-logon support was not installed previously"
+  ${EndIf}
+
+  ; Check for installed MMR support and enable updating
+  ; those modules if needed
+  ${If}    ${FileExists} "$g_strSystemDir\VBoxMMR.exe"
+!if $%BUILD_TARGET_ARCH% == "amd64"
+  ${AndIf} ${FileExists} "$g_strSysWow64\VBoxMMRHook.dll"
+!else
+  ${AndIf} ${FileExists} "$g_strSystemDir\VBoxMMRHook.dll"
+!endif
+    ${LogVerbose} "MultiMedia Redirection support (MMR) was installed previously"
+    StrCpy $g_bWithVBoxMMR "true" ; Force update
+  ${Else}
+    ${LogVerbose} "MultiMedia Redirection support (MMR) support was not installed previously"
+  ${EndIf}
+
+  Pop $1
   Pop $0
 
 FunctionEnd
@@ -577,10 +603,9 @@ FunctionEnd
 Section $(VBOX_COMPONENT_MAIN) SEC01
 
   SectionIn RO ; Section cannot be unselected (read-only)
-
-  Push "${PRODUCT_NAME} update started, please wait ..."
-  Push 0 ; Message type = info
-  Call WriteLogVBoxTray
+  ${If} $g_bPostInstallStatus == "true"
+    ${LogToVBoxTray} "0" "${PRODUCT_NAME} update started, please wait ..."
+  ${EndIf}
 
   SetOutPath "$INSTDIR"
   SetOverwrite on
@@ -589,23 +614,21 @@ Section $(VBOX_COMPONENT_MAIN) SEC01
 
   StrCpy $g_strSystemDir "$SYSDIR"
 
-  Call EnableLog
-
-  DetailPrint "Version: $%VBOX_VERSION_STRING% (Rev $%VBOX_SVN_REV%)"
+  ${LogVerbose} "Version: $%VBOX_VERSION_STRING% (Rev $%VBOX_SVN_REV%)"
   ${If} $g_strAddVerMaj != ""
-    DetailPrint "Previous version: $g_strAddVerMaj.$g_strAddVerMin.$g_strAddVerBuild (Rev $g_strAddVerRev)"
+    ${LogVerbose} "Previous version: $g_strAddVerMaj.$g_strAddVerMin.$g_strAddVerBuild (Rev $g_strAddVerRev)"
   ${Else}
-    DetailPrint "No previous version of ${PRODUCT_NAME} detected."
+    ${LogVerbose} "No previous version of ${PRODUCT_NAME} detected."
   ${EndIf}
 !if $%BUILD_TARGET_ARCH% == "amd64"
-  DetailPrint "Detected OS: Windows $g_strWinVersion (64-bit)"
+  ${LogVerbose} "Detected OS: Windows $g_strWinVersion (64-bit)"
 !else
-  DetailPrint "Detected OS: Windows $g_strWinVersion (32-bit)"
+  ${LogVerbose} "Detected OS: Windows $g_strWinVersion (32-bit)"
 !endif
-  DetailPrint "System Directory: $g_strSystemDir"
+  ${LogVerbose} "System Directory: $g_strSystemDir"
 
 !ifdef _DEBUG
-  DetailPrint "Debug!"
+  ${LogVerbose} "Installer runs in debug mode"
 !endif
 
   ;
@@ -688,8 +711,6 @@ success:
 
 exit:
 
-  Call WriteLogUI
-
 SectionEnd
 
 ; Auto-logon support (section is hidden at the moment -- only can be enabled via command line switch)
@@ -700,14 +721,16 @@ Section /o -$(VBOX_COMPONENT_AUTOLOGON) SEC02
   Call GetWindowsVersion
   Pop $R0 ; Windows Version
 
-  DetailPrint "Installing auto-logon support ..."
+  ${LogVerbose} "Installing auto-logon support ..."
 
   ; Another GINA already is installed? Check if this is ours, otherwise let the user decide (unless it's a silent setup)
   ; whether to replace it with the VirtualBox one or not
   ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\WinLogon" "GinaDLL"
   ${If} $0 != ""
     ${If} $0 != "VBoxGINA.dll"
+      ${LogVerbose} "Found another already installed GINA module: $0"
       MessageBox MB_ICONQUESTION|MB_YESNO|MB_DEFBUTTON1 $(VBOX_COMPONENT_AUTOLOGON_WARN_3RDPARTY) /SD IDYES IDYES install
+      ${LogVerbose} "Skipping GINA installation, keeping: $0"
       goto skip
     ${EndIf}
   ${EndIf}
@@ -715,14 +738,18 @@ Section /o -$(VBOX_COMPONENT_AUTOLOGON) SEC02
 install:
 
   ; Do we need VBoxCredProv or VBoxGINA?
-  ${If}   $R0 == 'Vista' ; Use VBoxCredProv on newer Windows OSes (>= Vista)
-  ${OrIf} $R0 == '7'
+  ${If}   $R0 == 'Vista' ; Windows Vista.
+  ${OrIf} $R0 == '7'     ; Windows 7.
+  ${OrIf} $R0 == '8'     ; Windows 8.
+    ; Use VBoxCredProv on Vista and up.
+    ${LogVerbose} "Installing VirtualBox credential provider ..."
     !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxCredProv.dll" "$g_strSystemDir\VBoxCredProv.dll" "$INSTDIR"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows\CurrentVersion\Authentication\Credential Providers\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}" "" "VBoxCredProv" ; adding to (default) key
     WriteRegStr HKCR "CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}" "" "VBoxCredProv"                       ; adding to (Default) key
     WriteRegStr HKCR "CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32" "" "VBoxCredProv.dll"    ; adding to (Default) key
     WriteRegStr HKCR "CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32" "ThreadingModel" "Apartment"
   ${Else} ; Use VBoxGINA on older Windows OSes (< Vista)
+    ${LogVerbose} "Installing VirtualBox GINA ..."
     !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxGINA.dll" "$g_strSystemDir\VBoxGINA.dll" "$INSTDIR"
     WriteRegStr HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion\WinLogon" "GinaDLL" "VBoxGINA.dll"
     ; Add Windows notification package callbacks for VBoxGINA
@@ -746,31 +773,31 @@ Function PrepareWRPFile
   Pop $0
 
   ${IfNot} ${FileExists} "$0"
-    LogText "WRP: File $0 does not exist, skipping"
+    ${LogVerbose} "WRP: File $0 does not exist, skipping"
     Return
   ${EndIf}
 
   ${If} ${FileExists} "$g_strSystemDir\takeown.exe"
     nsExec::ExecToLog '"$g_strSystemDir\takeown.exe" /F "$0"'
     Pop $1 ; Ret value
-    LogText "WRP: Taking ownership for $0 returned: $1"
+    ${LogVerbose} "WRP: Taking ownership for $0 returned: $1"
   ${Else}
-    LogText "WRP: Warning: takeown.exe not found, skipping"
+    ${LogVerbose} "WRP: Warning: takeown.exe not found, skipping"
   ${EndIf}
 
   AccessControl::SetFileOwner "$0" "(S-1-5-32-545)"
   Pop $1
-  DetailPrint "WRP: Setting file owner for $0 returned: $1"
+  ${LogVerbose} "WRP: Setting file owner for $0 returned: $1"
 
   AccessControl::GrantOnFile "$0" "(S-1-5-32-545)" "FullAccess"
   Pop $1
-  DetailPrint "WRP: Setting access rights for $0 returned: $1"
+  ${LogVerbose} "WRP: Setting access rights for $0 returned: $1"
 
 !if $%VBOX_WITH_GUEST_INSTALL_HELPER% == "1"
   !ifdef WFP_FILE_EXCEPTION
     VBoxGuestInstallHelper::DisableWFP "$0"
     Pop $1 ; Get return value (ignored for now)
-    DetailPrint "WRP: Setting WFP exception for $0 returned: $1"
+    ${LogVerbose} "WRP: Setting WFP exception for $0 returned: $1"
   !endif
 !endif
 
@@ -793,7 +820,7 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
   ${EndIf}
 
   SetOutPath $g_strSystemDir
-  DetailPrint "Installing Direct3D support ..."
+  ${LogVerbose} "Installing Direct3D support ..."
   FILE "$%PATH_OUT%\bin\additions\VBoxD3D8.dll"
   FILE "$%PATH_OUT%\bin\additions\VBoxD3D9.dll"
   FILE "$%PATH_OUT%\bin\additions\wined3d.dll"
@@ -817,10 +844,10 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
       ${InstallFileEx} "" "$%PATH_OUT%\bin\additions\d3d8.dll" "$g_strSystemDir\dllcache\d3d8.dll" "$TEMP"
       ${InstallFileEx} "" "$%PATH_OUT%\bin\additions\d3d9.dll" "$g_strSystemDir\dllcache\d3d9.dll" "$TEMP"
     ${Else}
-        DetailPrint "DLL cache does not exist, skipping"
+        ${LogVerbose} "DLL cache does not exist, skipping"
     ${EndIf}
   ${EndIf}
-    
+
   ;
   ; Save original DLLs (only if msd3d*.dll does not exist) ...
   ;
@@ -842,7 +869,7 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
     ; Only 64-bit installer:
     ; Also copy 32-bit DLLs on 64-bit Windows in SysWOW64 node
     SetOutPath $g_strSysWow64
-    DetailPrint "Installing Direct3D support for 32-bit applications (SysWOW64: $g_strSysWow64) ..."
+    ${LogVerbose} "Installing Direct3D support for 32-bit applications (SysWOW64: $g_strSysWow64) ..."
     FILE "$%VBOX_PATH_ADDITIONS_WIN_X86%\VBoxD3D8.dll"
     FILE "$%VBOX_PATH_ADDITIONS_WIN_X86%\VBoxD3D9.dll"
     FILE "$%VBOX_PATH_ADDITIONS_WIN_X86%\wined3d.dll"
@@ -866,7 +893,7 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
         ${InstallFileEx} "" "$%VBOX_PATH_ADDITIONS_WIN_X86%\d3d8.dll" "$g_strSysWow64\dllcache\d3d8.dll" "$TEMP"
         ${InstallFileEx} "" "$%VBOX_PATH_ADDITIONS_WIN_X86%\d3d9.dll" "$g_strSysWow64\dllcache\d3d9.dll" "$TEMP"
       ${Else}
-        DetailPrint "DLL cache does not exist, skipping"
+        ${LogVerbose} "DLL cache does not exist, skipping"
       ${EndIf}
     ${EndIf}
 
@@ -935,7 +962,7 @@ SectionEnd
 Section -Post
 
 !ifdef _DEBUG
-  DetailPrint "Doing post install ..."
+  ${LogVerbose} "Doing post install ..."
 !endif
 
 !ifdef EXTERNAL_UNINSTALLER
@@ -965,7 +992,7 @@ Section -Post
   WriteRegStr HKLM "SOFTWARE\Oracle\Sun Ray\ClientInfoAgent\DisconnectActions" "" ""
 !endif
 
-  DetailPrint "Installation completed."
+  ${LogVerbose} "Installation completed."
 
 SectionEnd
 
@@ -1049,12 +1076,11 @@ Function .onInstFailed
 
   MessageBox MB_ICONSTOP $(VBOX_ERROR_INST_FAILED) /SD IDOK
 
-  Push "Error while installing ${PRODUCT_NAME}!"
-  Push 2 ; Message type = error
-  Call WriteLogVBoxTray
+  ${If} $g_bPostInstallStatus == "true"
+    ${LogToVBoxTray} "2" "Error while installing ${PRODUCT_NAME}!"
+  ${EndIf}
 
-  StrCpy $g_bLogEnable "true"
-  Call WriteLogUI
+  ; Set overall exit code
   SetErrorLevel 1
 
 FunctionEnd
@@ -1062,9 +1088,9 @@ FunctionEnd
 ; This function is called when installation was successful!
 Function .onInstSuccess
 
-  Push "${PRODUCT_NAME} successfully updated!"
-  Push 0 ; Message type = info
-  Call WriteLogVBoxTray
+  ${If} $g_bPostInstallStatus == "true"
+    ${LogToVBoxTray} "0" "${PRODUCT_NAME} successfully updated!"
+  ${EndIf}
 
 FunctionEnd
 
@@ -1105,6 +1131,9 @@ Function .onInit
   StrCpy $g_bCapWDDM "false"
   StrCpy $g_bPostInstallStatus "false"
 
+  ; Set system directory
+  StrCpy $g_strSystemDir "$SYSDIR"
+
   ; We need a special directory set to SysWOW64 because some
   ; shell operations don't support file redirection (yet)
   StrCpy $g_strSysWow64 "$WINDIR\SysWOW64"
@@ -1136,6 +1165,13 @@ Function .onInit
     Quit
   ${EndIf}
 
+  IfSilent +1 +2
+    StrCpy $g_bLogEnable "true" ; Force logging in silent mode
+
+  ${LogEnable} "$g_bLogEnable"
+  IfSilent +1 +2
+    LogText "Installer runs in silent mode"
+
   ; Retrieve Windows version and store result in $g_strWinVersion
   Call GetWindowsVer
 
@@ -1145,7 +1181,7 @@ Function .onInit
   ; Get user Name
   AccessControl::GetCurrentUserName
   Pop $g_strCurUser
-  DetailPrint "Current user: $g_strCurUser"
+  ${LogVerbose} "Current user is: $g_strCurUser"
 
   ; Only extract files? This action can be called even from non-Admin users
   ; and non-compatible architectures
@@ -1187,11 +1223,11 @@ Function .onInit
 
   ; Set section bits
   ${If} $g_bWithAutoLogon == "true" ; Auto-logon support
-    SectionSetFlags ${SEC02} ${SF_SELECTED}
+    !insertmacro SelectSection ${SEC02}
   ${EndIf}
 !if $%VBOX_WITH_CROGL% == "1"
   ${If} $g_bWithD3D == "true" ; D3D support
-    SectionSetFlags ${SEC03} ${SF_SELECTED}
+    !insertmacro SelectSection ${SEC03}
   ${EndIf}
 !endif
   ; On Windows 8 we always select the 3D section and
@@ -1274,8 +1310,7 @@ FunctionEnd
 Section Uninstall
 
 !ifdef _DEBUG
-  ; Enable logging
-  Call un.EnableLog
+  ${LogEnable} "true"
 !endif
 
   Call un.SetAppMode64
@@ -1296,7 +1331,7 @@ Section Uninstall
 
 restart:
 
-  DetailPrint "Rebooting ..."
+  ${LogVerbose} "Rebooting ..."
   Reboot
 
 exit:

@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -64,6 +64,10 @@ UIGDetailsElementInterface::~UIGDetailsElementInterface()
 
 void UIGDetailsElementInterface::updateAppearance()
 {
+    /* Call for base class: */
+    UIGDetailsElement::updateAppearance();
+
+    /* Create/start update thread in necessary: */
     if (!m_pThread)
     {
         m_pThread = createUpdateThread();
@@ -78,7 +82,7 @@ void UIGDetailsElementInterface::sltUpdateAppearanceFinished(const UITextTable &
     if (text() != newText)
         setText(newText);
     cleanupThread();
-    emit sigElementUpdateDone();
+    emit sigBuildDone();
 }
 
 void UIGDetailsElementInterface::cleanupThread()
@@ -148,9 +152,16 @@ void UIGDetailsUpdateThreadGeneral::run()
 UIGDetailsElementGeneral::UIGDetailsElementGeneral(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_General, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_General));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/machine_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementGeneral::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_General));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementGeneral::createUpdateThread()
@@ -162,35 +173,40 @@ UIGDetailsUpdateThread* UIGDetailsElementGeneral::createUpdateThread()
 UIGDetailsElementPreview::UIGDetailsElementPreview(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElement(pParent, DetailsElementType_Preview, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Preview));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/machine_16px.png"));
 
     /* Prepare variables: */
     int iMargin = data(ElementData_Margin).toInt();
-    int iHeaderHeight = data(ElementData_HeaderSize).toSize().height();
     /* Prepare layout: */
     QGraphicsLinearLayout *pLayout = new QGraphicsLinearLayout;
-    pLayout->setContentsMargins(iMargin, 2 * iMargin + iHeaderHeight, iMargin, iMargin);
+    pLayout->setContentsMargins(iMargin, 2 * iMargin + minimumHeaderHeight(), iMargin, iMargin);
     setLayout(pLayout);
 
     /* Create preview: */
     m_pPreview = new UIGMachinePreview(this);
     pLayout->addItem(m_pPreview);
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementPreview::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Preview));
 }
 
 int UIGDetailsElementPreview::minimumWidthHint() const
 {
     /* Prepare variables: */
     int iMargin = data(ElementData_Margin).toInt();
-    int iHeaderWidth = data(ElementData_HeaderSize).toSize().width();
 
     /* Calculating proposed width: */
     int iProposedWidth = 0;
 
     /* Maximum between header width and preview width: */
-    iProposedWidth += qMax(iHeaderWidth, m_pPreview->minimumSizeHint().toSize().width());
+    iProposedWidth += qMax(minimumHeaderWidth(), m_pPreview->minimumSizeHint().toSize().width());
 
     /* Two margins: */
     iProposedWidth += 2 * iMargin;
@@ -203,7 +219,6 @@ int UIGDetailsElementPreview::minimumHeightHint(bool fClosed) const
 {
     /* Prepare variables: */
     int iMargin = data(ElementData_Margin).toInt();
-    int iHeaderHeight = data(ElementData_HeaderSize).toSize().height();
 
     /* Calculating proposed height: */
     int iProposedHeight = 0;
@@ -212,7 +227,7 @@ int UIGDetailsElementPreview::minimumHeightHint(bool fClosed) const
     iProposedHeight += 2 * iMargin;
 
     /* Header height: */
-    iProposedHeight += iHeaderHeight;
+    iProposedHeight += minimumHeaderHeight();
 
     /* Element is opened? */
     if (!fClosed)
@@ -231,12 +246,6 @@ int UIGDetailsElementPreview::minimumHeightHint(bool fClosed) const
     return iProposedHeight;
 }
 
-void UIGDetailsElementPreview::updateAppearance()
-{
-    m_pPreview->setMachine(machine());
-    emit sigElementUpdateDone();
-}
-
 void UIGDetailsElementPreview::updateLayout()
 {
     /* Call to base-class: */
@@ -245,8 +254,18 @@ void UIGDetailsElementPreview::updateLayout()
     /* Show/hide preview: */
     if (closed() && m_pPreview->isVisible())
         m_pPreview->hide();
-    if (opened() && !m_pPreview->isVisible() && !m_fAnimationRunning)
+    if (opened() && !m_pPreview->isVisible() && !isAnimationRunning())
         m_pPreview->show();
+}
+
+void UIGDetailsElementPreview::updateAppearance()
+{
+    /* Call for base class: */
+    UIGDetailsElement::updateAppearance();
+
+    /* Set new machine attribute: */
+    m_pPreview->setMachine(machine());
+    emit sigBuildDone();
 }
 
 
@@ -329,9 +348,16 @@ void UIGDetailsUpdateThreadSystem::run()
 UIGDetailsElementSystem::UIGDetailsElementSystem(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_System, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_System));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/chipset_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementSystem::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_System));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementSystem::createUpdateThread()
@@ -405,9 +431,16 @@ void UIGDetailsUpdateThreadDisplay::run()
 UIGDetailsElementDisplay::UIGDetailsElementDisplay(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_Display, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Display));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/vrdp_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementDisplay::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Display));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementDisplay::createUpdateThread()
@@ -486,9 +519,16 @@ void UIGDetailsUpdateThreadStorage::run()
 UIGDetailsElementStorage::UIGDetailsElementStorage(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_Storage, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Storage));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/attachment_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementStorage::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Storage));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementStorage::createUpdateThread()
@@ -543,9 +583,16 @@ void UIGDetailsUpdateThreadAudio::run()
 UIGDetailsElementAudio::UIGDetailsElementAudio(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_Audio, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Audio));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/sound_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementAudio::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Audio));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementAudio::createUpdateThread()
@@ -653,9 +700,16 @@ QString UIGDetailsUpdateThreadNetwork::summarizeGenericProperties(const CNetwork
 UIGDetailsElementNetwork::UIGDetailsElementNetwork(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_Network, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Network));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/nw_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementNetwork::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Network));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementNetwork::createUpdateThread()
@@ -715,9 +769,16 @@ void UIGDetailsUpdateThreadSerial::run()
 UIGDetailsElementSerial::UIGDetailsElementSerial(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_Serial, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Serial));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/serial_port_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementSerial::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Serial));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementSerial::createUpdateThread()
@@ -773,9 +834,16 @@ void UIGDetailsUpdateThreadParallel::run()
 UIGDetailsElementParallel::UIGDetailsElementParallel(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_Parallel, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Parallel));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/parallel_port_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementParallel::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Parallel));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementParallel::createUpdateThread()
@@ -835,9 +903,16 @@ void UIGDetailsUpdateThreadUSB::run()
 UIGDetailsElementUSB::UIGDetailsElementUSB(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_USB, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_USB));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/usb_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementUSB::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_USB));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementUSB::createUpdateThread()
@@ -883,9 +958,16 @@ void UIGDetailsUpdateThreadSF::run()
 UIGDetailsElementSF::UIGDetailsElementSF(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_SF, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_SF));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/shared_folder_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementSF::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_SF));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementSF::createUpdateThread()
@@ -931,9 +1013,16 @@ void UIGDetailsUpdateThreadDescription::run()
 UIGDetailsElementDescription::UIGDetailsElementDescription(UIGDetailsSet *pParent, bool fOpened)
     : UIGDetailsElementInterface(pParent, DetailsElementType_Description, fOpened)
 {
-    /* Name/icon: */
-    setName(gpConverter->toString(DetailsElementType_Description));
+    /* Icon: */
     setIcon(UIIconPool::iconSet(":/description_16px.png"));
+
+    /* Translate: */
+    retranslateUi();
+}
+
+void UIGDetailsElementDescription::retranslateUi()
+{
+    setName(gpConverter->toString(DetailsElementType_Description));
 }
 
 UIGDetailsUpdateThread* UIGDetailsElementDescription::createUpdateThread()

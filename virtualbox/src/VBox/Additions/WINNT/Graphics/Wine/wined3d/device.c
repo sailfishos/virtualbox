@@ -1603,7 +1603,7 @@ static void WINAPI IWineD3DDeviceImpl_ReleaseFocusWindow(IWineD3DDevice *iface)
 #ifndef VBOX_WITH_WDDM
     IWineD3DDeviceImpl *device = (IWineD3DDeviceImpl *)iface;
 
-    if (device->focus_window) wined3d_unregister_window(device->focus_window);
+    if (device->focus_window) wined3d_unregister_window(device->focus_window, device);
     device->focus_window = NULL;
 #else
     ERR("should not be here");
@@ -1869,6 +1869,10 @@ static HRESULT WINAPI IWineD3DDeviceImpl_Uninit3D(IWineD3DDevice *iface,
     TRACE("(%p)\n", This);
 
     if(!This->d3d_initialized) return WINED3DERR_INVALIDCALL;
+
+#ifdef VBOX_WINE_WITH_PROFILE
+    VBOXWINEPROFILE_DRAWPRIM_TERM(&This->DrawPrimProfile);
+#endif
 
     /* I don't think that the interface guarantees that the device is destroyed from the same thread
      * it was created. Thus make sure a context is active for the glDelete* calls
@@ -5527,7 +5531,7 @@ static HRESULT WINAPI IWineD3DDeviceImpl_UpdateSurface(IWineD3DDevice *iface,
      * needed, use BltFast instead to copy in sysmem and use regular surface
      * loading. */
     d3dfmt_get_conv(dst_impl, FALSE, TRUE, &dummy_desc, &convert);
-    if (convert != NO_CONVERSION)
+    if (convert != NO_CONVERSION || dummy_desc.convert)
         return IWineD3DSurface_BltFast(dst_surface, dst_x, dst_y, src_surface, src_rect, 0);
 
     context = context_acquire(This, NULL, CTXUSAGE_RESOURCELOAD);
@@ -7269,6 +7273,52 @@ static HRESULT WINAPI IWineD3DDeviceImpl_Flush(IWineD3DDevice *iface)
     return WINED3D_OK;
 }
 
+static HRESULT WINAPI IWineD3DDeviceImpl_Finish(IWineD3DDevice *iface)
+{
+    IWineD3DDeviceImpl *This = (IWineD3DDeviceImpl *) iface;
+    struct wined3d_context *context;
+    int i;
+
+    /* first call swapchain flush to ensure all swapchain-pending data gets flushed */
+    for (i = 0; i < This->NumberOfSwapChains; ++i)
+    {
+        IWineD3DSwapChain *pSwapchain = This->swapchains[i];
+        IWineD3DSwapChain_Flush(pSwapchain);
+    }
+
+    for (i = 0; i < This->numContexts; ++i)
+    {
+        context = This->contexts[i];
+        if (context_acquire_context(context, NULL, CTXUSAGE_RESOURCELOAD, TRUE))
+        {
+            Assert(context->valid);
+            wglFinish();
+            context_release(context);
+        }
+        else
+        {
+            WARN("Invalid context, skipping flush.\n");
+        }
+    }
+    return WINED3D_OK;
+}
+
+static HRESULT WINAPI IWineD3DDeviceImpl_FlushToHost(IWineD3DDevice *iface)
+{
+    IWineD3DDeviceImpl *This = (IWineD3DDeviceImpl *) iface;
+    struct wined3d_context *context;
+    int i;
+
+    /* no context acquisition is needed */
+    for (i = 0; i < This->numContexts; ++i)
+    {
+        context = This->contexts[i];
+        pVBoxFlushToHost(context->glCtx);
+    }
+    return WINED3D_OK;
+}
+
+
 /* context activation is done by the caller */
 void device_cleanup_durtify_texture_target(IWineD3DDeviceImpl *This, GLuint texture_target)
 {
@@ -7473,6 +7523,8 @@ static const IWineD3DDeviceVtbl IWineD3DDevice_Vtbl =
     IWineD3DDeviceImpl_Flush,
     IWineD3DDeviceImpl_VolBlt,
     IWineD3DDeviceImpl_VolTexBlt,
+    IWineD3DDeviceImpl_FlushToHost,
+    IWineD3DDeviceImpl_Finish,
 #endif
 };
 
@@ -7518,6 +7570,10 @@ HRESULT device_init(IWineD3DDeviceImpl *device, IWineD3DImpl *wined3d,
     device->createParms.DeviceType = device_type;
     device->createParms.hFocusWindow = focus_window;
     device->createParms.BehaviorFlags = flags;
+
+#ifdef VBOX_WINE_WITH_PROFILE
+    VBOXWINEPROFILE_DRAWPRIM_INIT(&device->DrawPrimProfile);
+#endif
 
     device->devType = device_type;
     for (i = 0; i < PATCHMAP_SIZE; ++i) list_init(&device->patches[i]);
@@ -7610,7 +7666,7 @@ LRESULT device_process_message(IWineD3DDeviceImpl *device, HWND window,
     if (message == WM_DESTROY)
     {
         TRACE("unregister window %p.\n", window);
-        wined3d_unregister_window(window);
+        wined3d_unregister_window(window, NULL);
 
         if (device->focus_window == window) device->focus_window = NULL;
         else ERR("Window %p is not the focus window for device %p.\n", window, device);

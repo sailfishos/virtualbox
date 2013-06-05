@@ -17,8 +17,8 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/* Qt includes: */
-#include <QGraphicsLinearLayout>
+/* Qt include: */
+#include <QGraphicsScene>
 
 /* GUI includes: */
 #include "UIGDetailsGroup.h"
@@ -26,92 +26,96 @@
 #include "UIGDetailsModel.h"
 #include "UIConverter.h"
 #include "VBoxGlobal.h"
+#include "UIVMItem.h"
 
-/* Other VBox includes: */
-#include <iprt/assert.h>
-
-UIGDetailsGroup::UIGDetailsGroup()
+UIGDetailsGroup::UIGDetailsGroup(QGraphicsScene *pParent)
     : UIGDetailsItem(0)
-    , m_pMainLayout(0)
-    , m_pLayout(0)
-    , m_pStep(0)
-    , m_iStep(0)
+    , m_iPreviousMinimumWidthHint(0)
+    , m_iPreviousMinimumHeightHint(0)
+    , m_pBuildStep(0)
 {
-    /* Prepare layout: */
-    prepareLayout();
+    /* Add group to the parent scene: */
+    pParent->addItem(this);
 
     /* Prepare connections: */
-    connect(this, SIGNAL(sigStartFirstStep(QString)), this, SLOT(sltFirstStep(QString)), Qt::QueuedConnection);
+    prepareConnections();
 }
 
 UIGDetailsGroup::~UIGDetailsGroup()
 {
-    /* Clear items: */
+    /* Cleanup items: */
     clearItems();
 }
 
-void UIGDetailsGroup::setItems(const QList<UIVMItem*> &items)
+void UIGDetailsGroup::buildGroup(const QList<UIVMItem*> &machineItems)
 {
-    prepareSets(items);
+    /* Remember passed machine-items: */
+    m_machineItems = machineItems;
+
+    /* Cleanup superflous items: */
+    bool fCleanupPerformed = m_items.size() > m_machineItems.size();
+    while (m_items.size() > m_machineItems.size())
+        delete m_items.last();
+    if (fCleanupPerformed)
+        updateGeometry();
+
+    /* Start building group: */
+    rebuildGroup();
 }
 
-void UIGDetailsGroup::updateItems()
+void UIGDetailsGroup::rebuildGroup()
 {
-    updateSets();
+    /* Load settings: */
+    loadSettings();
+
+    /* Cleanup build-step: */
+    delete m_pBuildStep;
+    m_pBuildStep = 0;
+
+    /* Generate new group-id: */
+    m_strGroupId = QUuid::createUuid().toString();
+
+    /* Request to build first step: */
+    emit sigBuildStep(m_strGroupId, 0);
 }
 
-void UIGDetailsGroup::stopPopulatingItems()
+void UIGDetailsGroup::stopBuildingGroup()
 {
+    /* Generate new group-id: */
     m_strGroupId = QUuid::createUuid().toString();
 }
 
-void UIGDetailsGroup::addItem(UIGDetailsItem *pItem)
+void UIGDetailsGroup::sltBuildStep(QString strStepId, int iStepNumber)
 {
-    switch (pItem->type())
-    {
-        case UIGDetailsItemType_Set: m_sets.append(pItem); m_pLayout->addItem(pItem); break;
-        default: AssertMsgFailed(("Invalid item type!")); break;
-    }
-}
+    /* Cleanup build-step: */
+    delete m_pBuildStep;
+    m_pBuildStep = 0;
 
-void UIGDetailsGroup::removeItem(UIGDetailsItem *pItem)
-{
-    switch (pItem->type())
-    {
-        case UIGDetailsItemType_Set: m_sets.removeAt(m_sets.indexOf(pItem)); m_pLayout->removeItem(pItem); break;
-        default: AssertMsgFailed(("Invalid item type!")); break;
-    }
-}
+    /* Is step id valid? */
+    if (strStepId != m_strGroupId)
+        return;
 
-QList<UIGDetailsItem*> UIGDetailsGroup::items(UIGDetailsItemType type /* = UIGDetailsItemType_Set */) const
-{
-    switch (type)
+    /* Step number feats the bounds: */
+    if (iStepNumber >= 0 && iStepNumber < m_machineItems.size())
     {
-        case UIGDetailsItemType_Any: return items(UIGDetailsItemType_Set);
-        case UIGDetailsItemType_Set: return m_sets;
-        default: AssertMsgFailed(("Invalid item type!")); break;
-    }
-    return QList<UIGDetailsItem*>();
-}
+        /* Should we create a new set for this step? */
+        UIGDetailsSet *pSet = 0;
+        if (iStepNumber > m_items.size() - 1)
+            pSet = new UIGDetailsSet(this);
+        /* Or use existing? */
+        else
+            pSet = m_items.at(iStepNumber)->toSet();
 
-bool UIGDetailsGroup::hasItems(UIGDetailsItemType type /* = UIGDetailsItemType_Set */) const
-{
-    switch (type)
-    {
-        case UIGDetailsItemType_Any: return hasItems(UIGDetailsItemType_Set);
-        case UIGDetailsItemType_Set: return !m_sets.isEmpty();
-        default: AssertMsgFailed(("Invalid item type!")); break;
-    }
-    return false;
-}
+        /* Create next build-step: */
+        m_pBuildStep = new UIBuildStep(this, pSet, strStepId, iStepNumber + 1);
 
-void UIGDetailsGroup::clearItems(UIGDetailsItemType type /* = UIGDetailsItemType_Set */)
-{
-    switch (type)
+        /* Build set: */
+        pSet->buildSet(m_machineItems[iStepNumber], m_machineItems.size() == 1, m_settings);
+    }
+    else
     {
-        case UIGDetailsItemType_Any: clearItems(UIGDetailsItemType_Set); break;
-        case UIGDetailsItemType_Set: while (!m_sets.isEmpty()) { delete m_sets.last(); } break;
-        default: AssertMsgFailed(("Invalid item type!")); break;
+        /* Notify listener about build done: */
+        emit sigBuildDone();
     }
 }
 
@@ -129,49 +133,63 @@ QVariant UIGDetailsGroup::data(int iKey) const
     return QVariant();
 }
 
-void UIGDetailsGroup::updateLayout()
+void UIGDetailsGroup::addItem(UIGDetailsItem *pItem)
 {
-    /* Update size-hints for all the items: */
-    foreach (UIGDetailsItem *pItem, items())
-        pItem->updateSizeHint();
-    /* Update size-hint for this item: */
-    updateSizeHint();
-
-    /* Update layout finally: */
-    m_pMainLayout->activate();
-    m_pLayout->activate();
-    foreach (UIGDetailsItem *pItem, items())
-        pItem->updateLayout();
+    switch (pItem->type())
+    {
+        case UIGDetailsItemType_Set: m_items.append(pItem); break;
+        default: AssertMsgFailed(("Invalid item type!")); break;
+    }
 }
 
-void UIGDetailsGroup::sltFirstStep(QString strGroupId)
+void UIGDetailsGroup::removeItem(UIGDetailsItem *pItem)
 {
-    /* Clear step: */
-    delete m_pStep;
-    m_pStep = 0;
-
-    /* Was that a requested group? */
-    if (strGroupId != m_strGroupId)
-        return;
-
-    /* Prepare first set: */
-    m_iStep = 0;
-    prepareSet(strGroupId);
+    switch (pItem->type())
+    {
+        case UIGDetailsItemType_Set: m_items.removeAt(m_items.indexOf(pItem)); break;
+        default: AssertMsgFailed(("Invalid item type!")); break;
+    }
 }
 
-void UIGDetailsGroup::sltNextStep(QString strGroupId)
+QList<UIGDetailsItem*> UIGDetailsGroup::items(UIGDetailsItemType type /* = UIGDetailsItemType_Set */) const
 {
-    /* Clear step: */
-    delete m_pStep;
-    m_pStep = 0;
+    switch (type)
+    {
+        case UIGDetailsItemType_Set: return m_items;
+        case UIGDetailsItemType_Any: return items(UIGDetailsItemType_Set);
+        default: AssertMsgFailed(("Invalid item type!")); break;
+    }
+    return QList<UIGDetailsItem*>();
+}
 
-    /* Was that a requested group? */
-    if (strGroupId != m_strGroupId)
-        return;
+bool UIGDetailsGroup::hasItems(UIGDetailsItemType type /* = UIGDetailsItemType_Set */) const
+{
+    switch (type)
+    {
+        case UIGDetailsItemType_Set: return !m_items.isEmpty();
+        case UIGDetailsItemType_Any: return hasItems(UIGDetailsItemType_Set);
+        default: AssertMsgFailed(("Invalid item type!")); break;
+    }
+    return false;
+}
 
-    /* Prepare next set: */
-    ++m_iStep;
-    prepareSet(strGroupId);
+void UIGDetailsGroup::clearItems(UIGDetailsItemType type /* = UIGDetailsItemType_Set */)
+{
+    switch (type)
+    {
+        case UIGDetailsItemType_Set: while (!m_items.isEmpty()) { delete m_items.last(); } break;
+        case UIGDetailsItemType_Any: clearItems(UIGDetailsItemType_Set); break;
+        default: AssertMsgFailed(("Invalid item type!")); break;
+    }
+}
+
+void UIGDetailsGroup::prepareConnections()
+{
+    /* Prepare group-item connections: */
+    connect(this, SIGNAL(sigMinimumWidthHintChanged(int)),
+            model(), SIGNAL(sigRootItemMinimumWidthHintChanged(int)));
+    connect(this, SIGNAL(sigMinimumHeightHintChanged(int)),
+            model(), SIGNAL(sigRootItemMinimumHeightHintChanged(int)));
 }
 
 void UIGDetailsGroup::loadSettings()
@@ -196,73 +214,113 @@ void UIGDetailsGroup::loadSettings()
     }
 }
 
-void UIGDetailsGroup::prepareLayout()
+void UIGDetailsGroup::updateGeometry()
+{
+    /* Call to base class: */
+    UIGDetailsItem::updateGeometry();
+
+    /* Group-item should notify details-view if minimum-width-hint was changed: */
+    int iMinimumWidthHint = minimumWidthHint();
+    if (m_iPreviousMinimumWidthHint != iMinimumWidthHint)
+    {
+        /* Save new minimum-width-hint, notify listener: */
+        m_iPreviousMinimumWidthHint = iMinimumWidthHint;
+        emit sigMinimumWidthHintChanged(m_iPreviousMinimumWidthHint);
+    }
+    /* Group-item should notify details-view if minimum-height-hint was changed: */
+    int iMinimumHeightHint = minimumHeightHint();
+    if (m_iPreviousMinimumHeightHint != iMinimumHeightHint)
+    {
+        /* Save new minimum-height-hint, notify listener: */
+        m_iPreviousMinimumHeightHint = iMinimumHeightHint;
+        emit sigMinimumHeightHintChanged(m_iPreviousMinimumHeightHint);
+    }
+}
+
+int UIGDetailsGroup::minimumWidthHint() const
+{
+    /* Prepare variables: */
+    int iMargin = data(GroupData_Margin).toInt();
+    int iMinimumWidthHint = 0;
+
+    /* For each the set we have: */
+    bool fHasItems = false;
+    foreach (UIGDetailsItem *pItem, items())
+    {
+        /* Ignore which are with no details: */
+        if (UIGDetailsSet *pSetItem = pItem->toSet())
+            if (!pSetItem->hasDetails())
+                continue;
+        /* And take into account all the others: */
+        iMinimumWidthHint = qMax(iMinimumWidthHint, pItem->minimumWidthHint());
+        if (!fHasItems)
+            fHasItems = true;
+    }
+
+    /* Add two margins finally: */
+    if (fHasItems)
+        iMinimumWidthHint += 2 * iMargin;
+
+    /* Return result: */
+    return iMinimumWidthHint;
+}
+
+int UIGDetailsGroup::minimumHeightHint() const
 {
     /* Prepare variables: */
     int iMargin = data(GroupData_Margin).toInt();
     int iSpacing = data(GroupData_Spacing).toInt();
+    int iMinimumHeightHint = 0;
 
-    /* Prepare layout: */
-    m_pMainLayout = new QGraphicsLinearLayout(Qt::Vertical);
-    m_pMainLayout->setContentsMargins(0, 0, 0, 0);
-    m_pMainLayout->setSpacing(0);
-    m_pLayout = new QGraphicsLinearLayout(Qt::Vertical);
-    m_pLayout->setContentsMargins(iMargin, iMargin, iMargin, iMargin);
-    m_pLayout->setSpacing(iSpacing);
-    m_pMainLayout->addItem(m_pLayout);
-    m_pMainLayout->addStretch();
-    setLayout(m_pMainLayout);
-}
-
-void UIGDetailsGroup::prepareSets(const QList<UIVMItem*> &items)
-{
-    /* Remove superflous sets: */
-    while (m_sets.size() > items.size())
-        delete m_sets.last();
-
-    /* Remember new items: */
-    m_items = items;
-
-    /* Update sets: */
-    updateSets();
-}
-
-void UIGDetailsGroup::updateSets()
-{
-    /* Load settings: */
-    loadSettings();
-
-    /* Clear step: */
-    delete m_pStep;
-    m_pStep = 0;
-
-    /* Prepare first set: */
-    m_strGroupId = QUuid::createUuid().toString();
-    emit sigStartFirstStep(m_strGroupId);
-}
-
-void UIGDetailsGroup::prepareSet(QString strGroupId)
-{
-    /* Step number feats the bounds: */
-    if (m_iStep >= 0 && m_iStep < m_items.size())
+    /* For each the set we have: */
+    bool fHasItems = false;
+    foreach (UIGDetailsItem *pItem, items())
     {
-        /* Should we create set? */
-        UIGDetailsSet *pSet = 0;
-        if (m_iStep > m_sets.size() - 1)
-            pSet = new UIGDetailsSet(this);
-        else
-            pSet = m_sets.at(m_iStep)->toSet();
-        /* Create prepare step: */
-        m_pStep = new UIPrepareStep(this, strGroupId);
-        connect(pSet, SIGNAL(sigSetCreationDone()), m_pStep, SLOT(sltStepDone()), Qt::QueuedConnection);
-        connect(m_pStep, SIGNAL(sigStepDone(const QString&)), this, SLOT(sltNextStep(const QString&)), Qt::QueuedConnection);
-        /* Configure set: */
-        pSet->configure(m_items[m_iStep], m_settings, m_items.size() == 1);
+        /* Ignore which are with no details: */
+        if (UIGDetailsSet *pSetItem = pItem->toSet())
+            if (!pSetItem->hasDetails())
+                continue;
+        /* And take into account all the others: */
+        iMinimumHeightHint += (pItem->minimumHeightHint() + iSpacing);
+        if (!fHasItems)
+            fHasItems = true;
     }
-    else
+    /* Minus last spacing: */
+    if (fHasItems)
+        iMinimumHeightHint -= iSpacing;
+
+    /* Add two margins finally: */
+    if (fHasItems)
+        iMinimumHeightHint += 2 * iMargin;
+
+    /* Return result: */
+    return iMinimumHeightHint;
+}
+
+void UIGDetailsGroup::updateLayout()
+{
+    /* Prepare variables: */
+    int iMargin = data(GroupData_Margin).toInt();
+    int iSpacing = data(GroupData_Spacing).toInt();
+    int iMaximumWidth = (int)geometry().width() - 2 * iMargin;
+    int iVerticalIndent = iMargin;
+
+    /* Layout all the sets: */
+    foreach (UIGDetailsItem *pItem, items())
     {
-        /* Update model after group update: */
-        model()->updateLayout();
+        /* Ignore sets with no details: */
+        if (UIGDetailsSet *pSetItem = pItem->toSet())
+            if (!pSetItem->hasDetails())
+                continue;
+        /* Move set: */
+        pItem->setPos(iMargin, iVerticalIndent);
+        /* Resize set: */
+        int iWidth = iMaximumWidth;
+        pItem->resize(iWidth, pItem->minimumHeightHint());
+        /* Layout set content: */
+        pItem->updateLayout();
+        /* Advance indent: */
+        iVerticalIndent += (pItem->minimumHeightHint() + iSpacing);
     }
 }
 

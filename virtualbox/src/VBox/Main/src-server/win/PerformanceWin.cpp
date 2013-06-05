@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2008 Oracle Corporation
+ * Copyright (C) 2008-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -346,11 +346,6 @@ int CollectorWin::getProcessMemoryUsage(RTPROCESS process, ULONG *used)
     }
     *used = (ULONG)(it->second.ramUsed / 1024);
     return VINF_SUCCESS;
-}
-
-int getDiskListByFs(const char *name, DiskList& list)
-{
-    return VERR_NOT_IMPLEMENTED;
 }
 
 }

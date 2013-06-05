@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -40,6 +40,7 @@
 #include <VBox/err.h>
 
 #include <VBox/settings.h>
+
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -1435,8 +1436,16 @@ STDMETHODIMP SessionMachine::BeginTakingSnapshot(IConsole *aInitiator,
     Utf8Str strStateFilePath;
     /* stateFilePath is null when the machine is not online nor saved */
     if (fTakingSnapshotOnline)
-        // creating a new online snapshot: then we need a fresh saved state file
-        composeSavedStateFilename(strStateFilePath);
+    {
+        Bstr value;
+        HRESULT rc = GetExtraData(Bstr("VBoxInternal2/ForceTakeSnapshotWithoutState").raw(),
+                                  value.asOutParam());
+        if (FAILED(rc) || value != "1")
+        {
+            // creating a new online snapshot: we need a fresh saved state file
+            composeSavedStateFilename(strStateFilePath);
+        }
+    }
     else if (mData->mMachineState == MachineState_Saved)
         // taking an online snapshot from machine in "saved" state: then use existing state file
         strStateFilePath = mSSData->strStateFilePath;
@@ -1499,9 +1508,9 @@ STDMETHODIMP SessionMachine::BeginTakingSnapshot(IConsole *aInitiator,
         if (FAILED(rc))
             throw rc;
 
-        // if we got this far without an error, then save the media registries
-        // that got modified for the diff images
-        mParent->saveModifiedRegistries();
+        // MUST NOT save the settings or the media registry here, because
+        // this causes trouble with rolling back settings if the user cancels
+        // taking the snapshot after the diff images have been created.
     }
     catch (HRESULT hrc)
     {
@@ -1608,11 +1617,14 @@ STDMETHODIMP SessionMachine::EndTakingSnapshot(BOOL aSuccess)
         /* inform callbacks */
         mParent->onSnapshotTaken(mData->mUuid,
                                  mConsoleTaskData.mSnapshot->getId());
+        machineLock.release();
     }
     else
     {
         /* delete all differencing hard disks created (this will also attach
          * their parents back by rolling back mMediaData) */
+        machineLock.release();
+
         rollbackMedia();
 
         mData->mFirstSnapshot = pOldFirstSnap;      // might have been changed above
@@ -1624,15 +1636,19 @@ STDMETHODIMP SessionMachine::EndTakingSnapshot(BOOL aSuccess)
             // snapshot means that a new saved state file was created, which we must
             // clean up now
             RTFileDelete(mConsoleTaskData.mSnapshot->getStateFilePath().c_str());
+            machineLock.acquire();
+
 
         mConsoleTaskData.mSnapshot->uninit();
+        machineLock.release();
+
     }
 
     /* clear out the snapshot data */
     mConsoleTaskData.mLastState = MachineState_Null;
     mConsoleTaskData.mSnapshot.setNull();
 
-    machineLock.release();
+    /* machineLock has been released already */
 
     mParent->saveModifiedRegistries();
 
@@ -2433,7 +2449,6 @@ void SessionMachine::deleteSnapshotHandler(DeleteSnapshotTask &aTask)
                 // then do a backward merge, i.e. merge its only child onto the
                 // base disk. Here we need then to update the attachment that
                 // refers to the child and have it point to the parent instead
-                Assert(pHD->getParent().isNull());
                 Assert(pHD->getChildren().size() == 1);
 
                 ComObjPtr<Medium> pReplaceHD = pHD->getChildren().front();
@@ -2871,9 +2886,30 @@ HRESULT SessionMachine::prepareDeleteSnapshotMedium(const ComObjPtr<Medium> &aHD
     }
     else
     {
-        /* forward merge */
-        aSource = aHD;
-        aTarget = pChild;
+        /* Determine best merge direction. */
+        bool fMergeForward = true;
+
+        childLock.release();
+        alock.release();
+        HRESULT rc = aHD->queryPreferredMergeDirection(pChild, fMergeForward);
+        alock.acquire();
+        childLock.acquire();
+
+        if (FAILED(rc) && rc != E_FAIL)
+            return rc;
+
+        if (fMergeForward)
+        {
+            aSource = aHD;
+            aTarget = pChild;
+            LogFlowFunc(("Forward merging selected\n"));
+        }
+        else
+        {
+            aSource = pChild;
+            aTarget = aHD;
+            LogFlowFunc(("Backward merging selected\n"));
+        }
     }
 
     HRESULT rc;

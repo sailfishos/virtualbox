@@ -126,10 +126,10 @@
           <listitem>
             <para>If you run the KDE desktop, you might prefer
             <computeroutput>krdc</computeroutput>, the KDE RDP viewer. The
-            command line would look like this:<screen>krdc --window --high-quality rdp:/1.2.3.4[:3389]</screen></para>
+            command line would look like this:<screen>krdc rdp://1.2.3.4[:3389]</screen></para>
 
             <para>Again, replace "1.2.3.4" with the host IP address, and 3389
-            with a different port if necessary. The "rdp:/" bit is required
+            with a different port if necessary. The "rdp://" bit is required
             with krdc to switch it into RDP mode.</para>
           </listitem>
 
@@ -168,7 +168,7 @@
         </footnote></para>
 
       <para>To start a virtual machine with
-      <computeroutput>VBoxHeadless</computeroutput>, you have two
+      <computeroutput>VBoxHeadless</computeroutput>, you have three
       options:</para>
 
       <itemizedlist>
@@ -181,7 +181,7 @@
         </listitem>
 
         <listitem>
-          <para>The alternative is to use
+          <para>One alternative is to use
           <computeroutput>VBoxHeadless</computeroutput> directly, as
           follows:<screen>VBoxHeadless --startvm &lt;uuid|name&gt;</screen></para>
 
@@ -193,6 +193,14 @@
           is preferred since it runs the VM directly as a background process
           which has to be done explicitly when directly starting
           <computeroutput>VBoxHeadless</computeroutput>.</para>
+        </listitem>
+
+        <listitem>
+          <para>The other alternative is to start
+          <computeroutput>VBoxHeadless</computeroutput> from the VirtualBox
+          Manager GUI, by holding the Shift key when starting a virtual
+          machine.
+          </para>
         </listitem>
       </itemizedlist>
 

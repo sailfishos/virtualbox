@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -103,11 +103,18 @@ static int parseFilterParameters(int argc, char *argv[],
 static Bstr toBaseName(Utf8Str& aFullName)
 {
     char *pszRaw = aFullName.mutableRaw();
-    char *pszSlash = strrchr(pszRaw, '/');
-    if (pszSlash)
+    /*
+     * Currently there are two metrics which base name is the same as the
+     * sub-metric name: CPU/MHz and Net/<iface>/LinkSpeed.
+     */
+    if (strcmp(pszRaw, "CPU/MHz") && !RTStrSimplePatternMatch("Net/*/LinkSpeed", pszRaw))
     {
-        *pszSlash = 0;
-        aFullName.jolt();
+        char *pszSlash = strrchr(pszRaw, '/');
+        if (pszSlash)
+        {
+            *pszSlash = 0;
+            aFullName.jolt();
+        }
     }
     return Bstr(aFullName);
 }

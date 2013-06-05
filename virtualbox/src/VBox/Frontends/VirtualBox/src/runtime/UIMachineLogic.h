@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,6 +26,9 @@
 # include <VBox/dbggui.h>
 #endif /* VBOX_WITH_DEBUGGER_GUI */
 
+/* COM includes: */
+#include "COMEnums.h"
+
 /* Forward declarations: */
 class QAction;
 class QActionGroup;
@@ -40,6 +43,9 @@ class CMachine;
 class CSnapshot;
 class CUSBDevice;
 class CVirtualBoxErrorInfo;
+#ifdef Q_WS_MAC
+class QMenuBar;
+#endif /* Q_WS_MAC */
 
 /* Machine logic interface: */
 class UIMachineLogic : public QIWithRetranslateUI3<QObject>
@@ -93,6 +99,10 @@ protected slots:
 #ifdef RT_OS_DARWIN
     virtual void sltShowWindows();
 #endif /* RT_OS_DARWIN */
+    virtual void sltGuestMonitorChange(KGuestMonitorChangedEventType changeType, ulong uScreenId, QRect screenGeo);
+
+    /* Qt callback handler: */
+    virtual void sltHostScreenCountChanged(int cHostScreenCount);
 
 protected:
 
@@ -119,8 +129,10 @@ protected:
     virtual void prepareSessionConnections();
     virtual void prepareActionGroups();
     virtual void prepareActionConnections();
+    virtual void prepareOtherConnections() {}
     virtual void prepareHandlers();
     virtual void prepareMachineWindows() = 0;
+    virtual void prepareMenu();
 #ifdef Q_WS_MAC
     virtual void prepareDock();
 #endif /* Q_WS_MAC */
@@ -135,8 +147,10 @@ protected:
 #ifdef Q_WS_MAC
     virtual void cleanupDock();
 #endif /* Q_WS_MAC */
+    virtual void cleanupMenu();
     virtual void cleanupMachineWindows() = 0;
     virtual void cleanupHandlers();
+    //virtual void cleanupOtherConnections() {}
     //virtual void cleanupActionConnections() {}
     virtual void cleanupActionGroups();
     //virtual void cleanupSessionConnections() {}
@@ -227,6 +241,7 @@ private:
 #endif /* VBOX_WITH_DEBUGGER_GUI */
 
 #ifdef Q_WS_MAC
+    QMenuBar *m_pMenuBar;
     bool m_fIsDockIconEnabled;
     UIDockIconPreview *m_pDockIconPreview;
     QActionGroup *m_pDockPreviewSelectMonitorGroup;

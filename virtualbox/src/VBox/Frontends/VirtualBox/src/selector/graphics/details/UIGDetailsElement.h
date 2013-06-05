@@ -49,9 +49,6 @@ class UIGDetailsElement : public UIGDetailsItem
 
 signals:
 
-    /* Notifier: Prepare stuff: */
-    void sigElementUpdateDone();
-
     /* Notifiers: Hover stuff: */
     void sigHoverEnter();
     void sigHoverLeave();
@@ -74,21 +71,16 @@ public:
     ~UIGDetailsElement();
 
     /* API: Element type: */
-    DetailsElementType elementType() const;
+    DetailsElementType elementType() const { return m_type; }
 
     /* API: Open/close stuff: */
-    bool closed() const;
-    bool opened() const;
+    bool closed() const { return m_fClosed; }
+    bool opened() const { return !m_fClosed; }
     void close(bool fAnimated = true);
     void open(bool fAnimated = true);
 
-    /* API: Layout stuff: */
-    virtual int minimumWidthHint() const;
-    virtual int minimumHeightHint() const;
-
     /* API: Update stuff: */
-    void updateHoverAccessibility();
-    virtual void updateAppearance() = 0;
+    virtual void updateAppearance();
 
     /* API: Animation stuff: */
     void markAnimationFinished();
@@ -105,26 +97,20 @@ protected:
     /* Data enumerator: */
     enum ElementData
     {
-        /* Layout hints: */
+        /* Hints: */
         ElementData_Margin,
         ElementData_Spacing,
-        /* Pixmaps: */
-        ElementData_Pixmap,
-        /* Fonts: */
-        ElementData_NameFont,
-        ElementData_TextFont,
-        /* Sizes: */
-        ElementData_PixmapSize,
-        ElementData_NameSize,
-        ElementData_ButtonSize,
-        ElementData_HeaderSize,
-        ElementData_TextWidth,
-        ElementData_TextHeight,
         ElementData_MinimumTextColumnWidth
     };
 
     /* Data provider: */
     QVariant data(int iKey) const;
+
+    /* Helpers: Update stuff: */
+    void updateMinimumHeaderWidth();
+    void updateMinimumHeaderHeight();
+    void updateMinimumTextWidth();
+    void updateMinimumTextHeight();
 
     /* API: Icon stuff: */
     void setIcon(const QIcon &icon);
@@ -133,13 +119,18 @@ protected:
     void setName(const QString &strName);
 
     /* API: Text stuff: */
-    UITextTable text() const;
+    UITextTable text() const { return m_text; }
     void setText(const UITextTable &text);
 
     /* API: Machine stuff: */
     const CMachine& machine();
 
     /* Helpers: Layout stuff: */
+    int minimumHeaderWidth() const { return m_iMinimumHeaderWidth; }
+    int minimumHeaderHeight() const { return m_iMinimumHeaderHeight; }
+    int minimumWidthHint() const;
+    virtual int minimumHeightHint(bool fClosed) const;
+    int minimumHeightHint() const;
     void updateLayout();
 
     /* Helpers: Hover stuff: */
@@ -148,10 +139,11 @@ protected:
 
     /* Helpers: Animation stuff: */
     void setAdditionalHeight(int iAdditionalHeight);
-    int additionalHeight() const;
-    UIGraphicsRotatorButton* button() const;
+    int additionalHeight() const { return m_iAdditionalHeight; }
+    UIGraphicsRotatorButton* button() const { return m_pButton; }
+    bool isAnimationRunning() const { return m_fAnimationRunning; }
 
-protected:
+private:
 
     /* API: Children stuff: */
     void addItem(UIGDetailsItem *pItem);
@@ -163,10 +155,6 @@ protected:
     /* Helpers: Prepare stuff: */
     void prepareElement();
     void prepareButton();
-
-    /* Helpers: Layout stuff: */
-    virtual int minimumHeightHint(bool fClosed) const;
-    QSizeF sizeHint(Qt::SizeHint which, const QSizeF &constraint = QSizeF()) const;
 
     /* Helpers: Paint stuff: */
     void paint(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption, QWidget *pWidget = 0);
@@ -182,7 +170,8 @@ protected:
 
     /* Helpers: Mouse stuff: */
     void updateButtonVisibility();
-    void updateNameHoverRepresentation(QGraphicsSceneHoverEvent *pEvent);
+    void handleHoverEvent(QGraphicsSceneHoverEvent *pEvent);
+    void updateNameHoverLink();
 
     /* Helper: Layout stuff: */
     static QTextLayout* prepareTextLayout(const QFont &font, QPaintDevice *pPaintDevice,
@@ -194,10 +183,19 @@ protected:
     /* Variables: */
     UIGDetailsSet *m_pSet;
     DetailsElementType m_type;
-    QIcon m_icon;
+    QPixmap m_pixmap;
     QString m_strName;
     UITextTable m_text;
     int m_iCornerRadius;
+    QFont m_nameFont;
+    QFont m_textFont;
+    QSize m_pixmapSize;
+    QSize m_nameSize;
+    QSize m_buttonSize;
+    int m_iMinimumHeaderWidth;
+    int m_iMinimumHeaderHeight;
+    int m_iMinimumTextWidth;
+    int m_iMinimumTextHeight;
 
     /* Variables: Toggle stuff: */
     bool m_fClosed;
@@ -207,7 +205,6 @@ protected:
 
     /* Variables: Hover stuff: */
     bool m_fHovered;
-    bool m_fNameHoveringAccessible;
     bool m_fNameHovered;
     QStateMachine *m_pHighlightMachine;
     QPropertyAnimation *m_pForwardAnimation;
@@ -216,6 +213,9 @@ protected:
     int m_iDefaultDarkness;
     int m_iHighlightDarkness;
     int m_iAnimationDarkness;
+
+    /* Friends: */
+    friend class UIGDetailsSet;
 };
 
 #endif /* __UIGDetailsElement_h__ */

@@ -3971,6 +3971,9 @@ static void generate_texcoord_assignment(struct wined3d_shader_buffer *buffer, I
     unsigned int i;
     char reg_mask[6];
 
+    if (!ps)
+        return;
+
     for (i = 0, map = ps->baseShader.reg_maps.texcoord; map && i < min(8, MAX_REG_TEXCRD); map >>= 1, ++i)
     {
         if (!map & 1)
@@ -5334,7 +5337,7 @@ const shader_backend_t glsl_shader_backend = {
     shader_glsl_color_fixup_supported,
 };
 
-#ifdef VBOXWINEDBG_SHADERS
+#if defined(VBOXWINEDBG_SHADERS) || defined(VBOX_WINE_WITH_PROFILE)
 void vboxWDbgPrintF(char * szString, ...)
 {
     char szBuffer[4096*2] = {0};

@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -96,7 +96,7 @@
 # define _WARN_LOGGER VBOX_VIDEO_LOG_LOGGER
 #endif
 
-#define WARN_NOBP(_a) _LOGMSG(VBOX_VIDEO_LOG_LOGGER, "WARNING! :", _a)
+#define WARN_NOBP(_a) _LOGMSG(_WARN_LOGGER, "WARNING! :", _a)
 #define WARN(_a)           \
     do                     \
     {                      \
@@ -107,6 +107,14 @@
         if(!(_a)) { \
             WARN(_w); \
         }\
+    } while (0)
+
+#define STOP_FATAL() do {      \
+        AssertReleaseFailed(); \
+    } while (0)
+#define ERR(_a) do { \
+        _LOGMSG(VBOX_VIDEO_LOGREL_LOGGER, "FATAL! :", _a); \
+        STOP_FATAL();                             \
     } while (0)
 
 #define LOG(_a) _LOGMSG(VBOX_VIDEO_LOG_LOGGER, "", _a)

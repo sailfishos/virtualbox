@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -4438,7 +4438,7 @@ static DECLCALLBACK(int) vmR3HotUnplugCpu(PVM pVM, VMCPUID idCpu)
      * even without this.
      */
     Log(("vmR3HotUnplugCpu for VCPU %u\n", idCpu));
-    PGMR3ResetUnpluggedCpu(pVM, pVCpu);
+    PGMR3ResetCpu(pVM, pVCpu);
     PDMR3ResetCpu(pVCpu);
     TRPMR3ResetCpu(pVCpu);
     CPUMR3ResetCpu(pVCpu);

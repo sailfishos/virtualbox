@@ -23,8 +23,8 @@
 #include "UIGDetailsItem.h"
 
 /* Forward declarations: */
-class QGraphicsLinearLayout;
 class UIVMItem;
+class QGraphicsScene;
 
 /* Details group
  * for graphics details model/view architecture: */
@@ -34,8 +34,9 @@ class UIGDetailsGroup : public UIGDetailsItem
 
 signals:
 
-    /* Notifiers: Prepare stuff: */
-    void sigStartFirstStep(QString strGroupId);
+    /* Notifiers: Size-hint stuff: */
+    void sigMinimumWidthHintChanged(int iMinimumWidthHint);
+    void sigMinimumHeightHintChanged(int iMinimumHeightHint);
 
 public:
 
@@ -44,29 +45,18 @@ public:
     int type() const { return Type; }
 
     /* Constructor/destructor: */
-    UIGDetailsGroup();
+    UIGDetailsGroup(QGraphicsScene *pParent);
     ~UIGDetailsGroup();
 
-    /* API: Prepare stuff: */
-    void setItems(const QList<UIVMItem*> &items);
-    void updateItems();
-    void stopPopulatingItems();
-
-    /* API: Children stuff: */
-    void addItem(UIGDetailsItem *pItem);
-    void removeItem(UIGDetailsItem *pItem);
-    QList<UIGDetailsItem*> items(UIGDetailsItemType type = UIGDetailsItemType_Set) const;
-    bool hasItems(UIGDetailsItemType type = UIGDetailsItemType_Set) const;
-    void clearItems(UIGDetailsItemType type = UIGDetailsItemType_Set);
-
-    /* API: Layout stuff: */
-    void updateLayout();
+    /* API: Build stuff: */
+    void buildGroup(const QList<UIVMItem*> &machineItems);
+    void rebuildGroup();
+    void stopBuildingGroup();
 
 private slots:
 
-    /* Handlers: Prepare stuff: */
-    void sltFirstStep(QString strGroupId);
-    void sltNextStep(QString strGroupId);
+    /* Handler: Build stuff: */
+    void sltBuildStep(QString strStepId, int iStepNumber);
 
 private:
 
@@ -81,24 +71,34 @@ private:
     /* Data provider: */
     QVariant data(int iKey) const;
 
+    /* Hidden API: Children stuff: */
+    void addItem(UIGDetailsItem *pItem);
+    void removeItem(UIGDetailsItem *pItem);
+    QList<UIGDetailsItem*> items(UIGDetailsItemType type = UIGDetailsItemType_Set) const;
+    bool hasItems(UIGDetailsItemType type = UIGDetailsItemType_Set) const;
+    void clearItems(UIGDetailsItemType type = UIGDetailsItemType_Set);
+
     /* Helpers: Prepare stuff: */
+    void prepareConnections();
     void loadSettings();
-    void prepareLayout();
-    void prepareSets(const QList<UIVMItem*> &items);
-    void updateSets();
-    void prepareSet(QString strGroupId);
 
-    /* Main variables: */
-    QGraphicsLinearLayout *m_pMainLayout;
-    QGraphicsLinearLayout *m_pLayout;
-    QList<UIGDetailsItem*> m_sets;
+    /* Helpers: Layout stuff: */
+    void updateGeometry();
+    int minimumWidthHint() const;
+    int minimumHeightHint() const;
+    void updateLayout();
 
-    /* Prepare variables: */
-    QList<UIVMItem*> m_items;
-    UIPrepareStep *m_pStep;
-    int m_iStep;
+    /* Variables: */
+    int m_iPreviousMinimumWidthHint;
+    int m_iPreviousMinimumHeightHint;
+    QList<UIGDetailsItem*> m_items;
+    QList<UIVMItem*> m_machineItems;
+    UIBuildStep *m_pBuildStep;
     QString m_strGroupId;
     QStringList m_settings;
+
+    /* Friends: */
+    friend class UIGDetailsModel;
 };
 
 #endif /* __UIGDetailsGroup_h__ */

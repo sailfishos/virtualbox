@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,27 +26,48 @@
 
 UIGChooserView::UIGChooserView(QWidget *pParent)
     : QGraphicsView(pParent)
+    , m_iMinimumWidthHint(0)
+    , m_iMinimumHeightHint(0)
 {
-    /* Fix palette: */
-    QPalette pal = palette();
-    pal.setColor(QPalette::Base, QColor(240, 240, 240));
-    setPalette(pal);
+    /* Setup frame: */
+    setFrameShape(QFrame::NoFrame);
+    setFrameShadow(QFrame::Plain);
+    setAlignment(Qt::AlignLeft | Qt::AlignTop);
 
-    /* Scrollbars policy: */
+    /* Setup scroll-bars policy: */
     setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
     /* Update scene-rect: */
     updateSceneRect();
 }
 
-void UIGChooserView::sltHandleRootItemResized(const QSizeF &size, int iMinimumWidth)
+void UIGChooserView::sltMinimumWidthHintChanged(int iMinimumWidthHint)
 {
-    /* Update scene-rect: */
-    updateSceneRect(size);
+    /* Is there something changed? */
+    if (m_iMinimumWidthHint == iMinimumWidthHint)
+        return;
 
-    /* Set minimum width: */
-    setMinimumWidth(2 * frameWidth() + iMinimumWidth +
-                    verticalScrollBar()->sizeHint().width());
+    /* Remember new value: */
+    m_iMinimumWidthHint = iMinimumWidthHint;
+
+    /* Set minimum view width according passed width-hint: */
+    setMinimumWidth(2 * frameWidth() + iMinimumWidthHint + verticalScrollBar()->sizeHint().width());
+
+    /* Update scene-rect: */
+    updateSceneRect();
+}
+
+void UIGChooserView::sltMinimumHeightHintChanged(int iMinimumHeightHint)
+{
+    /* Is there something changed? */
+    if (m_iMinimumHeightHint == iMinimumHeightHint)
+        return;
+
+    /* Remember new value: */
+    m_iMinimumHeightHint = iMinimumHeightHint;
+
+    /* Update scene-rect: */
+    updateSceneRect();
 }
 
 void UIGChooserView::sltFocusChanged(UIGChooserItem *pFocusItem)
@@ -61,20 +82,16 @@ void UIGChooserView::sltFocusChanged(UIGChooserItem *pFocusItem)
     ensureVisible(geo, 0, 0);
 }
 
-void UIGChooserView::resizeEvent(QResizeEvent*)
+void UIGChooserView::resizeEvent(QResizeEvent *pEvent)
 {
-    /* Update scene-rect: */
-    updateSceneRect();
+    /* Call to base-class: */
+    QGraphicsView::resizeEvent(pEvent);
     /* Notify listeners: */
     emit sigResized();
 }
 
-void UIGChooserView::updateSceneRect(const QSizeF &sizeHint /* = QSizeF() */)
+void UIGChooserView::updateSceneRect()
 {
-    QPointF topLeft = QPointF(0, 0);
-    QSizeF rectSize = viewport()->size();
-    if (!sizeHint.isNull())
-        rectSize = rectSize.expandedTo(sizeHint);
-    setSceneRect(QRectF(topLeft, rectSize));
+    setSceneRect(0, 0, m_iMinimumWidthHint, m_iMinimumHeightHint);
 }
 

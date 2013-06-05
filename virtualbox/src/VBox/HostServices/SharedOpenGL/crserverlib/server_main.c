@@ -183,6 +183,10 @@ static void crServerTearDown( void )
     crStateDestroy();
 
     crNetTearDown();
+
+    VBoxVrListClear(&cr_server.RootVr);
+
+    VBoxVrTerm();
 }
 
 static void crServerClose( unsigned int id )
@@ -228,6 +232,13 @@ crServerInit(int argc, char *argv[])
     int i;
     char *mothership = NULL;
     CRMuralInfo *defaultMural;
+
+    int rc = VBoxVrInit();
+    if (!RT_SUCCESS(rc))
+    {
+        crWarning("VBoxVrInit failed, rc %d", rc);
+        return;
+    }
 
     for (i = 1 ; i < argc ; i++)
     {
@@ -311,6 +322,10 @@ crServerInit(int argc, char *argv[])
     cr_server.contextTable = crAllocHashtable();
     cr_server.curClient->currentCtxInfo = &cr_server.MainContextInfo;
 
+    cr_server.fRootVrOn = GL_FALSE;
+    VBoxVrListInit(&cr_server.RootVr);
+    crMemset(&cr_server.RootVrCurPoint, 0, sizeof (cr_server.RootVrCurPoint));
+
     crServerInitDispatch();
     crStateDiffAPI( &(cr_server.head_spu->dispatch_table) );
 
@@ -332,6 +347,13 @@ void crVBoxServerTearDown(void)
 GLboolean crVBoxServerInit(void)
 {
     CRMuralInfo *defaultMural;
+
+    int rc = VBoxVrInit();
+    if (!RT_SUCCESS(rc))
+    {
+        crWarning("VBoxVrInit failed, rc %d", rc);
+        return GL_FALSE;
+    }
 
 #if DEBUG_FP_EXCEPTIONS
     {
@@ -387,6 +409,10 @@ GLboolean crVBoxServerInit(void)
     cr_server.contextTable = crAllocHashtable();
 //    cr_server.pContextCreateInfoTable = crAllocHashtable();
     cr_server.pWindowCreateInfoTable = crAllocHashtable();
+
+    cr_server.fRootVrOn = GL_FALSE;
+    VBoxVrListInit(&cr_server.RootVr);
+    crMemset(&cr_server.RootVrCurPoint, 0, sizeof (cr_server.RootVrCurPoint));
 
     crServerSetVBoxConfigurationHGCM();
 
@@ -1334,9 +1360,116 @@ DECLEXPORT(int32_t) crVBoxServerMapScreen(int sIndex, int32_t x, int32_t y, uint
     return VINF_SUCCESS;
 }
 
-DECLEXPORT(int32_t) crVBoxServerSetRootVisibleRegion(GLint cRects, GLint *pRects)
+static int crVBoxServerUpdateMuralRootVisibleRegion(CRMuralInfo *pMI)
 {
-    renderspuSetRootVisibleRegion(cRects, pRects);
+    uint32_t cRects;
+    const RTRECT *pRects;
+    RTRECT Rect;
+    int rc;
+
+    if (cr_server.fRootVrOn)
+    {
+        if (!pMI->fRootVrOn)
+        {
+            VBOXVR_TEXTURE Tex = {0};
+
+            rc = CrVrScrCompositorInit(&pMI->RootVrCompositor);
+            if (!RT_SUCCESS(rc))
+            {
+                crWarning("CrVrScrCompositorInit failed, rc %d", rc);
+                return rc;
+            }
+
+
+            Tex.width = pMI->width;
+            Tex.height = pMI->height;
+            Tex.target = GL_TEXTURE_2D;
+            Tex.hwid = 0;
+            CrVrScrCompositorEntryInit(&pMI->RootVrCEntry, &Tex);
+        }
+
+        rc = crServerMuralSynchRootVr(pMI, &cRects, &pRects);
+        if (!RT_SUCCESS(rc))
+        {
+            crWarning("crServerMuralSynchRootVr failed, rc %d", rc);
+            return rc;
+        }
+
+        if (!pMI->fRootVrOn)
+        {
+        	VBOXVR_TEXTURE Tex = {0};
+        	Tex.width = pMI->width;
+        	Tex.height = pMI->height;
+            CrVrScrCompositorEntryTexUpdate(&pMI->RootVrCEntry, &Tex);
+        }
+    }
+    else
+    {
+        CrVrScrCompositorTerm(&pMI->RootVrCompositor);
+        if (pMI->bReceivedRects)
+        {
+        	cRects = pMI->cVisibleRects;
+        	pRects = (const RTRECT*)pMI->pVisibleRects;
+        }
+        else
+        {
+        	cRects = 1;
+        	Rect.xLeft = 0;
+        	Rect.yTop = 0;
+        	Rect.xRight = pMI->width;
+        	Rect.yBottom = pMI->height;
+        	pRects = &Rect;
+        }
+    }
+
+    cr_server.head_spu->dispatch_table.WindowVisibleRegion(pMI->spuWindow, cRects, pRects);
+
+    pMI->fRootVrOn = cr_server.fRootVrOn;
+
+    return rc;
+}
+
+static void crVBoxServerSetRootVisibleRegionCB(unsigned long key, void *data1, void *data2)
+{
+    CRMuralInfo *pMI = (CRMuralInfo*) data1;
+
+    if (!key)
+        return;
+    (void) data2;
+
+    crVBoxServerUpdateMuralRootVisibleRegion(pMI);
+}
+
+DECLEXPORT(int32_t) crVBoxServerSetRootVisibleRegion(GLint cRects, const RTRECT *pRects)
+{
+    int32_t rc = VINF_SUCCESS;
+
+    /* non-zero rects pointer indicate rects are present and switched on
+     * i.e. cRects==0 and pRects!=NULL means root visible regioning is ON and there are no visible regions,
+     * while pRects==NULL means root visible regioning is OFF, i.e. everything is visible */
+    if (pRects)
+    {
+        crMemset(&cr_server.RootVrCurPoint, 0, sizeof (cr_server.RootVrCurPoint));
+        rc = VBoxVrListRectsSet(&cr_server.RootVr, cRects, pRects, NULL);
+        if (!RT_SUCCESS(rc))
+        {
+            crWarning("VBoxVrListRectsSet failed! rc %d", rc);
+            return rc;
+        }
+
+        cr_server.fRootVrOn = GL_TRUE;
+    }
+    else
+    {
+        if (!cr_server.fRootVrOn)
+            return VINF_SUCCESS;
+
+        VBoxVrListClear(&cr_server.RootVr);
+
+        cr_server.fRootVrOn = GL_FALSE;
+    }
+
+    crHashtableWalk(cr_server.muralTable, crVBoxServerSetRootVisibleRegionCB, NULL);
 
     return VINF_SUCCESS;
 }

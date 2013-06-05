@@ -9,7 +9,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -756,6 +756,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 
     Bstr osTypeId;
     hrc = pMachine->COMGETTER(OSTypeId)(osTypeId.asOutParam());                             H();
+    LogRel(("OS type: '%s'\n", Utf8Str(osTypeId).c_str()));
 
     BOOL fIOAPIC;
     hrc = biosSettings->COMGETTER(IOAPICEnabled)(&fIOAPIC);                                 H();
@@ -798,6 +799,15 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         InsertConfigInteger(pRoot, "PATMEnabled",          1);     /* boolean */
         InsertConfigInteger(pRoot, "CSAMEnabled",          1);     /* boolean */
 #endif
+
+#ifdef VBOX_WITH_RAW_RING1
+        if (osTypeId == "QNX")
+        {
+            /* QNX needs special treatment in raw mode due to its use of ring-1. */
+            InsertConfigInteger(pRoot, "RawR1Enabled",     1);     /* boolean */
+        }
+#endif
+
         /* Not necessary, but to make sure these two settings end up in the release log. */
         BOOL fPageFusion = FALSE;
         hrc = pMachine->COMGETTER(PageFusionEnabled)(&fPageFusion);                         H();
@@ -927,9 +937,9 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             if (    !fIsGuest64Bit
                 &&  fIOAPIC
                 &&  (   osTypeId == "WindowsNT4"
-                    || osTypeId == "Windows2000"
-                    || osTypeId == "WindowsXP"
-                    || osTypeId == "Windows2003"))
+                     || osTypeId == "Windows2000"
+                     || osTypeId == "WindowsXP"
+                     || osTypeId == "Windows2003"))
             {
                 /* Only allow TPR patching for NT, Win2k, XP and Windows Server 2003. (32 bits mode)
                  * We may want to consider adding more guest OSes (Solaris) later on.
@@ -2315,24 +2325,26 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 #endif
 
 #ifdef VBOX_WITH_USB_VIDEO
-
-                InsertConfigNode(pUsbDevices, "Webcam", &pDev);
-                InsertConfigNode(pDev,     "0", &pInst);
-                InsertConfigNode(pInst,    "Config", &pCfg);
-# if 0 /* Experiments with attaching */
-                InsertConfigInteger(pCfg, "USBVER", RT_BIT(2));
-# endif
-                InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+                BOOL aEmulatedUSBWebcamEnabled = FALSE;
+                hrc = pMachine->COMGETTER(EmulatedUSBWebcameraEnabled)(&aEmulatedUSBWebcamEnabled);    H();
+                if (aEmulatedUSBWebcamEnabled)
+                {
+                    InsertConfigNode(pUsbDevices, "Webcam", &pDev);
+                    InsertConfigNode(pDev,     "0", &pInst);
+                    InsertConfigNode(pInst,    "Config", &pCfg);
+                    InsertConfigNode(pInst,    "LUN#0", &pLunL0);
 # ifdef VBOX_WITH_USB_VIDEO_TEST
-                InsertConfigString(pLunL0,    "Driver", "WebcamFileFeeder");
-                InsertConfigNode(pLunL0,    "Config", &pCfg);
-                InsertConfigString(pCfg,   "DirToFeed", "out");
+                    InsertConfigString(pLunL0, "Driver", "WebcamFileFeeder");
+                    InsertConfigNode(pLunL0,   "Config", &pCfg);
+                    InsertConfigString(pCfg,   "DirToFeed", "out");
 # else
-                InsertConfigString(pLunL0,    "Driver", "UsbWebcamInterface");
-                InsertConfigNode(pLunL0,    "Config", &pCfg);
-                InsertConfigInteger(pCfg,   "Object", mUsbWebcamInterface);
+                    InsertConfigString(pLunL0, "Driver", "EmWebcam");
+                    InsertConfigNode(pLunL0,   "Config", &pCfg);
+                    InsertConfigInteger(pCfg,  "Object", (uintptr_t)mEmWebcam);
 # endif
+                }
 #endif
+
 #ifdef VBOX_WITH_USB_CARDREADER
                 BOOL aEmulatedUSBCardReaderEnabled = FALSE;
                 hrc = pMachine->COMGETTER(EmulatedUSBCardReaderEnabled)(&aEmulatedUSBCardReaderEnabled);    H();
@@ -2739,6 +2751,12 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
     if (RT_SUCCESS(rc))
         rc = configCfgmOverlay(pVM, virtualBox, pMachine);
 
+    /*
+     * Dump all extradata API settings tweaks, both global and per VM.
+     */
+    if (RT_SUCCESS(rc))
+        rc = configDumpAPISettingsTweaks(virtualBox, pMachine);
+
 #undef H
 
     pAlock->release(); /* Avoid triggering the lock order inversion check. */
@@ -2768,7 +2786,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 }
 
 /**
- * Applies the CFGM overlay as specified by /VBoxInternal/XXX extra data
+ * Applies the CFGM overlay as specified by VBoxInternal/XXX extra data
  * values.
  *
  * @returns VBox status code.
@@ -2809,7 +2827,7 @@ int Console::configCfgmOverlay(PVM pVM, IVirtualBox *pVirtualBox, IMachine *pMac
         size_t cGlobalValues = aGlobalExtraDataKeys.size();
 
         hrc = pMachine->GetExtraDataKeys(ComSafeArrayAsOutParam(aMachineExtraDataKeys));
-        AssertMsg(SUCCEEDED(hrc), ("VirtualBox::GetExtraDataKeys failed with %Rhrc\n", hrc));
+        AssertMsg(SUCCEEDED(hrc), ("Machine::GetExtraDataKeys failed with %Rhrc\n", hrc));
 
         // build a combined list from global keys...
         std::list<Utf8Str> llExtraDataKeys;
@@ -2922,6 +2940,66 @@ int Console::configCfgmOverlay(PVM pVM, IVirtualBox *pVirtualBox, IMachine *pMac
         return x.m_vrc;
     }
     return rc;
+}
+
+/**
+ * Dumps the API settings tweaks as specified by VBoxInternal2/XXX extra data
+ * values.
+ *
+ * @returns VBox status code.
+ * @param   pVirtualBox     Pointer to the IVirtualBox interface.
+ * @param   pMachine        Pointer to the IMachine interface.
+ */
+/* static */
+int Console::configDumpAPISettingsTweaks(IVirtualBox *pVirtualBox, IMachine *pMachine)
+{
+    {
+        SafeArray<BSTR> aGlobalExtraDataKeys;
+        HRESULT hrc = pVirtualBox->GetExtraDataKeys(ComSafeArrayAsOutParam(aGlobalExtraDataKeys));
+        AssertMsg(SUCCEEDED(hrc), ("VirtualBox::GetExtraDataKeys failed with %Rhrc\n", hrc));
+        bool hasKey = false;
+        for (size_t i = 0; i < aGlobalExtraDataKeys.size(); i++)
+        {
+            Utf8Str strKey(aGlobalExtraDataKeys[i]);
+            if (!strKey.startsWith("VBoxInternal2/"))
+                continue;
+
+            Bstr bstrValue;
+            hrc = pVirtualBox->GetExtraData(Bstr(strKey).raw(),
+                                            bstrValue.asOutParam());
+            if (FAILED(hrc))
+                continue;
+            if (!hasKey)
+                LogRel(("Global extradata API settings:\n"));
+            LogRel(("  %s=\"%ls\"\n", strKey.c_str(), bstrValue.raw()));
+            hasKey = true;
+        }
+    }
+
+    {
+        SafeArray<BSTR> aMachineExtraDataKeys;
+        HRESULT hrc = pMachine->GetExtraDataKeys(ComSafeArrayAsOutParam(aMachineExtraDataKeys));
+        AssertMsg(SUCCEEDED(hrc), ("Machine::GetExtraDataKeys failed with %Rhrc\n", hrc));
+        bool hasKey = false;
+        for (size_t i = 0; i < aMachineExtraDataKeys.size(); i++)
+        {
+            Utf8Str strKey(aMachineExtraDataKeys[i]);
+            if (!strKey.startsWith("VBoxInternal2/"))
+                continue;
+
+            Bstr bstrValue;
+            hrc = pMachine->GetExtraData(Bstr(strKey).raw(),
+                                         bstrValue.asOutParam());
+            if (FAILED(hrc))
+                continue;
+            if (!hasKey)
+                LogRel(("Per-VM extradata API settings:\n"));
+            LogRel(("  %s=\"%ls\"\n", strKey.c_str(), bstrValue.raw()));
+            hasKey = true;
+        }
+    }
+
+    return VINF_SUCCESS;
 }
 
 /**

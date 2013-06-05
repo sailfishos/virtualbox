@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2008 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -786,6 +786,7 @@ static int vboxNetFltLinuxPacketHandler(struct sk_buff *pBuf,
          * another copy going to the wire.
          */
         Log2(("vboxNetFltLinuxPacketHandler: dropped loopback packet (cb=%u)\n", pBuf->len));
+        dev_kfree_skb(pBuf); /* We must 'consume' all packets we get (@bugref{6539})! */
         return 0;
     }
 
@@ -794,6 +795,7 @@ static int vboxNetFltLinuxPacketHandler(struct sk_buff *pBuf,
     if (pDev != pSkbDev)
     {
         Log(("vboxNetFltLinuxPacketHandler: Devices do not match, pThis may be wrong! pThis=%p\n", pThis));
+        kfree_skb(pBuf); /* This is a failure, so we use kfree_skb instead of dev_kfree_skb. */
         return 0;
     }
 
@@ -812,7 +814,7 @@ static int vboxNetFltLinuxPacketHandler(struct sk_buff *pBuf,
          */
         unsigned int uMacLen = pBuf->mac_len;
         struct sk_buff *pCopy = skb_copy(pBuf, GFP_ATOMIC);
-        kfree_skb(pBuf);
+        dev_kfree_skb(pBuf);
         if (!pCopy)
         {
             LogRel(("VBoxNetFlt: Failed to allocate packet buffer, dropping the packet.\n"));

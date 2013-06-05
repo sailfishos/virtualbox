@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2005-2012 Oracle Corporation
+ * Copyright (C) 2005-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -379,7 +379,7 @@ Console::Console()
     , mAudioSniffer(NULL)
     , mNvram(NULL)
 #ifdef VBOX_WITH_USB_VIDEO
-    , mUsbWebcamInterface(NULL)
+    , mEmWebcam(NULL)
 #endif
 #ifdef VBOX_WITH_USB_CARDREADER
     , mUsbCardReader(NULL)
@@ -549,8 +549,8 @@ HRESULT Console::init(IMachine *aMachine, IInternalMachineControl *aControl, Loc
         }
 
 #ifdef VBOX_WITH_USB_VIDEO
-        unconst(mUsbWebcamInterface) = new UsbWebcamInterface(this);
-        AssertReturn(mUsbWebcamInterface, E_FAIL);
+        unconst(mEmWebcam) = new EmWebcam(this);
+        AssertReturn(mEmWebcam, E_FAIL);
 #endif
 #ifdef VBOX_WITH_USB_CARDREADER
         unconst(mUsbCardReader) = new UsbCardReader(this);
@@ -650,10 +650,10 @@ void Console::uninit()
     }
 
 #ifdef VBOX_WITH_USB_VIDEO
-    if (mUsbWebcamInterface)
+    if (mEmWebcam)
     {
-        delete mUsbWebcamInterface;
-        unconst(mUsbWebcamInterface) = NULL;
+        delete mEmWebcam;
+        unconst(mEmWebcam) = NULL;
     }
 #endif
 
@@ -1697,8 +1697,8 @@ DECLCALLBACK(int) Console::doGuestPropNotification(void *pvExtension,
     PHOSTCALLBACKDATA   pCBData = reinterpret_cast<PHOSTCALLBACKDATA>(pvParms);
     AssertReturn(sizeof(HOSTCALLBACKDATA) == cbParms, VERR_INVALID_PARAMETER);
     AssertReturn(HOSTCALLBACKMAGIC == pCBData->u32Magic, VERR_INVALID_PARAMETER);
-    Log5(("Console::doGuestPropNotification: pCBData={.pcszName=%s, .pcszValue=%s, .pcszFlags=%s}\n",
-          pCBData->pcszName, pCBData->pcszValue, pCBData->pcszFlags));
+    LogFlow(("Console::doGuestPropNotification: pCBData={.pcszName=%s, .pcszValue=%s, .pcszFlags=%s}\n",
+             pCBData->pcszName, pCBData->pcszValue, pCBData->pcszFlags));
 
     int  rc;
     Bstr name(pCBData->pcszName);
@@ -1713,7 +1713,7 @@ DECLCALLBACK(int) Console::doGuestPropNotification(void *pvExtension,
         rc = VINF_SUCCESS;
     else
     {
-        LogFunc(("Console::doGuestPropNotification: hrc=%Rhrc pCBData={.pcszName=%s, .pcszValue=%s, .pcszFlags=%s}\n",
+        LogFlow(("Console::doGuestPropNotification: hrc=%Rhrc pCBData={.pcszName=%s, .pcszValue=%s, .pcszFlags=%s}\n",
                  hrc, pCBData->pcszName, pCBData->pcszValue, pCBData->pcszFlags));
         rc = Global::vboxStatusCodeFromCOM(hrc);
     }
@@ -5498,6 +5498,7 @@ HRESULT Console::setGuestProperty(IN_BSTR aName, IN_BSTR aValue, IN_BSTR aFlags)
         return E_INVALIDARG;
     if ((aFlags != NULL) && !VALID_PTR(aFlags))
         return E_INVALIDARG;
+    bool fDelete = (!aValue || !aValue[0]);
 
     AutoCaller autoCaller(this);
     AssertComRCReturnRC(autoCaller.rc());
@@ -5521,7 +5522,7 @@ HRESULT Console::setGuestProperty(IN_BSTR aName, IN_BSTR aValue, IN_BSTR aFlags)
     /* The + 1 is the null terminator */
     parm[0].u.pointer.size = (uint32_t)Utf8Name.length() + 1;
     Utf8Str Utf8Value = aValue;
-    if (aValue != NULL)
+    if (!fDelete)
     {
         parm[1].type = VBOX_HGCM_SVC_PARM_PTR;
         parm[1].u.pointer.addr = (void*)Utf8Value.c_str();
@@ -5536,10 +5537,10 @@ HRESULT Console::setGuestProperty(IN_BSTR aName, IN_BSTR aValue, IN_BSTR aFlags)
         /* The + 1 is the null terminator */
         parm[2].u.pointer.size = (uint32_t)Utf8Flags.length() + 1;
     }
-    if ((aValue != NULL) && (aFlags != NULL))
+    if (!fDelete && (aFlags != NULL))
         vrc = m_pVMMDev->hgcmHostCall("VBoxGuestPropSvc", SET_PROP_HOST,
                                       3, &parm[0]);
-    else if (aValue != NULL)
+    else if (!fDelete)
         vrc = m_pVMMDev->hgcmHostCall("VBoxGuestPropSvc", SET_PROP_VALUE_HOST,
                                     2, &parm[0]);
     else
@@ -6349,6 +6350,12 @@ HRESULT Console::powerUp(IProgress **aProgress, bool aPaused)
                 tr("The virtual machine is already running or busy (machine state: %s)"),
                 Global::stringifyMachineState(mMachineState));
 
+        /* Set up release logging as early as possible after the check if
+         * there is already a running VM which we shouldn't disturb. */
+        rc = consoleInitReleaseLog(mMachine);
+        if (FAILED(rc))
+            throw rc;
+
         /* test and clear the TeleporterEnabled property  */
         BOOL fTeleporterEnabled;
         rc = mMachine->COMGETTER(TeleporterEnabled)(&fTeleporterEnabled);
@@ -6628,9 +6635,6 @@ HRESULT Console::powerUp(IProgress **aProgress, bool aPaused)
         else
             LogFlowThisFunc(("Machine has a current snapshot which is online, skipping immutable images reset\n"));
 
-        rc = consoleInitReleaseLog(mMachine);
-        if (FAILED(rc))
-            throw rc;
 #ifdef VBOX_WITH_EXTPACK
         mptrExtPackManager->dumpAllToReleaseLog();
 #endif
@@ -7356,14 +7360,15 @@ HRESULT Console::createSharedFolder(const Utf8Str &strName, const SharedFolderDa
                           aData.m_strHostPath.c_str(),
                           hostPathFull,
                           sizeof(hostPathFull));
+
+    bool fMissing = false;
     if (RT_FAILURE(vrc))
         return setError(E_INVALIDARG,
                         tr("Invalid shared folder path: '%s' (%Rrc)"),
                         aData.m_strHostPath.c_str(), vrc);
     if (!RTPathExists(hostPathFull))
-        return setError(E_INVALIDARG,
-                        tr("Shared folder path '%s' does not exist on the host"),
-                        aData.m_strHostPath.c_str());
+        fMissing = true;
+
     /* Check whether the path is full (absolute) */
     if (RTPathCompare(aData.m_strHostPath.c_str(), hostPathFull) != 0)
         return setError(E_INVALIDARG,
@@ -7409,7 +7414,9 @@ HRESULT Console::createSharedFolder(const Utf8Str &strName, const SharedFolderDa
     parms[2].type = VBOX_HGCM_SVC_PARM_32BIT;
     parms[2].u.uint32 = (aData.m_fWritable ? SHFL_ADD_MAPPING_F_WRITABLE : 0)
                       | (aData.m_fAutoMount ? SHFL_ADD_MAPPING_F_AUTOMOUNT : 0)
-                      | (fSymlinksCreate ? SHFL_ADD_MAPPING_F_CREATE_SYMLINKS : 0);
+                      | (fSymlinksCreate ? SHFL_ADD_MAPPING_F_CREATE_SYMLINKS : 0)
+                      | (fMissing ? SHFL_ADD_MAPPING_F_MISSING : 0)
+                      ;
 
     vrc = m_pVMMDev->hgcmHostCall("VBoxSharedFolders",
                                   SHFL_FN_ADD_MAPPING,
@@ -7421,6 +7428,11 @@ HRESULT Console::createSharedFolder(const Utf8Str &strName, const SharedFolderDa
         return setError(E_FAIL,
             tr("Could not create a shared folder '%s' mapped to '%s' (%Rrc)"),
             strName.c_str(), aData.m_strHostPath.c_str(), vrc);
+
+    if (fMissing)
+        return setError(E_INVALIDARG,
+                        tr("Shared folder path '%s' does not exist on the host"),
+                        aData.m_strHostPath.c_str());
 
     return S_OK;
 }
@@ -9308,13 +9320,13 @@ DECLCALLBACK(int) Console::fntTakeSnapshotWorker(RTTHREAD Thread, void *pvUser)
 
         fBeganTakingSnapshot = true;
 
-        /*
-         * state file is non-null only when the VM is paused
-         * (i.e. creating a snapshot online)
-         */
-        bool f =     (!pTask->bstrSavedStateFile.isEmpty() &&  pTask->fTakingSnapshotOnline)
-                  || ( pTask->bstrSavedStateFile.isEmpty() && !pTask->fTakingSnapshotOnline);
-        if (!f)
+        /* Check sanity: for offline snapshots there must not be a saved state
+         * file name. All other combinations are valid (even though online
+         * snapshots without saved state file seems inconsistent - there are
+         * some exotic use cases, which need to be explicitly enabled, see the
+         * code of SessionMachine::BeginTakingSnapshot. */
+        if (   !pTask->fTakingSnapshotOnline
+            && !pTask->bstrSavedStateFile.isEmpty())
             throw setErrorStatic(E_FAIL, "Invalid state of saved state file");
 
         /* sync the state with the server */
@@ -9326,31 +9338,38 @@ DECLCALLBACK(int) Console::fntTakeSnapshotWorker(RTTHREAD Thread, void *pvUser)
         // STEP 3: save the VM state (if online)
         if (pTask->fTakingSnapshotOnline)
         {
-            Utf8Str strSavedStateFile(pTask->bstrSavedStateFile);
-
+            int vrc;
             SafeVMPtr ptrVM(that);
             if (!ptrVM.isOk())
                 throw ptrVM.rc();
 
             pTask->mProgress->SetNextOperation(Bstr(tr("Saving the machine state")).raw(),
                                                pTask->ulMemSize);       // operation weight, same as computed when setting up progress object
-            pTask->mProgress->setCancelCallback(takesnapshotProgressCancelCallback, ptrVM.rawUVM());
+            if (!pTask->bstrSavedStateFile.isEmpty())
+            {
+                Utf8Str strSavedStateFile(pTask->bstrSavedStateFile);
 
-            alock.release();
-            LogFlowFunc(("VMR3Save...\n"));
-            int vrc = VMR3Save(ptrVM,
+                pTask->mProgress->setCancelCallback(takesnapshotProgressCancelCallback, ptrVM.rawUVM());
+
+                alock.release();
+                LogFlowFunc(("VMR3Save...\n"));
+                vrc = VMR3Save(ptrVM,
                                strSavedStateFile.c_str(),
                                true /*fContinueAfterwards*/,
                                Console::stateProgressCallback,
                                static_cast<IProgress *>(pTask->mProgress),
                                &fSuspenededBySave);
-            alock.acquire();
-            if (RT_FAILURE(vrc))
-                throw setErrorStatic(E_FAIL,
-                                     tr("Failed to save the machine state to '%s' (%Rrc)"),
-                                     strSavedStateFile.c_str(), vrc);
+                alock.acquire();
+                if (RT_FAILURE(vrc))
+                    throw setErrorStatic(E_FAIL,
+                                         tr("Failed to save the machine state to '%s' (%Rrc)"),
+                                         strSavedStateFile.c_str(), vrc);
 
-            pTask->mProgress->setCancelCallback(NULL, NULL);
+                pTask->mProgress->setCancelCallback(NULL, NULL);
+            }
+            else
+                LogRel(("Console: skipped saving state as part of online snapshot\n"));
+
             if (!pTask->mProgress->notifyPointOfNoReturn())
                 throw setErrorStatic(E_FAIL, tr("Canceled"));
             that->mptrCancelableProgress.setNull();

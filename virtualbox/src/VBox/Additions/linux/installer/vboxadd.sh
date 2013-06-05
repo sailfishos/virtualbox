@@ -1,10 +1,10 @@
 #! /bin/sh
 #
-# Linux Additions kernel module init script ($Revision: 81678 $)
+# Linux Additions kernel module init script ($Revision: 83687 $)
 #
 
 #
-# Copyright (C) 2006-2010 Oracle Corporation
+# Copyright (C) 2006-2012 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -228,6 +228,11 @@ running_vboxsf()
     lsmod | grep -q "vboxsf[^_-]"
 }
 
+running_vboxvideo()
+{
+    lsmod | grep -q "vboxvideo[^_-]"
+}
+
 do_vboxguest_non_udev()
 {
     if [ ! -c $dev ]; then
@@ -313,6 +318,9 @@ start()
             fail "modprobe vboxsf failed"
         }
     }
+
+    # This is needed as X.Org Server 1.13 does not auto-load the module.
+    running_vboxvideo || $MODPROBE vboxvideo > /dev/null 2>&1
 
     # Mount all shared folders from /etc/fstab. Normally this is done by some
     # other startup script but this requires the vboxdrv kernel module loaded.

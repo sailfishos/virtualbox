@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -261,7 +261,6 @@ typedef struct VBOXWDDMDISP_ALLOCATION
     UINT iAlloc;
     struct VBOXWDDMDISP_RESOURCE *pRc;
     void* pvMem;
-    UINT D3DWidth;
     /* object type is defined by enmD3DIfType enum */
     IUnknown *pD3DIf;
     VBOXDISP_D3DIFTYPE enmD3DIfType;

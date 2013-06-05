@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -393,6 +393,15 @@ public:
 
     /* Returns full medium-format name for the given base medium-format name: */
     static QString fullMediumFormatName(const QString &strBaseMediumFormatName);
+
+    /* Extra-data settings stuff: */
+    static bool isApprovedByExtraData(CMachine &machine, const QString &strExtraDataKey);
+    static bool shouldWeShowMachine(CMachine &machine);
+    static bool shouldWeAllowMachineReconfiguration(CMachine &machine,
+                                                    bool fIncludingMachineGeneralCheck = false,
+                                                    bool fIncludingMachineStateCheck = false);
+    static bool shouldWeShowDetails(CMachine &machine,
+                                    bool fIncludingMachineGeneralCheck = false);
 
 signals:
 

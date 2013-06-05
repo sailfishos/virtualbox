@@ -691,6 +691,25 @@ Statistics update:  disabled
             be specified in megabytes. The default size is 0 megabytes. For
             details, see <xref linkend="guestadd-balloon" />.</para>
           </listitem>
+
+          <listitem>
+            <para><computeroutput>--lptmode&lt;1-N&gt;
+            &lt;Device&gt;</computeroutput> 
+            Specifies the Device Name of the parallel port that 
+            the Parallel Port feature will be using. Use this
+            <emphasis>before</emphasis> <computeroutput>--lpt</computeroutput>.
+            This feature is host operating system specific.</para>
+          </listitem>
+
+          <listitem>
+            <para><computeroutput>--lpt&lt;1-N&gt;
+            &lt;I/O base&gt; &lt;IRQ&gt;</computeroutput> 
+            Specifies the I/O address of the parallel port and the IRQ
+            number that the Parallel Port feature will be using. Use this
+            <emphasis>after</emphasis>
+            <computeroutput>--lptmod</computeroutput>. I/O base address and IRQ are 
+			the values that guest sees i.e. the values avalable under guest Device Manager.</para>
+          </listitem>
         </itemizedlist></para>
     </sect2>
 
@@ -1719,6 +1738,12 @@ Virtual system 0:
                 </listitem>
 
                 <listitem>
+                  <para>"additions": For a virtual DVD drive only, this
+                    attaches the <emphasis>VirtualBox Guest Additions</emphasis>
+                    image to the given device slot.</para>
+                </listitem>
+              
+                <listitem>
                   <para>If a UUID is specified, it must be the UUID of a
                   storage medium that is already known to VirtualBox (e.g.
                   because it has been attached to another virtual machine).
@@ -2210,7 +2235,10 @@ Virtual system 0:
           Execute <computeroutput>sdelete -z</computeroutput> in the guest to
           zero the free disk space before compressing the virtual disk
           image. For Linux, use the <code>zerofree</code> utility which
-          supports ext2/ext3 filesystems.</para>
+          supports ext2/ext3 filesystems. For Mac OS X guests, use the
+          <emphasis>Erase Free Space</emphasis> feature of the built-in
+          <emphasis>Disk Utility</emphasis>. Use
+          <emphasis>Zero Out Data</emphasis> there.</para>
 
           <para>Please note that compacting is currently only available for
           VDI images. A similar effect can be achieved by zeroing out free
@@ -3534,7 +3562,7 @@ Value: 2006.01.01</screen>
     linkend="intro-installing" />.<itemizedlist>
         <listitem>
           <para>To add a new extension pack, use <computeroutput>VBoxManage
-          extpack install &lt;tarball&gt;</computeroutput>. This command
+          extpack install &lt;.vbox-extpack&gt;</computeroutput>. This command
           will fail if an older version of the same extension pack is already
           installed. The optional <computeroutput>--replace</computeroutput>
           parameter can be used to uninstall the old package before the new

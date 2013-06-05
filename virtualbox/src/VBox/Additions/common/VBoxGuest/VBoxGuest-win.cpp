@@ -2,7 +2,7 @@
  *
  * VBoxGuest - Windows specifics.
  *
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -803,6 +803,8 @@ static NTSTATUS vboxguestwinIOCtl(PDEVICE_OBJECT pDevObj, PIRP pIrp)
                 {
                     Status = STATUS_INVALID_PARAMETER;
                 }
+                else if (vrc == VERR_OUT_OF_RANGE)
+                    Status = STATUS_INVALID_BUFFER_SIZE;
                 else
                     Status = STATUS_UNSUCCESSFUL;
             }

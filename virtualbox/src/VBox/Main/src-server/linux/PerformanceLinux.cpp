@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,6 +27,7 @@
 #include <iprt/ctype.h>
 #include <iprt/err.h>
 #include <iprt/param.h>
+#include <iprt/path.h>
 #include <iprt/string.h>
 #include <iprt/mp.h>
 
@@ -35,6 +36,8 @@
 
 #include "Logging.h"
 #include "Performance.h"
+
+#define VBOXVOLINFO_NAME "VBoxVolInfo"
 
 namespace pm {
 
@@ -45,15 +48,23 @@ public:
     virtual int preCollect(const CollectorHints& hints, uint64_t /* iTick */);
     virtual int getHostMemoryUsage(ULONG *total, ULONG *used, ULONG *available);
     virtual int getHostFilesystemUsage(const char *name, ULONG *total, ULONG *used, ULONG *available);
+    virtual int getHostDiskSize(const char *name, uint64_t *size);
     virtual int getProcessMemoryUsage(RTPROCESS process, ULONG *used);
 
     virtual int getRawHostCpuLoad(uint64_t *user, uint64_t *kernel, uint64_t *idle);
     virtual int getRawHostNetworkLoad(const char *name, uint64_t *rx, uint64_t *tx);
     virtual int getRawHostDiskLoad(const char *name, uint64_t *disk_ms, uint64_t *total_ms);
     virtual int getRawProcessCpuLoad(RTPROCESS process, uint64_t *user, uint64_t *kernel, uint64_t *total);
+
+    virtual int getDiskListByFs(const char *name, DiskList& listUsage, DiskList& listLoad);
 private:
     virtual int _getRawHostCpuLoad();
     int getRawProcessStats(RTPROCESS process, uint64_t *cpuUser, uint64_t *cpuKernel, ULONG *memPagesUsed);
+    char *getDiskName(char *pszDiskName, size_t cbDiskName, const char *pszDevName, bool fTrimDigits);
+    void addVolumeDependencies(const char *pcszVolume, DiskList& listDisks);
+    void addRaidDisks(const char *pcszDevice, DiskList& listDisks);
+    char *trimTrailingDigits(char *pszName);
+    char *trimNewline(char *pszName);
 
     struct VMProcessStats
     {
@@ -233,6 +244,31 @@ int CollectorLinux::getHostFilesystemUsage(const char *path, ULONG *total, ULONG
     return VINF_SUCCESS;
 }
 
+int CollectorLinux::getHostDiskSize(const char *name, uint64_t *size)
+{
+    int rc = VINF_SUCCESS;
+    char *pszName = NULL;
+    long long unsigned int u64Size;
+
+    RTStrAPrintf(&pszName, "/sys/block/%s/size", name);
+    Assert(pszName);
+    FILE *f = fopen(pszName, "r");
+    RTMemFree(pszName);
+
+    if (f)
+    {
+        if (fscanf(f, "%llu", &u64Size) == 1)
+            *size = u64Size * 512;
+        else
+            rc = VERR_FILE_IO_ERROR;
+        fclose(f);
+    }
+    else
+        rc = VERR_ACCESS_DENIED;
+
+    return rc;
+}
+
 int CollectorLinux::getProcessMemoryUsage(RTPROCESS process, ULONG *used)
 {
     VMProcessMap::const_iterator it = mProcessStats.find(process);
@@ -324,6 +360,7 @@ int CollectorLinux::getRawHostNetworkLoad(const char *name, uint64_t *rx, uint64
 
 int CollectorLinux::getRawHostDiskLoad(const char *name, uint64_t *disk_ms, uint64_t *total_ms)
 {
+#if 0
     int rc = VINF_SUCCESS;
     char szIfName[/*IFNAMSIZ*/ 16 + 36];
     long long unsigned int u64Busy, tmp;
@@ -344,17 +381,87 @@ int CollectorLinux::getRawHostDiskLoad(const char *name, uint64_t *disk_ms, uint
     }
     else
         rc = VERR_ACCESS_DENIED;
+#else
+    int rc = VERR_MISSING;
+    FILE *f = fopen("/proc/diskstats", "r");
+    if (f)
+    {
+        char szBuf[128];
+        while (fgets(szBuf, sizeof(szBuf), f))
+        {
+            char *pszBufName = szBuf;
+            while (*pszBufName == ' ')         ++pszBufName; /* Skip spaces */
+            while (RT_C_IS_DIGIT(*pszBufName)) ++pszBufName; /* Skip major */
+            while (*pszBufName == ' ')         ++pszBufName; /* Skip spaces */
+            while (RT_C_IS_DIGIT(*pszBufName)) ++pszBufName; /* Skip minor */
+            while (*pszBufName == ' ')         ++pszBufName; /* Skip spaces */
+
+            char *pszBufData = strchr(pszBufName, ' ');
+            if (!pszBufData)
+            {
+                LogRel(("CollectorLinux::getRawHostDiskLoad() failed to parse disk stats: %s\n", szBuf));
+                continue;
+            }
+            *pszBufData++ = '\0';
+            if (!strcmp(name, pszBufName))
+            {
+                long long unsigned int u64Busy, tmp;
+
+                if (sscanf(pszBufData, "%llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+                           &tmp, &tmp, &tmp, &tmp, &tmp, &tmp, &tmp, &tmp, &tmp, &u64Busy, &tmp) == 11)
+                {
+                    *disk_ms   = u64Busy;
+                    *total_ms  = (uint64_t)(mSingleUser + mSingleKernel + mSingleIdle) * 1000 / mHZ;
+                    rc = VINF_SUCCESS;
+                }
+                else
+                    rc = VERR_FILE_IO_ERROR;
+                break;
+            }
+        }
+        fclose(f);
+    }
+#endif
 
     return rc;
 }
 
-static char *getDiskName(char *pszDiskName, size_t cbDiskName, const char *pszDevName)
+char *CollectorLinux::trimNewline(char *pszName)
+{
+    unsigned cbName = strlen(pszName);
+    if (cbName == 0)
+        return pszName;
+
+    char *pszEnd = pszName + cbName - 1;
+    while (pszEnd > pszName && *pszEnd == '\n')
+        pszEnd--;
+    pszEnd[1] = '\0';
+
+    return pszName;
+}
+
+char *CollectorLinux::trimTrailingDigits(char *pszName)
+{
+    unsigned cbName = strlen(pszName);
+    if (cbName == 0)
+        return pszName;
+
+    char *pszEnd = pszName + cbName - 1;
+    while (pszEnd > pszName && (RT_C_IS_DIGIT(*pszEnd) || *pszEnd == '\n'))
+        pszEnd--;
+    pszEnd[1] = '\0';
+
+    return pszName;
+}
+
+char *CollectorLinux::getDiskName(char *pszDiskName, size_t cbDiskName, const char *pszDevName, bool fTrimDigits)
 {
     unsigned cbName = 0;
     unsigned cbDevName = strlen(pszDevName);
     const char *pszEnd = pszDevName + cbDevName - 1;
-    while (pszEnd > pszDevName && RT_C_IS_DIGIT(*pszEnd))
-        pszEnd--;
+    if (fTrimDigits)
+        while (pszEnd > pszDevName && RT_C_IS_DIGIT(*pszEnd))
+            pszEnd--;
     while (pszEnd > pszDevName && *pszEnd != '/')
     {
         cbName++;
@@ -364,8 +471,84 @@ static char *getDiskName(char *pszDiskName, size_t cbDiskName, const char *pszDe
     return pszDiskName;
 }
 
+void CollectorLinux::addRaidDisks(const char *pcszDevice, DiskList& listDisks)
+{
+    FILE *f = fopen("/proc/mdstat", "r");
+    if (f)
+    {
+        char szBuf[128];
+        while (fgets(szBuf, sizeof(szBuf), f))
+        {
+            char *pszBufName = szBuf;
 
-int getDiskListByFs(const char *pszPath, DiskList& listDisks)
+            char *pszBufData = strchr(pszBufName, ' ');
+            if (!pszBufData)
+            {
+                LogRel(("CollectorLinux::addRaidDisks() failed to parse disk stats: %s\n", szBuf));
+                continue;
+            }
+            *pszBufData++ = '\0';
+            if (!strcmp(pcszDevice, pszBufName))
+            {
+                while (*pszBufData == ':')         ++pszBufData; /* Skip delimiter */
+                while (*pszBufData == ' ')         ++pszBufData; /* Skip spaces */
+                while (RT_C_IS_ALNUM(*pszBufData)) ++pszBufData; /* Skip status */
+                while (*pszBufData == ' ')         ++pszBufData; /* Skip spaces */
+                while (RT_C_IS_ALNUM(*pszBufData)) ++pszBufData; /* Skip type */
+
+                while (*pszBufData != '\0')
+                {
+                    while (*pszBufData == ' ') ++pszBufData; /* Skip spaces */
+                    char *pszDisk = pszBufData;
+                    while (RT_C_IS_ALPHA(*pszBufData))
+                        ++pszBufData;
+                    if (*pszBufData)
+                    {
+                        *pszBufData++ = '\0';
+                        listDisks.push_back(RTCString(pszDisk));
+                        while (*pszBufData != '\0' && *pszBufData != ' ')
+                            ++pszBufData;
+                    }
+                    else
+                        listDisks.push_back(RTCString(pszDisk));
+                }
+                break;
+            }
+        }
+        fclose(f);
+    }
+}
+
+void CollectorLinux::addVolumeDependencies(const char *pcszVolume, DiskList& listDisks)
+{
+    char szVolInfo[RTPATH_MAX];
+    int rc = RTPathExecDir(szVolInfo, sizeof(szVolInfo) - sizeof("/" VBOXVOLINFO_NAME " ") - strlen(pcszVolume));
+    if (RT_FAILURE(rc))
+    {
+        LogRel(("VolInfo: Failed to get program path, rc=%Rrc\n", rc));
+        return;
+    }
+    strcat(szVolInfo, "/" VBOXVOLINFO_NAME " ");
+    strcat(szVolInfo, pcszVolume);
+
+    FILE *fp = popen(szVolInfo, "r");
+    if (fp)
+    {
+        char szBuf[128];
+
+        while (fgets(szBuf, sizeof(szBuf), fp))
+            if (strncmp(szBuf, "dm-", 3))
+                listDisks.push_back(RTCString(trimTrailingDigits(szBuf)));
+            else
+                listDisks.push_back(RTCString(trimNewline(szBuf)));
+
+        pclose(fp);
+    }
+    else
+        listDisks.push_back(RTCString(pcszVolume));
+}
+
+int CollectorLinux::getDiskListByFs(const char *pszPath, DiskList& listUsage, DiskList& listLoad)
 {
     FILE *mtab = setmntent("/etc/mtab", "r");
     if (mtab)
@@ -373,10 +556,44 @@ int getDiskListByFs(const char *pszPath, DiskList& listDisks)
         struct mntent *mntent;
         while ((mntent = getmntent(mtab)))
         {
+            /* Skip rootfs entry, there must be another root mount. */
+            if (strcmp(mntent->mnt_fsname, "rootfs") == 0)
+                continue;
             if (strcmp(pszPath, mntent->mnt_dir) == 0)
             {
-                char szDevName[32];
-                listDisks.push_back(RTCString(getDiskName(szDevName, sizeof(szDevName), mntent->mnt_fsname)));
+                char szDevName[128];
+                char szFsName[1024];
+                /* Try to resolve symbolic link if necessary */
+                ssize_t cbFsName = readlink(mntent->mnt_fsname, szFsName, sizeof(szFsName) - 1);
+                if (cbFsName != -1)
+                    szFsName[cbFsName] = '\0';
+                else
+                    strcpy(szFsName, mntent->mnt_fsname);
+                if (!strncmp(szFsName, "/dev/mapper", 11))
+                {
+                    /* LVM */
+                    getDiskName(szDevName, sizeof(szDevName), szFsName, false);
+                    addVolumeDependencies(szDevName, listUsage);
+                    listLoad = listUsage;
+                }
+                else if (!strncmp(szFsName, "/dev/md", 7))
+                {
+                    /* Software RAID */
+                    getDiskName(szDevName, sizeof(szDevName), szFsName, false);
+                    listUsage.push_back(RTCString(szDevName));
+                    addRaidDisks(szDevName, listLoad);
+                }
+                else
+                {
+                    /* Plain disk partition */
+                    getDiskName(szDevName, sizeof(szDevName), mntent->mnt_fsname, true);
+                    listUsage.push_back(RTCString(szDevName));
+                    listLoad.push_back(RTCString(szDevName));
+                }
+                if (listUsage.empty() || listLoad.empty())
+                {
+                    LogRel(("Failed to retrive disk info: getDiskName(%s) --> %s\n", mntent->mnt_fsname, szDevName));
+                }
                 break;
             }
         }

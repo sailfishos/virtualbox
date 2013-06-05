@@ -854,6 +854,10 @@
         <source>Shared &amp;Clipboard</source>
         <translation>Paylaşılan &amp;Pano</translation>
     </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translation>Sürükle&apos;v&apos;Bırak</translation>
+    </message>
 </context>
 <context>
     <name>UIApplianceEditorWidget</name>
@@ -1809,6 +1813,22 @@
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
         <translation>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation>Grubu daralt</translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation>Grubu genişlet</translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation>Gruba gir</translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation>Gruptan çık</translation>
     </message>
 </context>
 <context>

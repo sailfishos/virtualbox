@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -292,8 +292,22 @@ void crServerCreateMuralFBO(CRMuralInfo *mural)
     GLuint uid;
     GLenum status;
     SPUDispatchTable *gl = &cr_server.head_spu->dispatch_table;
+    CRContextInfo *pMuralContextInfo;
+    int RestoreSpuWindow = -1;
+    int RestoreSpuContext = -1;
 
     CRASSERT(mural->idFBO==0);
+
+    pMuralContextInfo = cr_server.currentCtxInfo;
+    if (!pMuralContextInfo)
+    {
+        /* happens on saved state load */
+        CRASSERT(cr_server.MainContextInfo.SpuContext);
+        pMuralContextInfo = &cr_server.MainContextInfo;
+        cr_server.head_spu->dispatch_table.MakeCurrent(mural->spuWindow, 0, cr_server.MainContextInfo.SpuContext);
+        RestoreSpuWindow = 0;
+        RestoreSpuContext = 0;
+    }
 
     /*Color texture*/
     gl->GenTextures(1, &mural->idColorTex);
@@ -365,6 +379,11 @@ void crServerCreateMuralFBO(CRMuralInfo *mural)
     if (crStateIsBufferBound(GL_PIXEL_UNPACK_BUFFER_ARB))
     {
         gl->BindBufferARB(GL_PIXEL_UNPACK_BUFFER_ARB, ctx->bufferobject.unpackBuffer->hwid);
+    }
+
+    if (RestoreSpuWindow >= 0 && RestoreSpuContext >= 0)
+    {
+        cr_server.head_spu->dispatch_table.MakeCurrent(RestoreSpuWindow, 0, RestoreSpuContext);
     }
 }
 

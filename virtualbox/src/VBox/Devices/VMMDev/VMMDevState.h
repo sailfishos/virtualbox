@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2007 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,6 +30,10 @@ typedef struct DISPLAYCHANGEINFO
     uint32_t yres;
     uint32_t bpp;
     uint32_t display;
+    uint32_t xOrigin;
+    uint32_t yOrigin;
+    bool fEnabled;
+    bool fChangeOrigin;
 } DISPLAYCHANGEINFO;
 
 typedef struct DISPLAYCHANGEREQUEST

@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -76,6 +76,20 @@ HRESULT VBoxDispD3DOpen(VBOXDISPD3D *pD3D)
         if (!pD3D->pfnVBoxWineExD3DDev9Flush)
         {
             WARN(("no VBoxWineExD3DDev9Flush"));
+            break;
+        }
+
+        pD3D->pfnVBoxWineExD3DDev9FlushToHost = (PFNVBOXWINEEXD3DDEV9_FLUSHTOHOST)GetProcAddress(pD3D->hD3DLib, "VBoxWineExD3DDev9FlushToHost");
+        if (!pD3D->pfnVBoxWineExD3DDev9FlushToHost)
+        {
+            WARN(("no VBoxWineExD3DDev9FlushToHost"));
+            break;
+        }
+
+        pD3D->pfnVBoxWineExD3DDev9Finish = (PFNVBOXWINEEXD3DDEV9_FINISH)GetProcAddress(pD3D->hD3DLib, "VBoxWineExD3DDev9Finish");
+        if (!pD3D->pfnVBoxWineExD3DDev9Finish)
+        {
+            WARN(("no VBoxWineExD3DDev9Finish"));
             break;
         }
 

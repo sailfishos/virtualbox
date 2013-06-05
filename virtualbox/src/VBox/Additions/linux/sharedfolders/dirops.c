@@ -453,13 +453,6 @@ static int sf_instantiate(struct inode *parent, struct dentry *dentry,
     SET_INODE_INFO(inode, sf_new_i);
     sf_init_inode(sf_g, inode, info);
     sf_new_i->path = path;
-
-    dentry->d_time = jiffies;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 38)
-    d_set_d_op(dentry, &sf_dentry_ops);
-#else
-    dentry->d_op = &sf_dentry_ops;
-#endif
     INIT_LIST_HEAD(&sf_new_i->handles);
     sf_new_i->force_restat = 0;
     sf_new_i->force_reread = 0;

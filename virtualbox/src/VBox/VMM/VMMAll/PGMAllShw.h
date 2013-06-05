@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -298,7 +298,8 @@ PGM_SHW_DECL(int, GetPage)(PVMCPU pVCpu, RTGCUINTPTR GCPtr, uint64_t *pfFlags, P
     else /* mapping: */
     {
 # if    PGM_SHW_TYPE == PGM_TYPE_AMD64 \
-     || PGM_SHW_TYPE == PGM_TYPE_EPT
+     || PGM_SHW_TYPE == PGM_TYPE_EPT \
+     || defined(PGM_WITHOUT_MAPPINGS)
         AssertFailed(); /* can't happen */
         pPT = NULL;     /* shut up MSC */
 # else

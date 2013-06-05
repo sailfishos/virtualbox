@@ -53,6 +53,13 @@ endif
 ifdef VBOX_WITH_DTRACE_RC
  VMM_COMMON_DEFS += VBOX_WITH_DTRACE_RC
 endif
+ifdef VBOX_WITH_SAFE_STR 
+ VMM_COMMON_DEFS += VBOX_WITH_SAFE_STR 
+endif
+ifdef VBOX_WITH_RAW_RING1
+ VMM_COMMON_DEFS += VBOX_WITH_RAW_RING1
+endif
+
 # VMM_COMMON_DEFS += VBOX_WITH_NS_ACCOUNTING_STATS
 
 # Special IEM debug mode which compares the result with REM.
@@ -118,7 +125,7 @@ VBoxVMM_SOURCES  = \
 	VMMR3/DBGFSym.cpp \
 	VMMR3/DBGFR3Trace.cpp \
 	VMMR3/EM.cpp \
-	VMMR3/EMRaw.cpp \
+	$(if $(VBOX_WITH_RAW_MODE),VMMR3/EMRaw.cpp) \
 	VMMR3/EMHwaccm.cpp \
 	VMMR3/FTM.cpp \
 	VMMR3/IEMR3.cpp \

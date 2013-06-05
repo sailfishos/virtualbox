@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,7 +30,7 @@
 #include "UIGDetailsModel.h"
 
 UIGDetailsItem::UIGDetailsItem(UIGDetailsItem *pParent)
-    : QIGraphicsWidget(pParent)
+    : QIWithRetranslateUI4<QIGraphicsWidget>(pParent)
     , m_pParent(pParent)
 {
     /* Basic item setup: */
@@ -45,6 +45,10 @@ UIGDetailsItem::UIGDetailsItem(UIGDetailsItem *pParent)
         /* Non-root item setup: */
         setAcceptHoverEvents(true);
     }
+
+    /* Setup connections: */
+    connect(this, SIGNAL(sigBuildStep(QString, int)),
+            this, SLOT(sltBuildStep(QString, int)), Qt::QueuedConnection);
 }
 
 UIGDetailsGroup* UIGDetailsItem::toGroup()
@@ -80,9 +84,29 @@ UIGDetailsItem* UIGDetailsItem::parentItem() const
     return m_pParent;
 }
 
-void UIGDetailsItem::updateSizeHint()
+void UIGDetailsItem::updateGeometry()
 {
-    updateGeometry();
+    /* Call to base-class: */
+    QIGraphicsWidget::updateGeometry();
+
+    /* Do the same for the parent: */
+    if (parentItem())
+        parentItem()->updateGeometry();
+}
+
+QSizeF UIGDetailsItem::sizeHint(Qt::SizeHint which, const QSizeF &constraint /* = QSizeF() */) const
+{
+    /* If Qt::MinimumSize or Qt::PreferredSize requested: */
+    if (which == Qt::MinimumSize || which == Qt::PreferredSize)
+        /* Return wrappers: */
+        return QSizeF(minimumWidthHint(), minimumHeightHint());
+    /* Call to base-class: */
+    return QIGraphicsWidget::sizeHint(which, constraint);
+}
+
+void UIGDetailsItem::sltBuildStep(QString, int)
+{
+    AssertMsgFailed(("This item doesn't support building!"));
 }
 
 /* static */
@@ -122,28 +146,34 @@ void UIGDetailsItem::paintPixmap(QPainter *pPainter, const QRect &rect, const QP
 }
 
 /* static */
-void UIGDetailsItem::paintText(QPainter *pPainter, const QRect &rect, const QFont &font,
-                               const QString &strText, bool fUrl /* = false */)
+void UIGDetailsItem::paintText(QPainter *pPainter, QPoint point,
+                               const QFont &font, QPaintDevice *pPaintDevice,
+                               const QString &strText, const QColor &color)
 {
+    /* Prepare variables: */
+    QFontMetrics fm(font, pPaintDevice);
+    point += QPoint(0, fm.ascent());
+
+    /* Draw text: */
     pPainter->save();
     pPainter->setFont(font);
-    if (fUrl)
-    {
-        QPalette pal = QApplication::palette();
-        pPainter->setPen(pal.color(QPalette::Link));
-    }
-    pPainter->drawText(rect, strText);
+    pPainter->setPen(color);
+    pPainter->drawText(point, strText);
     pPainter->restore();
 }
 
-UIPrepareStep::UIPrepareStep(QObject *pParent, const QString &strStepId /* = QString() */)
+UIBuildStep::UIBuildStep(QObject *pParent, QObject *pBuildObject, const QString &strStepId, int iStepNumber)
     : QObject(pParent)
     , m_strStepId(strStepId)
+    , m_iStepNumber(iStepNumber)
 {
+    /* Prepare connections: */
+    connect(pBuildObject, SIGNAL(sigBuildDone()), this, SLOT(sltStepDone()), Qt::QueuedConnection);
+    connect(this, SIGNAL(sigStepDone(QString, int)), pParent, SLOT(sltBuildStep(QString, int)), Qt::QueuedConnection);
 }
 
-void UIPrepareStep::sltStepDone()
+void UIBuildStep::sltStepDone()
 {
-    emit sigStepDone(m_strStepId);
+    emit sigStepDone(m_strStepId, m_iStepNumber);
 }
 
