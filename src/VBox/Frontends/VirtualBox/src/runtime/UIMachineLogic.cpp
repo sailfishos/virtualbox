@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,6 +24,9 @@
 #include <QImageWriter>
 #include <QPainter>
 #include <QTimer>
+#ifdef Q_WS_MAC
+# include <QMenuBar>
+#endif /* Q_WS_MAC */
 
 /* GUI includes: */
 #include "QIFileDialog.h"
@@ -165,11 +168,17 @@ void UIMachineLogic::prepare()
     /* Prepare action connections: */
     prepareActionConnections();
 
+    /* Prepare other connections: */
+    prepareOtherConnections();
+
     /* Prepare handlers: */
     prepareHandlers();
 
     /* Prepare machine window(s): */
     prepareMachineWindows();
+
+    /* Prepare menu: */
+    prepareMenu();
 
 #ifdef Q_WS_MAC
     /* Prepare dock: */
@@ -204,6 +213,9 @@ void UIMachineLogic::cleanup()
     /* Cleanup dock: */
     cleanupDock();
 #endif /* Q_WS_MAC */
+
+    /* Cleanup menu: */
+    cleanupMenu();
 
     /* Cleanup machine window(s): */
     cleanupMachineWindows();
@@ -435,6 +447,20 @@ void UIMachineLogic::sltShowWindows()
 }
 #endif /* Q_WS_MAC */
 
+void UIMachineLogic::sltGuestMonitorChange(KGuestMonitorChangedEventType, ulong, QRect)
+{
+    /* Deliver event to all machine-windows: */
+    foreach (UIMachineWindow *pMachineWindow, machineWindows())
+        pMachineWindow->handleScreenCountChange();
+}
+
+void UIMachineLogic::sltHostScreenCountChanged(int /*cHostScreenCount*/)
+{
+    /* Deliver event to all machine-windows: */
+    foreach (UIMachineWindow *pMachineWindow, machineWindows())
+        pMachineWindow->handleScreenCountChange();
+}
+
 UIMachineLogic::UIMachineLogic(QObject *pParent, UISession *pSession, UIVisualStateType visualStateType)
     : QIWithRetranslateUI3<QObject>(pParent)
     , m_pSession(pSession)
@@ -452,6 +478,7 @@ UIMachineLogic::UIMachineLogic(QObject *pParent, UISession *pSession, UIVisualSt
     , m_pDbgGuiVT(0)
 #endif /* VBOX_WITH_DEBUGGER_GUI */
 #ifdef Q_WS_MAC
+    , m_pMenuBar(0)
     , m_fIsDockIconEnabled(true)
     , m_pDockIconPreview(0)
     , m_pDockPreviewSelectMonitorGroup(0)
@@ -562,6 +589,14 @@ void UIMachineLogic::prepareSessionConnections()
     /* Show windows: */
     connect(uisession(), SIGNAL(sigShowWindows()), this, SLOT(sltShowWindows()));
 #endif /* Q_WS_MAC */
+
+    /* Guest-monitor-change updater: */
+    connect(uisession(), SIGNAL(sigGuestMonitorChange(KGuestMonitorChangedEventType, ulong, QRect)),
+            this, SLOT(sltGuestMonitorChange(KGuestMonitorChangedEventType, ulong, QRect)));
+
+    /* Host-screen-change updater: */
+    connect(uisession(), SIGNAL(sigHostScreenCountChanged(int)),
+            this, SLOT(sltHostScreenCountChanged(int)));
 }
 
 void UIMachineLogic::prepareActionGroups()
@@ -697,6 +732,13 @@ void UIMachineLogic::prepareHandlers()
     setMouseHandler(UIMouseHandler::create(this, visualStateType()));
 }
 
+void UIMachineLogic::prepareMenu()
+{
+#ifdef Q_WS_MAC
+    m_pMenuBar = uisession()->newMenuBar();
+#endif /* Q_WS_MAC */
+}
+
 #ifdef Q_WS_MAC
 void UIMachineLogic::prepareDock()
 {
@@ -813,6 +855,14 @@ void UIMachineLogic::cleanupDock()
 }
 #endif /* Q_WS_MAC */
 
+void UIMachineLogic::cleanupMenu()
+{
+#ifdef Q_WS_MAC
+    delete m_pMenuBar;
+    m_pMenuBar = 0;
+#endif /* Q_WS_MAC */
+}
+
 void UIMachineLogic::cleanupHandlers()
 {
     /* Cleanup mouse-handler: */
@@ -924,7 +974,7 @@ void UIMachineLogic::sltTakeSnapshot()
     if (!isMachineWindowsCreated())
         return;
 
-    /* Remember the paused state. */
+    /* Remember the paused state: */
     bool fWasPaused = uisession()->isPaused();
     if (!fWasPaused)
     {
@@ -934,37 +984,53 @@ void UIMachineLogic::sltTakeSnapshot()
             return;
     }
 
+    /* Get current machine: */
     CMachine machine = session().GetMachine();
 
-    VBoxTakeSnapshotDlg dlg(activeMachineWindow(), machine);
+    /* Create take-snapshot dialog: */
+    QPointer<VBoxTakeSnapshotDlg> pDlg = new VBoxTakeSnapshotDlg(activeMachineWindow(), machine);
 
+    /* Assign corresponding icon: */
     QString strTypeId = machine.GetOSTypeId();
-    dlg.mLbIcon->setPixmap(vboxGlobal().vmGuestOSTypeIcon(strTypeId));
+    pDlg->mLbIcon->setPixmap(vboxGlobal().vmGuestOSTypeIcon(strTypeId));
 
-    /* Search for the max available filter index. */
+    /* Search for the max available filter index: */
     QString strNameTemplate = QApplication::translate("UIMachineLogic", "Snapshot %1");
     int iMaxSnapshotIndex = searchMaxSnapshotIndex(machine, machine.FindSnapshot(QString()), strNameTemplate);
-    dlg.mLeName->setText(strNameTemplate.arg(++ iMaxSnapshotIndex));
+    pDlg->mLeName->setText(strNameTemplate.arg(++ iMaxSnapshotIndex));
 
-    if (dlg.exec() == QDialog::Accepted)
+    /* Exec the dialog: */
+    bool fDialogAccepted = pDlg->exec() == QDialog::Accepted;
+
+    /* Is the dialog still valid? */
+    if (pDlg)
     {
-        CConsole console = session().GetConsole();
+        /* Acquire variables: */
+        QString strSnapshotName = pDlg->mLeName->text().trimmed();
+        QString strSnapshotDescription = pDlg->mTeDescription->toPlainText();
 
-        CProgress progress = console.TakeSnapshot(dlg.mLeName->text().trimmed(), dlg.mTeDescription->toPlainText());
+        /* Destroy dialog early: */
+        delete pDlg;
 
-        if (console.isOk())
+        /* Was the dialog accepted? */
+        if (fDialogAccepted)
         {
-            /* Show the "Taking Snapshot" progress dialog */
-            msgCenter().showModalProgressDialog(progress, machine.GetName(), ":/progress_snapshot_create_90px.png", 0, true);
-
-            if (progress.GetResultCode() != 0)
-                msgCenter().cannotTakeSnapshot(progress);
+            /* Prepare the take-snapshot progress: */
+            CConsole console = session().GetConsole();
+            CProgress progress = console.TakeSnapshot(strSnapshotName, strSnapshotDescription);
+            if (console.isOk())
+            {
+                /* Show the take-snapshot progress: */
+                msgCenter().showModalProgressDialog(progress, machine.GetName(), ":/progress_snapshot_create_90px.png", 0, true);
+                if (progress.GetResultCode() != 0)
+                    msgCenter().cannotTakeSnapshot(progress);
+            }
+            else
+                msgCenter().cannotTakeSnapshot(console);
         }
-        else
-            msgCenter().cannotTakeSnapshot(console);
     }
 
-    /* Restore the running state if needed. */
+    /* Restore the running state if needed: */
     if (!fWasPaused)
     {
         /* Make sure machine-state-change callback is processed: */
@@ -1005,6 +1071,16 @@ void UIMachineLogic::sltTakeScreenshot()
         filters.prepend(filters.takeAt(i));
         strFilter = filters.first();
     }
+
+#ifdef Q_WS_WIN
+    /* Due to Qt bug, modal QFileDialog appeared above the active machine-window
+     * does not retreive the focus from the currently focused machine-view,
+     * as the result guest keyboard remains captured, so we should
+     * clear the focus from this machine-view initially: */
+    if (activeMachineWindow())
+        activeMachineWindow()->machineView()->clearFocus();
+#endif /* Q_WS_WIN */
+
     /* Request the filename from the user. */
     const CMachine &machine = session().GetMachine();
     QFileInfo fi(machine.GetSettingsFilePath());
@@ -1018,6 +1094,17 @@ void UIMachineLogic::sltTakeScreenshot()
                                                         &strFilter,
                                                         true /* resolve symlinks */,
                                                         true /* confirm overwrite */);
+
+#ifdef Q_WS_WIN
+    /* Due to Qt bug, modal QFileDialog appeared above the active machine-window
+     * does not retreive the focus from the currently focused machine-view,
+     * as the result guest keyboard remains captured, so we already
+     * cleared the focus from this machine-view and should return
+     * that focus finally: */
+    if (activeMachineWindow())
+        activeMachineWindow()->machineView()->setFocus();
+#endif /* Q_WS_WIN */
+
     /* Do the screenshot. */
     if (!strFilename.isEmpty())
         takeScreenshot(strFilename, strFilter.split(" ").value(0, "png"));
@@ -1879,11 +1966,11 @@ void UIMachineLogic::takeScreenshot(const QString &strFile, const QString &strFo
     }
     p.end();
 
-    /* Save the big image in the requested format. */
+    /* Save the big image in the requested format: */
     const QFileInfo fi(strFile);
-    const QString &strPath   = fi.absolutePath() + "/" + fi.baseName();
+    const QString &strPathWithoutSuffix = QDir(fi.absolutePath()).absoluteFilePath(fi.baseName());
     const QString &strSuffix = fi.suffix().isEmpty() ? strFormat : fi.suffix();
-    bigImg.save(QFile::encodeName(QString("%1.%2").arg(strPath).arg(strSuffix)),
+    bigImg.save(QDir::toNativeSeparators(QFile::encodeName(QString("%1.%2").arg(strPathWithoutSuffix, strSuffix))),
                 strFormat.toAscii().constData());
 }
 

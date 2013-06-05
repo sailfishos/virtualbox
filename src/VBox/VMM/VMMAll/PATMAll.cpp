@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2007 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -625,9 +625,9 @@ VMMDECL(const char *) patmGetInstructionString(uint32_t opcode, uint32_t fPatchF
         break;
     case OP_MOV:
         if (fPatchFlags & PATMFL_IDTHANDLER)
-        {
             pszInstr = "mov (Int/Trap Handler)";
-        }
+        else
+            pszInstr = "mov (cs)";
         break;
     case OP_SYSENTER:
         pszInstr = "sysenter";

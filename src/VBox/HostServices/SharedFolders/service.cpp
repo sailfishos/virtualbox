@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1313,18 +1313,20 @@ static DECLCALLBACK(int) svcHostCall (void *, uint32_t u32Function, uint32_t cPa
             }
             else
             {
-                LogRel(("    Host path '%ls', map name '%ls', %s, automount=%s, create_symlinks=%s\n",
+                LogRel(("    Host path '%ls', map name '%ls', %s, automount=%s, create_symlinks=%s, missing=%s\n",
                         ((SHFLSTRING *)paParms[0].u.pointer.addr)->String.ucs2,
                         ((SHFLSTRING *)paParms[1].u.pointer.addr)->String.ucs2,
                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_WRITABLE) ? "writable" : "read-only",
                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_AUTOMOUNT) ? "true" : "false",
-                        RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_CREATE_SYMLINKS) ? "true" : "false"));
+                        RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_CREATE_SYMLINKS) ? "true" : "false",
+                        RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_MISSING) ? "true" : "false"));
 
                 /* Execute the function. */
                 rc = vbsfMappingsAdd(pFolderName, pMapName,
                                      RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_WRITABLE),
                                      RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_AUTOMOUNT),
-                                     RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_CREATE_SYMLINKS));
+                                     RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_CREATE_SYMLINKS),
+                                     RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_MISSING));
                 if (RT_SUCCESS(rc))
                 {
                     /* Update parameters.*/

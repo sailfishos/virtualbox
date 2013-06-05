@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2013 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -23,6 +23,9 @@ include $(KBUILD_PATH)/subheader.kmk
 #
 include $(PATH_SUB_CURRENT)/sharedfolders/Makefile.kmk
 include $(PATH_SUB_CURRENT)/drm/Makefile.kmk
+ifdef VBOX_WITH_LIGHTDM_GREETER
+ include $(PATH_SUB_CURRENT)/lightdm-greeter/Makefile.kmk
+endif
 
 #
 # Globals
@@ -84,10 +87,10 @@ VBOX_LNX_ADD_INST_DEP_ON_MAKEFILE := $(MAKEFILE_CURRENT)
 # Targets
 #
 VBOX_SELINUX_CMPLD := $(PATH_SUB_CURRENT)/selinux-fedora/vbox_x11.pp
-VBOX_LNX_ADD_ARCHIVE.x86   := $(PATH_OUT_BASE)/linux.x86/$(KBUILD_TYPE)/bin/additions/VBoxGuestAdditions-x86-r$(VBOX_SVN_REV).tar.bz2
-VBOX_LNX_ADD_ARCHIVE.amd64 := $(PATH_OUT_BASE)/linux.amd64/$(KBUILD_TYPE)/bin/additions/VBoxGuestAdditions-amd64-r$(VBOX_SVN_REV).tar.bz2
+VBOX_LNX_ADD_ARCHIVE.x86   := $(PATH_OUT_BASE)/linux.x86/$(KBUILD_TYPE)/bin/additions/VBoxGuestAdditions-x86.tar.bz2
+VBOX_LNX_ADD_ARCHIVE.amd64 := $(PATH_OUT_BASE)/linux.amd64/$(KBUILD_TYPE)/bin/additions/VBoxGuestAdditions-amd64.tar.bz2
 ifndef VBOX_WITH_COMBINED_LINUX_GUEST_PACKAGE
- VBOX_LNX_ADD_ARCHIVES := $(PATH_STAGE_BIN)/additions/VBoxGuestAdditions-$(KBUILD_TARGET_ARCH)-r$(VBOX_SVN_REV).tar.bz2
+ VBOX_LNX_ADD_ARCHIVES := $(PATH_STAGE_BIN)/additions/VBoxGuestAdditions-$(KBUILD_TARGET_ARCH).tar.bz2
 else
  VBOX_LNX_ADD_ARCHIVES := \
 	$(VBOX_LNX_ADD_ARCHIVE.x86) \
@@ -122,7 +125,8 @@ VBOX_ADD_BIN.linux += \
 	VBoxClient-all
 
 VBOX_ADD_STRIP_SBIN += \
-	VBoxService
+	VBoxService \
+	$(if $(VBOX_WITH_LIGHTDM_GREETER),vbox-greeter)
 
 VBOX_ADD_STRIP_LIB += \
 	VBoxOGLarrayspu.so \
@@ -140,19 +144,7 @@ VBOX_ADD_STRIP_MOD.linux = \
 	vboxmouse_drv_14.so \
 	vboxmouse_drv_15.so \
 	vboxmouse_drv_16.so \
-	vboxvideo_drv_70.so \
-	vboxvideo_drv_71.so \
-	vboxvideo_drv_13.so \
-	vboxvideo_drv_14.so \
-	vboxvideo_drv_15.so \
-	vboxvideo_drv_16.so \
-	vboxvideo_drv_17.so \
-	vboxvideo_drv_18.so \
-	vboxvideo_drv_19.so \
-	vboxvideo_drv_110.so \
-	vboxvideo_drv_111.so \
-	vboxvideo_drv_112.so \
-	vboxvideo_drv_113.so \
+	$(addsuffix .so,$(filter vboxvideo_drv_%,$(DLLS))) \
 	$(if $(VBOX_WITH_PAM),pam_vbox.so,) \
 	mount.vboxsf
 
@@ -208,6 +200,11 @@ VBOX_LNX_ADD_DBG_FILES := \
 	$(addprefix $(VBOX_LNX_ADD_DBG_LIB_DIR),$(VBOX_LNX_ADD_STRIP_LIB)) \
 	$(addprefix $(VBOX_LNX_ADD_DBG_MOD_DIR),$(VBOX_LNX_ADD_STRIP_MOD))
 
+ifdef VBOX_WITH_LIGHTDM_GREETER_PACKING
+VBOX_LNX_ADD_INST_FILES += \
+	$(addprefix $(VBOX_LNX_ADD_INST_SBIN_DIR),vbox-greeter)
+endif
+
 # Cleanup of the the installer directory files
 OTHER_CLEAN += $(VBOX_LNX_ADD_INST_FILES) $(VBOX_LNX_ADD_DBG_FILES)
 
@@ -242,13 +239,21 @@ $(addprefix $(VBOX_LNX_ADD_INST_BIN_DIR),$(VBOX_LNX_ADD_STRIP_BIN)): \
 	$(QUIET)objcopy --add-gnu-debuglink=$@ $@
 
 # pattern rule for stripping and copying the VBOX_LNX_ADD_STRIP_SBIN files to the installation directory
-$(addprefix $(VBOX_LNX_ADD_INST_SBIN_DIR),$(VBOX_LNX_ADD_STRIP_SBIN)): \
+$(addprefix $(VBOX_LNX_ADD_INST_SBIN_DIR),\
+		$(filter-out vbox-greeter,$(VBOX_LNX_ADD_STRIP_SBIN))): \
 		$(VBOX_LNX_ADD_INST_SBIN_DIR)% : $(PATH_STAGE_BIN)/additions/% \
 		$(VBOX_LNX_ADD_DBG_SBIN_DIR)% \
 		| $$(dir $$@)
 	$(call MSG_INST_FILE,$<,$@)
 	$(QUIET)$(INSTALL) -m 0755 $(if $(VBOX_DO_STRIP),-s,) $< $@
 	$(QUIET)objcopy --add-gnu-debuglink=$@ $@
+
+# pattern rule for stripping and copying vbox-greeter to the installation directory
+$(addprefix $(VBOX_LNX_ADD_INST_SBIN_DIR),vbox-greeter): \
+		$(VBOX_LNX_ADD_INST_SBIN_DIR)% : $(subst linux,linux2,$(PATH_STAGE_BIN))/additions/% \
+		| $$(dir $$@)
+	$(call MSG_INST_FILE,$<,$@)
+	$(QUIET)$(INSTALL) -m 0755 $< $@
 
 # pattern rule for stripping and copying the VBOX_LNX_ADD_STRIP_LIB files to the installation directory
 $(addprefix $(VBOX_LNX_ADD_INST_LIB_DIR),$(VBOX_LNX_ADD_STRIP_LIB)): \
@@ -320,7 +325,6 @@ $(addprefix $(VBOX_LNX_ADD_INST_MOD_DIR),$(VBOX_LNX_ADD_INIT)): \
 	$(QUIET)$(RM) -Rf $@
 	$(QUIET)$(CP) -RPf -- $< $@
 
-
 INSTALLS += GuestDrivers-src
 GuestDrivers-src_INST = $(INST_ADDITIONS)src/
 GuestDrivers-src_MODE = a+r,u+w
@@ -341,6 +345,7 @@ lnx_add_inst-noexec_INSTTYPE = stage
 lnx_add_inst-noexec_SOURCES  = \
 	$(VBOX_REL_X11_ADD_INST)vboxclient.desktop \
 	$(VBOX_REL_X11_ADD_INST)vboxvideo.ids \
+	$(if $(VBOX_WITH_LIGHTDM_GREETER_PACKING),lightdm-greeter/vbox-greeter.desktop,) \
 	selinux-fedora/vbox_x11.pp \
 	selinux-fedora/vbox_accel.pp
 
@@ -365,8 +370,12 @@ LnxAdd-scripts_EXEC_SOURCES  = \
 	$(VBOX_REL_LNX_INST_SRC)routines.sh \
 	$(VBOX_REL_LNX_ADD_INST)vboxadd.sh=>vboxadd \
 	$(VBOX_REL_LNX_ADD_INST)vboxadd-service.sh=>vboxadd-service \
-	$(VBOX_REL_LNX_ADD_INST)vboxadd-x11.sh=>vboxadd-x11 \
+	$(VBOX_REL_LNX_ADD_INST)vboxadd-x11.sh=>vboxadd-x11
 
+ifdef VBOX_WITH_LIGHTDM_GREETER_PACKING
+ LnxAdd-scripts_EXEC_SOURCES += \
+	$(VBOX_REL_LNX_ADD_INST)module-autologon.sh=>installer/module-autologon
+endif
 
 #
 # VBoxClient-all

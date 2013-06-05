@@ -1,10 +1,10 @@
-/* $Revision: 78886 $ */
+/* $Revision: 83687 $ */
 /** @file
  * VBoxGuestLibR0 - IDC with VBoxGuest and HGCM helpers.
  */
 
 /*
- * Copyright (C) 2006-2009 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -309,7 +309,13 @@ int vbglDriverIOCtl (VBGLDRIVER *pDriver, uint32_t u32Function, void *pvData, ui
     if (rc != STATUS_SUCCESS)
         Log(("vbglDriverIOCtl: ntstatus=%x\n", rc));
 
-    return NT_SUCCESS(rc)? VINF_SUCCESS: VERR_VBGL_IOCTL_FAILED;
+    if (NT_SUCCESS(rc))
+        return VINF_SUCCESS;
+    if (rc == STATUS_INVALID_PARAMETER)
+        return VERR_INVALID_PARAMETER;
+    if (rc == STATUS_INVALID_BUFFER_SIZE)
+        return VERR_OUT_OF_RANGE;
+    return VERR_VBGL_IOCTL_FAILED;
 
 # elif defined (RT_OS_OS2)
     if (    pDriver->u32Session

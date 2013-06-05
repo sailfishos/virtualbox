@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -235,6 +235,9 @@ typedef struct VBOXWDDM_CONTEXT
     UINT  EngineAffinity;
     BOOLEAN fRenderFromShadowDisabled;
     uint32_t u32CrConClientID;
+#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
+    VBOXMP_CRPACKER CrPacker;
+#endif
     VBOXWDDM_HTABLE Swapchains;
     VBOXVIDEOCM_CTX CmContext;
     VBOXVIDEOCM_ALLOC_CONTEXT AllocContext;

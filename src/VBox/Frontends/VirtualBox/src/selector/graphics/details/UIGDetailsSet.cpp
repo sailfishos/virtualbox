@@ -31,119 +31,194 @@
 
 UIGDetailsSet::UIGDetailsSet(UIGDetailsItem *pParent)
     : UIGDetailsItem(pParent)
+    , m_fElementNameHoverable(false)
+    , m_fHasDetails(false)
     , m_fFullSet(true)
-    , m_pStep(0)
-    , m_iStep(-1)
-    , m_iLastStep(-1)
+    , m_pBuildStep(0)
+    , m_iLastStepNumber(-1)
 {
-    /* Setup size-policy: */
-    setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-
-    /* Add item to the parent: */
+    /* Add set to the parent group: */
     parentItem()->addItem(this);
 
+    /* Prepare set: */
+    prepareSet();
+
     /* Prepare connections: */
-    connect(this, SIGNAL(sigStartFirstStep(QString)), this, SLOT(sltFirstStep(QString)), Qt::QueuedConnection);
-    connect(this, SIGNAL(sigSetPrepared()), this, SLOT(sltSetPrepared()), Qt::QueuedConnection);
-    connect(gVBoxEvents, SIGNAL(sigMachineStateChange(QString, KMachineState)), this, SLOT(sltMachineStateChange(QString)));
-    connect(gVBoxEvents, SIGNAL(sigMachineDataChange(QString)), this, SLOT(sltMachineAttributesChange(QString)));
-    connect(gVBoxEvents, SIGNAL(sigSessionStateChange(QString, KSessionState)), this, SLOT(sltMachineAttributesChange(QString)));
-    connect(gVBoxEvents, SIGNAL(sigSnapshotChange(QString, QString)), this, SLOT(sltMachineAttributesChange(QString)));
-    connect(&vboxGlobal(), SIGNAL(mediumEnumStarted()), this, SLOT(sltUpdateAppearance()));
-    connect(&vboxGlobal(), SIGNAL(mediumEnumFinished(const VBoxMediaList &)), this, SLOT(sltUpdateAppearance()));
+    prepareConnections();
 }
 
 UIGDetailsSet::~UIGDetailsSet()
 {
-    /* Delete all the items: */
+    /* Cleanup items: */
     clearItems();
 
-    /* Remove item from the parent: */
+    /* Remove set from the parent group: */
     parentItem()->removeItem(this);
 }
 
-void UIGDetailsSet::configure(UIVMItem *pItem, const QStringList &settings, bool fFullSet)
+void UIGDetailsSet::buildSet(UIVMItem *pMachineItem, bool fFullSet, const QStringList &settings)
 {
-    /* Assign settings: */
+    /* Remember passed arguments: */
+    m_machine = pMachineItem->machine();
+    m_fElementNameHoverable = pMachineItem->reconfigurable();
+    m_fHasDetails = pMachineItem->hasDetails();
     m_fFullSet = fFullSet;
-    m_machine = pItem->machine();
     m_settings = settings;
 
-    /* Create elements step-by-step: */
-    prepareElements();
+    /* Cleanup superfluous items: */
+    if (!m_fFullSet || !m_fHasDetails)
+    {
+        int iFirstItem = m_fHasDetails ? DetailsElementType_Display : DetailsElementType_General;
+        int iLastItem = DetailsElementType_Description;
+        bool fCleanupPerformed = false;
+        for (int i = iFirstItem; i <= iLastItem; ++i)
+            if (m_elements.contains(i))
+            {
+                delete m_elements[i];
+                fCleanupPerformed = true;
+            }
+        if (fCleanupPerformed)
+            updateGeometry();
+    }
+
+    /* Make sure we have details: */
+    if (!m_fHasDetails)
+    {
+        /* Reset last-step number: */
+        m_iLastStepNumber = -1;
+        /* Notify parent group we are built: */
+        emit sigBuildDone();
+        return;
+    }
+
+    /* Choose last-step number: */
+    m_iLastStepNumber = m_fFullSet ? DetailsElementType_Description : DetailsElementType_Preview;
+
+    /* Fetch USB controller restrictions: */
+    const CUSBController &ctl = m_machine.GetUSBController();
+    if (ctl.isNull() || !ctl.GetProxyAvailable())
+    {
+        QString strElementTypeOpened = gpConverter->toInternalString(DetailsElementType_USB);
+        QString strElementTypeClosed = strElementTypeOpened + "Closed";
+        m_settings.removeAll(strElementTypeOpened);
+        m_settings.removeAll(strElementTypeClosed);
+    }
+
+    /* Start building set: */
+    rebuildSet();
 }
 
-const CMachine& UIGDetailsSet::machine() const
+void UIGDetailsSet::sltBuildStep(QString strStepId, int iStepNumber)
 {
-    return m_machine;
-}
+    /* Cleanup build-step: */
+    delete m_pBuildStep;
+    m_pBuildStep = 0;
 
-void UIGDetailsSet::sltFirstStep(QString strSetId)
-{
-    /* Clear step: */
-    delete m_pStep;
-    m_pStep = 0;
-
-    /* Was that a requested set? */
-    if (strSetId != m_strSetId)
+    /* Is step id valid? */
+    if (strStepId != m_strSetId)
         return;
 
-    /* Prepare first element: */
-    m_iStep = DetailsElementType_General;
-    prepareElement(strSetId);
-}
+    /* Step number feats the bounds: */
+    if (iStepNumber >= 0 && iStepNumber <= m_iLastStepNumber)
+    {
+        /* Load details settings: */
+        DetailsElementType elementType = (DetailsElementType)iStepNumber;
+        QString strElementTypeOpened = gpConverter->toInternalString(elementType);
+        QString strElementTypeClosed = strElementTypeOpened + "Closed";
+        /* Should the element be visible? */
+        bool fVisible = m_settings.contains(strElementTypeOpened) || m_settings.contains(strElementTypeClosed);
+        /* Should the element be opened? */
+        bool fOpen = m_settings.contains(strElementTypeOpened);
 
-void UIGDetailsSet::sltNextStep(QString strSetId)
-{
-    /* Clear step: */
-    delete m_pStep;
-    m_pStep = 0;
+        /* Check if element is present already: */
+        UIGDetailsElement *pElement = element(elementType);
+        if (pElement && fOpen)
+            pElement->open(false);
+        /* Create element if necessary: */
+        bool fJustCreated = false;
+        if (!pElement)
+        {
+            fJustCreated = true;
+            pElement = createElement(elementType, fOpen);
+        }
 
-    /* Was that a requested set? */
-    if (strSetId != m_strSetId)
-        return;
+        /* Show element if necessary: */
+        if (fVisible && !pElement->isVisible())
+        {
+            /* Show the element: */
+            pElement->show();
+            /* Recursively update size-hint: */
+            pElement->updateGeometry();
+            /* Update layout: */
+            model()->updateLayout();
+        }
+        /* Hide element if necessary: */
+        else if (!fVisible && pElement->isVisible())
+        {
+            /* Hide the element: */
+            pElement->hide();
+            /* Recursively update size-hint: */
+            updateGeometry();
+            /* Update layout: */
+            model()->updateLayout();
+        }
+        /* Update model if necessary: */
+        else if (fJustCreated)
+            model()->updateLayout();
 
-    /* Prepare next element: */
-    ++m_iStep;
-    prepareElement(strSetId);
-}
+        /* For visible element: */
+        if (pElement->isVisible())
+        {
+            /* Create next build-step: */
+            m_pBuildStep = new UIBuildStep(this, pElement, strStepId, iStepNumber + 1);
 
-void UIGDetailsSet::sltSetPrepared()
-{
-    /* Reset step index: */
-    m_iStep = -1;
-    /* Notify parent group: */
-    emit sigSetCreationDone();
+            /* Build element: */
+            pElement->updateAppearance();
+        }
+        /* For invisible element: */
+        else
+        {
+            /* Just build next step: */
+            sltBuildStep(strStepId, iStepNumber + 1);
+        }
+    }
+    /* Step number out of bounds: */
+    else
+    {
+        /* Update model: */
+        model()->updateLayout();
+        /* Repaint all the items: */
+        foreach (UIGDetailsItem *pItem, items())
+            pItem->update();
+        /* Notify listener about build done: */
+        emit sigBuildDone();
+    }
 }
 
 void UIGDetailsSet::sltMachineStateChange(QString strId)
 {
     /* Is this our VM changed? */
-    if (machine().GetId() != strId)
+    if (m_machine.GetId() != strId)
         return;
 
-    /* Update hover accessibility: */
-    foreach (UIGDetailsItem *pItem, items())
-        pItem->toElement()->updateHoverAccessibility();
-
     /* Update appearance: */
-    prepareElements();
+    rebuildSet();
 }
 
 void UIGDetailsSet::sltMachineAttributesChange(QString strId)
 {
     /* Is this our VM changed? */
-    if (machine().GetId() != strId)
+    if (m_machine.GetId() != strId)
         return;
 
     /* Update appearance: */
-    prepareElements();
+    rebuildSet();
 }
 
 void UIGDetailsSet::sltUpdateAppearance()
 {
     /* Update appearance: */
-    prepareElements();
+    rebuildSet();
 }
 
 QVariant UIGDetailsSet::data(int iKey) const
@@ -204,8 +279,8 @@ QList<UIGDetailsItem*> UIGDetailsSet::items(UIGDetailsItemType type /* = UIGDeta
 {
     switch (type)
     {
-        case UIGDetailsItemType_Any: return items(UIGDetailsItemType_Element);
         case UIGDetailsItemType_Element: return m_elements.values();
+        case UIGDetailsItemType_Any: return items(UIGDetailsItemType_Element);
         default: AssertMsgFailed(("Invalid item type!")); break;
     }
     return QList<UIGDetailsItem*>();
@@ -215,8 +290,8 @@ bool UIGDetailsSet::hasItems(UIGDetailsItemType type /* = UIGDetailsItemType_Ele
 {
     switch (type)
     {
-        case UIGDetailsItemType_Any: return hasItems(UIGDetailsItemType_Element);
         case UIGDetailsItemType_Element: return !m_elements.isEmpty();
+        case UIGDetailsItemType_Any: return hasItems(UIGDetailsItemType_Element);
         default: AssertMsgFailed(("Invalid item type!")); break;
     }
     return false;
@@ -226,16 +301,16 @@ void UIGDetailsSet::clearItems(UIGDetailsItemType type /* = UIGDetailsItemType_E
 {
     switch (type)
     {
-        case UIGDetailsItemType_Any:
-        {
-            clearItems(UIGDetailsItemType_Element);
-            break;
-        }
         case UIGDetailsItemType_Element:
         {
             foreach (int iKey, m_elements.keys())
                 delete m_elements[iKey];
             AssertMsg(m_elements.isEmpty(), ("Set items cleanup failed!"));
+            break;
+        }
+        case UIGDetailsItemType_Any:
+        {
+            clearItems(UIGDetailsItemType_Element);
             break;
         }
         default:
@@ -254,14 +329,143 @@ UIGDetailsElement* UIGDetailsSet::element(DetailsElementType elementType) const
     return 0;
 }
 
+void UIGDetailsSet::prepareSet()
+{
+    /* Setup size-policy: */
+    setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+}
+
+void UIGDetailsSet::prepareConnections()
+{
+    /* Global-events connections: */
+    connect(gVBoxEvents, SIGNAL(sigMachineStateChange(QString, KMachineState)), this, SLOT(sltMachineStateChange(QString)));
+    connect(gVBoxEvents, SIGNAL(sigMachineDataChange(QString)), this, SLOT(sltMachineAttributesChange(QString)));
+    connect(gVBoxEvents, SIGNAL(sigSessionStateChange(QString, KSessionState)), this, SLOT(sltMachineAttributesChange(QString)));
+    connect(gVBoxEvents, SIGNAL(sigSnapshotChange(QString, QString)), this, SLOT(sltMachineAttributesChange(QString)));
+
+    /* Meidum-enumeration connections: */
+    connect(&vboxGlobal(), SIGNAL(mediumEnumStarted()), this, SLOT(sltUpdateAppearance()));
+    connect(&vboxGlobal(), SIGNAL(mediumEnumFinished(const VBoxMediaList &)), this, SLOT(sltUpdateAppearance()));
+}
+
+int UIGDetailsSet::minimumWidthHint() const
+{
+    /* Zero if has no details: */
+    if (!hasDetails())
+        return 0;
+
+    /* Prepare variables: */
+    int iMargin = data(SetData_Margin).toInt();
+    int iSpacing = data(SetData_Spacing).toInt();
+    int iMinimumWidthHint = 0;
+
+    /* Take into account all the elements: */
+    foreach (UIGDetailsItem *pItem, items())
+    {
+        /* Skip hidden: */
+        if (!pItem->isVisible())
+            continue;
+
+        /* For each particular element: */
+        UIGDetailsElement *pElement = pItem->toElement();
+        switch (pElement->elementType())
+        {
+            case DetailsElementType_General:
+            case DetailsElementType_System:
+            case DetailsElementType_Display:
+            case DetailsElementType_Storage:
+            case DetailsElementType_Audio:
+            case DetailsElementType_Network:
+            case DetailsElementType_Serial:
+#ifdef VBOX_WITH_PARALLEL_PORTS
+            case DetailsElementType_Parallel:
+#endif /* VBOX_WITH_PARALLEL_PORTS */
+            case DetailsElementType_USB:
+            case DetailsElementType_SF:
+            case DetailsElementType_Description:
+            {
+                iMinimumWidthHint = qMax(iMinimumWidthHint, pItem->minimumWidthHint());
+                break;
+            }
+            case DetailsElementType_Preview:
+            {
+                UIGDetailsItem *pGeneralItem = element(DetailsElementType_General);
+                UIGDetailsItem *pSystemItem = element(DetailsElementType_System);
+                int iGeneralElementWidth = pGeneralItem ? pGeneralItem->minimumWidthHint() : 0;
+                int iSystemElementWidth = pSystemItem ? pSystemItem->minimumWidthHint() : 0;
+                int iFirstColumnWidth = qMax(iGeneralElementWidth, iSystemElementWidth);
+                iMinimumWidthHint = qMax(iMinimumWidthHint, iFirstColumnWidth + iSpacing + pItem->minimumWidthHint());
+                break;
+            }
+        }
+    }
+
+    /* And two margins finally: */
+    iMinimumWidthHint += 2 * iMargin;
+
+    /* Return result: */
+    return iMinimumWidthHint;
+}
+
+int UIGDetailsSet::minimumHeightHint() const
+{
+    /* Zero if has no details: */
+    if (!hasDetails())
+        return 0;
+
+    /* Prepare variables: */
+    int iMargin = data(SetData_Margin).toInt();
+    int iSpacing = data(SetData_Spacing).toInt();
+    int iMinimumHeightHint = 0;
+
+    /* Take into account all the elements: */
+    foreach (UIGDetailsItem *pItem, items())
+    {
+        /* Skip hidden: */
+        if (!pItem->isVisible())
+            continue;
+
+        /* For each particular element: */
+        UIGDetailsElement *pElement = pItem->toElement();
+        switch (pElement->elementType())
+        {
+            case DetailsElementType_General:
+            case DetailsElementType_System:
+            case DetailsElementType_Display:
+            case DetailsElementType_Storage:
+            case DetailsElementType_Audio:
+            case DetailsElementType_Network:
+            case DetailsElementType_Serial:
+#ifdef VBOX_WITH_PARALLEL_PORTS
+            case DetailsElementType_Parallel:
+#endif /* VBOX_WITH_PARALLEL_PORTS */
+            case DetailsElementType_USB:
+            case DetailsElementType_SF:
+            case DetailsElementType_Description:
+            {
+                iMinimumHeightHint += (pItem->minimumHeightHint() + iSpacing);
+                break;
+            }
+            case DetailsElementType_Preview:
+            {
+                iMinimumHeightHint = qMax(iMinimumHeightHint, pItem->minimumHeightHint() + iSpacing);
+                break;
+            }
+        }
+    }
+
+    /* Minus last spacing: */
+    iMinimumHeightHint -= iSpacing;
+
+    /* And two margins finally: */
+    iMinimumHeightHint += 2 * iMargin;
+
+    /* Return result: */
+    return iMinimumHeightHint;
+}
+
 void UIGDetailsSet::updateLayout()
 {
-    /* Update size-hints for all the items: */
-    foreach (UIGDetailsItem *pItem, items())
-        pItem->updateSizeHint();
-    /* Update size-hint for this item: */
-    updateSizeHint();
-
     /* Prepare variables: */
     int iMargin = data(SetData_Margin).toInt();
     int iSpacing = data(SetData_Spacing).toInt();
@@ -271,378 +475,115 @@ void UIGDetailsSet::updateLayout()
     /* Layout all the elements: */
     foreach (UIGDetailsItem *pItem, items())
     {
-        /* Get particular element: */
-        UIGDetailsElement *pElement = pItem->toElement();
-        if (!pElement->isVisible())
+        /* Skip hidden: */
+        if (!pItem->isVisible())
             continue;
 
         /* For each particular element: */
+        UIGDetailsElement *pElement = pItem->toElement();
         switch (pElement->elementType())
         {
             case DetailsElementType_General:
             case DetailsElementType_System:
+            case DetailsElementType_Display:
+            case DetailsElementType_Storage:
+            case DetailsElementType_Audio:
+            case DetailsElementType_Network:
+            case DetailsElementType_Serial:
+#ifdef VBOX_WITH_PARALLEL_PORTS
+            case DetailsElementType_Parallel:
+#endif /* VBOX_WITH_PARALLEL_PORTS */
+            case DetailsElementType_USB:
+            case DetailsElementType_SF:
+            case DetailsElementType_Description:
             {
-                UIGDetailsElement *pPreviewElement = element(DetailsElementType_Preview);
-                int iPreviewWidth = pPreviewElement && pPreviewElement->isVisible() ? pPreviewElement->minimumWidthHint() : 0;
-                int iWidth = iPreviewWidth == 0 ? iMaximumWidth - 2 * iMargin :
-                                                  iMaximumWidth - 2 * iMargin - iSpacing - iPreviewWidth;
+                /* Move element: */
                 pElement->setPos(iMargin, iVerticalIndent);
-                /* Resize to required width: */
+                /* Calculate required width: */
+                int iWidth = iMaximumWidth - 2 * iMargin;
+                if (pElement->elementType() == DetailsElementType_General ||
+                    pElement->elementType() == DetailsElementType_System)
+                    if (UIGDetailsElement *pPreviewElement = element(DetailsElementType_Preview))
+                        if (pPreviewElement->isVisible())
+                            iWidth -= (iSpacing + pPreviewElement->minimumWidthHint());
+                /* If element width is wrong: */
+                if (pElement->geometry().width() != iWidth)
+                {
+                    /* Resize element to required width: */
+                    pElement->resize(iWidth, pElement->geometry().height());
+                    /* Update minimum-height-hint: */
+                    pElement->updateMinimumTextHeight();
+                }
+                /* Acquire required height: */
                 int iHeight = pElement->minimumHeightHint();
-                pElement->resize(iWidth, iHeight);
-                /* Update minimum height hint: */
-                pItem->updateSizeHint();
-                /* Resize to required height: */
-                iHeight = pElement->minimumHeightHint();
-                pElement->resize(iWidth, iHeight);
+                /* If element height is wrong: */
+                if (pElement->geometry().height() != iHeight)
+                {
+                    /* Resize element to required height: */
+                    pElement->resize(pElement->geometry().width(), iHeight);
+                }
+                /* Layout element content: */
                 pItem->updateLayout();
+                /* Advance indent: */
                 iVerticalIndent += (iHeight + iSpacing);
                 break;
             }
             case DetailsElementType_Preview:
             {
+                /* Prepare variables: */
                 int iWidth = pElement->minimumWidthHint();
                 int iHeight = pElement->minimumHeightHint();
+                /* Move element: */
                 pElement->setPos(iMaximumWidth - iMargin - iWidth, iMargin);
+                /* Resize element: */
                 pElement->resize(iWidth, iHeight);
+                /* Layout element content: */
                 pItem->updateLayout();
+                /* Advance indent: */
                 iVerticalIndent = qMax(iVerticalIndent, iHeight + iSpacing);
                 break;
             }
-            case DetailsElementType_Display:
-            case DetailsElementType_Storage:
-            case DetailsElementType_Audio:
-            case DetailsElementType_Network:
-            case DetailsElementType_Serial:
-#ifdef VBOX_WITH_PARALLEL_PORTS
-            case DetailsElementType_Parallel:
-#endif /* VBOX_WITH_PARALLEL_PORTS */
-            case DetailsElementType_USB:
-            case DetailsElementType_SF:
-            case DetailsElementType_Description:
-            {
-                int iWidth = iMaximumWidth - 2 * iMargin;
-                pElement->setPos(iMargin, iVerticalIndent);
-                /* Resize to required width: */
-                int iHeight = pElement->minimumHeightHint();
-                pElement->resize(iWidth, iHeight);
-                /* Update minimum height hint: */
-                pItem->updateSizeHint();
-                /* Resize to required height: */
-                iHeight = pElement->minimumHeightHint();
-                pElement->resize(iWidth, iHeight);
-                pItem->updateLayout();
-                iVerticalIndent += (iHeight + iSpacing);
-                break;
-            }
         }
     }
 }
 
-int UIGDetailsSet::minimumWidthHint() const
+void UIGDetailsSet::rebuildSet()
 {
-    /* Prepare variables: */
-    int iMargin = data(SetData_Margin).toInt();
-    int iSpacing = data(SetData_Spacing).toInt();
-    int iProposedWidth = 0;
+    /* Make sure we have details: */
+    if (!m_fHasDetails)
+        return;
 
-    /* Layout all the elements: */
-    foreach (UIGDetailsItem *pItem, items())
-    {
-        /* Get particular element: */
-        UIGDetailsElement *pElement = pItem->toElement();
-        if (!pElement->isVisible())
-            continue;
+    /* Cleanup build-step: */
+    delete m_pBuildStep;
+    m_pBuildStep = 0;
 
-        /* For each particular element: */
-        switch (pElement->elementType())
-        {
-            case DetailsElementType_General:
-            case DetailsElementType_System:
-            case DetailsElementType_Display:
-            case DetailsElementType_Storage:
-            case DetailsElementType_Audio:
-            case DetailsElementType_Network:
-            case DetailsElementType_Serial:
-#ifdef VBOX_WITH_PARALLEL_PORTS
-            case DetailsElementType_Parallel:
-#endif /* VBOX_WITH_PARALLEL_PORTS */
-            case DetailsElementType_USB:
-            case DetailsElementType_SF:
-            case DetailsElementType_Description:
-            {
-                iProposedWidth = qMax(iProposedWidth, pElement->minimumWidthHint());
-                break;
-            }
-            case DetailsElementType_Preview:
-            {
-                UIGDetailsElement *pGeneralElement = element(DetailsElementType_General);
-                UIGDetailsElement *pSystemElement = element(DetailsElementType_System);
-                int iGeneralElementWidth = pGeneralElement ? pGeneralElement->minimumWidthHint() : 0;
-                int iSystemElementWidth = pSystemElement ? pSystemElement->minimumWidthHint() : 0;
-                int iFirstColumnWidth = qMax(iGeneralElementWidth, iSystemElementWidth);
-                iProposedWidth = qMax(iProposedWidth, iFirstColumnWidth + iSpacing + pElement->minimumWidthHint());
-                break;
-            }
-        }
-    }
-
-    /* Two margins finally: */
-    iProposedWidth += 2 * iMargin;
-
-    /* Return result: */
-    return iProposedWidth;
-}
-
-int UIGDetailsSet::minimumHeightHint() const
-{
-    /* Prepare variables: */
-    int iMargin = data(SetData_Margin).toInt();
-    int iSpacing = data(SetData_Spacing).toInt();
-    int iProposedHeight = 0;
-
-    /* Layout all the elements: */
-    foreach (UIGDetailsItem *pItem, items())
-    {
-        /* Get particular element: */
-        UIGDetailsElement *pElement = pItem->toElement();
-        if (!pElement->isVisible())
-            continue;
-
-        /* For each particular element: */
-        switch (pElement->elementType())
-        {
-            case DetailsElementType_General:
-            case DetailsElementType_System:
-            case DetailsElementType_Display:
-            case DetailsElementType_Storage:
-            case DetailsElementType_Audio:
-            case DetailsElementType_Network:
-            case DetailsElementType_Serial:
-#ifdef VBOX_WITH_PARALLEL_PORTS
-            case DetailsElementType_Parallel:
-#endif /* VBOX_WITH_PARALLEL_PORTS */
-            case DetailsElementType_USB:
-            case DetailsElementType_SF:
-            case DetailsElementType_Description:
-            {
-                iProposedHeight += (pElement->minimumHeightHint() + iSpacing);
-                break;
-            }
-            case DetailsElementType_Preview:
-            {
-                iProposedHeight = qMax(iProposedHeight, pElement->minimumHeightHint() + iSpacing);
-                break;
-            }
-        }
-    }
-
-    /* Minus last spacing: */
-    iProposedHeight -= iSpacing;
-
-    /* Two margins finally: */
-    iProposedHeight += 2 * iMargin;
-
-    /* Return result: */
-    return iProposedHeight;
-}
-
-QSizeF UIGDetailsSet::sizeHint(Qt::SizeHint which, const QSizeF &constraint /* = QSizeF() */) const
-{
-    /* If Qt::MinimumSize requested: */
-    if (which == Qt::MinimumSize || which == Qt::PreferredSize)
-    {
-        /* Return wrappers: */
-        return QSizeF(minimumWidthHint(), minimumHeightHint());
-    }
-
-    /* Call to base-class: */
-    return UIGDetailsItem::sizeHint(which, constraint);
-}
-
-void UIGDetailsSet::prepareElements()
-{
-    /* Which will be the last step? */
-    m_iLastStep = m_fFullSet ? DetailsElementType_Description : DetailsElementType_Preview;
-    /* Cleanup superfluous elements: */
-    if (!m_fFullSet)
-        for (int i = DetailsElementType_Display; i <= DetailsElementType_Description; ++i)
-            if (m_elements.contains(i))
-                delete m_elements[i];
-
-    /* Per-set configuration: */
-    {
-        /* USB controller restrictions: */
-        const CUSBController &ctl = machine().GetUSBController();
-        if (ctl.isNull() || !ctl.GetProxyAvailable())
-        {
-            QString strElementTypeOpened = gpConverter->toInternalString(DetailsElementType_USB);
-            QString strElementTypeClosed = strElementTypeOpened + "Closed";
-            m_settings.removeAll(strElementTypeOpened);
-            m_settings.removeAll(strElementTypeClosed);
-        }
-    }
-
-    /* Clear step: */
-    delete m_pStep;
-    m_pStep = 0;
-
-    /* Prepare first element: */
+    /* Generate new set-id: */
     m_strSetId = QUuid::createUuid().toString();
-    emit sigStartFirstStep(m_strSetId);
-}
 
-void UIGDetailsSet::prepareElement(QString strSetId)
-{
-    /* Step number feats the bounds: */
-    if (m_iStep <= m_iLastStep)
-    {
-        /* Load details settings: */
-        DetailsElementType elementType = (DetailsElementType)m_iStep;
-        QString strElementTypeOpened = gpConverter->toInternalString(elementType);
-        QString strElementTypeClosed = strElementTypeOpened + "Closed";
-        /* Should be element visible? */
-        bool fVisible = m_settings.contains(strElementTypeOpened) || m_settings.contains(strElementTypeClosed);
-        /* Should be element opened? */
-        bool fOpen = m_settings.contains(strElementTypeOpened);
-
-        /* Check if element is present already: */
-        UIGDetailsElement *pElement = element(elementType);
-        if (pElement && fOpen)
-            pElement->open(false);
-        /* Create element if necessary: */
-        bool fJustCreated = false;
-        if (!pElement)
-        {
-            fJustCreated = true;
-            pElement = createElement(elementType, fOpen);
-        }
-
-        /* Show element if necessary: */
-        if (fVisible && !pElement->isVisible())
-        {
-            pElement->show();
-            model()->updateLayout();
-        }
-        /* Hide element if necessary: */
-        else if (!fVisible && pElement->isVisible())
-        {
-            pElement->hide();
-            model()->updateLayout();
-        }
-        /* Update model if necessary: */
-        else if (fJustCreated)
-            model()->updateLayout();
-
-        /* For visible element: */
-        if (pElement->isVisible())
-        {
-            /* Create prepare step: */
-            m_pStep = new UIPrepareStep(this, strSetId);
-            connect(pElement, SIGNAL(sigElementUpdateDone()), m_pStep, SLOT(sltStepDone()), Qt::QueuedConnection);
-            connect(m_pStep, SIGNAL(sigStepDone(const QString&)), this, SLOT(sltNextStep(const QString&)), Qt::QueuedConnection);
-
-            /* Update element: */
-            pElement->updateAppearance();
-        }
-        /* For invisible element: */
-        else
-        {
-            /* Just go to the next step: */
-            sltNextStep(strSetId);
-        }
-    }
-    /* Step number out of bounds: */
-    else
-    {
-        /* Mark whole set prepared: */
-        model()->updateLayout();
-        foreach (UIGDetailsItem *pElement, items())
-            pElement->update();
-        emit sigSetPrepared();
-    }
+    /* Request to build first step: */
+    emit sigBuildStep(m_strSetId, DetailsElementType_General);
 }
 
 UIGDetailsElement* UIGDetailsSet::createElement(DetailsElementType elementType, bool fOpen)
 {
-    UIGDetailsElement *pElement = 0;
+    /* Element factory: */
     switch (elementType)
     {
-        case DetailsElementType_General:
-        {
-            /* Create 'general' element: */
-            pElement = new UIGDetailsElementGeneral(this, fOpen);
-            break;
-        }
-        case DetailsElementType_System:
-        {
-            /* Create 'system' element: */
-            pElement = new UIGDetailsElementSystem(this, fOpen);
-            break;
-        }
-        case DetailsElementType_Preview:
-        {
-            /* Create 'preview' element: */
-            pElement = new UIGDetailsElementPreview(this, fOpen);
-            break;
-        }
-        case DetailsElementType_Display:
-        {
-            /* Create 'display' element: */
-            pElement = new UIGDetailsElementDisplay(this, fOpen);
-            break;
-        }
-        case DetailsElementType_Storage:
-        {
-            /* Create 'storage' element: */
-            pElement = new UIGDetailsElementStorage(this, fOpen);
-            break;
-        }
-        case DetailsElementType_Audio:
-        {
-            /* Create 'audio' element: */
-            pElement = new UIGDetailsElementAudio(this, fOpen);
-            break;
-        }
-        case DetailsElementType_Network:
-        {
-            /* Create 'network' element: */
-            pElement = new UIGDetailsElementNetwork(this, fOpen);
-            break;
-        }
-        case DetailsElementType_Serial:
-        {
-            /* Create 'serial' element: */
-            pElement = new UIGDetailsElementSerial(this, fOpen);
-            break;
-        }
+        case DetailsElementType_General:     return new UIGDetailsElementGeneral(this, fOpen);
+        case DetailsElementType_System:      return new UIGDetailsElementSystem(this, fOpen);
+        case DetailsElementType_Preview:     return new UIGDetailsElementPreview(this, fOpen);
+        case DetailsElementType_Display:     return new UIGDetailsElementDisplay(this, fOpen);
+        case DetailsElementType_Storage:     return new UIGDetailsElementStorage(this, fOpen);
+        case DetailsElementType_Audio:       return new UIGDetailsElementAudio(this, fOpen);
+        case DetailsElementType_Network:     return new UIGDetailsElementNetwork(this, fOpen);
+        case DetailsElementType_Serial:      return new UIGDetailsElementSerial(this, fOpen);
 #ifdef VBOX_WITH_PARALLEL_PORTS
-        case DetailsElementType_Parallel:
-        {
-            /* Create 'parallel' element: */
-            pElement = new UIGDetailsElementParallel(this, fOpen);
-            break;
-        }
+        case DetailsElementType_Parallel:    return new UIGDetailsElementParallel(this, fOpen);
 #endif /* VBOX_WITH_PARALLEL_PORTS */
-        case DetailsElementType_USB:
-        {
-            /* Create 'usb' element: */
-            pElement = new UIGDetailsElementUSB(this, fOpen);
-            break;
-        }
-        case DetailsElementType_SF:
-        {
-            /* Create 'sf' element: */
-            pElement = new UIGDetailsElementSF(this, fOpen);
-            break;
-        }
-        case DetailsElementType_Description:
-        {
-            /* Create 'description' element: */
-            pElement = new UIGDetailsElementDescription(this, fOpen);
-            break;
-        }
+        case DetailsElementType_USB:         return new UIGDetailsElementUSB(this, fOpen);
+        case DetailsElementType_SF:          return new UIGDetailsElementSF(this, fOpen);
+        case DetailsElementType_Description: return new UIGDetailsElementDescription(this, fOpen);
     }
-    return pElement;
+    return 0;
 }
 

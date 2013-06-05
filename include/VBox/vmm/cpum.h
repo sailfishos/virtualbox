@@ -413,6 +413,7 @@ VMMDECL(DISCPUMODE)     CPUMGetGuestDisMode(PVMCPU pVCpu);
  */
 
 VMMR3DECL(int)          CPUMR3Init(PVM pVM);
+VMMR3DECL(void)         CPUMR3LogCpuIds(PVM pVM);
 VMMR3DECL(void)         CPUMR3Relocate(PVM pVM);
 VMMR3DECL(int)          CPUMR3Term(PVM pVM);
 VMMR3DECL(void)         CPUMR3Reset(PVM pVM);
@@ -458,6 +459,12 @@ DECLASM(void)           CPUMGCCallGuestTrapHandler(PCPUMCTXCORE pRegFrame, uint3
  * @param   pRegFrame   Original trap/interrupt context
  */
 DECLASM(void)           CPUMGCCallV86Code(PCPUMCTXCORE pRegFrame);
+
+
+VMMDECL(uint32_t)       CPUMRCGetGuestCPL(PVMCPU pVCpu, PCPUMCTXCORE pRegFrame);
+#ifdef VBOX_WITH_RAW_RING1
+VMMDECL(void)           CPUMRCRecheckRawState(PVMCPU pVCpu, PCPUMCTXCORE pCtxCore);
+#endif
 
 /** @} */
 #endif /* IN_RC */

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008 Oracle Corporation
+ * Copyright (C) 2008-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,6 +31,8 @@
 #include <list>
 #include <vector>
 #include <queue>
+
+#include "MediumImpl.h"
 
 /* Forward decl. */
 class Machine;
@@ -153,33 +155,39 @@ namespace pm
      */
     typedef enum
     {
-        GUESTSTATMASK_NONE       = 0x00000000,
-        GUESTSTATMASK_CPUUSER    = 0x00000001,
-        GUESTSTATMASK_CPUKERNEL  = 0x00000002,
-        GUESTSTATMASK_CPUIDLE    = 0x00000004,
-        GUESTSTATMASK_MEMTOTAL   = 0x00000008,
-        GUESTSTATMASK_MEMFREE    = 0x00000010,
-        GUESTSTATMASK_MEMBALLOON = 0x00000020,
-        GUESTSTATMASK_MEMSHARED  = 0x00000040,
-        GUESTSTATMASK_MEMCACHE   = 0x00000080,
-        GUESTSTATMASK_PAGETOTAL  = 0x00000100,
-        GUESTSTATMASK_ALLOCVMM   = 0x00000200,
-        GUESTSTATMASK_FREEVMM    = 0x00000400,
-        GUESTSTATMASK_BALOONVMM  = 0x00000800,
-        GUESTSTATMASK_SHAREDVMM  = 0x00001000
-    } GUESTSTATMASK;
+        VMSTATMASK_NONE             = 0x00000000,
+        VMSTATMASK_GUEST_CPUUSER    = 0x00000001,
+        VMSTATMASK_GUEST_CPUKERNEL  = 0x00000002,
+        VMSTATMASK_GUEST_CPUIDLE    = 0x00000004,
+        VMSTATMASK_GUEST_MEMTOTAL   = 0x00000008,
+        VMSTATMASK_GUEST_MEMFREE    = 0x00000010,
+        VMSTATMASK_GUEST_MEMBALLOON = 0x00000020,
+        VMSTATMASK_GUEST_MEMSHARED  = 0x00000040,
+        VMSTATMASK_GUEST_MEMCACHE   = 0x00000080,
+        VMSTATMASK_GUEST_PAGETOTAL  = 0x00000100,
+        VMSTATMASK_VMM_ALLOC        = 0x00010000,
+        VMSTATMASK_VMM_FREE         = 0x00020000,
+        VMSTATMASK_VMM_BALOON       = 0x00040000,
+        VMSTATMASK_VMM_SHARED       = 0x00080000,
+        VMSTATMASK_NET_RX           = 0x01000000,
+        VMSTATMASK_NET_TX           = 0x02000000
+    } VMSTATMASK;
 
-    const ULONG GUESTSTATS_CPULOAD = 
-        GUESTSTATMASK_CPUUSER|GUESTSTATMASK_CPUKERNEL|GUESTSTATMASK_CPUIDLE;
-    const ULONG GUESTSTATS_RAMUSAGE =
-        GUESTSTATMASK_MEMTOTAL|GUESTSTATMASK_MEMFREE|GUESTSTATMASK_MEMBALLOON|
-        GUESTSTATMASK_MEMSHARED|GUESTSTATMASK_MEMCACHE|
-        GUESTSTATMASK_PAGETOTAL;
-    const ULONG GUESTSTATS_VMMRAM =
-        GUESTSTATMASK_ALLOCVMM|GUESTSTATMASK_FREEVMM|
-        GUESTSTATMASK_BALOONVMM|GUESTSTATMASK_SHAREDVMM;
-    const ULONG GUESTSTATS_ALL = GUESTSTATS_CPULOAD|GUESTSTATS_RAMUSAGE|GUESTSTATS_VMMRAM;
-
+    const ULONG VMSTATS_GUEST_CPULOAD = 
+        VMSTATMASK_GUEST_CPUUSER    | VMSTATMASK_GUEST_CPUKERNEL |
+        VMSTATMASK_GUEST_CPUIDLE;
+    const ULONG VMSTATS_GUEST_RAMUSAGE =
+        VMSTATMASK_GUEST_MEMTOTAL   | VMSTATMASK_GUEST_MEMFREE |
+        VMSTATMASK_GUEST_MEMBALLOON | VMSTATMASK_GUEST_MEMSHARED |
+        VMSTATMASK_GUEST_MEMCACHE   | VMSTATMASK_GUEST_PAGETOTAL;
+    const ULONG VMSTATS_VMM_RAM =
+        VMSTATMASK_VMM_ALLOC        | VMSTATMASK_VMM_FREE|
+        VMSTATMASK_VMM_BALOON       | VMSTATMASK_VMM_SHARED;
+    const ULONG VMSTATS_NET_RATE =
+        VMSTATMASK_NET_RX           | VMSTATMASK_NET_TX;
+    const ULONG VMSTATS_ALL =
+        VMSTATS_GUEST_CPULOAD       | VMSTATS_GUEST_RAMUSAGE |
+        VMSTATS_VMM_RAM             | VMSTATS_NET_RATE;
     class CollectorGuest;
 
     class CollectorGuestRequest
@@ -265,7 +273,8 @@ namespace pm
                          ULONG aMemBalloon, ULONG aMemShared,
                          ULONG aMemCache, ULONG aPageTotal,
                          ULONG aAllocVMM, ULONG aFreeVMM,
-                         ULONG aBalloonedVMM, ULONG aSharedVMM);
+                         ULONG aBalloonedVMM, ULONG aSharedVMM,
+                         ULONG aVmNetRx, ULONG aVmNetTx);
         int enable(ULONG mask);
         int disable(ULONG mask);
 
@@ -289,6 +298,8 @@ namespace pm
         ULONG getFreeVMM()      { return mFreeVMM; };
         ULONG getBalloonedVMM() { return mBalloonedVMM; };
         ULONG getSharedVMM()    { return mSharedVMM; };
+        ULONG getVmNetRx()      { return mVmNetRx; };
+        ULONG getVmNetTx()      { return mVmNetTx; };
 
     private:
         int enableVMMStats(bool mCollectVMMStats);
@@ -316,6 +327,8 @@ namespace pm
         ULONG                mFreeVMM;
         ULONG                mBalloonedVMM;
         ULONG                mSharedVMM;
+        ULONG                mVmNetRx;
+        ULONG                mVmNetTx;
     };
 
     typedef std::list<CollectorGuest*> CollectorGuestList;
@@ -343,6 +356,8 @@ namespace pm
     };
 
     /* Collector Hardware Abstraction Layer *********************************/
+    typedef std::list<RTCString> DiskList;
+
     class CollectorHAL
     {
     public:
@@ -357,6 +372,8 @@ namespace pm
         virtual int getHostMemoryUsage(ULONG *total, ULONG *used, ULONG *available);
         /** Returns file system counters in megabytes. */
         virtual int getHostFilesystemUsage(const char *name, ULONG *total, ULONG *used, ULONG *available);
+        /** Returns disk size in bytes. */
+        virtual int getHostDiskSize(const char *name, uint64_t *size);
         /** Returns CPU usage in 1/1000th per cent by a particular process. */
         virtual int getProcessCpuLoad(RTPROCESS process, ULONG *user, ULONG *kernel);
         /** Returns the amount of memory used by a process in kilobytes. */
@@ -370,12 +387,12 @@ namespace pm
         virtual int getRawHostDiskLoad(const char *name, uint64_t *disk_ms, uint64_t *total_ms);
         /** Returns process' CPU usage counter in platform-specific units. */
         virtual int getRawProcessCpuLoad(RTPROCESS process, uint64_t *user, uint64_t *kernel, uint64_t *total);
+
+        /** Returns the lists of disks (aggregate and physical) used by the specified file system. */
+        virtual int getDiskListByFs(const char *name, DiskList& listUsage, DiskList& listLoad);
     };
 
     extern CollectorHAL *createHAL();
-
-    typedef std::list<RTCString> DiskList;
-    extern int getDiskListByFs(const char *name, DiskList& list);
 
     /* Base Metrics *********************************************************/
     class BaseMetric
@@ -455,6 +472,7 @@ namespace pm
         HostCpuLoadRaw(CollectorHAL *hal, ComPtr<IUnknown> object, SubMetric *user, SubMetric *kernel, SubMetric *idle)
         : HostCpuLoad(hal, object, user, kernel, idle), mUserPrev(0), mKernelPrev(0), mIdlePrev(0) {};
 
+        void init(ULONG period, ULONG length);
         void preCollect(CollectorHints& hints, uint64_t iTick);
         void collect();
     private:
@@ -499,6 +517,27 @@ namespace pm
         SubMetric *mTotal;
         SubMetric *mUsed;
         SubMetric *mAvailable;
+    };
+
+    class HostNetworkSpeed : public BaseMetric
+    {
+    public:
+        HostNetworkSpeed(CollectorHAL *hal, ComPtr<IUnknown> object, com::Utf8Str name, com::Utf8Str shortname, com::Utf8Str /* ifname */, uint32_t speed, SubMetric *linkspeed)
+        : BaseMetric(hal, name, object), mShortName(shortname), mSpeed(speed), mLinkSpeed(linkspeed) {};
+        ~HostNetworkSpeed() { delete mLinkSpeed; };
+
+        void init(ULONG period, ULONG length);
+
+        void preCollect(CollectorHints& /* hints */, uint64_t /* iTick */) {};
+        void collect() { if (mSpeed) mLinkSpeed->put(mSpeed); };
+        const char *getUnit() { return "mbit/s"; };
+        ULONG getMinValue() { return 0; };
+        ULONG getMaxValue() { return INT32_MAX; };
+        ULONG getScale() { return 1; }
+    private:
+        com::Utf8Str mShortName;
+        uint32_t     mSpeed;
+        SubMetric   *mLinkSpeed;
     };
 
     class HostNetworkLoadRaw : public BaseMetric
@@ -547,6 +586,25 @@ namespace pm
         SubMetric   *mTotal;
         SubMetric   *mUsed;
         SubMetric   *mAvailable;
+    };
+
+    class HostDiskUsage : public BaseMetric
+    {
+    public:
+        HostDiskUsage(CollectorHAL *hal, ComPtr<IUnknown> object, com::Utf8Str name, com::Utf8Str diskname, SubMetric *total)
+            : BaseMetric(hal, name, object), mDiskName(diskname), mTotal(total) {};
+        ~HostDiskUsage() { delete mTotal; };
+
+        void init(ULONG period, ULONG length);
+        void preCollect(CollectorHints& hints, uint64_t iTick);
+        void collect();
+        const char *getUnit() { return "mB"; };
+        ULONG getMinValue() { return 0; };
+        ULONG getMaxValue() { return INT32_MAX; };
+        ULONG getScale() { return 1; }
+    private:
+        com::Utf8Str mDiskName;
+        SubMetric   *mTotal;
     };
 
     class HostDiskLoadRaw : public BaseMetric
@@ -660,6 +718,52 @@ namespace pm
 
 
 #ifndef VBOX_COLLECTOR_TEST_CASE
+    typedef std::list<ComObjPtr<Medium> > MediaList;
+    class MachineDiskUsage : public BaseMetric
+    {
+    public:
+        MachineDiskUsage(CollectorHAL *hal, ComPtr<IUnknown> object, MediaList &disks, SubMetric *used)
+        : BaseMetric(hal, "Disk/Usage", object), mDisks(disks), mUsed(used) {};
+        ~MachineDiskUsage() { delete mUsed; };
+
+        void init(ULONG period, ULONG length);
+        void preCollect(CollectorHints& hints, uint64_t iTick);
+        void collect();
+        const char *getUnit() { return "mB"; };
+        ULONG getMinValue() { return 0; };
+        ULONG getMaxValue() { return INT32_MAX; };
+        ULONG getScale() { return 1; }
+    private:
+        MediaList   mDisks;
+        SubMetric *mUsed;
+    };
+
+    /*
+     * Although MachineNetRate is measured for VM, not for the guest, it is
+     * derived from BaseGuestMetric since it uses the same mechanism for
+     * data collection -- values get pushed by Guest class along with other
+     * guest statistics.
+     */
+    class MachineNetRate : public BaseGuestMetric
+    {
+    public:
+        MachineNetRate(CollectorGuest *cguest, ComPtr<IUnknown> object, SubMetric *rx, SubMetric *tx)
+            : BaseGuestMetric(cguest, "Net/Rate", object), mRx(rx), mTx(tx) {};
+        ~MachineNetRate() { delete mRx; delete mTx; };
+
+        void init(ULONG period, ULONG length);
+        void preCollect(CollectorHints& hints, uint64_t iTick);
+        void collect();
+        int enable();
+        int disable();
+        const char *getUnit() { return "B/s"; };
+        ULONG getMinValue() { return 0; };
+        ULONG getMaxValue() { return INT32_MAX; };
+        ULONG getScale() { return 1; }
+    private:
+        SubMetric *mRx, *mTx;
+    };
+
     class GuestCpuLoad : public BaseGuestMetric
     {
     public:

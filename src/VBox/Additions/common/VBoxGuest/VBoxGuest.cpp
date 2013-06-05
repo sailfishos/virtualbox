@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1568,6 +1568,7 @@ static int VBoxGuestCheckIfVMMReqAllowed(PVBOXGUESTSESSION pSession, VMMDevReque
         case VMMDevReq_VideoAccelEnable:
         case VMMDevReq_VideoAccelFlush:
         case VMMDevReq_VideoSetVisibleRegion:
+        case VMMDevReq_GetDisplayChangeRequestEx:
         case VMMDevReq_GetSeamlessChangeRequest:
         case VMMDevReq_GetVRDPChangeRequest:
         case VMMDevReq_LogString:

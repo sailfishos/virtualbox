@@ -1042,6 +1042,10 @@
         <source>Shared &amp;Clipboard</source>
         <translation>Área de Transferência &amp;Compartilhada</translation>
     </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translation>Arrastar e Soltar</translation>
+    </message>
 </context>
 <context>
     <name>UIApplianceEditorWidget</name>
@@ -2566,46 +2570,62 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>&lt;b&gt;%1&lt;/b&gt;</source>
         <comment>Group item tool-tip / Group name</comment>
-        <translation type="unfinished"></translation>
+        <translation>&lt;qt&gt;%1&lt;/qt&gt;</translation>
     </message>
     <message numerus="yes">
         <source>%n group(s)</source>
         <comment>Group item tool-tip / Group info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n grupo</numerusform>
+            <numerusform>%n grupos</numerusform>
         </translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Group info wrapper</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
     </message>
     <message numerus="yes">
         <source>%n machine(s)</source>
         <comment>Group item tool-tip / Machine info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n máquina</numerusform>
+            <numerusform>%n máquinas</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>(%n running)</source>
         <comment>Group item tool-tip / Running machine info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>(%n em execução)</numerusform>
+            <numerusform>(%n em execução)</numerusform>
         </translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt; {1 %2&lt;?}</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt; {1 %2&lt;?}</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -5815,7 +5835,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Controller: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Controladora: %1</translation>
     </message>
 </context>
 <context>
@@ -7859,8 +7879,8 @@ p, li { white-space: pre-wrap; }
         <source>&lt;p&gt;The %n following virtual machine(s) are currently in a saved state: &lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;If you continue the runtime state of the exported machine(s) will be discarded. The other machine(s) will not be changed.&lt;/p&gt;</source>
         <comment>This text is never used with n == 0.  Feel free to drop the %n where possible, we only included it because of problems with Qt Linguist (but the user can see how many machines are in the list and doesn&apos;t need to be told).</comment>
         <translation>
-            <numerusform>&lt;p&gt;As seguintes máquinas virtuais possuem um estado de execução salvo: &lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Se você continuar, o estado atual de execução das máquinas exportadas será descartado. As outras máquinas não serão afetadas.&lt;/p&gt;</numerusform>
-            <numerusform></numerusform>
+            <numerusform>&lt;p&gt;A seguinte máquina virtual possui um estado de execução salvo: &lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Se você continuar, o estado atual de execução da máquina exportada será descartado. As outras máquinas não serão afetadas.&lt;/p&gt;</numerusform>
+            <numerusform>&lt;p&gt;As seguintes %n máquinas virtuais possuem um estado de execução salvo: &lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Se você continuar, o estado atual de execução das máquinas exportadas será descartado. As outras máquinas não serão afetadas.&lt;/p&gt;</numerusform>
         </translation>
     </message>
     <message>

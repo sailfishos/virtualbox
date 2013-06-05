@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -455,7 +455,7 @@ VMMR3DECL(int)      PGMR3InitDynMap(PVM pVM);
 VMMR3DECL(int)      PGMR3InitFinalize(PVM pVM);
 VMMR3_INT_DECL(int) PGMR3InitCompleted(PVM pVM, VMINITCOMPLETED enmWhat);
 VMMR3DECL(void)     PGMR3Relocate(PVM pVM, RTGCINTPTR offDelta);
-VMMR3DECL(void)     PGMR3ResetUnpluggedCpu(PVM pVM, PVMCPU pVCpu);
+VMMR3DECL(void)     PGMR3ResetCpu(PVM pVM, PVMCPU pVCpu);
 VMMR3DECL(void)     PGMR3Reset(PVM pVM);
 VMMR3DECL(int)      PGMR3Term(PVM pVM);
 VMMR3DECL(int)      PGMR3LockCall(PVM pVM);
@@ -512,7 +512,9 @@ VMMR3DECL(int)      PGMR3MappingsSize(PVM pVM, uint32_t *pcb);
 VMMR3DECL(int)      PGMR3MappingsFix(PVM pVM, RTGCPTR GCPtrBase, uint32_t cb);
 VMMR3DECL(int)      PGMR3MappingsUnfix(PVM pVM);
 VMMR3DECL(bool)     PGMR3MappingsNeedReFixing(PVM pVM);
+#ifdef VBOX_WITH_RAW_MODE
 VMMR3DECL(int)      PGMR3MapIntermediate(PVM pVM, RTUINTPTR Addr, RTHCPHYS HCPhys, unsigned cbPages);
+#endif
 VMMR3DECL(int)      PGMR3MapRead(PVM pVM, void *pvDst, RTGCPTR GCPtrSrc, size_t cb);
 
 VMMR3DECL(int)      PGMR3HandlerPhysicalRegister(PVM pVM, PGMPHYSHANDLERTYPE enmType, RTGCPHYS GCPhys, RTGCPHYS GCPhysLast,

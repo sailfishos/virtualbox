@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2007 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -653,7 +653,12 @@ VMMR3DECL(int) DBGFR3DisasInstrCurrentLogInternal(PVMCPU pVCpu, const char *pszP
     if (RT_FAILURE(rc))
         RTStrPrintf(szBuf, sizeof(szBuf), "DBGFR3DisasInstrCurrentLog failed with rc=%Rrc\n", rc);
     if (pszPrefix && *pszPrefix)
-        RTLogPrintf("%s-CPU%u: %s\n", pszPrefix, pVCpu->idCpu, szBuf);
+    {
+        if (pVCpu->CTX_SUFF(pVM)->cCpus > 1)
+            RTLogPrintf("%s-CPU%u: %s\n", pszPrefix, pVCpu->idCpu, szBuf);
+        else
+            RTLogPrintf("%s: %s\n", pszPrefix, szBuf);
+    }
     else
         RTLogPrintf("%s\n", szBuf);
     return rc;
@@ -681,7 +686,12 @@ VMMR3DECL(int) DBGFR3DisasInstrLogInternal(PVMCPU pVCpu, RTSEL Sel, RTGCPTR GCPt
     if (RT_FAILURE(rc))
         RTStrPrintf(szBuf, sizeof(szBuf), "DBGFR3DisasInstrLog(, %RTsel, %RGv) failed with rc=%Rrc\n", Sel, GCPtr, rc);
     if (pszPrefix && *pszPrefix)
-        RTLogPrintf("%s-CPU%u: %s\n", pszPrefix, pVCpu->idCpu, szBuf);
+    {
+        if (pVCpu->CTX_SUFF(pVM)->cCpus > 1)
+            RTLogPrintf("%s-CPU%u: %s\n", pszPrefix, pVCpu->idCpu, szBuf);
+        else
+            RTLogPrintf("%s: %s\n", pszPrefix, szBuf);
+    }
     else
         RTLogPrintf("%s\n", szBuf);
     return rc;

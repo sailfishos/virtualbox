@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1021,7 +1021,7 @@ int handleExportAppliance(HandlerArg *a)
                         int irc = RTFileReadAll(itD->second.c_str(), &pvFile, &cbFile);
                         if (RT_SUCCESS(irc))
                         {
-                            Bstr bstrContent((char*)pvFile);
+                            Bstr bstrContent((char*)pvFile, cbFile);
                             pVSD->AddDescription(VirtualSystemDescriptionType_License,
                                                  bstrContent.raw(),
                                                  bstrContent.raw());

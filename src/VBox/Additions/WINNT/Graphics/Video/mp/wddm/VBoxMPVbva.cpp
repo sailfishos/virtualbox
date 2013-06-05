@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -290,7 +290,7 @@ static int vboxHwBufferWrite (PVBOXMP_DEVEXT pDevExt, VBOXVBVAINFO *pVbva, const
 
         if (cbChunk >= cbHwBufferAvail)
         {
-            LOGF(("1) avail %d, chunk %d", cbHwBufferAvail, cbChunk));
+            LOG(("1) avail %d, chunk %d", cbHwBufferAvail, cbChunk));
 
             vboxHwBufferFlush (pDevExt, pVbva);
 

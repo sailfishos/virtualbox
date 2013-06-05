@@ -161,20 +161,20 @@
     <message>
         <source>not complete</source>
         <comment>value state</comment>
-        <translation>unvollständig</translation>
+        <translation>wurde nicht ausgefüllt</translation>
     </message>
     <message>
         <source>invalid</source>
         <comment>value state</comment>
-        <translation>unzulässig</translation>
+        <translation>hat einen unzulässigen Wert</translation>
     </message>
     <message>
         <source>&lt;qt&gt;The value of the &lt;b&gt;%1&lt;/b&gt; field on the &lt;b&gt;%2&lt;/b&gt; page is %3.&lt;/qt&gt;</source>
-        <translation>&lt;qt&gt;Der Wert des Feldes &lt;b&gt;%1&lt;/b&gt; auf der Seite &lt;b&gt;%2&lt;/b&gt; ist %3.&lt;/qt&gt;</translation>
+        <translation>&lt;qt&gt;Das Eingabefeld &lt;b&gt;%1&lt;/b&gt; auf der Seite &lt;b&gt;%2&lt;/b&gt; %3.&lt;/qt&gt;</translation>
     </message>
     <message>
         <source>&lt;qt&gt;One of the values on the &lt;b&gt;%1&lt;/b&gt; page is %2.&lt;/qt&gt;</source>
-        <translation>&lt;qt&gt;Einer der Werte der Seite &lt;b&gt;%1&lt;/b&gt; ist %2.&lt;/qt&gt;</translation>
+        <translation>&lt;qt&gt;Eines der Eingabefelder der Seite &lt;b&gt;%1&lt;/b&gt; %2.&lt;/qt&gt;</translation>
     </message>
 </context>
 <context>
@@ -697,6 +697,10 @@
         <source>Shared &amp;Clipboard</source>
         <translation>Gemeinsame &amp;Zwischenablage</translation>
     </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translation>Drag&apos;n&apos;Drop</translation>
+    </message>
 </context>
 <context>
     <name>UIApplianceEditorWidget</name>
@@ -1201,46 +1205,62 @@
     <message>
         <source>&lt;b&gt;%1&lt;/b&gt;</source>
         <comment>Group item tool-tip / Group name</comment>
-        <translation type="unfinished"></translation>
+        <translation></translation>
     </message>
     <message numerus="yes">
         <source>%n group(s)</source>
         <comment>Group item tool-tip / Group info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n Gruppe</numerusform>
+            <numerusform>%n Gruppen</numerusform>
         </translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Group info wrapper</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
     </message>
     <message numerus="yes">
         <source>%n machine(s)</source>
         <comment>Group item tool-tip / Machine info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>% Maschine</numerusform>
+            <numerusform>% Maschinen</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>(%n running)</source>
         <comment>Group item tool-tip / Running machine info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>(%n wird ausgeführt)</numerusform>
+            <numerusform>(%n wird ausgeführt)</numerusform>
         </translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt; {1 %2&lt;?}</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt; {1 %2&lt;?}</translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation>Gruppe betreten</translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation>Gruppe verlassen</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation>Gruppe schließen</translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation>Gruppe öffnen</translation>
     </message>
 </context>
 <context>
@@ -3270,7 +3290,7 @@
     </message>
     <message>
         <source>Controller: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Controller: %1</translation>
     </message>
 </context>
 <context>

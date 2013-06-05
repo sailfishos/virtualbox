@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -202,6 +202,13 @@ void UIMedium::refresh()
             {
                 CMachine machine = vbox.FindMachine(*it);
 
+                /* UIMedium object can wrap newly created CMedium object which belongs to
+                 * not yet registered machine, like while creating VM clone.
+                 * We can skip such a machines in usage string.
+                 * CVirtualBox::FindMachine() will return null machine for such case. */
+                if (machine.isNull())
+                    continue;
+
                 QString sName = machine.GetName();
                 QString sSnapshots;
 
@@ -240,8 +247,8 @@ void UIMedium::refresh()
                     mIsUsedInSnapshots = false;
             }
 
-            Assert (!sUsage.isEmpty());
-            mUsage = sUsage;
+            if (!sUsage.isEmpty())
+                mUsage = sUsage;
         }
     }
 

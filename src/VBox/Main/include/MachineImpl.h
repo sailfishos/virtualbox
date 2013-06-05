@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -238,8 +238,6 @@ public:
          * Data structure to hold information about a guest property.
          */
         struct GuestProperty {
-            /** Property name */
-            Utf8Str strName;
             /** Property value */
             Utf8Str strValue;
             /** Property timestamp */
@@ -290,14 +288,15 @@ public:
         ClipboardMode_T      mClipboardMode;
         DragAndDropMode_T    mDragAndDropMode;
 
-        typedef std::list<GuestProperty> GuestPropertyList;
-        GuestPropertyList    mGuestProperties;
+        typedef std::map<Utf8Str, GuestProperty> GuestPropertyMap;
+        GuestPropertyMap     mGuestProperties;
         Utf8Str              mGuestPropertyNotificationPatterns;
 
         FirmwareType_T       mFirmwareType;
         KeyboardHIDType_T    mKeyboardHIDType;
         PointingHIDType_T    mPointingHIDType;
         ChipsetType_T        mChipsetType;
+        BOOL                 mEmulatedUSBWebcamEnabled;
         BOOL                 mEmulatedUSBCardReaderEnabled;
 
         BOOL                 mIOCacheEnabled;
@@ -887,7 +886,7 @@ protected:
     HRESULT createImplicitDiffs(IProgress *aProgress,
                                 ULONG aWeight,
                                 bool aOnline);
-    HRESULT deleteImplicitDiffs();
+    HRESULT deleteImplicitDiffs(bool aOnline);
 
     MediumAttachment* findAttachment(const MediaData::AttachmentList &ll,
                                      IN_BSTR aControllerName,
@@ -943,6 +942,7 @@ protected:
 #endif /* VBOX_WITH_GUEST_PROPS */
 
 #ifdef VBOX_WITH_RESOURCE_USAGE_API
+    void getDiskList(MediaList &list);
     void registerMetrics(PerformanceCollector *aCollector, Machine *aMachine, RTPROCESS pid);
 
     pm::CollectorGuest     *mCollectorGuest;
@@ -1064,17 +1064,18 @@ public:
               ComSafeArrayOut(LONG64, aTimestamps), ComSafeArrayOut(BSTR, aFlags));
     STDMETHOD(PushGuestProperty)(IN_BSTR aName, IN_BSTR aValue,
                                   LONG64 aTimestamp, IN_BSTR aFlags);
-    STDMETHOD(LockMedia)()   { return lockMedia(); }
-    STDMETHOD(UnlockMedia)() { unlockMedia(); return S_OK; }
+    STDMETHOD(LockMedia)();
+    STDMETHOD(UnlockMedia)();
     STDMETHOD(EjectMedium)(IMediumAttachment *aAttachment,
                            IMediumAttachment **aNewAttachment);
-    STDMETHOD(ReportGuestStatistics)(ULONG aValidStats, ULONG aCpuUser,
-                                     ULONG aCpuKernel, ULONG aCpuIdle,
-                                     ULONG aMemTotal, ULONG aMemFree,
-                                     ULONG aMemBalloon, ULONG aMemShared,
-                                     ULONG aMemCache, ULONG aPageTotal,
-                                     ULONG aAllocVMM, ULONG aFreeVMM,
-                                     ULONG aBalloonedVMM, ULONG aSharedVMM);
+    STDMETHOD(ReportVmStatistics)(ULONG aValidStats, ULONG aCpuUser,
+                                  ULONG aCpuKernel, ULONG aCpuIdle,
+                                  ULONG aMemTotal, ULONG aMemFree,
+                                  ULONG aMemBalloon, ULONG aMemShared,
+                                  ULONG aMemCache, ULONG aPageTotal,
+                                  ULONG aAllocVMM, ULONG aFreeVMM,
+                                  ULONG aBalloonedVMM, ULONG aSharedVMM,
+                                  ULONG aVmNetRx, ULONG aVmNetTx);
 
     // public methods only for internal purposes
 
@@ -1108,6 +1109,9 @@ public:
     HRESULT onStorageDeviceChange(IMediumAttachment *aMediumAttachment, BOOL aRemove);
 
     bool hasMatchingUSBFilter(const ComObjPtr<HostUSBDevice> &aDevice, ULONG *aMaskedIfs);
+
+    HRESULT lockMedia();
+    void unlockMedia();
 
 private:
 
@@ -1175,9 +1179,6 @@ private:
                               MediumLockList *aMediumLockList,
                               ComObjPtr<Progress> &aProgress,
                               bool *pfNeedsMachineSaveSettings);
-
-    HRESULT lockMedia();
-    void unlockMedia();
 
     HRESULT setMachineState(MachineState_T aMachineState);
     HRESULT updateMachineStateOnClient();

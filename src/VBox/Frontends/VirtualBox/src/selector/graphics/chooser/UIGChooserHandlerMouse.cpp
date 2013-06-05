@@ -70,49 +70,46 @@ bool UIGChooserHandlerMouse::handleMousePress(QGraphicsSceneMouseEvent *pEvent) 
                 /* Or a machine one? */
                 else if (UIGChooserItemMachine *pMachineItem = qgraphicsitem_cast<UIGChooserItemMachine*>(pItemUnderMouse))
                     pClickedItem = pMachineItem;
-                /* If we had clicked one of the required item types: */
+                /* If we had clicked one of required item types: */
                 if (pClickedItem && !pClickedItem->isRoot())
                 {
-                    /* Old selection list: */
-                    QList<UIGChooserItem*> oldSelectionList = model()->selectionList();
-                    /* Move focus to clicked item: */
-                    model()->setFocusItem(pClickedItem);
                     /* Was 'shift' modifier pressed? */
                     if (pEvent->modifiers() == Qt::ShiftModifier)
                     {
                         /* Calculate positions: */
-                        UIGChooserItem *pFirstItem = model()->selectionList().first();
+                        UIGChooserItem *pFirstItem = model()->currentItem();
                         int iFirstPosition = model()->navigationList().indexOf(pFirstItem);
                         int iClickedPosition = model()->navigationList().indexOf(pClickedItem);
-                        /* Clear selection: */
-                        model()->clearSelectionList();
-                        /* Select all the items from 'first' to 'clicked': */
+                        /* Populate list of items from 'first' to 'clicked': */
+                        QList<UIGChooserItem*> items;
                         if (iFirstPosition <= iClickedPosition)
                             for (int i = iFirstPosition; i <= iClickedPosition; ++i)
-                                model()->addToSelectionList(model()->navigationList().at(i));
+                                items << model()->navigationList().at(i);
                         else
                             for (int i = iFirstPosition; i >= iClickedPosition; --i)
-                                model()->addToSelectionList(model()->navigationList().at(i));
+                                items << model()->navigationList().at(i);
+                        /* Set that list as current: */
+                        model()->setCurrentItems(items);
+                        /* Move focus to clicked item: */
+                        model()->setFocusItem(pClickedItem);
                     }
                     /* Was 'control' modifier pressed? */
                     else if (pEvent->modifiers() == Qt::ControlModifier)
                     {
-                        /* Select clicked item, inverting if necessary: */
-                        if (model()->selectionList().contains(pClickedItem))
-                            model()->removeFromSelectionList(pClickedItem);
+                        /* Invert selection state for clicked item: */
+                        if (model()->currentItems().contains(pClickedItem))
+                            model()->removeFromCurrentItems(pClickedItem);
                         else
-                            model()->addToSelectionList(pClickedItem);
+                            model()->addToCurrentItems(pClickedItem);
+                        /* Move focus to clicked item: */
+                        model()->setFocusItem(pClickedItem);
                     }
                     /* Was no modifiers pressed? */
                     else if (pEvent->modifiers() == Qt::NoModifier)
                     {
-                        /* Move selection to clicked item: */
-                        model()->clearSelectionList();
-                        model()->addToSelectionList(pClickedItem);
+                        /* Make clicked item the current one: */
+                        model()->setCurrentItem(pClickedItem);
                     }
-                    /* Selection list changed?: */
-                    if (oldSelectionList != model()->selectionList())
-                        model()->notifySelectionChanged();
                 }
                 break;
             }
@@ -127,17 +124,12 @@ bool UIGChooserHandlerMouse::handleMousePress(QGraphicsSceneMouseEvent *pEvent) 
                 /* Or a machine one? */
                 else if (UIGChooserItemMachine *pMachineItem = qgraphicsitem_cast<UIGChooserItemMachine*>(pItemUnderMouse))
                     pClickedItem = pMachineItem;
-                /* If we had clicked one of the required item types: */
-                if (pClickedItem)
+                /* If we had clicked one of required item types: */
+                if (pClickedItem && !pClickedItem->isRoot())
                 {
-                    /* For non-root items: */
-                    if (!pClickedItem->isRoot())
-                    {
-                        /* Is clicked item in selection list: */
-                        bool fIsClickedItemInSelectionList = contains(model()->selectionList(), pClickedItem);
-                        /* Move focus to clicked item (with selection if not selected yet): */
-                        model()->setFocusItem(pClickedItem, !fIsClickedItemInSelectionList);
-                    }
+                    /* Select clicked item if not selected yet: */
+                    if (!model()->currentItems().contains(pClickedItem))
+                        model()->setCurrentItem(pClickedItem);
                 }
                 break;
             }
@@ -193,10 +185,10 @@ bool UIGChooserHandlerMouse::handleMouseDoubleClick(QGraphicsSceneMouseEvent *pE
                         if (iMouseDoubleClickX < iGroupItemWidth / 2)
                         {
                             /* Toggle it: */
-                            if (pGroupItem->opened())
-                                pGroupItem->close();
-                            else if (pGroupItem->closed())
+                            if (pGroupItem->isClosed())
                                 pGroupItem->open();
+                            else if (pGroupItem->isOpened())
+                                pGroupItem->close();
                         }
                         /* If click was at right part: */
                         else
@@ -213,34 +205,8 @@ bool UIGChooserHandlerMouse::handleMouseDoubleClick(QGraphicsSceneMouseEvent *pE
                 else if (pItemUnderMouse->type() == UIGChooserItemType_Machine)
                 {
                     /* Activate machine item: */
-                    model()->activate();
+                    model()->activateMachineItem();
                 }
-#if 0
-                /* Or a machine one? */
-                else if (UIGChooserItemMachine *pMachineItem = qgraphicsitem_cast<UIGChooserItemMachine*>(pItemUnderMouse))
-                {
-                    /* Prepare variables: */
-                    int iMachineItemWidth = pMachineItem->geometry().toRect().width();
-                    int iMouseDoubleClickX = pEvent->scenePos().toPoint().x();
-                    /* If click was at left part: */
-                    if (iMouseDoubleClickX < iMachineItemWidth / 2)
-                    {
-                        /* Unindent root if possible: */
-                        if (model()->root() != model()->mainRoot())
-                        {
-                            pMachineItem->setHovered(false);
-                            model()->unindentRoot();
-                        }
-                    }
-                    else
-                    {
-                        /* Activate machine item: */
-                        model()->activate();
-                    }
-                    /* Filter that event out: */
-                    return true;
-                }
-#endif
                 break;
             }
             default:
@@ -248,27 +214,6 @@ bool UIGChooserHandlerMouse::handleMouseDoubleClick(QGraphicsSceneMouseEvent *pE
         }
     }
     /* Pass all other events: */
-    return false;
-}
-
-bool UIGChooserHandlerMouse::contains(QList<UIGChooserItem*> list,
-                                      UIGChooserItem *pRequiredItem,
-                                      bool fRecursively /* = false */) const
-{
-    /* Search throught the all passed list items: */
-    foreach (UIGChooserItem *pItem, list)
-    {
-        /* Check item first: */
-        if (pItem == pRequiredItem)
-            return true;
-        /* Check if this item supports children: */
-        if (fRecursively && pItem->type() == UIGChooserItemType_Group)
-        {
-            /* Check items recursively: */
-            if (contains(pItem->items(), pRequiredItem))
-                return true;
-        }
-    }
     return false;
 }
 

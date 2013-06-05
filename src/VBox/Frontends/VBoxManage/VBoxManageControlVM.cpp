@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -283,8 +283,14 @@ int handleControlVM(HandlerArg *a)
         }
         else if (!strcmp(a->argv[1], "keyboardputscancode"))
         {
-            ComPtr<IKeyboard> keyboard;
-            CHECK_ERROR_BREAK(console, COMGETTER(Keyboard)(keyboard.asOutParam()));
+            ComPtr<IKeyboard> pKeyboard;
+            CHECK_ERROR_BREAK(console, COMGETTER(Keyboard)(pKeyboard.asOutParam()));
+            if (!pKeyboard)
+            {
+                RTMsgError("Guest not running");
+                rc = E_FAIL;
+                break;
+            }
 
             if (a->argc <= 1 + 1)
             {
@@ -328,7 +334,7 @@ int handleControlVM(HandlerArg *a)
             /* Send scancodes to the VM. */
             com::SafeArray<LONG> saScancodes(llScancodes);
             ULONG codesStored = 0;
-            CHECK_ERROR_BREAK(keyboard, PutScancodes(ComSafeArrayAsInParam(saScancodes),
+            CHECK_ERROR_BREAK(pKeyboard, PutScancodes(ComSafeArrayAsInParam(saScancodes),
                                                      &codesStored));
             if (codesStored < saScancodes.size())
             {
@@ -618,6 +624,53 @@ int handleControlVM(HandlerArg *a)
                 }
                 else
                     RTMsgError("The NIC %d is currently disabled and thus its properties can't be changed", n);
+            }
+        }
+        else if (!strncmp(a->argv[1], "nicpromisc", 10))
+        {
+            /* Get the number of network adapters */
+            ULONG NetworkAdapterCount = getMaxNics(a->virtualBox,sessionMachine) ;
+            unsigned n = parseNum(&a->argv[1][10], NetworkAdapterCount, "NIC");
+            if (!n)
+            {
+                rc = E_FAIL;
+                break;
+            }
+            if (a->argc <= 2)
+            {
+                errorArgument("Missing argument to '%s'", a->argv[1]);
+                rc = E_FAIL;
+                break;
+            }
+
+            /* get the corresponding network adapter */
+            ComPtr<INetworkAdapter> adapter;
+            CHECK_ERROR_BREAK(sessionMachine, GetNetworkAdapter(n - 1, adapter.asOutParam()));
+            if (adapter)
+            {
+                BOOL fEnabled;
+                adapter->COMGETTER(Enabled)(&fEnabled);
+                if (fEnabled)
+                {
+                    NetworkAdapterPromiscModePolicy_T enmPromiscModePolicy;
+                    if (!strcmp(a->argv[2], "deny"))
+                        enmPromiscModePolicy = NetworkAdapterPromiscModePolicy_Deny;
+                    else if (  !strcmp(a->argv[2], "allow-vms")
+                            || !strcmp(a->argv[2], "allow-network"))
+                        enmPromiscModePolicy = NetworkAdapterPromiscModePolicy_AllowNetwork;
+                    else if (!strcmp(a->argv[2], "allow-all"))
+                        enmPromiscModePolicy = NetworkAdapterPromiscModePolicy_AllowAll;
+                    else
+                    {
+                        errorArgument("Unknown promiscuous mode policy '%s'", a->argv[2]);
+                        rc = E_INVALIDARG;
+                        break;
+                    }
+
+                    CHECK_ERROR(adapter, COMSETTER(PromiscModePolicy)(enmPromiscModePolicy));
+                }
+                else
+                    RTMsgError("The NIC %d is currently disabled and thus its promiscuous mode can't be changed", n);
             }
         }
         else if (!strncmp(a->argv[1], "nic", 3))
@@ -943,11 +996,17 @@ int handleControlVM(HandlerArg *a)
                 fChangeOrigin = true;
             }
 
-            ComPtr<IDisplay> display;
-            CHECK_ERROR_BREAK(console, COMGETTER(Display)(display.asOutParam()));
-            CHECK_ERROR_BREAK(display, SetVideoModeHint(uDisplayIdx, fEnabled,
-                                                        fChangeOrigin, iOriginX, iOriginY,
-                                                        uXRes, uYRes, uBpp));
+            ComPtr<IDisplay> pDisplay;
+            CHECK_ERROR_BREAK(console, COMGETTER(Display)(pDisplay.asOutParam()));
+            if (!pDisplay)
+            {
+                RTMsgError("Guest not running");
+                rc = E_FAIL;
+                break;
+            }
+            CHECK_ERROR_BREAK(pDisplay, SetVideoModeHint(uDisplayIdx, fEnabled,
+                                                         fChangeOrigin, iOriginX, iOriginY,
+                                                         uXRes, uYRes, uBpp));
         }
         else if (!strcmp(a->argv[1], "setcredentials"))
         {
@@ -993,12 +1052,18 @@ int handleControlVM(HandlerArg *a)
                 domain = a->argv[5];
             }
 
-            ComPtr<IGuest> guest;
-            CHECK_ERROR_BREAK(console, COMGETTER(Guest)(guest.asOutParam()));
-            CHECK_ERROR_BREAK(guest, SetCredentials(Bstr(a->argv[2]).raw(),
-                                                    Bstr(passwd).raw(),
-                                                    Bstr(domain).raw(),
-                                                    fAllowLocalLogon));
+            ComPtr<IGuest> pGuest;
+            CHECK_ERROR_BREAK(console, COMGETTER(Guest)(pGuest.asOutParam()));
+            if (!pGuest)
+            {
+                RTMsgError("Guest not running");
+                rc = E_FAIL;
+                break;
+            }
+            CHECK_ERROR_BREAK(pGuest, SetCredentials(Bstr(a->argv[2]).raw(),
+                                                     Bstr(passwd).raw(),
+                                                     Bstr(domain).raw(),
+                                                     fAllowLocalLogon));
         }
 #if 0 /* TODO: review & remove */
         else if (!strcmp(a->argv[1], "dvdattach"))
@@ -1140,10 +1205,18 @@ int handleControlVM(HandlerArg *a)
                 break;
             }
             /* guest is running; update IGuest */
-            ComPtr <IGuest> guest;
-            rc = console->COMGETTER(Guest)(guest.asOutParam());
+            ComPtr <IGuest> pGuest;
+            rc = console->COMGETTER(Guest)(pGuest.asOutParam());
             if (SUCCEEDED(rc))
-                CHECK_ERROR(guest, COMSETTER(MemoryBalloonSize)(uVal));
+            {
+                if (!pGuest)
+                {
+                    RTMsgError("Guest not running");
+                    rc = E_FAIL;
+                    break;
+                }
+                CHECK_ERROR(pGuest, COMSETTER(MemoryBalloonSize)(uVal));
+            }
         }
         else if (!strcmp(a->argv[1], "teleport"))
         {
@@ -1232,6 +1305,12 @@ int handleControlVM(HandlerArg *a)
             }
             ComPtr<IDisplay> pDisplay;
             CHECK_ERROR_BREAK(console, COMGETTER(Display)(pDisplay.asOutParam()));
+            if (!pDisplay)
+            {
+                RTMsgError("Guest not running");
+                rc = E_FAIL;
+                break;
+            }
             ULONG width, height, bpp;
             CHECK_ERROR_BREAK(pDisplay, GetScreenResolution(displayIdx, &width, &height, &bpp));
             com::SafeArray<BYTE> saScreenshot;

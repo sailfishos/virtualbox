@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -37,6 +37,9 @@
 
 volatile uint32_t g_u32VBoxDispProfileFunctionLoggerIndex = 0;
 
+/* the number of frames to collect data before doing dump/reset */
+#define VBOXDISPPROFILE_DDI_DUMP_FRAME_COUNT 0xffffffff
+
 struct VBOXDISPPROFILE_GLOBAL {
     VBoxDispProfileFpsCounter ProfileDdiFps;
     VBoxDispProfileSet ProfileDdiFunc;
@@ -50,10 +53,25 @@ struct VBOXDISPPROFILE_GLOBAL {
 
 # ifdef VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_ENABLE
 
-extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
+class VBoxDispProfileDevicePostProcess
+{
+public:
+    VBoxDispProfileDevicePostProcess(PVBOXWDDMDISP_DEVICE pDevice) :
+        m_pDevice(pDevice)
+    {}
+
+    void postProcess()
+    {
+        if (m_pDevice->pDevice9If)
+            m_pDevice->pAdapter->D3D.D3D.pfnVBoxWineExD3DDev9Finish((IDirect3DDevice9Ex *)m_pDevice->pDevice9If);
+    }
+private:
+    PVBOXWDDMDISP_DEVICE m_pDevice;
+};
 
 //static VBoxDispProfileSet g_VBoxDispProfileDDI("D3D_DDI");
-#  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE(_pObj) VBOXDISPPROFILE_FUNCTION_LOGGER_DEFINE((_pObj)->ProfileDdiFunc)
+#  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE_DEV(_pObj) VBOXDISPPROFILE_FUNCTION_LOGGER_DEFINE((_pObj)->ProfileDdiFunc, VBoxDispProfileDevicePostProcess, VBoxDispProfileDevicePostProcess(_pObj))
+#  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE_BASE(_pObj) VBOXDISPPROFILE_FUNCTION_LOGGER_DEFINE((_pObj)->ProfileDdiFunc, VBoxDispProfileDummyPostProcess, VBoxDispProfileDummyPostProcess())
 #  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_DUMP(_pObj) do {\
         (_pObj)->ProfileDdiFunc.dump(_pObj); \
     } while (0)
@@ -67,14 +85,15 @@ extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
 #  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_LOG_AND_DISABLE_CURRENT() VBOXDISPPROFILE_FUNCTION_LOGGER_LOG_AND_DISABLE_CURRENT()
 
 #  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_REPORT_FRAME(_pObj) do { \
-        if (!((_pObj)->ProfileDdiFunc.reportIteration() % 31) && !VBOXVDBG_IS_DWM()) {\
+        if (!((_pObj)->ProfileDdiFunc.reportIteration() % VBOXDISPPROFILE_DDI_DUMP_FRAME_COUNT) /*&& !VBOXVDBG_IS_DWM()*/) {\
             VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_DUMP(_pObj); \
             VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_RESET(_pObj); \
         } \
     } while (0)
 
 # else
-#  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE(_pObj) do {} while(0)
+#  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE_DEV(_pObj) do {} while(0)
+#  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE_BASE(_pObj) do {} while(0)
 #  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_DUMP(_pObj) do {} while(0)
 #  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_RESET(_pObj) do {} while(0)
 #  define VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_DISABLE_CURRENT() do {} while (0)
@@ -84,7 +103,7 @@ extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
 
 # ifdef VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_ENABLE
 //static VBoxDispProfileFpsCounter g_VBoxDispFpsDDI(64);
-#  define VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_PROLOGUE(_pObj) VBOXDISPPROFILE_STATISTIC_LOGGER_DEFINE(&(_pObj)->ProfileDdiFps)
+#  define VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_PROLOGUE(_pObj) VBOXDISPPROFILE_STATISTIC_LOGGER_DEFINE(&(_pObj)->ProfileDdiFps, VBoxDispProfileDummyPostProcess, VBoxDispProfileDummyPostProcess())
 #  define VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_DISABLE_CURRENT() do {\
         VBOXDISPPROFILE_STATISTIC_LOGGER_DISABLE_CURRENT();\
     } while (0)
@@ -98,7 +117,7 @@ extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
 
 #  define VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_REPORT_FRAME(_pObj) do { \
         (_pObj)->ProfileDdiFps.ReportFrame(); \
-        if(!((_pObj)->ProfileDdiFps.GetNumFrames() % 31)) \
+        if(!((_pObj)->ProfileDdiFps.GetNumFrames() % VBOXDISPPROFILE_DDI_DUMP_FRAME_COUNT)) \
         { \
             VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_DUMP(_pObj); \
         } \
@@ -113,8 +132,12 @@ extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
 #  define VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_DUMP(_pObj) do {} while (0)
 # endif
 
-# define VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE(_pObj) \
-        VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE(_pObj); \
+# define VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE_DEV(_pObj) \
+        VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE_DEV(_pObj); \
+        VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_PROLOGUE(_pObj);
+
+# define VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE_BASE(_pObj) \
+        VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_PROLOGUE_BASE(_pObj); \
         VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_PROLOGUE(_pObj);
 
 # define VBOXDISPPROFILE_DDI_LOG_AND_DISABLE_CURRENT() \
@@ -127,11 +150,15 @@ extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
         VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_REPORT_FRAME(_pDev); \
     } while (0)
 
+#if 0
 # define VBOXDISPPROFILE_DDI_REPORT_FLUSH(_pDev) do {\
         VBOXDISPPROFILE_DDI_LOG_AND_DISABLE_CURRENT(); \
         VBOXDISPPROFILE_DDI_STATISTIC_LOGGER_REPORT_FRAME(_pDev); \
         VBOXDISPPROFILE_DDI_FUNCTION_LOGGER_REPORT_FRAME(_pDev); \
     } while (0)
+#else
+# define VBOXDISPPROFILE_DDI_REPORT_FLUSH(_pDev) do {} while (0)
+#endif
 
 # define VBOXDISPPROFILE_DDI_INIT_CMN(_pObj, _name, _cEntries) do { \
         (_pObj)->ProfileDdiFps = VBoxDispProfileFpsCounter(); \
@@ -156,7 +183,8 @@ extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
 # define VBOXDISPPROFILE_DDI_INIT_ADP(_pAdp) VBOXDISPPROFILE_DDI_INIT_CMN(_pAdp, "DDI_Adp", 64)
 # define VBOXDISPPROFILE_DDI_INIT_DEV(_pDev) VBOXDISPPROFILE_DDI_INIT_CMN(_pDev, "DDI_Dev", 64)
 #else
-# define VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE(_pObj) do {} while (0)
+# define VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE_DEV(_pObj) do {} while (0)
+# define VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE_BASE(_pObj) do {} while (0)
 # define VBOXDISPPROFILE_DDI_REPORT_FRAME(_pDev) do {} while (0)
 # define VBOXDISPPROFILE_DDI_REPORT_FLUSH(_pDev) do {} while (0)
 # define VBOXDISPPROFILE_DDI_INIT_GLBL() do {} while (0)
@@ -174,15 +202,15 @@ extern volatile uint32_t g_u322VBoxDispProfileFunctionLoggerIndex = 0;
 
 #define VBOXDISP_DDI_PROLOGUE_DEV(_hDevice) \
     VBOXDISP_DDI_PROLOGUE_CMN(); \
-    VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE((PVBOXWDDMDISP_DEVICE)(_hDevice));
+    VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE_DEV((PVBOXWDDMDISP_DEVICE)(_hDevice));
 
 #define VBOXDISP_DDI_PROLOGUE_ADP(_hAdapter) \
     VBOXDISP_DDI_PROLOGUE_CMN(); \
-    VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE((PVBOXWDDMDISP_ADAPTER)(_hAdapter));
+    VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE_BASE((PVBOXWDDMDISP_ADAPTER)(_hAdapter));
 
 #define VBOXDISP_DDI_PROLOGUE_GLBL() \
     VBOXDISP_DDI_PROLOGUE_CMN(); \
-    VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE(&g_VBoxDispProfile);
+    VBOXDISPPROFILE_FUNCTION_DDI_PROLOGUE_BASE(&g_VBoxDispProfile);
 
 #ifdef VBOXDISPMP_TEST
 HRESULT vboxDispMpTstStart();
@@ -2895,7 +2923,7 @@ static HRESULT APIENTRY vboxWddmDDevTexBlt(HANDLE hDevice, CONST D3DDDIARG_TEXBL
     VBOXVDBG_CHECK_SMSYNC(pDstRc);
     VBOXVDBG_CHECK_SMSYNC(pSrcRc);
 
-    if (pSrcRc->aAllocations[0].D3DWidth == pDstRc->aAllocations[0].D3DWidth
+    if (pSrcRc->aAllocations[0].SurfDesc.d3dWidth == pDstRc->aAllocations[0].SurfDesc.d3dWidth
             && pSrcRc->aAllocations[0].SurfDesc.height == pDstRc->aAllocations[0].SurfDesc.height
             && pSrcRc->RcDesc.enmFormat == pDstRc->RcDesc.enmFormat
                 &&pData->DstPoint.x == 0 && pData->DstPoint.y == 0
@@ -4087,7 +4115,7 @@ static HRESULT APIENTRY vboxWddmDDevCreateResource(HANDLE hDevice, D3DDDIARG_CRE
         pAllocation->enmType = VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC;
         pAllocation->iAlloc = i;
         pAllocation->pRc = pRc;
-        pAllocation->D3DWidth = pSurf->Width;
+        pAllocation->SurfDesc.d3dWidth = pSurf->Width;
         pAllocation->pvMem = (void*)pSurf->pSysMem;
         pAllocation->SurfDesc.slicePitch = pSurf->SysMemSlicePitch;
         pAllocation->SurfDesc.depth = pSurf->Depth;
@@ -4119,14 +4147,14 @@ static HRESULT APIENTRY vboxWddmDDevCreateResource(HANDLE hDevice, D3DDDIARG_CRE
                 if (pAllocation->SurfDesc.pitch != minPitch)
                 {
                     Assert(pAllocation->SurfDesc.pitch > minPitch);
-                    pAllocation->D3DWidth = vboxWddmCalcWidthForPitch(pAllocation->SurfDesc.pitch, pAllocation->SurfDesc.format);
+                    pAllocation->SurfDesc.d3dWidth = vboxWddmCalcWidthForPitch(pAllocation->SurfDesc.pitch, pAllocation->SurfDesc.format);
                     Assert(VBOXWDDMDISP_IS_TEXTURE(pRc->RcDesc.fFlags) && !pRc->RcDesc.fFlags.CubeMap); /* <- tested for textures only! */
                 }
-                Assert(pAllocation->D3DWidth >= pAllocation->SurfDesc.width);
+                Assert(pAllocation->SurfDesc.d3dWidth >= pAllocation->SurfDesc.width);
             }
             else
             {
-                Assert(pAllocation->D3DWidth == pAllocation->SurfDesc.width);
+                Assert(pAllocation->SurfDesc.d3dWidth == pAllocation->SurfDesc.width);
             }
         }
 
@@ -4749,13 +4777,23 @@ static HRESULT APIENTRY vboxWddmDDevSetStreamSource(HANDLE hDevice, CONST D3DDDI
 static HRESULT APIENTRY vboxWddmDDevSetStreamSourceFreq(HANDLE hDevice, CONST D3DDDIARG_SETSTREAMSOURCEFREQ* pData)
 {
     VBOXDISP_DDI_PROLOGUE_DEV(hDevice);
-    vboxVDbgPrintF(("<== "__FUNCTION__", hDevice(0x%p)\n", hDevice));
+    vboxVDbgPrintF(("==> "__FUNCTION__", hDevice(0x%p)\n", hDevice));
     PVBOXWDDMDISP_DEVICE pDevice = (PVBOXWDDMDISP_DEVICE)hDevice;
     Assert(pDevice);
     VBOXDISPCRHGSMI_SCOPE_SET_DEV(pDevice);
+    IDirect3DDevice9 * pDevice9If = VBOXDISP_D3DEV(pDevice);
+    HRESULT hr = pDevice9If->SetStreamSourceFreq(pData->Stream, pData->Divider);
+    if (SUCCEEDED(hr))
+        hr = S_OK;
+    else
+        WARN(("SetStreamSourceFreq failed hr 0x%x", hr));
+
+#ifdef DEBUG_misha
+    /* test it more */
     Assert(0);
-    vboxVDbgPrintF(("==> "__FUNCTION__", hDevice(0x%p)\n", hDevice));
-    return E_FAIL;
+#endif
+    vboxVDbgPrintF(("<== "__FUNCTION__", hDevice(0x%p)\n", hDevice));
+    return hr;
 }
 static HRESULT APIENTRY vboxWddmDDevSetConvolutionKernelMono(HANDLE hDevice, CONST D3DDDIARG_SETCONVOLUTIONKERNELMONO* pData)
 {

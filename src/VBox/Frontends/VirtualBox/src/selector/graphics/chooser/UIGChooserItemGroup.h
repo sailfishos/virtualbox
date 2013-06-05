@@ -21,19 +21,20 @@
 
 /* Qt includes: */
 #include <QWidget>
+#include <QPixmap>
 
 /* GUI includes: */
 #include "UIGChooserItem.h"
 
 /* Forward declarations: */
 class QGraphicsScene;
+class QGraphicsProxyWidget;
+class QLineEdit;
 class UIGraphicsButton;
 class UIGraphicsRotatorButton;
-class QLineEdit;
-class QGraphicsProxyWidget;
 class UIGroupRenameEditor;
 
-/* Graphics group item
+/* Graphics group-item
  * for graphics selector model/view architecture: */
 class UIGChooserItemGroup : public UIGChooserItem
 {
@@ -55,41 +56,41 @@ public:
     enum { Type = UIGChooserItemType_Group };
     int type() const { return Type; }
 
-    /* Constructor/destructor: */
+    /* Constructor (main-root-item): */
     UIGChooserItemGroup(QGraphicsScene *pScene);
-    UIGChooserItemGroup(QGraphicsScene *pScene, UIGChooserItemGroup *pCopyFrom,
-                        bool fMainRoot);
-    UIGChooserItemGroup(UIGChooserItem *pParent, const QString &strName,
-                        bool fOpened  = false , int iPosition  = -1 );
-    UIGChooserItemGroup(UIGChooserItem *pParent, UIGChooserItemGroup *pCopyFrom,
-                        int iPosition  = -1 );
+    /* Constructor (temporary main-root-item/root-item copy): */
+    UIGChooserItemGroup(QGraphicsScene *pScene, UIGChooserItemGroup *pCopyFrom, bool fMainRoot);
+    /* Constructor (new non-root-item): */
+    UIGChooserItemGroup(UIGChooserItem *pParent, const QString &strName, bool fOpened = false, int iPosition  = -1);
+    /* Constructor (new non-root-item copy): */
+    UIGChooserItemGroup(UIGChooserItem *pParent, UIGChooserItemGroup *pCopyFrom, int iPosition = -1);
+    /* Destructor: */
     ~UIGChooserItemGroup();
 
     /* API: Basic stuff: */
     QString name() const;
+    QString fullName() const;
+    QString definition() const;
     void setName(const QString &strName);
-    bool closed() const;
-    bool opened() const;
+    bool isClosed() const;
+    bool isOpened() const;
     void close(bool fAnimated = true);
     void open(bool fAnimated = true);
 
     /* API: Children stuff: */
-    bool contains(const QString &strId, bool fRecursively = false) const;
+    bool isContainsMachine(const QString &strId) const;
     bool isContainsLockedMachine();
-
-    /* API: Update stuff: */
-    void updateToolTip();
 
 private slots:
 
-    /* Handler: Group name editing: */
+    /* Handler: Name editing stuff: */
     void sltNameEditingFinished();
 
-    /* Handler: Collapse/expand stuff: */
+    /* Handler: Toggle stuff: */
     void sltGroupToggleStart();
     void sltGroupToggleFinish(bool fToggled);
 
-    /* Handler: Indent root stuff: */
+    /* Handlers: Indent root stuff: */
     void sltIndentRoot();
     void sltUnindentRoot();
 
@@ -103,32 +104,23 @@ private:
         GroupItemData_VerticalMargin,
         GroupItemData_MajorSpacing,
         GroupItemData_MinorSpacing,
-        /* Pixmaps: */
-        GroupItemData_GroupPixmap,
-        GroupItemData_MachinePixmap,
-        /* Fonts: */
-        GroupItemData_NameFont,
-        GroupItemData_InfoFont,
-        /* Text: */
-        GroupItemData_Name,
-        GroupItemData_GroupCountText,
-        GroupItemData_MachineCountText,
-        /* Sizes: */
-        GroupItemData_ToggleButtonSize,
-        GroupItemData_EnterButtonSize,
-        GroupItemData_ExitButtonSize,
-        GroupItemData_MinimumNameSize,
-        GroupItemData_NameSize,
-        GroupItemData_NameEditorSize,
-        GroupItemData_GroupPixmapSize,
-        GroupItemData_MachinePixmapSize,
-        GroupItemData_GroupCountTextSize,
-        GroupItemData_MachineCountTextSize,
-        GroupItemData_FullHeaderSize
+        GroupItemData_RootIndent,
     };
 
     /* Data provider: */
     QVariant data(int iKey) const;
+
+    /* Helpers: Prepare stuff: */
+    void prepare();
+    static void copyContent(UIGChooserItemGroup *pFrom, UIGChooserItemGroup *pTo);
+
+    /* Helpers: Update stuff: */
+    void handleRootStatusChange();
+    void updateVisibleName();
+    void updateItemCountInfo();
+    void updateMinimumHeaderSize();
+    void updateToolTip();
+    void updateToggleButtonToolTip();
 
     /* Helper: Translate stuff: */
     void retranslateUi();
@@ -146,48 +138,49 @@ private:
     QList<UIGChooserItem*> items(UIGChooserItemType type = UIGChooserItemType_Any) const;
     bool hasItems(UIGChooserItemType type = UIGChooserItemType_Any) const;
     void clearItems(UIGChooserItemType type = UIGChooserItemType_Any);
+    void updateAll(const QString &strId);
+    void removeAll(const QString &strId);
+    UIGChooserItem* searchForItem(const QString &strSearchTag, int iItemSearchFlags);
+    UIGChooserItemMachine* firstMachineItem();
+    void sortItems();
 
     /* Helpers: Layout stuff: */
-    void updateSizeHint();
     void updateLayout();
-    int minimumWidthHint(bool fClosedGroup) const;
-    int minimumHeightHint(bool fClosedGroup) const;
+    int minimumWidthHint(bool fOpenedGroup) const;
+    int minimumHeightHint(bool fOpenedGroup) const;
     int minimumWidthHint() const;
     int minimumHeightHint() const;
-    QSizeF minimumSizeHint(bool fClosedGroup) const;
+    QSizeF minimumSizeHint(bool fOpenedGroup) const;
     QSizeF sizeHint(Qt::SizeHint which, const QSizeF &constraint = QSizeF()) const;
 
-    /* Helpers: Drag and drop stuff: */
+    /* Helpers: Drag&drop stuff: */
     QPixmap toPixmap();
     bool isDropAllowed(QGraphicsSceneDragDropEvent *pEvent, DragToken where) const;
     void processDrop(QGraphicsSceneDragDropEvent *pEvent, UIGChooserItem *pFromWho, DragToken where);
     void resetDragToken();
     QMimeData* createMimeData();
 
-    /* Event handlers: */
+    /* Handler: Resize handling stuff: */
+    void resizeEvent(QGraphicsSceneResizeEvent *pEvent);
+
+    /* Handlers: Hover handling stuff: */
     void hoverMoveEvent(QGraphicsSceneHoverEvent *pEvent);
+    void hoverLeaveEvent(QGraphicsSceneHoverEvent *pEvent);
 
     /* Helpers: Paint stuff: */
     void paint(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption, QWidget *pWidget = 0);
-    void paint(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption, bool fClosedGroup);
-    void paintDecorations(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption);
     void paintBackground(QPainter *pPainter, const QRect &rect);
-    void paintGroupInfo(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption, bool fClosedGroup);
+    void paintHeader(QPainter *pPainter, const QRect &rect);
 
     /* Helpers: Animation stuff: */
     void updateAnimationParameters();
     void setAdditionalHeight(int iAdditionalHeight);
     int additionalHeight() const;
 
-    /* Helpers: Prepare stuff: */
-    void prepare();
-    static void copyContent(UIGChooserItemGroup *pFrom, UIGChooserItemGroup *pTo);
-
-    /* Color stuff: */
+    /* Helper: Color stuff: */
     int blackoutDarkness() const { return m_iBlackoutDarkness; }
 
     /* Variables: */
-    QString m_strName;
     bool m_fClosed;
     UIGraphicsRotatorButton *m_pToggleButton;
     UIGraphicsButton *m_pEnterButton;
@@ -200,6 +193,24 @@ private:
     int m_iCornerRadius;
     bool m_fMainRoot;
     int m_iBlackoutDarkness;
+    /* Cached values: */
+    QString m_strName;
+    QString m_strVisibleName;
+    QString m_strInfoGroups;
+    QString m_strInfoMachines;
+    QSize m_visibleNameSize;
+    QSize m_infoSizeGroups;
+    QSize m_infoSizeMachines;
+    QSize m_pixmapSizeGroups;
+    QSize m_pixmapSizeMachines;
+    QSize m_minimumHeaderSize;
+    QSize m_toggleButtonSize;
+    QSize m_enterButtonSize;
+    QSize m_exitButtonSize;
+    QFont m_nameFont;
+    QFont m_infoFont;
+    QPixmap m_groupsPixmap;
+    QPixmap m_machinesPixmap;
 };
 
 class UIGroupRenameEditor : public QWidget

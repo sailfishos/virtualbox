@@ -1211,11 +1211,15 @@ static DECLCALLBACK(int) PS2KPutEventWrapper(PPDMIKEYBOARDPORT pInterface, uint8
     PPS2K       pThis = RT_FROM_MEMBER(pInterface, PS2K, Keyboard.IPort);
     uint32_t    u32Usage = 0;
 
-    LogFlowFunc(("key code %02X\n", u8KeyCode ));
+    LogFlowFunc(("key code %02X\n", u8KeyCode));
     pThis->XlatState = ScancodeToHidUsage(pThis->XlatState, u8KeyCode, &u32Usage);
 
     if (pThis->XlatState == SS_IDLE)
     {
+        /* Stupid Korean key hack: convert a lone break key into a press/release sequence. */
+        if (u32Usage == 0x80000090 || u32Usage == 0x80000091)
+            PS2KPutEvent(pInterface, u32Usage & ~0x80000000);
+
         PS2KPutEvent(pInterface, u32Usage);
     }
 
@@ -1347,6 +1351,9 @@ int PS2KLoadState(PSSMHANDLE pSSM, PPS2K pThis, uint32_t uVersion)
         /* Load the command delay timer, just in case. */
         rc = TMR3TimerLoad(pThis->CTX_SUFF(pKbdDelayTimer), pSSM);
         if (RT_FAILURE(rc)) break;
+
+        /* Recalculate the typematic delay/rate. */
+        PS2KSetupTypematic(pThis, pThis->u8Typematic);
 
         /* Fake key up events for keys that were held down at the time the state was saved. */
         rc = SSMR3GetU32(pSSM, &cPressed);

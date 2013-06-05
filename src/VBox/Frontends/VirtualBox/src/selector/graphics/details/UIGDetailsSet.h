@@ -36,13 +36,6 @@ class UIGDetailsSet : public UIGDetailsItem
 {
     Q_OBJECT;
 
-signals:
-
-    /* Notifiers: Prepare stuff: */
-    void sigStartFirstStep(QString strSetId);
-    void sigSetPrepared();
-    void sigSetCreationDone();
-
 public:
 
     /* Graphics-item type: */
@@ -53,18 +46,18 @@ public:
     UIGDetailsSet(UIGDetailsItem *pParent);
     ~UIGDetailsSet();
 
-    /* API: Configure stuff: */
-    void configure(UIVMItem *pItem, const QStringList &settings, bool fFullSet);
+    /* API: Build stuff: */
+    void buildSet(UIVMItem *pMachineItem, bool fFullSet, const QStringList &settings);
 
     /* API: Machine stuff: */
-    const CMachine& machine() const;
+    const CMachine& machine() const { return m_machine; }
+    bool elementNameHoverable() const { return m_fElementNameHoverable; }
+    bool hasDetails() const { return m_fHasDetails; }
 
 private slots:
 
-    /* Handlers: Prepare stuff: */
-    void sltFirstStep(QString strSetId);
-    void sltNextStep(QString strSetId);
-    void sltSetPrepared();
+    /* Handler: Build stuff: */
+    void sltBuildStep(QString strStepId, int iStepNumber);
 
     /* Handlers: Global event stuff: */
     void sltMachineStateChange(QString strId);
@@ -86,7 +79,7 @@ private:
     /* Data provider: */
     QVariant data(int iKey) const;
 
-    /* Children stuff: */
+    /* Hidden API: Children stuff: */
     void addItem(UIGDetailsItem *pItem);
     void removeItem(UIGDetailsItem *pItem);
     QList<UIGDetailsItem*> items(UIGDetailsItemType type = UIGDetailsItemType_Element) const;
@@ -94,26 +87,29 @@ private:
     void clearItems(UIGDetailsItemType type = UIGDetailsItemType_Element);
     UIGDetailsElement* element(DetailsElementType elementType) const;
 
+    /* Helpers: Prepare stuff: */
+    void prepareSet();
+    void prepareConnections();
+
     /* Helpers: Layout stuff: */
-    void updateLayout();
     int minimumWidthHint() const;
     int minimumHeightHint() const;
-    QSizeF sizeHint(Qt::SizeHint which, const QSizeF &constraint = QSizeF()) const;
+    void updateLayout();
 
-    /* Helpers: Prepare stuff: */
-    void prepareElements();
-    void prepareElement(QString strSetId);
+    /* Helpers: Build stuff: */
+    void rebuildSet();
     UIGDetailsElement* createElement(DetailsElementType elementType, bool fOpen);
 
     /* Main variables: */
     CMachine m_machine;
     QMap<int, UIGDetailsItem*> m_elements;
+    bool m_fElementNameHoverable;
+    bool m_fHasDetails;
 
     /* Prepare variables: */
     bool m_fFullSet;
-    UIPrepareStep *m_pStep;
-    int m_iStep;
-    int m_iLastStep;
+    UIBuildStep *m_pBuildStep;
+    int m_iLastStepNumber;
     QString m_strSetId;
     QStringList m_settings;
 };

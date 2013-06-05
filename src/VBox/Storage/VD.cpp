@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -5358,6 +5358,10 @@ VBOXDDU_DECL(int) VDOpen(PVBOXHDD pDisk, const char *pszBackend,
         AssertMsgBreakStmt((uOpenFlags & ~VD_OPEN_FLAGS_MASK) == 0,
                            ("uOpenFlags=%#x\n", uOpenFlags),
                            rc = VERR_INVALID_PARAMETER);
+        AssertMsgBreakStmt(   !(uOpenFlags & VD_OPEN_FLAGS_SKIP_CONSISTENCY_CHECKS)
+                           ||  (uOpenFlags & VD_OPEN_FLAGS_READONLY),
+                           ("uOpenFlags=%#x\n", uOpenFlags),
+                           rc = VERR_INVALID_PARAMETER);
 
         /*
          * Destroy the current discard state first which might still have pending blocks
@@ -5450,6 +5454,35 @@ VBOXDDU_DECL(int) VDOpen(PVBOXHDD pDisk, const char *pszBackend,
                                       pImage->pVDIfsImage,
                                       pDisk->enmType,
                                       &pImage->pBackendData);
+        /*
+         * If the image is corrupted and there is a repair method try to repair it
+         * first if it was openend in read-write mode and open again afterwards.
+         */
+        if (   RT_UNLIKELY(rc == VERR_VD_IMAGE_CORRUPTED)
+            && pImage->Backend->pfnRepair)
+        {
+            rc = pImage->Backend->pfnRepair(pszFilename, pDisk->pVDIfsDisk, pImage->pVDIfsImage, 0 /* fFlags */);
+            if (RT_SUCCESS(rc))
+                rc = pImage->Backend->pfnOpen(pImage->pszFilename,
+                                              uOpenFlags & ~(VD_OPEN_FLAGS_HONOR_SAME | VD_OPEN_FLAGS_IGNORE_FLUSH | VD_OPEN_FLAGS_INFORM_ABOUT_ZERO_BLOCKS),
+                                              pDisk->pVDIfsDisk,
+                                              pImage->pVDIfsImage,
+                                              pDisk->enmType,
+                                              &pImage->pBackendData);
+            else
+            {
+                rc = vdError(pDisk, rc, RT_SRC_POS,
+                             N_("VD: error %Rrc repairing corrupted image file '%s'"), rc, pszFilename);
+                break;
+            }
+        }
+        else if (RT_UNLIKELY(rc == VERR_VD_IMAGE_CORRUPTED))
+        {
+            rc = vdError(pDisk, rc, RT_SRC_POS,
+                         N_("VD: Image file '%s' is corrupted and can't be opened"), pszFilename);
+            break;
+        }
+
         /* If the open in read-write mode failed, retry in read-only mode. */
         if (RT_FAILURE(rc))
         {
@@ -6619,7 +6652,11 @@ VBOXDDU_DECL(int) VDMerge(PVBOXHDD pDisk, unsigned nImageFrom,
         unsigned uOpenFlags = pImageTo->Backend->pfnGetOpenFlags(pImageTo->pBackendData);
         if (uOpenFlags & VD_OPEN_FLAGS_READONLY)
         {
-            uOpenFlags &= ~VD_OPEN_FLAGS_READONLY;
+            /*
+             * Clear skip consistency checks because the image is made writable now and
+             * skipping consistency checks is only possible for readonly images.
+             */
+            uOpenFlags &= ~(VD_OPEN_FLAGS_READONLY | VD_OPEN_FLAGS_SKIP_CONSISTENCY_CHECKS);
             rc = pImageTo->Backend->pfnSetOpenFlags(pImageTo->pBackendData,
                                                     uOpenFlags);
             if (RT_FAILURE(rc))
@@ -7571,6 +7608,8 @@ VBOXDDU_DECL(int) VDResize(PVBOXHDD pDisk, uint64_t cbSize,
     {
         if (pIfProgress && pIfProgress->pfnProgress)
             pIfProgress->pfnProgress(pIfProgress->Core.pvUser, 100);
+
+        pDisk->cbSize = cbSize;
     }
 
     LogFlowFunc(("returns %Rrc\n", rc));

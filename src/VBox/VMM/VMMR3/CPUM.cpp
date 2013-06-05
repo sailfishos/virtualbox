@@ -40,6 +40,7 @@
 #include <VBox/vmm/cpumctx-v1_6.h>
 #include <VBox/vmm/pgm.h>
 #include <VBox/vmm/mm.h>
+#include <VBox/vmm/em.h>
 #include <VBox/vmm/selm.h>
 #include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/patm.h>
@@ -1389,20 +1390,6 @@ static int cpumR3CpuIdInit(PVM pVM)
     rc = CFGMR3QueryBoolDef(pCpumCfg, "EnableHVP", &fEnable, false);                AssertRCReturn(rc, rc);
     if (fEnable)
         CPUMSetGuestCpuIdFeature(pVM, CPUMCPUIDFEATURE_HVP);
-    /*
-     * Log the cpuid and we're good.
-     */
-    bool fOldBuffered = RTLogRelSetBuffering(true /*fBuffered*/);
-    RTCPUSET OnlineSet;
-    LogRel(("Logical host processors: %u present, %u max, %u online, online mask: %016RX64\n",
-            (unsigned)RTMpGetPresentCount(), (unsigned)RTMpGetCount(), (unsigned)RTMpGetOnlineCount(),
-            RTCpuSetToU64(RTMpGetOnlineSet(&OnlineSet)) ));
-    LogRel(("************************* CPUID dump ************************\n"));
-    DBGFR3Info(pVM, "cpuid", "verbose", DBGFR3InfoLogRelHlp());
-    LogRel(("\n"));
-    DBGFR3InfoLog(pVM, "cpuid", "verbose"); /* macro */
-    RTLogRelSetBuffering(fOldBuffered);
-    LogRel(("******************** End of CPUID dump **********************\n"));
 
 #undef PORTABLE_DISABLE_FEATURE_BIT
 #undef PORTABLE_CLEAR_BITS_WHEN
@@ -4033,7 +4020,9 @@ VMMR3DECL(int) CPUMR3DisasmInstrCPU(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, RTGCPT
     {
         if (!CPUMSELREG_ARE_HIDDEN_PARTS_VALID(pVCpu, &pCtx->cs))
         {
+# ifdef VBOX_WITH_RAW_MODE_NOT_R0
             CPUMGuestLazyLoadHiddenSelectorReg(pVCpu, &pCtx->cs);
+# endif
             if (!CPUMSELREG_ARE_HIDDEN_PARTS_VALID(pVCpu, &pCtx->cs))
                 return VERR_CPUM_HIDDEN_CS_LOAD_ERROR;
         }
@@ -4193,7 +4182,8 @@ VMMR3DECL(int) CPUMR3RawEnter(PVMCPU pVCpu, PCPUMCTXCORE pCtxCore)
     /*
      * Are we in Ring-0?
      */
-    if (    pCtxCore->ss.Sel && (pCtxCore->ss.Sel & X86_SEL_RPL) == 0
+    if (    pCtxCore->ss.Sel
+        &&  (pCtxCore->ss.Sel & X86_SEL_RPL) == 0
         &&  !pCtxCore->eflags.Bits.u1VM)
     {
         /*
@@ -4205,13 +4195,26 @@ VMMR3DECL(int) CPUMR3RawEnter(PVMCPU pVCpu, PCPUMCTXCORE pCtxCore)
          * Set CPL to Ring-1.
          */
         pCtxCore->ss.Sel |= 1;
-        if (pCtxCore->cs.Sel && (pCtxCore->cs.Sel & X86_SEL_RPL) == 0)
+        if (    pCtxCore->cs.Sel
+            &&  (pCtxCore->cs.Sel & X86_SEL_RPL) == 0)
             pCtxCore->cs.Sel |= 1;
     }
     else
     {
+#ifdef VBOX_WITH_RAW_RING1
+        if (    EMIsRawRing1Enabled(pVM)
+            &&  !pCtxCore->eflags.Bits.u1VM
+            &&  (pCtxCore->ss.Sel & X86_SEL_RPL) == 1)
+        {
+            /* Set CPL to Ring-2. */
+            pCtxCore->ss.Sel = (pCtxCore->ss.Sel & ~X86_SEL_RPL) | 2;
+            if (pCtxCore->cs.Sel && (pCtxCore->cs.Sel & X86_SEL_RPL) == 1)
+                pCtxCore->cs.Sel = (pCtxCore->cs.Sel & ~X86_SEL_RPL) | 2;
+        }
+#else
         AssertMsg((pCtxCore->ss.Sel & X86_SEL_RPL) >= 2 || pCtxCore->eflags.Bits.u1VM,
                   ("ring-1 code not supported\n"));
+#endif
         /*
          * PATM takes care of IOPL and IF flags for Ring-3 and Ring-2 code as well.
          */
@@ -4222,8 +4225,7 @@ VMMR3DECL(int) CPUMR3RawEnter(PVMCPU pVCpu, PCPUMCTXCORE pCtxCore)
      * Assert sanity.
      */
     AssertMsg((pCtxCore->eflags.u32 & X86_EFL_IF), ("X86_EFL_IF is clear\n"));
-    AssertReleaseMsg(   pCtxCore->eflags.Bits.u2IOPL < (unsigned)(pCtxCore->ss.Sel & X86_SEL_RPL)
-                     || pCtxCore->eflags.Bits.u1VM,
+    AssertReleaseMsg(pCtxCore->eflags.Bits.u2IOPL == 0,
                      ("X86_EFL_IOPL=%d CPL=%d\n", pCtxCore->eflags.Bits.u2IOPL, pCtxCore->ss.Sel & X86_SEL_RPL));
     Assert((pVCpu->cpum.s.Guest.cr0 & (X86_CR0_PG | X86_CR0_WP | X86_CR0_PE)) == (X86_CR0_PG | X86_CR0_PE | X86_CR0_WP));
 
@@ -4301,15 +4303,43 @@ VMMR3DECL(int) CPUMR3RawLeave(PVMCPU pVCpu, PCPUMCTXCORE pCtxCore, int rc)
         PATMRawLeave(pVM, pCtxCore, rc);
         if (!pCtxCore->eflags.Bits.u1VM)
         {
-            /** @todo See what happens if we remove this. */
-            if ((pCtxCore->ds.Sel & X86_SEL_RPL) == 1)
-                pCtxCore->ds.Sel &= ~X86_SEL_RPL;
-            if ((pCtxCore->es.Sel & X86_SEL_RPL) == 1)
-                pCtxCore->es.Sel &= ~X86_SEL_RPL;
-            if ((pCtxCore->fs.Sel & X86_SEL_RPL) == 1)
-                pCtxCore->fs.Sel &= ~X86_SEL_RPL;
-            if ((pCtxCore->gs.Sel & X86_SEL_RPL) == 1)
-                pCtxCore->gs.Sel &= ~X86_SEL_RPL;
+#ifdef VBOX_WITH_RAW_RING1
+            if (    EMIsRawRing1Enabled(pVM)
+                &&  (pCtxCore->ss.Sel & X86_SEL_RPL) == 2)
+            {
+                /* Not quite sure if this is really required, but shouldn't harm (too much anyways). */
+                /** @todo See what happens if we remove this. */
+                if ((pCtxCore->ds.Sel & X86_SEL_RPL) == 2)
+                    pCtxCore->ds.Sel = (pCtxCore->ds.Sel & ~X86_SEL_RPL) | 1;
+                if ((pCtxCore->es.Sel & X86_SEL_RPL) == 2)
+                    pCtxCore->es.Sel = (pCtxCore->es.Sel & ~X86_SEL_RPL) | 1;
+                if ((pCtxCore->fs.Sel & X86_SEL_RPL) == 2)
+                    pCtxCore->fs.Sel = (pCtxCore->fs.Sel & ~X86_SEL_RPL) | 1;
+                if ((pCtxCore->gs.Sel & X86_SEL_RPL) == 2)
+                    pCtxCore->gs.Sel = (pCtxCore->gs.Sel & ~X86_SEL_RPL) | 1;
+
+                /*
+                 * Ring-2 selector => Ring-1.
+                 */
+                pCtxCore->ss.Sel = (pCtxCore->ss.Sel & ~X86_SEL_RPL) | 1;
+                if ((pCtxCore->cs.Sel & X86_SEL_RPL) == 2)
+                    pCtxCore->cs.Sel = (pCtxCore->cs.Sel & ~X86_SEL_RPL) | 1;
+            }
+            else
+            {
+#endif
+                /** @todo See what happens if we remove this. */
+                if ((pCtxCore->ds.Sel & X86_SEL_RPL) == 1)
+                    pCtxCore->ds.Sel &= ~X86_SEL_RPL;
+                if ((pCtxCore->es.Sel & X86_SEL_RPL) == 1)
+                    pCtxCore->es.Sel &= ~X86_SEL_RPL;
+                if ((pCtxCore->fs.Sel & X86_SEL_RPL) == 1)
+                    pCtxCore->fs.Sel &= ~X86_SEL_RPL;
+                if ((pCtxCore->gs.Sel & X86_SEL_RPL) == 1)
+                    pCtxCore->gs.Sel &= ~X86_SEL_RPL;
+#ifdef VBOX_WITH_RAW_RING1
+            }
+#endif
         }
     }
 
@@ -4369,3 +4399,25 @@ VMMR3DECL(void) CPUMR3RemLeave(PVMCPU pVCpu, bool fNoOutOfSyncSels)
     pVCpu->cpum.s.fRemEntered = false;
 }
 
+/**
+ * Called when the ring-0 init phases comleted.
+ *
+ * @param   pVM                 Pointer to the VM.
+ */
+VMMR3DECL(void) CPUMR3LogCpuIds(PVM pVM)
+{
+    /*
+     * Log the cpuid.
+     */
+    bool fOldBuffered = RTLogRelSetBuffering(true /*fBuffered*/);
+    RTCPUSET OnlineSet;
+    LogRel(("Logical host processors: %u present, %u max, %u online, online mask: %016RX64\n",
+                (unsigned)RTMpGetPresentCount(), (unsigned)RTMpGetCount(), (unsigned)RTMpGetOnlineCount(),
+                RTCpuSetToU64(RTMpGetOnlineSet(&OnlineSet)) ));
+    LogRel(("************************* CPUID dump ************************\n"));
+    DBGFR3Info(pVM, "cpuid", "verbose", DBGFR3InfoLogRelHlp());
+    LogRel(("\n"));
+    DBGFR3InfoLog(pVM, "cpuid", "verbose"); /* macro */
+    RTLogRelSetBuffering(fOldBuffered);
+    LogRel(("******************** End of CPUID dump **********************\n"));
+}

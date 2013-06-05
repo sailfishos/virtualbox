@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,9 +26,7 @@ int VBoxSharedFoldersAutoMount(void)
 {
     uint32_t u32ClientId;
     int rc = VbglR3SharedFolderConnect(&u32ClientId);
-    if (RT_FAILURE(rc))
-        Log(("VBoxTray: Failed to connect to the shared folder service, error %Rrc\n", rc));
-    else
+    if (RT_SUCCESS(rc))
     {
         uint32_t cMappings;
         VBGLR3SHAREDFOLDERMAPPING *paMappings;
@@ -126,6 +124,12 @@ int VBoxSharedFoldersAutoMount(void)
         else
             Log(("VBoxTray: Error while getting the shared folder mappings, rc = %Rrc\n", rc));
         VbglR3SharedFolderDisconnect(u32ClientId);
+    }
+    else
+    {
+        Log(("VBoxTray: Failed to connect to the shared folder service, error %Rrc\n", rc));
+        /* return success, otherwise VBoxTray will not start! */
+        rc = VINF_SUCCESS;
     }
     return rc;
 }

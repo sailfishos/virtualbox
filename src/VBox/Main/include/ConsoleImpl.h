@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2005-2012 Oracle Corporation
+ * Copyright (C) 2005-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,7 +35,7 @@ class VRDEServerInfo;
 class AudioSniffer;
 class Nvram;
 #ifdef VBOX_WITH_USB_VIDEO
-class UsbWebcamInterface;
+class EmWebcam;
 #endif
 #ifdef VBOX_WITH_USB_CARDREADER
 class UsbCardReader;
@@ -228,6 +228,9 @@ public:
 #ifdef VBOX_WITH_USB_CARDREADER
     UsbCardReader *getUsbCardReader() { return mUsbCardReader; }
 #endif
+#ifdef VBOX_WITH_USB_VIDEO
+    EmWebcam *getEmWebcam() { return mEmWebcam; }
+#endif
 
     int VRDPClientLogon(uint32_t u32ClientId, const char *pszUser, const char *pszPassword, const char *pszDomain);
     void VRDPClientStatusChange(uint32_t u32ClientId, const char *pszStatus);
@@ -238,18 +241,19 @@ public:
     void VRDPInterceptClipboard(uint32_t u32ClientId);
 
     void processRemoteUSBDevices(uint32_t u32ClientId, VRDEUSBDEVICEDESC *pDevList, uint32_t cbDevList, bool fDescExt);
-    void reportGuestStatistics(ULONG aValidStats, ULONG aCpuUser,
+    void reportVmStatistics(ULONG aValidStats, ULONG aCpuUser,
                                ULONG aCpuKernel, ULONG aCpuIdle,
                                ULONG aMemTotal, ULONG aMemFree,
                                ULONG aMemBalloon, ULONG aMemShared,
                                ULONG aMemCache, ULONG aPageTotal,
                                ULONG aAllocVMM, ULONG aFreeVMM,
-                               ULONG aBalloonedVMM, ULONG aSharedVMM)
+                               ULONG aBalloonedVMM, ULONG aSharedVMM,
+                               ULONG aVmNetRx, ULONG aVmNetTx)
     {
-        mControl->ReportGuestStatistics(aValidStats, aCpuUser, aCpuKernel, aCpuIdle,
-                                        aMemTotal, aMemFree, aMemBalloon, aMemShared,
-                                        aMemCache, aPageTotal, aAllocVMM, aFreeVMM,
-                                        aBalloonedVMM, aSharedVMM);
+        mControl->ReportVmStatistics(aValidStats, aCpuUser, aCpuKernel, aCpuIdle,
+                                     aMemTotal, aMemFree, aMemBalloon, aMemShared,
+                                     aMemCache, aPageTotal, aAllocVMM, aFreeVMM,
+                                     aBalloonedVMM, aSharedVMM, aVmNetRx, aVmNetTx);
     }
     void enableVMMStatistics(BOOL aEnable);
 
@@ -522,6 +526,7 @@ private:
     static DECLCALLBACK(int) configConstructor(PVM pVM, void *pvConsole);
     int configConstructorInner(PVM pVM, AutoWriteLock *pAlock);
     int configCfgmOverlay(PVM pVM, IVirtualBox *pVirtualBox, IMachine *pMachine);
+    int configDumpAPISettingsTweaks(IVirtualBox *pVirtualBox, IMachine *pMachine);
 
     int configMediumAttachment(PCFGMNODE pCtlInst,
                                const char *pcszDevice,
@@ -773,7 +778,7 @@ private:
     AudioSniffer * const mAudioSniffer;
     Nvram   * const mNvram;
 #ifdef VBOX_WITH_USB_VIDEO
-    UsbWebcamInterface * const mUsbWebcamInterface;
+    EmWebcam * const mEmWebcam;
 #endif
 #ifdef VBOX_WITH_USB_CARDREADER
     UsbCardReader * const mUsbCardReader;

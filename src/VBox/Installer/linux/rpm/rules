@@ -62,7 +62,7 @@ arch     := $(shell if [ `uname -m` = "x86_64" ]; then echo "amd64"; else echo "
 verfile  := $(builddir)/version-generated.mk
 ose      := $(if $(OSE),1,$(if $(wildcard $(vboxroot)/src/VBox/RDP/server),,1))
 -include $(vboxroot)/SVN_REVISION
-svnrev   :=$(if $(svn_revision),$(svn_revision),0)
+svnrev   :=$(if $(svn_revision),$(svn_revision),)
 
 NOMODS   ?= $(ose)
 NOQT     ?= $(HEADLESS)
@@ -84,7 +84,7 @@ ifneq ($(MAKECMDGOALS),clean)
   $(error Cannot detect package distribution (rpmrel=$(rpmrel)))
  endif
 
- ifeq ($(filter-out el4 el5 el6 ol4 ol5 ol6 centos4 centos5 centos6 fedora9 fedora11 fedora12 fedora13 fedora14 fedora15 fedora16 fedora17 turbolinux11,$(rpmrel)),)
+ ifeq ($(filter-out el4 el5 el6 ol4 ol5 ol6 centos4 centos5 centos6 fedora9 fedora11 fedora12 fedora13 fedora14 fedora15 fedora16 fedora17 fedora18 turbolinux11,$(rpmrel)),)
   rpmspec := rpm_redhat
  endif
  ifeq ($(filter-out openSUSE110 openSUSE111 openSUSE112 openSUSE113 openSUSE114 sles10.1 sles11.0,$(rpmrel)),)
@@ -109,8 +109,8 @@ rpmver   :=$(ver)$(if $(NOSUBVER),,$(if $(svn_revision),_$(svn_revision),)$(VERS
 archdir  := $(current)/rpm/VirtualBox-$(ver)
 rpmname  := $(verpkg)-$(rpmver)_$(rpmrel)
 
-# Fedora13/14 is bleeding edge, the other jails have outdated kernel headers
-instmod  := $(if $(filter el4 el5 el6 ol4 ol5 ol6 centos4 centos5 centos6 sles10.1 sles11.0 fedora13 fedora14 fedora15 fedora16 fedora17,$(rpmrel)),,install_rpm)
+# never ship any modules
+instmod  := 
 
 ifneq ($(STAGEDISO),)
  ifeq ($(wildcard $(STAGEDISO)/VBoxGuestAdditions.iso),)
@@ -158,7 +158,7 @@ bld_flags := AUTOCFG=$(current)/rpm/AutoConfig.kmk \
 	     $(doc_dir) \
 	     $(if $(ose),,VBOX_WITH_DOCS_CHM=1) \
 	     VBOX_PACKAGE_DIST=$(rpmdist) \
-	     VBOX_SVN_REV=$(svnrev) \
+	     $(if $(svnrev),VBOX_SVN_REV=$(svnrev),) \
 	     $(if $(NODOCS),VBOX_WITH_DOCS= ,) \
 	     $(if $(VERBOSE),--print-directory KBUILD_VERBOSE=2,--no-print-directory) \
 	     $(if $(STAGEDISO),VBOX_WITHOUT_ADDITIONS=1,) \
@@ -179,8 +179,8 @@ rpm/build-stamp: rpm/configure-stamp
 	$(if $(STAGEDISO),cp $(STAGEDISO)/VBoxGuestAdditions.iso $(builddir)/bin/additions,)
 	. rpm/env.sh && kmk -C $(vboxroot) $(bld_flags) \
 	    VBOX_NO_LINUX_RUN_INSTALLER=1 \
-	    VBOX_LNX_ADD_ARCHIVE.x86=$(builddir)/bin/additions/VBoxGuestAdditions-x86-r$(svnrev).tar.bz2 \
-	    VBOX_LNX_ADD_ARCHIVE.amd64=$(builddir)/bin/additions/VBoxGuestAdditions-amd64-r$(svnrev).tar.bz2 \
+	    VBOX_LNX_ADD_ARCHIVE.x86=$(builddir)/bin/additions/VBoxGuestAdditions-x86.tar.bz2 \
+	    VBOX_LNX_ADD_ARCHIVE.amd64=$(builddir)/bin/additions/VBoxGuestAdditions-amd64.tar.bz2 \
 	    VBOX_PATH_ADDITIONS.linux.x86=$(builddir)/bin/additions \
 	    VBOX_PATH_ADDITIONS.linux.amd64=$(builddir)/bin/additions \
 	    packing

@@ -48,6 +48,8 @@ const WCHAR *g_pwszMMRFlags    = L"VBoxMMR";
 const WCHAR *g_pwszMMRAdditions =
     L"SOFTWARE\\Oracle\\VirtualBox Guest Additions";
 
+const char *g_pszVRDETSMF      = "/vrde/tsmf";
+
 const DWORD g_dwMMRCodeCavingEnabled = 0x00000002;
 
 BOOL g_bMMRCodeCavingIsEnabled = TRUE;
@@ -93,8 +95,6 @@ RTTHREAD hDetachMonitor = NIL_RTTHREAD;
 uint32_t nUserData = 1;
 
 HANDLE ghVBoxDriver = NULL;
-
-typedef HRESULT (*g_pMFShutdown)(void);
 
 using std::map;
 using std::list;
@@ -297,6 +297,11 @@ public:
         }
 
         return false;
+    }
+
+    static uint32_t ChannelCount()
+    {
+        return ChannelList.size();
     }
 
     DWORD GetId() { return m_Id; }
@@ -519,6 +524,131 @@ void InstallHooks(const IMAGE_IMPORT_DESCRIPTOR *pDescriptor, const PBYTE pBaseA
         }
         ++pDescriptor;
     }
+}
+
+int StartMonitor(RTTHREAD *hMonitor, PFNRTTHREAD pMonitorFn,
+    void *pData, size_t cbStack, RTTHREADTYPE enmType,
+    uint32_t flags, const char *pszName)
+{
+    int rc;
+
+    rc = RTThreadCreate(hMonitor, pMonitorFn, pData,
+                        cbStack, enmType, flags, pszName);
+
+    if (RT_FAILURE(rc))
+    {
+        VBoxMMRHookLog("VBoxMMR: Error starting monitor %s: %d\n", pszName, rc);
+    }
+
+    return rc;
+}
+
+int StopMonitor(RTTHREAD *hMonitor, const char* pszName)
+{
+    int rc;
+
+    if (*hMonitor != NIL_RTTHREAD)
+    {
+        rc = RTThreadUserSignal(*hMonitor);
+
+        if (RT_SUCCESS(rc))
+        {
+            // rc = RTThreadWait(*hMonitor, RT_INDEFINITE_WAIT, NULL);
+
+            if (RT_FAILURE(rc))
+            {
+                VBoxMMRHookLog("VBoxMMR: Error waiting for monitor %s to stop: %d\n", pszName, rc);
+            }
+        }
+        else
+        {
+            VBoxMMRHookLog("VBoxMMR: Error sending stop signal to monitor %s: %d\n", pszName, rc);
+        }
+
+        *hMonitor = NIL_RTTHREAD;
+    }
+
+
+    return rc;
+}
+
+DECLCALLBACK(int)
+MonitorDetach(RTTHREAD hThreadSelf, void *pvUser)
+{
+    VBoxGuestFilterMaskInfo maskInfo;
+    DWORD cbReturned;
+    bool bPrevious = FALSE;
+    bool bCurrent = bPrevious;
+
+    maskInfo.u32OrMask = VMMDEV_EVENT_VRDP;
+    maskInfo.u32NotMask = 0;
+
+    VBoxMMRHookLog("VBoxMMR: MonitorDetach starting\n");
+
+    if (DeviceIoControl (ghVBoxDriver, VBOXGUEST_IOCTL_CTL_FILTER_MASK, &maskInfo, sizeof (maskInfo), NULL, 0, &cbReturned, NULL))
+    {
+        VBoxMMRHookLog("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask - or) succeeded\n");
+    }
+    else
+    {
+        VBoxMMRHookLog("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask) failed\n");
+        return 0;
+    }
+
+    for(;;)
+    {
+        /* Call the host to get VRDP status and the experience level. */
+        VMMDevVRDPChangeRequest vrdpChangeRequest = {0};
+
+        vrdpChangeRequest.header.size            = sizeof(VMMDevVRDPChangeRequest);
+        vrdpChangeRequest.header.version         = VMMDEV_REQUEST_HEADER_VERSION;
+        vrdpChangeRequest.header.requestType     = VMMDevReq_GetVRDPChangeRequest;
+        vrdpChangeRequest.u8VRDPActive           = 0;
+        vrdpChangeRequest.u32VRDPExperienceLevel = 0;
+
+        if (DeviceIoControl (ghVBoxDriver,
+                             VBOXGUEST_IOCTL_VMMREQUEST(sizeof(VMMDevVRDPChangeRequest)),
+                             &vrdpChangeRequest,
+                             sizeof(VMMDevVRDPChangeRequest),
+                             &vrdpChangeRequest,
+                             sizeof(VMMDevVRDPChangeRequest),
+                             &cbReturned, NULL))
+        {
+            bCurrent = ( vrdpChangeRequest.u8VRDPActive == 1) ? TRUE : FALSE;
+
+            if (bCurrent != bPrevious)
+            {
+                VBoxMMRHookLog(
+                    "VBoxMMR: VRDP active status changed: %d\n",
+                    vrdpChangeRequest.u8VRDPActive);
+
+                if (bCurrent == FALSE &&
+                    VBOX_RDP_CHANNEL::ChannelCount() > 0)
+                {
+                    VBoxMMRHookLog("VBoxMMR: exiting ...\n");
+                    ExitProcess(0);
+                    break;
+                }
+            }
+
+            bPrevious = bCurrent;
+        }
+        else
+        {
+           VBoxMMRHookLog("VBoxMMR: VBoxVRDPThread: Error from DeviceIoControl VBOXGUEST_IOCTL_VMMREQUEST\n");
+
+        }
+
+        if (RTThreadUserWait(hThreadSelf, 1000) == VINF_SUCCESS)
+        {
+            VBoxMMRHookLog("VBoxMMR: detach monitor received stop signal\n");
+            break;
+        }
+    }
+
+    VBoxMMRHookLog("VBoxMMR: MonitorDetach stopping\n");
+
+    return VINF_SUCCESS;
 }
 
 /*
@@ -782,11 +912,22 @@ HANDLE WINAPI MMRWinStationVirtualOpenEx(HANDLE hServer, DWORD hSession, LPSTR p
 
         if (RT_SUCCESS(rc))
         {
-            WaitForSingleObject(hCreateEvent, INFINITE);
+            WaitForSingleObject(hCreateEvent, 5000);
 
             if (g_nCreateResult == VBOX_TSMF_HCH_CREATE_ACCEPTED)
             {
                 h = new VBOX_RDP_CHANNEL(u32ChannelHandle);
+
+                if (hDetachMonitor == NIL_RTTHREAD)
+                {
+                    StartMonitor(&hDetachMonitor, MonitorDetach,
+                        &nUserData, 0, RTTHREADTYPE_INFREQUENT_POLLER,
+                        RTTHREADFLAGS_WAITABLE, "mmrpoll");
+                }
+            }
+            else
+            {
+                VBoxMMRHookLog("VBoxMMR: Unable to open channel: %d\n", g_nCreateResult);
             }
         }
         else
@@ -979,21 +1120,22 @@ FARPROC WINAPI MMRGetProcAddress(HMODULE hModule, LPCSTR lpProcName)
             CHAR szDllName[512];
 
             if (FALSE == GetModuleFileNameA(hModule, szDllName, sizeof(szDllName)))
-                szDllName[0] = '\0';
-
-        }
-        else
-            if (0 == strcmp(lpProcName, "WTSQuerySessionInformationW"))
             {
-                g_pfnWTSQuerySessionInformation = (BOOL (__stdcall *)(HANDLE,DWORD,WTS_INFO_CLASS,LPWSTR *,DWORD *)) ret;
-                ret = (FARPROC) LocalWTSQuerySessionInformation;
+                szDllName[0] = '\0';
+            }
+        }
+        else if (0 == strcmp(lpProcName, "WTSQuerySessionInformationW"))
+        {
+            g_pfnWTSQuerySessionInformation = (BOOL (__stdcall *)(HANDLE,DWORD,WTS_INFO_CLASS,LPWSTR *,DWORD *)) ret;
+            ret = (FARPROC) LocalWTSQuerySessionInformation;
 
             CHAR szDllName[512];
 
             if (FALSE == GetModuleFileNameA(hModule, szDllName, sizeof(szDllName)))
+            {
                 szDllName[0] = '\0';
-
             }
+        }
     }
 
     return ret;
@@ -1075,131 +1217,6 @@ static void VBoxMMRCloseBaseDriver(void)
         CloseHandle(ghVBoxDriver);
         ghVBoxDriver = NULL;
     }
-}
-
-DECLCALLBACK(int)
-MonitorDetach(RTTHREAD hThreadSelf, void *pvUser)
-{
-    VBoxGuestFilterMaskInfo maskInfo;
-    DWORD cbReturned;
-    bool bPrevious = TRUE;
-    bool bCurrent = TRUE;
-
-    maskInfo.u32OrMask = VMMDEV_EVENT_VRDP;
-    maskInfo.u32NotMask = 0;
-
-    VBoxMMRHookLog("VBoxMMR: MonitorDetach starting\n");
-
-    if (DeviceIoControl (ghVBoxDriver, VBOXGUEST_IOCTL_CTL_FILTER_MASK, &maskInfo, sizeof (maskInfo), NULL, 0, &cbReturned, NULL))
-    {
-        VBoxMMRHookLog("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask - or) succeeded\n");
-    }
-    else
-    {
-        VBoxMMRHookLog("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask) failed\n");
-        return 0;
-    }
-
-    g_pMFShutdown ret = (g_pMFShutdown)GetProcAddress(GetModuleHandle(TEXT("Mfplat.dll")),"MFShutdown");
-
-
-    for(;;)
-    {
-        /* Call the host to get VRDP status and the experience level. */
-        VMMDevVRDPChangeRequest vrdpChangeRequest = {0};
-
-        vrdpChangeRequest.header.size            = sizeof(VMMDevVRDPChangeRequest);
-        vrdpChangeRequest.header.version         = VMMDEV_REQUEST_HEADER_VERSION;
-        vrdpChangeRequest.header.requestType     = VMMDevReq_GetVRDPChangeRequest;
-        vrdpChangeRequest.u8VRDPActive           = 0;
-        vrdpChangeRequest.u32VRDPExperienceLevel = 0;
-
-        if (DeviceIoControl (ghVBoxDriver,
-                             VBOXGUEST_IOCTL_VMMREQUEST(sizeof(VMMDevVRDPChangeRequest)),
-                             &vrdpChangeRequest,
-                             sizeof(VMMDevVRDPChangeRequest),
-                             &vrdpChangeRequest,
-                             sizeof(VMMDevVRDPChangeRequest),
-                             &cbReturned, NULL))
-        {
-            VBoxMMRHookLog("VBoxMMR: VBoxVRDPThread: u8VRDPActive = %d, level %d\n", vrdpChangeRequest.u8VRDPActive, vrdpChangeRequest.u32VRDPExperienceLevel);
-            bCurrent = ( vrdpChangeRequest.u8VRDPActive == 1) ? TRUE : FALSE;
-            if (bCurrent != bPrevious && bCurrent == FALSE)
-            {
-                HWND hWnd = FindWindow(L"WMPlayerApp", NULL);
-                if (hWnd != NULL)
-                {
-                    VBoxMMRHookLog("VBoxMMR:  PostMessage close\n");
-                    PostMessage(hWnd, WM_COMMAND, (WPARAM) 84345 , NULL);
-                    //g_pMFShutdown();
-
-                }
-            }
-            bPrevious =  bCurrent;
-
-        }
-        else
-        {
-           VBoxMMRHookLog("VBoxMMR: VBoxVRDPThread: Error from DeviceIoControl VBOXGUEST_IOCTL_VMMREQUEST\n");
-
-        }
-
-        if (RTThreadUserWait(hThreadSelf, 1000) == VINF_SUCCESS)
-        {
-            VBoxMMRHookLog("VBoxMMR: detach monitor received stop signal\n");
-            break;
-        }
-    }
-
-    VBoxMMRHookLog("VBoxMMR: MonitorDetach stopping\n");
-
-    return VINF_SUCCESS;
-}
-
-int StartMonitor(RTTHREAD hMonitor, PFNRTTHREAD pMonitorFn,
-    void *pData, size_t cbStack, RTTHREADTYPE enmType,
-    uint32_t flags, const char *pszName)
-{
-    int rc;
-
-    rc = RTThreadCreate(&hMonitor, pMonitorFn, pData,
-                        cbStack, enmType, flags, pszName);
-
-    if (RT_FAILURE(rc))
-    {
-        VBoxMMRHookLog("VBoxMMR: Error starting monitor %s: %d\n", pszName, rc);
-    }
-
-    return rc;
-}
-
-int StopMonitor(RTTHREAD hMonitor, const char* pszName)
-{
-    int rc;
-
-    if (hMonitor != NIL_RTTHREAD)
-    {
-        rc = RTThreadUserSignal(hMonitor);
-
-        if (RT_SUCCESS(rc))
-        {
-            // rc = RTThreadWait(hMonitor, RT_INDEFINITE_WAIT, NULL);
-
-            if (RT_FAILURE(rc))
-            {
-                VBoxMMRHookLog("VBoxMMR: Error waiting for monitor %s to stop: %d\n", pszName, rc);
-            }
-        }
-        else
-        {
-            VBoxMMRHookLog("VBoxMMR: Error sending stop signal to monitor %s: %d\n", pszName, rc);
-        }
-
-        hMonitor = NIL_RTTHREAD;
-    }
-
-
-    return rc;
 }
 
 void
@@ -1352,17 +1369,24 @@ TSMFHOOK_API LRESULT CALLBACK CBTProc(int nCode, WPARAM wParam, LPARAM lParam)
 
         VBoxMMRHookLog("VBoxMMR: WMP APIs Hooking started ...\n");
 
+        HMODULE hMod = GetModuleHandleA("wmp");
+        if (hMod != NULL)
+        {
+            VBoxMMRHookLog("VBoxMMR: Hooking wmp -> %x \n",hMod);
+            const IMAGE_IMPORT_DESCRIPTOR *pDescriptor = GetImportDescriptor(hMod);
+            InstallHooks(pDescriptor, (PBYTE) hMod, g_WMPHooks);
+        }
+        else
+        {
+            VBoxMMRHookLog("VBoxMMR: Error hooking wmp -> not found\n");
+        }
+
         InstallHooksForModule("winmm.dll", g_WinMMHooks);
         InstallHooksForModule("tsmf.dll", g_TSMFHooks);
         InstallHooksForModule("DSHOWRDPFILTER.dll", g_TSMFHooks);
         InstallHooksForModule("MSMPEG2VDEC.dll", g_DShowHooks);
         InstallHooksForModule("MFDS.dll", g_DShowHooks);
         InstallHooksForModule("mf.dll", g_MFHooks);
-
-        HMODULE hMod = GetModuleHandleA("wmp");
-        VBoxMMRHookLog("VBoxMMR: Hooking wmp -> %x \n",hMod);
-        const IMAGE_IMPORT_DESCRIPTOR *pDescriptor = GetImportDescriptor(hMod);
-        InstallHooks(pDescriptor, (PBYTE) hMod, g_WMPHooks);
 
         ULONG ret = RegisterTraceGuids(
             ControlCallback, NULL, &ProviderId, 0,
@@ -1373,36 +1397,45 @@ TSMFHOOK_API LRESULT CALLBACK CBTProc(int nCode, WPARAM wParam, LPARAM lParam)
             VBoxMMRHookLog("VBoxMMR: RegisterTraceGuids failed with error code: %u\n", GetLastError());
         }
 
-        int rc = VBoxMMROpenBaseDriver();
-
-        if (RT_SUCCESS(rc))
-        {
-            StartMonitor(hDetachMonitor, MonitorDetach,
-                         &nUserData, 0, RTTHREADTYPE_INFREQUENT_POLLER,
-                         RTTHREADFLAGS_WAITABLE, "mmrpoll");
-        }
-
         bool bInRDPSession = (1 == GetSystemMetrics(0x1000));
 
         if (!bInRDPSession)
         {
             uint32_t u32HGCMClientId = 0;
 
-            rc = VbglR3HostChannelInit(&u32HGCMClientId);
+            int rc = VbglR3HostChannelInit(&u32HGCMClientId);
 
             if (RT_SUCCESS(rc))
             {
-                hCreateEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
-                InitializeCriticalSection(&CreateLock);
+                uint32_t u32Size = 0;
 
-                g_HostChannelCtx.thread = NIL_RTTHREAD;
-                g_HostChannelCtx.u32HGCMClientId = u32HGCMClientId;
+                rc = VbglR3HostChannelQuery(g_pszVRDETSMF, u32HGCMClientId,
+                    VBOX_HOST_CHANNEL_CTRL_EXISTS, NULL, 0, NULL, 0, &u32Size);
 
-                StartMonitor(
-                    g_HostChannelCtx.thread, MonitorTSMFChannel,
-                    &g_HostChannelCtx, 64*_1K,
-                    RTTHREADTYPE_DEFAULT, RTTHREADFLAGS_WAITABLE,
-                    "tsmfio");
+                if (RT_SUCCESS(rc))
+                {
+                    hCreateEvent = CreateEvent(NULL, FALSE, FALSE, NULL);
+                    InitializeCriticalSection(&CreateLock);
+
+                    g_HostChannelCtx.thread = NIL_RTTHREAD;
+                    g_HostChannelCtx.u32HGCMClientId = u32HGCMClientId;
+
+                    StartMonitor(
+                        &g_HostChannelCtx.thread, MonitorTSMFChannel,
+                        &g_HostChannelCtx, 64*_1K,
+                        RTTHREADTYPE_DEFAULT, RTTHREADFLAGS_WAITABLE,
+                        "tsmfio");
+
+                    VBoxMMROpenBaseDriver();
+                }
+                else
+                {
+                    VBoxMMRHookLog(
+                        "VBoxMMR: TSMF HGCM unavailable: hgcmid: %d, rc: %d\n",
+                        u32HGCMClientId, rc);
+
+                    VbglR3HostChannelTerm(u32HGCMClientId);
+                }
             }
             else
             {
@@ -1420,13 +1453,14 @@ void Shutdown()
     {
         VBoxMMRHookLog("VBoxMMR: Shutdown\n");
 
-        StopMonitor(hDetachMonitor, "mmrpoll");
+        StopMonitor(&hDetachMonitor, "mmrpoll");
         VBoxMMRCloseBaseDriver();
 
         if (g_HostChannelCtx.u32HGCMClientId != 0)
         {
             g_HostChannelCtx.fShutdown = true;
-            StopMonitor(g_HostChannelCtx.thread, "tsmfio");
+            VbglR3HostChannelEventCancel(0, g_HostChannelCtx.u32HGCMClientId);
+            StopMonitor(&g_HostChannelCtx.thread, "tsmfio");
             VbglR3HostChannelTerm(g_HostChannelCtx.u32HGCMClientId);
         }
 

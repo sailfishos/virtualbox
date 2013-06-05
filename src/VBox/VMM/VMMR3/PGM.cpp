@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -2470,7 +2470,7 @@ static DECLCALLBACK(int) pgmR3RelocateHyperVirtHandler(PAVLROGCPTRNODECORE pNode
  * @param   pVM                 Pointer to the VM.
  * @param   pVCpu               Pointer to the VMCPU.
  */
-VMMR3DECL(void) PGMR3ResetUnpluggedCpu(PVM pVM, PVMCPU pVCpu)
+VMMR3DECL(void) PGMR3ResetCpu(PVM pVM, PVMCPU pVCpu)
 {
     int rc = PGM_GST_PFN(Exit, pVCpu)(pVCpu);
     AssertRC(rc);

@@ -1345,6 +1345,10 @@ void UISelectorWindow::prepareWidgets()
     /* Prepare graphics details: */
     m_pDetails = new UIGDetails(this);
 
+    /* Configure splitter colors: */
+    m_pSplitter->configureColors(m_pChooser->palette().color(QPalette::Active, QPalette::Window),
+                                 m_pDetails->palette().color(QPalette::Active, QPalette::Window));
+
     /* Prepare details and snapshots tabs: */
     m_pVMDesktop = new UIVMDesktop(mVMToolBar, m_pAction_Common_Refresh, this);
 
@@ -1683,8 +1687,7 @@ bool UISelectorWindow::isActionEnabled(int iActionIndex, const QList<UIVMItem*> 
         {
             return !m_pChooser->isGroupSavingInProgress() &&
                    items.size() == 1 &&
-                   pItem->accessible() &&
-                   !UIVMItem::isItemStuck(pItem);
+                   pItem->reconfigurable();
         }
         case UIActionIndexSelector_Simple_Machine_Clone:
         {
@@ -1814,7 +1817,7 @@ bool UISelectorWindow::isAtLeastOneItemSupportsShortcuts(const QList<UIVMItem*> 
 #ifdef Q_WS_MAC
             /* On Mac OS X this are real alias files, which don't work with the old
              * legacy xml files. On the other OS's some kind of start up script is used. */
-            && !pItem->settingsFile().endsWith(".vbox", Qt::CaseInsensitive)
+            && pItem->settingsFile().endsWith(".vbox", Qt::CaseInsensitive)
 #endif /* Q_WS_MAC */
             )
             return true;

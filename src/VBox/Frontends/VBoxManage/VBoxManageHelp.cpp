@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -267,7 +267,6 @@ void printUsage(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
                      "                            [--lptmode<1-N> <devicename>]\n"
 #endif
                      "                            [--guestmemoryballoon <balloonsize in MB>]\n"
-                     "                            [--gueststatisticsinterval <seconds>]\n"
                      "                            [--audio none|null", SEP);
         if (fWin)
         {
@@ -355,6 +354,9 @@ void printUsage(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
                      "                            [--faulttolerancesyncinterval <msec>]\n"
                      "                            [--faulttolerancepassword <password>]\n"
 #endif
+#ifdef VBOX_WITH_USB_VIDEO
+                     "                            [--usbwebcam on|off]\n"
+#endif
 #ifdef VBOX_WITH_USB_CARDREADER
                      "                            [--usbcardreader on|off]\n"
 #endif
@@ -433,25 +435,25 @@ void printUsage(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
                      "                            nic<1-N> null|nat|bridged|intnet|generic\n"
                      "                                     [<devicename>] |\n"
 #endif /* !VBOX_WITH_NETFLT */
-                     "                            nictrace<1-N> on|off\n"
-                     "                            nictracefile<1-N> <filename>\n"
-                     "                            nicproperty<1-N> name=[value]\n"
+                     "                            nictrace<1-N> on|off |\n"
+                     "                            nictracefile<1-N> <filename> |\n"
+                     "                            nicproperty<1-N> name=[value] |\n"
+                     "                            nicpromisc<1-N> deny|allow-vms|allow-all |\n"
                      "                            natpf<1-N> [<rulename>],tcp|udp,[<hostip>],\n"
-                     "                                          <hostport>,[<guestip>],<guestport>\n"
-                     "                            natpf<1-N> delete <rulename>\n"
-                     "                            guestmemoryballoon <balloonsize in MB>]\n"
-                     "                            gueststatisticsinterval <seconds>]\n"
+                     "                                        <hostport>,[<guestip>],<guestport> |\n"
+                     "                            natpf<1-N> delete <rulename> |\n"
+                     "                            guestmemoryballoon <balloonsize in MB> |\n"
                      "                            usbattach <uuid>|<address> |\n"
                      "                            usbdetach <uuid>|<address> |\n"
                      "                            clipboard disabled|hosttoguest|guesttohost|\n"
-                     "                                         bidirectional]\n"
-                     "                            draganddrop disabled|hosttoguest]\n"
+                     "                                      bidirectional |\n"
+                     "                            draganddrop disabled|hosttoguest |\n"
                      "                            vrde on|off |\n"
                      "                            vrdeport <port> |\n"
                      "                            vrdeproperty <name=[value]> |\n"
-                     "                            vrdevideochannelquality <percent>\n"
+                     "                            vrdevideochannelquality <percent> |\n"
                      "                            setvideomodehint <xres> <yres> <bpp>\n"
-                     "                                            [[<display>] [<enabled:yes|no>\n"
+                     "                                            [[<display>] [<enabled:yes|no> |\n"
                      "                                              [<xorigin> <yorigin>]]] |\n"
                      "                            screenshotpng <file> [display] |\n"
                      "                            setcredentials <username>\n"
@@ -461,9 +463,9 @@ void printUsage(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
                      "                            teleport --host <name> --port <port>\n"
                      "                                     [--maxdowntime <msec>]\n"
                      "                                     [--passwordfile <file> |\n"
-                     "                                      --password <password>]\n"
-                     "                            plugcpu <id>\n"
-                     "                            unplugcpu <id>\n"
+                     "                                      --password <password>] |\n"
+                     "                            plugcpu <id> |\n"
+                     "                            unplugcpu <id> |\n"
                      "                            cpuexecutioncap <1-100>\n"
                      "\n", SEP);
     }
@@ -505,7 +507,7 @@ void printUsage(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
                      "                            [--port <number>]\n"
                      "                            [--device <number>]\n"
                      "                            [--type dvddrive|hdd|fdd]\n"
-                     "                            [--medium none|emptydrive|\n"
+                     "                            [--medium none|emptydrive|additions|\n"
                      "                                      <uuid>|<filename>|host:<drive>|iscsi]\n"
                      "                            [--mtype normal|writethrough|immutable|shareable|\n"
                      "                                     readonly|multiattach]\n"

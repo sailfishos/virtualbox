@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -461,6 +461,7 @@ static NTSTATUS vboxWddmChildStatusReportPerform(PVBOXMP_DEVEXT pDevExt, PVBOXVD
             Assert(pChildStatus->iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
             DdiChildStatus.ChildUid = pChildStatus->iChild;
         }
+        LOG(("Reporting DISCONNECT to child %d", DdiChildStatus.ChildUid));
         DdiChildStatus.HotPlug.Connected = FALSE;
         NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbIndicateChildStatus(pDevExt->u.primary.DxgkInterface.DeviceHandle, &DdiChildStatus);
         if (!NT_SUCCESS(Status))
@@ -487,6 +488,7 @@ static NTSTATUS vboxWddmChildStatusReportPerform(PVBOXMP_DEVEXT pDevExt, PVBOXVD
             Assert(pChildStatus->iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
             DdiChildStatus.ChildUid = pChildStatus->iChild;
         }
+        LOG(("Reporting CONNECT to child %d", DdiChildStatus.ChildUid));
         DdiChildStatus.HotPlug.Connected = TRUE;
         NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbIndicateChildStatus(pDevExt->u.primary.DxgkInterface.DeviceHandle, &DdiChildStatus);
         if (!NT_SUCCESS(Status))
@@ -513,6 +515,7 @@ static NTSTATUS vboxWddmChildStatusReportPerform(PVBOXMP_DEVEXT pDevExt, PVBOXVD
             Assert(pChildStatus->iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
             DdiChildStatus.ChildUid = pChildStatus->iChild;
         }
+        LOG(("Reporting ROTATED to child %d", DdiChildStatus.ChildUid));
         DdiChildStatus.Rotation.Angle = pChildStatus->u8RotationAngle;
         NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbIndicateChildStatus(pDevExt->u.primary.DxgkInterface.DeviceHandle, &DdiChildStatus);
         if (!NT_SUCCESS(Status))
@@ -664,10 +667,14 @@ static NTSTATUS vboxWddmChildStatusCheckByMask(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM
     bool bChanged[VBOX_VIDEO_MAX_SCREENS] = {0};
     int i;
 
+    LOG(("checking child status.."));
+
     for (i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
     {
         if (pMask && !ASMBitTest(pMask, i))
             continue;
+
+        LOG(("requested to change child status for display %d", i));
 
         /* @todo: check that we actually need the current source->target */
         PVBOXWDDM_VIDEOMODES_INFO pInfo = &paInfos[i];
@@ -694,6 +701,8 @@ static NTSTATUS vboxWddmChildStatusCheckByMask(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM
     {
         if (bChanged[i])
         {
+            LOG(("modes changed for display %d", i));
+
             NTSTATUS tmpStatus = vboxWddmChildStatusReportReconnected(pDevExt, i);
             if (!NT_SUCCESS(tmpStatus))
             {
@@ -1121,7 +1130,7 @@ NTSTATUS DxgkDdiStartDevice(
                     pDevExt->cContexts3D = 0;
                     pDevExt->cContexts2D = 0;
                     pDevExt->cUnlockedVBVADisabled = 0;
-                    ExInitializeFastMutex(&pDevExt->ContextMutex);
+                    VBOXWDDM_CTXLOCK_INIT(pDevExt);
                     KeInitializeSpinLock(&pDevExt->SynchLock);
 
                     VBoxMPCmnInitCustomVideoModes(pDevExt);
@@ -1136,6 +1145,10 @@ NTSTATUS DxgkDdiStartDevice(
                     vboxVhwaInit(pDevExt);
 #endif
                     VBoxWddmSlInit(pDevExt);
+
+#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
+                    VBoxMpCrShgsmiTransportCreate(&pDevExt->CrHgsmiTransport, pDevExt);
+#endif
 
                     for (UINT i = 0; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
                     {
@@ -1225,6 +1238,10 @@ NTSTATUS DxgkDdiStopDevice(
 
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)MiniportDeviceContext;
     NTSTATUS Status = STATUS_SUCCESS;
+
+#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
+    VBoxMpCrShgsmiTransportTerm(&pDevExt->CrHgsmiTransport);
+#endif
 
     VBoxWddmSlTerm(pDevExt);
 
@@ -4006,13 +4023,11 @@ DxgkDdiEscape(
                     /* this is true due to the above condition */
                     Assert(pEscape->PrivateDriverDataSize > RT_OFFSETOF(VBOXDISPIFESCAPE_CRHGSMICTLCON_CALL, CallInfo));
                     int rc = VBoxMpCrCtlConCallUserData(&pDevExt->CrCtlCon, &pCall->CallInfo, pEscape->PrivateDriverDataSize - RT_OFFSETOF(VBOXDISPIFESCAPE_CRHGSMICTLCON_CALL, CallInfo));
-                    if (RT_SUCCESS(rc))
-                        Status = STATUS_SUCCESS;
-                    else
-                    {
+                    pEscapeHdr->u32CmdSpecific = (uint32_t)rc;
+                    Status = STATUS_SUCCESS; /* <- always return success here, otherwise the private data buffer modifications
+                                              * i.e. rc status stored in u32CmdSpecific will not be copied to user mode */
+                    if (!RT_SUCCESS(rc))
                         WARN(("VBoxMpCrUmCtlConCall failed, rc(%d)", rc));
-                        Status = STATUS_UNSUCCESSFUL;
-                    }
                 }
                 else
                 {
@@ -4179,6 +4194,7 @@ DxgkDdiEscape(
                     Status = STATUS_INVALID_PARAMETER;
                     break;
                 }
+                LOG(("=> VBOXESC_REINITVIDEOMODESBYMASK"));
                 PVBOXDISPIFESCAPE_REINITVIDEOMODESBYMASK pData = (PVBOXDISPIFESCAPE_REINITVIDEOMODESBYMASK)pEscapeHdr;
                 PVBOXWDDM_VIDEOMODES_INFO pInfos = VBoxWddmUpdateVideoModesInfoByMask(pDevExt, pData->ScreenMask);
                 if (fCheckDisplayRecconect)
@@ -4189,6 +4205,7 @@ DxgkDdiEscape(
                         WARN(("vboxWddmChildStatusCheckByMask failed, Status 0x%x", Status));
                     }
                 }
+                LOG(("<= VBOXESC_REINITVIDEOMODESBYMASK"));
                 break;
             }
             case VBOXESC_ADJUSTVIDEOMODES:
@@ -4212,6 +4229,7 @@ DxgkDdiEscape(
                 PVBOXDISPIFESCAPE_ADJUSTVIDEOMODES pPodesInfo = (PVBOXDISPIFESCAPE_ADJUSTVIDEOMODES)pEscapeHdr;
                 VBoxWddmAdjustModes(pDevExt, cModes, pPodesInfo->aScreenInfos);
                 Status = STATUS_SUCCESS;
+                break;
             }
             case VBOXESC_SHRC_ADDREF:
             case VBOXESC_SHRC_RELEASE:
@@ -5139,7 +5157,7 @@ DxgkDdiControlInterrupt(
 {
     LOGF(("ENTER, hAdapter(0x%x)", hAdapter));
 
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status = STATUS_NOT_IMPLEMENTED;
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
 
     switch (InterruptType)
@@ -5147,7 +5165,9 @@ DxgkDdiControlInterrupt(
         case DXGK_INTERRUPT_CRTC_VSYNC:
         {
             Status = VBoxWddmSlEnableVSyncNotification(pDevExt, Enable);
-            if (!NT_SUCCESS(Status))
+            if (NT_SUCCESS(Status))
+                Status = STATUS_SUCCESS; /* <- sanity */
+            else
                 WARN(("VSYNC Interrupt control failed Enable(%d), Status(0x%x)", Enable, Status));
             break;
         }
@@ -6136,7 +6156,13 @@ DxgkDdiCreateContext(
                                         rc = VBoxMpCrCtlConConnect(&pDevExt->CrCtlCon,
                                             pInfo->crVersionMajor, pInfo->crVersionMinor,
                                             &pContext->u32CrConClientID);
-                                        if (!RT_SUCCESS(rc))
+                                        if (RT_SUCCESS(rc))
+                                        {
+#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
+                                            VBoxMpCrPackerInit(&pContext->CrPacker);
+#endif
+                                        }
+                                        else
                                         {
                                             WARN(("VBoxMpCrCtlConConnect failed rc (%d)", rc));
                                             Status = STATUS_UNSUCCESSFUL;
@@ -6677,14 +6703,14 @@ DriverEntry(
 
     vboxVDbgBreakFv();
 
-#ifdef DEBUG_misha
+#if 0//def DEBUG_misha
     RTLogGroupSettings(0, "+default.e.l.f.l2.l3");
 #endif
 
 #ifdef VBOX_WDDM_WIN8
-    LOGREL(("VBox WDDM Driver for Windows 8; Built %s %s", __DATE__, __TIME__));
+    LOGREL(("VBox WDDM Driver for Windows 8, %d bit; Built %s %s", (sizeof (void*) << 3), __DATE__, __TIME__));
 #else
-    LOGREL(("VBox WDDM Driver for Windows Vista and 7; Built %s %s", __DATE__, __TIME__));
+    LOGREL(("VBox WDDM Driver for Windows Vista and 7, %d bit; Built %s %s", (sizeof (void*) << 3), __DATE__, __TIME__));
 #endif
 
     if (! ARGUMENT_PRESENT(DriverObject) ||

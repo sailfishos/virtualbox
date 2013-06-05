@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -143,6 +143,10 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
     PVBOX_ENUM_PARAM    lpParam = (PVBOX_ENUM_PARAM)lParam;
     DWORD               dwStyle, dwExStyle;
     RECT                rectWindow, rectVisible;
+    OSVERSIONINFO       OSinfo;
+
+    OSinfo.dwOSVersionInfoSize = sizeof (OSinfo);
+    GetVersionEx (&OSinfo);
 
     dwStyle   = GetWindowLong(hwnd, GWL_STYLE);
     dwExStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
@@ -160,21 +164,36 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
         szWindowText[0] = 0;
         GetWindowText(hwnd, szWindowText, sizeof(szWindowText));
 
+#ifdef LOG_ENABLED
+        DWORD pid = 0;
+        DWORD tid = GetWindowThreadProcessId(hwnd, &pid);
+#endif
+
         /* Filter out Windows XP shadow windows */
         /** @todo still shows inside the guest */
         if (   szWindowText[0] == 0
-            && dwStyle == (WS_POPUP|WS_VISIBLE|WS_CLIPSIBLINGS)
-            && dwExStyle == (WS_EX_LAYERED|WS_EX_TOOLWINDOW|WS_EX_TRANSPARENT|WS_EX_TOPMOST))
+            && (
+                    (dwStyle == (WS_POPUP|WS_VISIBLE|WS_CLIPSIBLINGS)
+                            && dwExStyle == (WS_EX_LAYERED|WS_EX_TOOLWINDOW|WS_EX_TRANSPARENT|WS_EX_TOPMOST))
+                 || (dwStyle == (WS_POPUP|WS_VISIBLE|WS_DISABLED|WS_CLIPSIBLINGS|WS_CLIPCHILDREN)
+                            && dwExStyle == (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE))
+                 || (dwStyle == (WS_POPUP|WS_VISIBLE|WS_CLIPSIBLINGS|WS_CLIPCHILDREN)
+                                       && dwExStyle == (WS_EX_TOOLWINDOW))
+                            ))
         {
             Log(("VBoxTray: Filter out shadow window style=%x exstyle=%x\n", dwStyle, dwExStyle));
+            Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d) (filtered)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
+            Log(("VBoxTray: title=%s style=%x exStyle=%x\n", szWindowText, dwStyle, dwExStyle));
+            Log(("VBoxTray: pid=%d tid=%d\n", pid, tid));
             return TRUE;
         }
 
         /** @todo will this suffice? The Program Manager window covers the whole screen */
         if (strcmp(szWindowText, "Program Manager"))
         {
-            Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
+            Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d) (applying)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
             Log(("VBoxTray: title=%s style=%x exStyle=%x\n", szWindowText, dwStyle, dwExStyle));
+            Log(("VBoxTray: pid=%d tid=%d\n", pid, tid));
 
             HRGN hrgn = CreateRectRgn(0,0,0,0);
 
@@ -183,7 +202,27 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
             if (ret == ERROR)
             {
                 Log(("VBoxTray: GetWindowRgn failed with rc=%d\n", GetLastError()));
-                SetRectRgn(hrgn, rectVisible.left, rectVisible.top, rectVisible.right, rectVisible.bottom);
+
+                /* for vista and above. To solve the issue of small bar above the Start button */
+                if (OSinfo.dwMajorVersion >= 6)
+                {
+                    char szWindowTextStart[256];
+                    HWND hStart = NULL;
+                    hStart = ::FindWindowEx(GetDesktopWindow(), NULL, "Button", NULL);
+                    GetWindowText(hwnd, szWindowText, sizeof(szWindowText));
+                    GetWindowText(hStart,szWindowTextStart, sizeof(szWindowTextStart));
+                    if (   hwnd == hStart && szWindowText != NULL
+                        && !(strcmp(szWindowText, szWindowTextStart))
+                       )
+                    {
+                        LogRel(("VboxTray/Seamless: Start found.\n"));
+                        SetRectRgn(hrgn, rectVisible.left, rectVisible.top +7, rectVisible.right, rectVisible.bottom);
+                    }
+                    else
+                        SetRectRgn(hrgn, rectVisible.left, rectVisible.top , rectVisible.right , rectVisible.bottom);
+                }
+                else
+                    SetRectRgn(hrgn, rectVisible.left, rectVisible.top , rectVisible.right , rectVisible.bottom);
             }
             else
             {
@@ -203,6 +242,7 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
         {
             Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d) (ignored)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
             Log(("VBoxTray: title=%s style=%x\n", szWindowText, dwStyle));
+            Log(("VBoxTray: pid=%d tid=%d\n", pid, tid));
         }
     }
     return TRUE; /* continue enumeration */

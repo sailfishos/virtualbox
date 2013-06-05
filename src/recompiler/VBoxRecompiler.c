@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2007 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1369,7 +1369,7 @@ REMR3DECL(int) REMR3Run(PVM pVM, PVMCPU pVCpu)
          * Switch to RAW-mode.
          */
         case EXCP_EXECUTE_RAW:
-            Log2(("REMR3Run: cpu_exec -> EXCP_EXECUTE_RAW\n"));
+            Log2(("REMR3Run: cpu_exec -> EXCP_EXECUTE_RAW pc=%RGv\n", pVM->rem.s.Env.eip));
             rc = VINF_EM_RESCHEDULE_RAW;
             break;
 
@@ -1631,8 +1631,17 @@ bool remR3CanExecuteRaw(CPUX86State *env, RTGCPTR eip, unsigned fFlags, int *piE
             return false;
         }
 
-        // Only R0
-        if (((fFlags >> HF_CPL_SHIFT) & 3) != 0)
+        if (EMIsRawRing1Enabled(env->pVM))
+        {
+            /* Only ring 0 and 1 supervisor code. */
+            if (((fFlags >> HF_CPL_SHIFT) & 3) == 2) /* ring 1 code is moved into ring 2, so we can't support ring-2 in that case. */
+            {
+                Log2(("raw r0 mode refused: CPL %d\n", (fFlags >> HF_CPL_SHIFT) & 3));
+                return false;
+            }
+        }
+        /* Only R0. */
+        else if (((fFlags >> HF_CPL_SHIFT) & 3) != 0)
         {
             STAM_COUNTER_INC(&gStatRefuseRing1or2);
             Log2(("raw r0 mode refused: CPL %d\n", ((fFlags >> HF_CPL_SHIFT) & 3) ));
@@ -1663,6 +1672,13 @@ bool remR3CanExecuteRaw(CPUX86State *env, RTGCPTR eip, unsigned fFlags, int *piE
         }
 #endif
 
+#ifndef VBOX_WITH_RAW_RING1
+        if (((env->eflags >> IOPL_SHIFT) & 3) != 0)
+        {
+            Log2(("raw r0 mode refused: IOPL %d\n", ((env->eflags >> IOPL_SHIFT) & 3)));
+            return false;
+        }
+#endif
         env->state |= CPU_RAW_RING0;
     }
 
@@ -1684,37 +1700,37 @@ bool remR3CanExecuteRaw(CPUX86State *env, RTGCPTR eip, unsigned fFlags, int *piE
     {
         Log2(("raw mode refused: stale CS (%#x)\n", env->segs[R_CS].selector));
         STAM_COUNTER_INC(&gaStatRefuseStale[R_CS]);
-        return EMSTATE_REM;
+        return false;
     }
     if (env->segs[R_SS].fVBoxFlags & CPUMSELREG_FLAGS_STALE)
     {
         Log2(("raw mode refused: stale SS (%#x)\n", env->segs[R_SS].selector));
         STAM_COUNTER_INC(&gaStatRefuseStale[R_SS]);
-        return EMSTATE_REM;
+        return false;
     }
     if (env->segs[R_DS].fVBoxFlags & CPUMSELREG_FLAGS_STALE)
     {
         Log2(("raw mode refused: stale DS (%#x)\n", env->segs[R_DS].selector));
         STAM_COUNTER_INC(&gaStatRefuseStale[R_DS]);
-        return EMSTATE_REM;
+        return false;
     }
     if (env->segs[R_ES].fVBoxFlags & CPUMSELREG_FLAGS_STALE)
     {
         Log2(("raw mode refused: stale ES (%#x)\n", env->segs[R_ES].selector));
         STAM_COUNTER_INC(&gaStatRefuseStale[R_ES]);
-        return EMSTATE_REM;
+        return false;
     }
     if (env->segs[R_FS].fVBoxFlags & CPUMSELREG_FLAGS_STALE)
     {
         Log2(("raw mode refused: stale FS (%#x)\n", env->segs[R_FS].selector));
         STAM_COUNTER_INC(&gaStatRefuseStale[R_FS]);
-        return EMSTATE_REM;
+        return false;
     }
     if (env->segs[R_GS].fVBoxFlags & CPUMSELREG_FLAGS_STALE)
     {
         Log2(("raw mode refused: stale GS (%#x)\n", env->segs[R_GS].selector));
         STAM_COUNTER_INC(&gaStatRefuseStale[R_GS]);
-        return EMSTATE_REM;
+        return false;
     }
 
 /*    Assert(env->pVCpu && PGMPhysIsA20Enabled(env->pVCpu));*/
@@ -1762,7 +1778,7 @@ void remR3FlushPage(CPUX86State *env, RTGCPTR GCPtr)
      */
     if (pVM->rem.s.fIgnoreInvlPg || pVM->rem.s.cIgnoreAll)
         return;
-    Log(("remR3FlushPage: GCPtr=%RGv\n", GCPtr));
+    LogFlow(("remR3FlushPage: GCPtr=%RGv\n", GCPtr));
     Assert(pVM->rem.s.fInREM || pVM->rem.s.fInStateSync);
 
     //RAWEx_ProfileStop(env, STATS_QEMU_TOTAL);

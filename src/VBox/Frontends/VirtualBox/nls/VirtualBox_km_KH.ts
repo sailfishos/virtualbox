@@ -773,6 +773,10 @@
         <source>Shared &amp;Clipboard</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>UIApplianceEditorWidget</name>
@@ -1942,6 +1946,22 @@ p, li { white-space: pre-wrap; }
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
         <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt; {1 %2&lt;?}</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

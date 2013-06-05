@@ -150,7 +150,7 @@
     </message>
     <message>
         <source>The VirtualBox Linux kernel driver (vboxdrv) is either not loaded or there is a permission problem with /dev/vboxdrv. Please reinstall the kernel module by executing&lt;br/&gt;&lt;br/&gt;  &lt;font color=blue&gt;&apos;/etc/init.d/vboxdrv setup&apos;&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;as root. If it is available in your distribution, you should install the DKMS package first. This package keeps track of Linux kernel changes and recompiles the vboxdrv kernel module if necessary.</source>
-        <translation type="unfinished"></translation>
+        <translation>A VirtualBox Linuxos eszközmeghajtója nem tölthető be, vagy jogosultságprobléma van a /dev/vboxdrv eszközfájllal. Kérlek, telepítsd újra a kernel modult a&lt;br/&gt;&lt;br/&gt;  &lt;font color=blue&gt;&apos;/etc/init.d/vboxdrv setup&apos;&lt;/font&gt;&lt;br/&gt;&lt;br/&gt;parancs rendszergazdaként történő végrehajtásával. Lehet,  hogy ehhez előbb telepítened kell a megfelelő DKMS csomagot, ha ez elérhető a disztribúciódhoz. Ez a csomag figyeli a Linux kenel változásait, és újrafordítja a vboxdrv meghajtót ha szükséges.</translation>
     </message>
 </context>
 <context>
@@ -946,6 +946,10 @@
     <message>
         <source>Shared &amp;Clipboard</source>
         <translation>&amp;Megosztott vágólap</translation>
+    </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translation>Fogd és vidd</translation>
     </message>
 </context>
 <context>
@@ -1768,14 +1772,14 @@
     <name>UIDnDHandler</name>
     <message>
         <source>Dropping data ...</source>
-        <translation type="unfinished"></translation>
+        <translation>Adatok fogadása...</translation>
     </message>
 </context>
 <context>
     <name>UIDnDMimeData</name>
     <message>
         <source>Dropping data ...</source>
-        <translation type="unfinished"></translation>
+        <translation>Adatok fogadása...</translation>
     </message>
 </context>
 <context>
@@ -2446,43 +2450,59 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>&lt;b&gt;%1&lt;/b&gt;</source>
         <comment>Group item tool-tip / Group name</comment>
-        <translation type="unfinished"></translation>
+        <translation>&lt;b&gt;%1&lt;/b&gt;</translation>
     </message>
     <message numerus="yes">
         <source>%n group(s)</source>
         <comment>Group item tool-tip / Group info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n csoport</numerusform>
         </translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Group info wrapper</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
     </message>
     <message numerus="yes">
         <source>%n machine(s)</source>
         <comment>Group item tool-tip / Machine info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>%n gép</numerusform>
         </translation>
     </message>
     <message numerus="yes">
         <source>(%n running)</source>
         <comment>Group item tool-tip / Running machine info</comment>
-        <translation type="unfinished">
-            <numerusform></numerusform>
+        <translation>
+            <numerusform>(%n fut)</numerusform>
         </translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
+        <translation>&lt;nobr&gt;%1&lt;/nobr&gt;</translation>
     </message>
     <message>
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
-        <translation type="unfinished">&lt;nobr&gt;%1&lt;/nobr&gt; {1 %2&lt;?}</translation>
+        <translation>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation>Csoport becsukása</translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation>Csoport kibontása</translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation>Csoportba lépés</translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation>Csoport elhagyása</translation>
     </message>
 </context>
 <context>
@@ -4641,7 +4661,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>the second digit in the MAC address may not be odd as only unicast addresses are allowed.</source>
-        <translation type="unfinished">a MAC cím második számjegye talán nem valós, mert csak unicast címek engedélyezettek.</translation>
+        <translation>a MAC cím második számjegye talán nem valós, mert csak unicast címek engedélyezettek.</translation>
     </message>
 </context>
 <context>
@@ -5441,7 +5461,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>Controller: %1</source>
-        <translation type="unfinished"></translation>
+        <translation>Vezérlő: %1</translation>
     </message>
 </context>
 <context>
@@ -7272,7 +7292,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>&lt;p&gt;You have version %1 of the &lt;b&gt;&lt;nobr&gt;%2&lt;/nobr&gt;&lt;/b&gt; installed.&lt;/p&gt;&lt;p&gt;You should download and install version %3 of this extension pack from Oracle!&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;A(z) &lt;b&gt;&lt;nobr&gt;%2&lt;/nobr&gt;&lt;/b&gt; telepített verziója %1.&lt;/p&gt;&lt;p&gt;Le kellene töltened és telepíteni a(z) %3 verziós kiterjesztő csomagot az Oracle-től!&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Ok</source>
@@ -7281,7 +7301,7 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>&lt;p&gt;Failed to initialize COM because the VirtualBox global configuration directory &lt;b&gt;&lt;nobr&gt;%1&lt;/nobr&gt;&lt;/b&gt; is not accessible. Please check the permissions of this directory and of its parent directory.&lt;/p&gt;&lt;p&gt;The application will now terminate.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;A COM inicializálása sikertelen, mert a VirtualBox globális beállítások mappája (&lt;b&gt;&lt;nobr&gt;%1&lt;/nobr&gt;&lt;/b&gt;) nem érhető el. Ellenőrizd a mappa és a szülőmappa jogosultságait.&lt;/p&gt;&lt;p&gt;Az alkalmazás most leáll.&lt;/p&gt;</translation>
     </message>
     <message numerus="yes">
         <source>&lt;p&gt;The %n following virtual machine(s) are currently in a saved state: &lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;If you continue the runtime state of the exported machine(s) will be discarded. The other machine(s) will not be changed.&lt;/p&gt;</source>
@@ -7292,23 +7312,23 @@ p, li { white-space: pre-wrap; }
     </message>
     <message>
         <source>&lt;p&gt;You are about to remove following virtual machine items from the machine list:&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Do you wish to proceed?&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;El fogod távolítani a következő virtuális gépet a listából:&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;.&lt;/p&gt;&lt;p&gt;Biztos folytatod?&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;You are about to remove following inaccessible virtual machines from the machine list:&lt;/p&gt;&lt;p&gt;%1&lt;/p&gt;&lt;p&gt;Do you wish to proceed?&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;El fogod távolítani az elérhetetlen virtuális gépet a listából:&lt;/p&gt;&lt;p&gt;%1.&lt;/p&gt;&lt;p&gt;Biztos folytatod?&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;You are about to remove following virtual machines from the machine list:&lt;/p&gt;&lt;p&gt;%1&lt;/p&gt;&lt;p&gt;Would you like to delete the files containing the virtual machine from your hard disk as well? Doing this will also remove the files containing the machine&apos;s virtual hard disks if they are not in use by another machine.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;El akarod távolítani a következő virtuális gépet a listából:&lt;/p&gt;&lt;p&gt;%1&lt;/p&gt;&lt;p&gt;Szeretnéd a virtuális gépet tároló fájlt is törölni a merevlemezről? Ezzel eltávolítod a virtuális gépet tároló fájlt, ha azt nem használja egy másik gép.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;You are about to remove following virtual machines from the machine list:&lt;/p&gt;&lt;p&gt;%1&lt;/p&gt;&lt;p&gt;Would you like to delete the files containing the virtual machine from your hard disk as well?&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;El akarod távolítani a következő virtuális gépet a listából:&lt;/p&gt;&lt;p&gt;%1&lt;/p&gt;&lt;p&gt;Szeretnéd a virtuális gépet tároló fájlt is törölni a merevlemezről?&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Do you wish to cancel all current network operations?</source>
-        <translation type="unfinished"></translation>
+        <translation>Meg kívánsz szakítani minden jelenlegi hálózati műveletet?</translation>
     </message>
     <message>
         <source>ACPI Shutdown</source>
@@ -7318,79 +7338,80 @@ p, li { white-space: pre-wrap; }
     <message>
         <source>Power Off</source>
         <comment>machine</comment>
-        <translation type="unfinished"></translation>
+        <translation>Kikapcsol</translation>
     </message>
     <message>
         <source>&lt;p&gt;Cannot remove the machine folder &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;.&lt;/nobr&gt;&lt;/p&gt;&lt;p&gt;Please check that this folder really exists and that you have permissions to remove it.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Nem lehet eltávolítani a gép mappáját: &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;.&lt;/nobr&gt;&lt;/p&gt;&lt;p&gt;Ellenőrizd, hogy a mappa tényleg létezi-e és van-e jogosultságod az eltávolítására.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;Cannot create the machine folder &lt;b&gt;%1&lt;/b&gt; in the parent folder &lt;nobr&gt;&lt;b&gt;%2&lt;/b&gt;.&lt;/nobr&gt;&lt;/p&gt;&lt;p&gt;This folder already exists and possibly belongs to another machine.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Nem lehet létrehozni a gép mappáját: &lt;b&gt;%1&lt;/b&gt; a szülő mappában: &lt;nobr&gt;&lt;b&gt;%2&lt;/b&gt;.&lt;/nobr&gt;&lt;/p&gt;&lt;p&gt;Ez a mappa már létezik és valószínűleg egy másik géphez tartozik.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>You are about to create a new virtual machine without a hard drive. You will not be able to install an operating system on the machine until you add one. In the mean time you will only be able to start the machine using a virtual optical disk or from the network.</source>
-        <translation type="unfinished"></translation>
+        <translation>Merevlemez nélküli gépet készülsz létrehozni. Merevlemez nélkül, nem leszel képes operációs rendszert telepíteni rá. Addig csak virtuális optikai meghajtóról vagy hálózatról tudod elindítani a gépet.</translation>
     </message>
     <message>
         <source>Failed to drop data.</source>
-        <translation type="unfinished"></translation>
+        <translatorcomment>CHECKIT: DnD operation &quot;drop&quot; state failed. See UIDnDHandler.</translatorcomment>
+        <translation>Az adatok fogadása sikertelen.</translation>
     </message>
     <message>
         <source>&lt;p&gt;Could not find the VirtualBox Guest Additions CD image file.&lt;/nobr&gt;&lt;/p&gt;&lt;p&gt;Do you wish to download this CD image from the Internet?&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Nem található a VirtualBox Integrációs szolgáltatások CD fájl. &lt;nobr&gt;&lt;/p&gt;&lt;p&gt;Letöltöd a CD-t az internetről?&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;Are you sure you want to discard the saved state of the following virtual machines?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;This operation is equivalent to resetting or powering off the machine without doing a proper shutdown of the guest OS.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Biztos elveted a következő virtuális gépek mentett állapotát?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Ez a művelet egyenértékű a virtuális gép újraindításával vagy kikapcsolásával, ami a vendég operációs rendszer nem szabályos leállítását jelenti.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;Do you really want to reset the following virtual machines?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;This will cause any unsaved data in applications running inside it to be lost.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Biztos reset-eled a következő virtuális gépet?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;A benne futó alkalmazások mentetlen adatai mind elvesznek.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;Do you really want to send an ACPI shutdown signal to the following virtual machines?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Biztos ACPI leállítási jelet akarsz küldeni a következő virtuális gépnek?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;Do you really want to power off the following virtual machines?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;This will cause any unsaved data in applications running inside it to be lost.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Biztos kikapcsolod a következő virtuális gépet?&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;A benne futó alkalmazások mentetlen adatai mind elvesznek.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;You are trying to move machine &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt; to group &lt;nobr&gt;&lt;b&gt;%2&lt;/b&gt;&lt;/nobr&gt; which already have sub-group &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt;.&lt;/p&gt;&lt;p&gt;Please resolve this name-conflict and try again.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;A(z) &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt; gépet próbálod a(z) &lt;nobr&gt;&lt;b&gt;%2&lt;/b&gt;&lt;/nobr&gt; csoportba mozgatni, mely rendelkezik &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt; alcsoporttal.&lt;/p&gt;&lt;p&gt;Oldd fel a nevek ütközését és próbáld újra.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;You are trying to move group &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt; to group &lt;nobr&gt;&lt;b&gt;%2&lt;/b&gt;&lt;/nobr&gt; which already have another item with the same name.&lt;/p&gt;&lt;p&gt;Would you like to automatically rename it?&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;A(z) &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt; gépet próbálod a(z) &lt;nobr&gt;&lt;b&gt;%2&lt;/b&gt;&lt;/nobr&gt; csoportba mozgatni, mely már rendelkezik egy ilyen nevű elemmel.&lt;/p&gt;&lt;p&gt;Szeretnéd automatikusan átnevezni?&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Rename</source>
-        <translation type="unfinished"></translation>
+        <translation>Átnevez</translation>
     </message>
     <message>
         <source>&lt;p&gt;You are about to restore snapshot &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt;.&lt;/p&gt;&lt;p&gt;You can create a snapshot of the current state of the virtual machine first by checking the box below; if you do not do this the current state will be permanently lost. Do you wish to proceed?&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Vissza akarod állítani a pillanatképet: &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt;.&lt;/p&gt;&lt;p&gt;Készíthetsz pillanatképet a virtuális gép jelenlegi állapotáról a lenti jelölőnégyzettel; ha nem teszed meg, a jelenlegi állapot végleg elveszik. Folytatni akarod?&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;Are you sure you want to restore snapshot &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt;?&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;Biztos vissza akarod állítani a pillanatképet: &lt;nobr&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/nobr&gt;?&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Failed to set groups of the virtual machine &lt;b&gt;%1&lt;/b&gt;.</source>
-        <translation type="unfinished"></translation>
+        <translation>A virtuális gép csoportjának beállítása sikertelen: &lt;b&gt;%1&lt;/b&gt;.</translation>
     </message>
     <message>
         <source>&lt;p&gt;Could not start the machine &lt;b&gt;%1&lt;/b&gt; because the following physical network interfaces were not found:&lt;/p&gt;&lt;p&gt;&lt;b&gt;%2&lt;/b&gt;&lt;/p&gt;&lt;p&gt;You can either change the machine&apos;s network settings or stop the machine.&lt;/p&gt;</source>
-        <translation type="unfinished"></translation>
+        <translation>&lt;p&gt;A gép nem indítható: &lt;b&gt;%1&lt;/b&gt;. A következő fizikai hálózati csatolók nem találhatók:&lt;/p&gt;&lt;p&gt;&lt;b&gt;%2&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Megváltoztathatod a gép hálózati beállításait vagy leállíthatod a gépet.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Change Network Settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Hálózati beállítások módosítása</translation>
     </message>
     <message>
         <source>Close Virtual Machine</source>
-        <translation type="unfinished">Virtuális gép bezárása</translation>
+        <translation>Virtuális gép bezárása</translation>
     </message>
 </context>
 <context>
@@ -12470,7 +12491,8 @@ Verzió %1</translation>
     <message>
         <source>Fixed size storage on raw disk</source>
         <comment>MediumVariant</comment>
-        <translation type="unfinished">Fix méretű tároló raw lemezen</translation>
+        <translatorcomment>CHECKIT: raw means no FS/RAID/LVM or other thing. Was: &quot;Fix méretű tároló raw lemezen&quot;</translatorcomment>
+        <translation>Fix méretű tároló nyers lemezen</translation>
     </message>
     <message>
         <source>Deny</source>

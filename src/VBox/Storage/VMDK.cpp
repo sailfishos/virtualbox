@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -700,7 +700,12 @@ DECLINLINE(int) vmdkFileInflateSync(PVMDKIMAGE pImage, PVMDKEXTENT pExtent,
                 return rc;
         }
         else
+        {
             memcpy(pMarker, pcvMarker, RT_OFFSETOF(VMDKMARKER, uType));
+            /* pcvMarker endianness has already been partially transformed, fix it */
+            pMarker->uSector = RT_H2LE_U64(pMarker->uSector);
+            pMarker->cbSize = RT_H2LE_U32(pMarker->cbSize);
+        }
 
         cbCompSize = RT_LE2H_U32(pMarker->cbSize);
         if (cbCompSize == 0)
@@ -1080,7 +1085,8 @@ static int vmdkReadGrainDirectory(PVMDKIMAGE pImage, PVMDKEXTENT pExtent)
     for (i = 0, pGDTmp = pExtent->pGD; i < pExtent->cGDEntries; i++, pGDTmp++)
         *pGDTmp = RT_LE2H_U32(*pGDTmp);
 
-    if (pExtent->uSectorRGD)
+    if (   pExtent->uSectorRGD
+        && !(pImage->uOpenFlags & VD_OPEN_FLAGS_SKIP_CONSISTENCY_CHECKS))
     {
         /* The VMDK 1.1 spec seems to talk about compressed grain directories,
          * but in reality they are not compressed. */
@@ -6529,7 +6535,9 @@ static int vmdkSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
     int rc;
 
     /* Image must be opened and the new flags must be valid. */
-    if (!pImage || (uOpenFlags & ~(VD_OPEN_FLAGS_READONLY | VD_OPEN_FLAGS_INFO | VD_OPEN_FLAGS_ASYNC_IO | VD_OPEN_FLAGS_SHAREABLE | VD_OPEN_FLAGS_SEQUENTIAL)))
+    if (!pImage || (uOpenFlags & ~(  VD_OPEN_FLAGS_READONLY | VD_OPEN_FLAGS_INFO
+                                   | VD_OPEN_FLAGS_ASYNC_IO | VD_OPEN_FLAGS_SHAREABLE
+                                   | VD_OPEN_FLAGS_SEQUENTIAL | VD_OPEN_FLAGS_SKIP_CONSISTENCY_CHECKS)))
     {
         rc = VERR_INVALID_PARAMETER;
         goto out;
@@ -6542,12 +6550,13 @@ static int vmdkSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
             rc = VINF_SUCCESS;
         else
             rc = VERR_INVALID_PARAMETER;
-        goto out;
     }
-
-    /* Implement this operation via reopening the image. */
-    vmdkFreeImage(pImage, false);
-    rc = vmdkOpenImage(pImage, uOpenFlags);
+    else
+    {
+        /* Implement this operation via reopening the image. */
+        vmdkFreeImage(pImage, false);
+        rc = vmdkOpenImage(pImage, uOpenFlags);
+    }
 
 out:
     LogFlowFunc(("returns %Rrc\n", rc));

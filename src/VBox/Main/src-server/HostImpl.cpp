@@ -2928,17 +2928,17 @@ void Host::registerDiskMetrics(PerformanceCollector *aCollector)
                                               new pm::AggregateMax()));
 
     /* For now we are concerned with the root file system only. */
-    pm::DiskList disks;
-    int rc = pm::getDiskListByFs("/", disks);
-    if (RT_FAILURE(rc) || disks.empty())
+    pm::DiskList disksUsage, disksLoad;
+    int rc = hal->getDiskListByFs("/", disksUsage, disksLoad);
+    if (RT_FAILURE(rc))
         return;
     pm::DiskList::iterator it;
-    for (it = disks.begin(); it != disks.end(); ++it)
+    for (it = disksLoad.begin(); it != disksLoad.end(); ++it)
     {
-        Utf8StrFmt strName("Disk/%s/Load", it->c_str());
-        pm::SubMetric *fsLoadUtil   = new pm::SubMetric(strName + "/Util",
+        Utf8StrFmt strName("Disk/%s", it->c_str());
+        pm::SubMetric *fsLoadUtil   = new pm::SubMetric(strName + "/Load/Util",
             "Percentage of time disk was busy serving I/O requests.");
-        pm::BaseMetric *fsLoad = new pm::HostDiskLoadRaw(hal, this, strName,
+        pm::BaseMetric *fsLoad  = new pm::HostDiskLoadRaw(hal, this, strName + "/Load",
                                                          *it, fsLoadUtil);
         aCollector->registerBaseMetric (fsLoad);
 
@@ -2948,6 +2948,23 @@ void Host::registerDiskMetrics(PerformanceCollector *aCollector)
         aCollector->registerMetric(new pm::Metric(fsLoad, fsLoadUtil,
                                                   new pm::AggregateMin()));
         aCollector->registerMetric(new pm::Metric(fsLoad, fsLoadUtil,
+                                                  new pm::AggregateMax()));
+    }
+    for (it = disksUsage.begin(); it != disksUsage.end(); ++it)
+    {
+        Utf8StrFmt strName("Disk/%s", it->c_str());
+        pm::SubMetric *fsUsageTotal = new pm::SubMetric(strName + "/Usage/Total",
+            "Disk size.");
+        pm::BaseMetric *fsUsage = new pm::HostDiskUsage(hal, this, strName + "/Usage",
+                                                        *it, fsUsageTotal);
+        aCollector->registerBaseMetric (fsUsage);
+
+        aCollector->registerMetric(new pm::Metric(fsUsage, fsUsageTotal, 0));
+        aCollector->registerMetric(new pm::Metric(fsUsage, fsUsageTotal,
+                                                  new pm::AggregateAvg()));
+        aCollector->registerMetric(new pm::Metric(fsUsage, fsUsageTotal,
+                                                  new pm::AggregateMin()));
+        aCollector->registerMetric(new pm::Metric(fsUsage, fsUsageTotal,
                                                   new pm::AggregateMax()));
     }
 }

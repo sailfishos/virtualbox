@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -2066,7 +2066,9 @@ typedef struct PDMIVMMDEVPORT
      * @param   cBits           Bits per pixel (0 = do not change).
      * @param   idxDisplay      The display index.
      */
-    DECLR3CALLBACKMEMBER(int, pfnRequestDisplayChange,(PPDMIVMMDEVPORT pInterface, uint32_t cx, uint32_t cy, uint32_t cBits, uint32_t idxDisplay));
+    DECLR3CALLBACKMEMBER(int, pfnRequestDisplayChange,(PPDMIVMMDEVPORT pInterface, uint32_t cx,
+                         uint32_t cy, uint32_t cBits, uint32_t idxDisplay,
+                         uint32_t cxOrigin, uint32_t cyOrigin, bool fEnable, bool fChangeOrigin));
 
     /**
      * Pass credentials to guest.

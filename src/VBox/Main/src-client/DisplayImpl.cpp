@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -1161,8 +1161,7 @@ int Display::handleSetVisibleRegion(uint32_t cRect, PRTRECT pRect)
         }
     }
 
-#if defined(RT_OS_DARWIN) && defined(VBOX_WITH_HGCM) && defined(VBOX_WITH_CROGL)
-    // @todo fix for multimonitor
+#if defined(VBOX_WITH_HGCM) && defined(VBOX_WITH_CROGL)
     BOOL is3denabled = FALSE;
 
     mParent->machine()->COMGETTER(Accelerate3DEnabled)(&is3denabled);
@@ -2171,12 +2170,6 @@ STDMETHODIMP Display::SetVideoModeHint(ULONG aDisplay, BOOL aEnabled,
 
     CHECK_CONSOLE_DRV (mpDrv);
 
-    /* XXX Ignore these parameters for now: */
-    NOREF(aChangeOrigin);
-    NOREF(aOriginX);
-    NOREF(aOriginY);
-    NOREF(aEnabled);
-
     /*
      * Do some rough checks for valid input
      */
@@ -2215,7 +2208,8 @@ STDMETHODIMP Display::SetVideoModeHint(ULONG aDisplay, BOOL aEnabled,
     {
         PPDMIVMMDEVPORT pVMMDevPort = pVMMDev->getVMMDevPort();
         if (pVMMDevPort)
-            pVMMDevPort->pfnRequestDisplayChange(pVMMDevPort, aWidth, aHeight, aBitsPerPixel, aDisplay);
+            pVMMDevPort->pfnRequestDisplayChange(pVMMDevPort, aWidth, aHeight, aBitsPerPixel,
+                                                 aDisplay, aOriginX, aOriginY, aEnabled, aChangeOrigin);
     }
     return S_OK;
 }
@@ -2237,6 +2231,30 @@ STDMETHODIMP Display::SetSeamlessMode (BOOL enabled)
         if (pVMMDevPort)
             pVMMDevPort->pfnRequestSeamlessChange(pVMMDevPort, !!enabled);
     }
+
+#if defined(VBOX_WITH_HGCM) && defined(VBOX_WITH_CROGL)
+    if (!enabled)
+    {
+        BOOL is3denabled = FALSE;
+
+        mParent->machine()->COMGETTER(Accelerate3DEnabled)(&is3denabled);
+
+        VMMDev *vmmDev = mParent->getVMMDev();
+        if (is3denabled && vmmDev)
+        {
+            VBOXHGCMSVCPARM parms[2];
+
+            parms[0].type = VBOX_HGCM_SVC_PARM_PTR;
+            /* NULL means disable */
+            parms[0].u.pointer.addr = NULL;
+            parms[0].u.pointer.size = 0;  /* We don't actually care. */
+            parms[1].type = VBOX_HGCM_SVC_PARM_32BIT;
+            parms[1].u.uint32 = 0;
+
+            vmmDev->hgcmHostCall("VBoxSharedCrOpenGL", SHCRGL_HOST_FN_SET_VISIBLE_REGION, 2, &parms[0]);
+        }
+    }
+#endif
     return S_OK;
 }
 
@@ -2773,11 +2791,11 @@ STDMETHODIMP Display::DrawToScreen (ULONG aScreenId, BYTE *address, ULONG x, ULO
     return rc;
 }
 
-void Display::InvalidateAndUpdateEMT(Display *pDisplay)
+void Display::InvalidateAndUpdateEMT(Display *pDisplay, unsigned uId, bool fUpdateAll)
 {
     pDisplay->vbvaLock();
     unsigned uScreenId;
-    for (uScreenId = 0; uScreenId < pDisplay->mcMonitors; uScreenId++)
+    for (uScreenId = (fUpdateAll ? 0 : uId); uScreenId < pDisplay->mcMonitors; uScreenId++)
     {
         DISPLAYFBINFO *pFBInfo = &pDisplay->maFramebuffers[uScreenId];
 
@@ -2788,7 +2806,8 @@ void Display::InvalidateAndUpdateEMT(Display *pDisplay)
         else
         {
             if (   !pFBInfo->pFramebuffer.isNull()
-                && !(pFBInfo->fDisabled))
+                && !(pFBInfo->fDisabled)
+                && pFBInfo->u32ResizeStatus == ResizeStatus_Void)
             {
                 /* Render complete VRAM screen to the framebuffer.
                  * When framebuffer uses VRAM directly, just notify it to update.
@@ -2796,6 +2815,10 @@ void Display::InvalidateAndUpdateEMT(Display *pDisplay)
                 if (pFBInfo->fDefaultFormat)
                 {
                     BYTE *address = NULL;
+                    ULONG uWidth = 0;
+                    ULONG uHeight = 0;
+                    pFBInfo->pFramebuffer->COMGETTER(Width) (&uWidth);
+                    pFBInfo->pFramebuffer->COMGETTER(Height) (&uHeight);
                     HRESULT hrc = pFBInfo->pFramebuffer->COMGETTER(Address) (&address);
                     if (SUCCEEDED(hrc) && address != NULL)
                     {
@@ -2819,22 +2842,32 @@ void Display::InvalidateAndUpdateEMT(Display *pDisplay)
                         uint32_t u32DstLineSize     = u32DstWidth * 4;
                         uint32_t u32DstBitsPerPixel = 32;
 
-                        pDisplay->mpDrv->pUpPort->pfnCopyRect(pDisplay->mpDrv->pUpPort,
-                                                              width, height,
-                                                              pu8Src,
-                                                              xSrc, ySrc,
-                                                              u32SrcWidth, u32SrcHeight,
-                                                              u32SrcLineSize, u32SrcBitsPerPixel,
-                                                              pu8Dst,
-                                                              xDst, yDst,
-                                                              u32DstWidth, u32DstHeight,
-                                                              u32DstLineSize, u32DstBitsPerPixel);
+                        /* if uWidth != pFBInfo->w and uHeight != pFBInfo->h
+                         * implies resize of Framebuffer is in progress and
+                         * copyrect should not be called.
+                         */
+                        if (uWidth == pFBInfo->w && uHeight == pFBInfo->h)
+                        {
+
+                            pDisplay->mpDrv->pUpPort->pfnCopyRect(pDisplay->mpDrv->pUpPort,
+                                                                  width, height,
+                                                                  pu8Src,
+                                                                  xSrc, ySrc,
+                                                                  u32SrcWidth, u32SrcHeight,
+                                                                  u32SrcLineSize, u32SrcBitsPerPixel,
+                                                                  pu8Dst,
+                                                                  xDst, yDst,
+                                                                  u32DstWidth, u32DstHeight,
+                                                                  u32DstLineSize, u32DstBitsPerPixel);
+                        }
                     }
                 }
 
                 pDisplay->handleDisplayUpdate (uScreenId, 0, 0, pFBInfo->w, pFBInfo->h);
             }
         }
+        if (!fUpdateAll)
+            break;
     }
     pDisplay->vbvaUnlock();
 }
@@ -2868,7 +2901,8 @@ STDMETHODIMP Display::InvalidateAndUpdate()
 
     /* pdm.h says that this has to be called from the EMT thread */
     int rcVBox = VMR3ReqCallVoidWait(pVM, VMCPUID_ANY, (PFNRT)Display::InvalidateAndUpdateEMT,
-                                     1, this);
+                                      3, this, 0, true);
+
     alock.acquire();
 
     if (RT_FAILURE(rcVBox))
@@ -3226,7 +3260,7 @@ DECLCALLBACK(void) Display::displayRefreshCallback(PPDMIDISPLAYCONNECTOR pInterf
             /* Continue with normal processing because the status here is ResizeStatus_Void.
              * Repaint all displays because VM continued to run during the framebuffer resize.
              */
-            pDisplay->InvalidateAndUpdateEMT(pDisplay);
+            pDisplay->InvalidateAndUpdateEMT(pDisplay, uScreenId, false);
         }
         else if (u32ResizeStatus == ResizeStatus_InProgress)
         {
@@ -4081,11 +4115,13 @@ DECLCALLBACK(int) Display::displayVBVAResize(PPDMIDISPLAYCONNECTOR pInterface, c
         pFBInfo->fDisabled = true;
         pFBInfo->flags = pScreen->u16Flags;
 
-        /* Temporary: ask framebuffer to resize using a default format. The framebuffer will be black. */
-        pThis->handleDisplayResize(pScreen->u32ViewIndex, 0,
-                                   (uint8_t *)NULL,
-                                   pScreen->u32LineSize, pScreen->u32Width,
-                                   pScreen->u32Height, pScreen->u16Flags);
+        /* Ask the framebuffer to resize using a default format. The framebuffer will be black.
+         * So if the frontend does not support GuestMonitorChangedEventType_Disabled event,
+         * the VM window will be black. */
+        uint32_t u32Width = pFBInfo->w ? pFBInfo->w : 640;
+        uint32_t u32Height = pFBInfo->h ? pFBInfo->h : 480;
+        pThis->handleDisplayResize(pScreen->u32ViewIndex, 0, (uint8_t *)NULL, 0,
+                                   u32Width, u32Height, pScreen->u16Flags);
 
         fireGuestMonitorChangedEvent(pThis->mParent->getEventSource(),
                                      GuestMonitorChangedEventType_Disabled,

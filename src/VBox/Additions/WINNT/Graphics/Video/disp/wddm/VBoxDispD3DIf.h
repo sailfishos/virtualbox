@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -73,6 +73,10 @@ typedef struct VBOXDISPD3D
     PFNVBOXWINEEXD3DRC9_SETSHRCSTATE pfnVBoxWineExD3DRc9SetShRcState;
 
     PFNVBOXWINEEXD3DSWAPCHAIN9_PRESENT pfnVBoxWineExD3DSwapchain9Present;
+
+    PFNVBOXWINEEXD3DDEV9_FLUSHTOHOST pfnVBoxWineExD3DDev9FlushToHost;
+
+    PFNVBOXWINEEXD3DDEV9_FINISH pfnVBoxWineExD3DDev9Finish;
 
     /* module handle */
     HMODULE hD3DLib;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -341,6 +341,10 @@ int handleSnapshot(HandlerArg *a)
             if (FAILED(rc))
                 break;
 
+            /*
+             * XXX for now, do ALWAYS pause as live snapshots are still broken
+             */
+            fPause = true;
             if (fPause)
             {
                 MachineState_T machineState;

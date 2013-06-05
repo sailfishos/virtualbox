@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -108,6 +108,54 @@ VMMR0DECL(int) CPUMR0ModuleTerm(void)
 
 
 /**
+ * Check the CPUID features of this particular CPU and disable relevant features
+ * for the guest which do not exist on this CPU. We have seen systems where the
+ * X86_CPUID_FEATURE_ECX_MONITOR feature flag is only set on some host CPUs, see
+ * @{bugref 5436}.
+ *
+ * @note This function might be called simultaneously on more than one CPU!
+ *
+ * @param   idCpu       The identifier for the CPU the function is called on.
+ * @param   pvUser1     Pointer to the VM structure.
+ * @param   pvUser2     Ignored.
+ */
+static DECLCALLBACK(void) cpumR0CheckCpuid(RTCPUID idCpu, void *pvUser1, void *pvUser2)
+{
+    struct
+    {
+        uint32_t uLeave; /* leave to check */
+        uint32_t ecx;    /* which bits in ecx to unify between CPUs */
+        uint32_t edx;    /* which bits in edx to unify between CPUs */
+    } aCpuidUnify[]
+    =
+    {
+        { 0x00000001, X86_CPUID_FEATURE_ECX_CX16
+                    | X86_CPUID_FEATURE_ECX_MONITOR,
+                      X86_CPUID_FEATURE_EDX_CX8 }
+    };
+    PVM pVM = (PVM)pvUser1;
+    PCPUM pCPUM = &pVM->cpum.s;
+    for (uint32_t i = 0; i < RT_ELEMENTS(aCpuidUnify); i++)
+    {
+        uint32_t uLeave = aCpuidUnify[i].uLeave;
+        uint32_t eax, ebx, ecx, edx;
+
+        ASMCpuId_Idx_ECX(uLeave, 0, &eax, &ebx, &ecx, &edx);
+        PCPUMCPUID paLeaves;
+        if (uLeave < 0x80000000)
+            paLeaves = &pCPUM->aGuestCpuIdStd[uLeave - 0x00000000];
+        else if (uLeave < 0xc0000000)
+            paLeaves = &pCPUM->aGuestCpuIdExt[uLeave - 0x80000000];
+        else
+            paLeaves = &pCPUM->aGuestCpuIdCentaur[uLeave - 0xc0000000];
+        /* unify important bits */
+        ASMAtomicAndU32(&paLeaves->ecx, ecx | ~aCpuidUnify[i].ecx);
+        ASMAtomicAndU32(&paLeaves->edx, edx | ~aCpuidUnify[i].edx);
+    }
+}
+
+
+/**
  * Does Ring-0 CPUM initialization.
  *
  * This is mainly to check that the Host CPU mode is compatible
@@ -204,6 +252,8 @@ VMMR0DECL(int) CPUMR0Init(PVM pVM)
                 }
             }
         }
+
+	RTMpOnAll(cpumR0CheckCpuid, pVM, NULL);
     }
 
 
@@ -675,6 +725,10 @@ VMMR0DECL(int) CPUMR0LoadHyperDebugState(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, b
 /**
  * Worker for cpumR0MapLocalApics. Check each CPU for a present Local APIC.
  * Play safe and treat each CPU separate.
+ *
+ * @param   idCpu       The identifier for the CPU the function is called on.
+ * @param   pvUser1     Ignored.
+ * @param   pvUser2     Ignored.
  */
 static DECLCALLBACK(void) cpumR0MapLocalApicWorker(RTCPUID idCpu, void *pvUser1, void *pvUser2)
 {

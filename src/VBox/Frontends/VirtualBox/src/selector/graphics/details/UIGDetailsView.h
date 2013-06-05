@@ -22,14 +22,14 @@
 /* Qt includes: */
 #include <QGraphicsView>
 
-/* Graphics details view: */
+/* Graphics details-view: */
 class UIGDetailsView : public QGraphicsView
 {
     Q_OBJECT;
 
 signals:
 
-    /* Notifiers: Resize stuff: */
+    /* Notifier: Resize stuff: */
     void sigResized();
 
 public:
@@ -39,16 +39,24 @@ public:
 
 private slots:
 
-    /* Handlers: Resize stuff: */
-    void sltHandleRootItemResized(const QSizeF &size, int iMinimumWidth);
+    /* Handlers: Size-hint stuff: */
+    void sltMinimumWidthHintChanged(int iMinimumWidthHint);
+    void sltMinimumHeightHintChanged(int iMinimumHeightHint);
 
 private:
 
-    /* Event handlers: Resize stuff: */
+    /* Helper: Prepare stuff: */
+    void preparePalette();
+
+    /* Handler: Resize-event stuff: */
     void resizeEvent(QResizeEvent *pEvent);
 
-    /* Helpers: Update stuff: */
-    void updateSceneRect(const QSizeF &sizeHint = QSizeF());
+    /* Helper: Update stuff: */
+    void updateSceneRect();
+
+    /* Variables: */
+    int m_iMinimumWidthHint;
+    int m_iMinimumHeightHint;
 };
 
 #endif /* __UIGDetailsView_h__ */

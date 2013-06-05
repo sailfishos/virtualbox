@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -101,6 +101,7 @@ UIGlobalSettingsExtension::UIGlobalSettingsExtension()
     /* Setup tool-bar: */
     m_pPackagesToolbar->setUsesTextLabel(false);
     m_pPackagesToolbar->setIconSize(QSize(16, 16));
+    m_pPackagesToolbar->setOrientation(Qt::Vertical);
     m_pActionAdd = m_pPackagesToolbar->addAction(UIIconPool::iconSet(":/extension_pack_install_16px.png",
                                                                      ":/extension_pack_install_disabled_16px.png"),
                                                  QString(), this, SLOT(sltInstallPackage()));

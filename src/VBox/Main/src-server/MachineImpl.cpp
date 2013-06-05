@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2004-2012 Oracle Corporation
+ * Copyright (C) 2004-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -168,7 +168,7 @@ Machine::HWData::HWData()
     mVideoCaptureFile = "Test.webm";
     mVideoCaptureWidth = 640;
     mVideoCaptureHeight = 480;
-    mVideoCaptureEnabled = true;
+    mVideoCaptureEnabled = false;
 
     mHWVirtExEnabled = true;
     mHWVirtExNestedPagingEnabled = true;
@@ -208,6 +208,7 @@ Machine::HWData::HWData()
     mKeyboardHIDType = KeyboardHIDType_PS2Keyboard;
     mPointingHIDType = PointingHIDType_PS2Mouse;
     mChipsetType = ChipsetType_PIIX3;
+    mEmulatedUSBWebcamEnabled = FALSE;
     mEmulatedUSBCardReaderEnabled = FALSE;
 
     for (size_t i = 0; i < RT_ELEMENTS(mCPUAttached); i++)
@@ -1622,14 +1623,42 @@ STDMETHODIMP Machine::COMSETTER(EmulatedUSBCardReaderEnabled)(BOOL enabled)
 
 STDMETHODIMP Machine::COMGETTER(EmulatedUSBWebcameraEnabled)(BOOL *enabled)
 {
+#ifdef VBOX_WITH_USB_VIDEO
+    CheckComArgOutPointerValid(enabled);
+
+    AutoCaller autoCaller(this);
+    if (FAILED(autoCaller.rc())) return autoCaller.rc();
+
+    AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
+
+    *enabled = mHWData->mEmulatedUSBWebcamEnabled;
+
+    return S_OK;
+#else
     NOREF(enabled);
     return E_NOTIMPL;
+#endif
 }
 
 STDMETHODIMP Machine::COMSETTER(EmulatedUSBWebcameraEnabled)(BOOL enabled)
 {
+#ifdef VBOX_WITH_USB_VIDEO
+    AutoCaller autoCaller(this);
+    if (FAILED(autoCaller.rc())) return autoCaller.rc();
+    AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
+
+    HRESULT rc = checkStateDependency(MutableStateDep);
+    if (FAILED(rc)) return rc;
+
+    setModified(IsModified_MachineData);
+    mHWData.backup();
+    mHWData->mEmulatedUSBWebcamEnabled = enabled;
+
+    return S_OK;
+#else
     NOREF(enabled);
     return E_NOTIMPL;
+#endif
 }
 
 STDMETHODIMP Machine::COMGETTER(HPETEnabled)(BOOL *enabled)
@@ -1664,7 +1693,7 @@ STDMETHODIMP Machine::COMSETTER(HPETEnabled)(BOOL enabled)
     return rc;
 }
 
-STDMETHODIMP Machine::COMGETTER(VideoCaptureEnabled)(BOOL * fEnabled)
+STDMETHODIMP Machine::COMGETTER(VideoCaptureEnabled)(BOOL *fEnabled)
 {
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -1675,7 +1704,7 @@ STDMETHODIMP Machine::COMGETTER(VideoCaptureEnabled)(BOOL * fEnabled)
     return S_OK;
 }
 
-STDMETHODIMP Machine::COMSETTER(VideoCaptureEnabled)(BOOL  fEnabled)
+STDMETHODIMP Machine::COMSETTER(VideoCaptureEnabled)(BOOL fEnabled)
 {
     AutoCaller autoCaller(this);
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
@@ -1702,7 +1731,7 @@ STDMETHODIMP Machine::COMSETTER(VideoCaptureFile)(IN_BSTR aFile)
     if (FAILED(autoCaller.rc())) return autoCaller.rc();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-    if(strFile.isEmpty())
+    if (strFile.isEmpty())
        strFile = "VideoCap.webm";
     mHWData->mVideoCaptureFile = strFile;
     return S_OK;
@@ -5441,21 +5470,18 @@ HRESULT Machine::getGuestPropertyFromService(IN_BSTR aName,
 
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
     Utf8Str strName(aName);
-    HWData::GuestPropertyList::const_iterator it;
+    HWData::GuestPropertyMap::const_iterator it =
+        mHWData->mGuestProperties.find(strName);
 
-    for (it = mHWData->mGuestProperties.begin();
-         it != mHWData->mGuestProperties.end(); ++it)
+    if (it != mHWData->mGuestProperties.end())
     {
-        if (it->strName == strName)
-        {
-            char szFlags[MAX_FLAGS_LEN + 1];
-            it->strValue.cloneTo(aValue);
-            *aTimestamp = it->mTimestamp;
-            writeFlags(it->mFlags, szFlags);
-            Bstr(szFlags).cloneTo(aFlags);
-            break;
-        }
+        char szFlags[MAX_FLAGS_LEN + 1];
+        it->second.strValue.cloneTo(aValue);
+        *aTimestamp = it->second.mTimestamp;
+        writeFlags(it->second.mFlags, szFlags);
+        Bstr(szFlags).cloneTo(aFlags);
     }
+
     return S_OK;
 }
 
@@ -5538,7 +5564,6 @@ HRESULT Machine::setGuestPropertyToService(IN_BSTR aName, IN_BSTR aValue,
     HRESULT rc = S_OK;
     HWData::GuestProperty property;
     property.mFlags = NILFLAG;
-    bool found = false;
 
     rc = checkStateDependency(MutableStateDep);
     if (FAILED(rc)) return rc;
@@ -5548,64 +5573,62 @@ HRESULT Machine::setGuestPropertyToService(IN_BSTR aName, IN_BSTR aValue,
         Utf8Str utf8Name(aName);
         Utf8Str utf8Flags(aFlags);
         uint32_t fFlags = NILFLAG;
-        if (    (aFlags != NULL)
-             && RT_FAILURE(validateFlags(utf8Flags.c_str(), &fFlags))
+        if (   (aFlags != NULL)
+            && RT_FAILURE(validateFlags(utf8Flags.c_str(), &fFlags))
            )
             return setError(E_INVALIDARG,
-                            tr("Invalid flag values: '%ls'"),
+                            tr("Invalid guest property flag values: '%ls'"),
                             aFlags);
 
-        /** @todo r=bird: see efficiency rant in PushGuestProperty. (Yeah, I
-         *                know, this is simple and do an OK job atm.) */
-        HWData::GuestPropertyList::iterator it;
-        for (it = mHWData->mGuestProperties.begin();
-             it != mHWData->mGuestProperties.end(); ++it)
-            if (it->strName == utf8Name)
+        HWData::GuestPropertyMap::iterator it =
+            mHWData->mGuestProperties.find(utf8Name);
+
+        if (it == mHWData->mGuestProperties.end())
+        {
+            setModified(IsModified_MachineData);
+            mHWData.backupEx();
+
+            RTTIMESPEC time;
+            HWData::GuestProperty prop;
+            prop.strValue = aValue;
+            prop.mTimestamp = RTTimeSpecGetNano(RTTimeNow(&time));
+            prop.mFlags = fFlags;
+
+            mHWData->mGuestProperties[Utf8Str(aName)] = prop;
+        }
+        else
+        {
+            if (it->second.mFlags & (RDONLYHOST))
             {
-                property = *it;
-                if (it->mFlags & (RDONLYHOST))
-                    rc = setError(E_ACCESSDENIED,
-                                  tr("The property '%ls' cannot be changed by the host"),
-                                  aName);
+                rc = setError(E_ACCESSDENIED,
+                              tr("The property '%ls' cannot be changed by the host"),
+                              aName);
+            }
+            else
+            {
+                setModified(IsModified_MachineData);
+                mHWData.backupEx();
+
+                /* The backupEx() operation invalidates our iterator,
+                 * so get a new one. */
+                it = mHWData->mGuestProperties.find(utf8Name);
+                Assert(it != mHWData->mGuestProperties.end());
+
+                if (RT_VALID_PTR(aValue) && *(aValue) != '\0')
+                {
+                    RTTIMESPEC time;
+                    it->second.strValue = aValue;
+                    it->second.mTimestamp = RTTimeSpecGetNano(RTTimeNow(&time));
+                    if (aFlags != NULL)
+                        it->second.mFlags = fFlags;
+                }
                 else
                 {
-                    setModified(IsModified_MachineData);
-                    mHWData.backup();           // @todo r=dj backup in a loop?!?
-
-                    /* The backup() operation invalidates our iterator, so
-                    * get a new one. */
-                    for (it = mHWData->mGuestProperties.begin();
-                         it->strName != utf8Name;
-                         ++it)
-                        ;
                     mHWData->mGuestProperties.erase(it);
                 }
-                found = true;
-                break;
-            }
-        if (found && SUCCEEDED(rc))
-        {
-            if (aValue)
-            {
-                RTTIMESPEC time;
-                property.strValue = aValue;
-                property.mTimestamp = RTTimeSpecGetNano(RTTimeNow(&time));
-                if (aFlags != NULL)
-                    property.mFlags = fFlags;
-                mHWData->mGuestProperties.push_back(property);
             }
         }
-        else if (SUCCEEDED(rc) && aValue)
-        {
-            RTTIMESPEC time;
-            setModified(IsModified_MachineData);
-            mHWData.backup();
-            property.strName = aName;
-            property.strValue = aValue;
-            property.mTimestamp = RTTimeSpecGetNano(RTTimeNow(&time));
-            property.mFlags = fFlags;
-            mHWData->mGuestProperties.push_back(property);
-        }
+
         if (   SUCCEEDED(rc)
             && (   mHWData->mGuestPropertyNotificationPatterns.isEmpty()
                 || RTStrSimplePatternMultiMatch(mHWData->mGuestPropertyNotificationPatterns.c_str(),
@@ -5616,8 +5639,8 @@ HRESULT Machine::setGuestPropertyToService(IN_BSTR aName, IN_BSTR aValue,
                )
            )
         {
-            /** @todo r=bird: Why aren't we leaving the lock here?  The
-             *                same code in PushGuestProperty does... */
+            alock.release();
+
             mParent->onGuestPropertyChange(mData->mUuid, aName,
                                            aValue ? aValue : Bstr("").raw(),
                                            aFlags ? aFlags : Bstr("").raw());
@@ -5713,42 +5736,50 @@ HRESULT Machine::enumerateGuestPropertiesInService
     AutoReadLock alock(this COMMA_LOCKVAL_SRC_POS);
     Utf8Str strPatterns(aPatterns);
 
+    HWData::GuestPropertyMap propMap;
+
     /*
      * Look for matching patterns and build up a list.
      */
-    HWData::GuestPropertyList propList;
-    for (HWData::GuestPropertyList::iterator it = mHWData->mGuestProperties.begin();
-         it != mHWData->mGuestProperties.end();
-         ++it)
+    HWData::GuestPropertyMap::const_iterator it = mHWData->mGuestProperties.begin();
+    while (it != mHWData->mGuestProperties.end())
+    {
         if (   strPatterns.isEmpty()
             || RTStrSimplePatternMultiMatch(strPatterns.c_str(),
                                             RTSTR_MAX,
-                                            it->strName.c_str(),
+                                            it->first.c_str(),
                                             RTSTR_MAX,
                                             NULL)
            )
-            propList.push_back(*it);
+        {
+            propMap.insert(*it);
+        }
+
+        it++;
+    }
+
+    alock.release();
 
     /*
      * And build up the arrays for returning the property information.
      */
-    size_t cEntries = propList.size();
+    size_t cEntries = propMap.size();
     SafeArray<BSTR> names(cEntries);
     SafeArray<BSTR> values(cEntries);
     SafeArray<LONG64> timestamps(cEntries);
     SafeArray<BSTR> flags(cEntries);
     size_t iProp = 0;
-    for (HWData::GuestPropertyList::iterator it = propList.begin();
-         it != propList.end();
-         ++it)
+
+    it = propMap.begin();
+    while (it != propMap.end())
     {
          char szFlags[MAX_FLAGS_LEN + 1];
-         it->strName.cloneTo(&names[iProp]);
-         it->strValue.cloneTo(&values[iProp]);
-         timestamps[iProp] = it->mTimestamp;
-         writeFlags(it->mFlags, szFlags);
-         Bstr(szFlags).cloneTo(&flags[iProp]);
-         ++iProp;
+         it->first.cloneTo(&names[iProp]);
+         it->second.strValue.cloneTo(&values[iProp]);
+         timestamps[iProp] = it->second.mTimestamp;
+         writeFlags(it->second.mFlags, szFlags);
+         Bstr(szFlags).cloneTo(&flags[iProp++]);
+         it++;
     }
     names.detachTo(ComSafeArrayOutArg(aNames));
     values.detachTo(ComSafeArrayOutArg(aValues));
@@ -8017,13 +8048,13 @@ void Machine::uninitDataAndChildObjects()
         unconst(mBIOSSettings).setNull();
     }
 
-    /* Deassociate hard disks (only when a real Machine or a SnapshotMachine
+    /* Deassociate media (only when a real Machine or a SnapshotMachine
      * instance is uninitialized; SessionMachine instances refer to real
-     * Machine hard disks). This is necessary for a clean re-initialization of
+     * Machine media). This is necessary for a clean re-initialization of
      * the VM after successfully re-checking the accessibility state. Note
      * that in case of normal Machine or SnapshotMachine uninitialization (as
-     * a result of unregistering or deleting the snapshot), outdated hard
-     * disk attachments will already be uninitialized and deleted, so this
+     * a result of unregistering or deleting the snapshot), outdated media
+     * attachments will already be uninitialized and deleted, so this
      * code will not affect them. */
     if (    !!mMediaData
          && (!isSessionMachine())
@@ -8033,10 +8064,10 @@ void Machine::uninitDataAndChildObjects()
              it != mMediaData->mAttachments.end();
              ++it)
         {
-            ComObjPtr<Medium> hd = (*it)->getMedium();
-            if (hd.isNull())
+            ComObjPtr<Medium> pMedium = (*it)->getMedium();
+            if (pMedium.isNull())
                 continue;
-            HRESULT rc = hd->removeBackReference(mData->mUuid, getSnapshotId());
+            HRESULT rc = pMedium->removeBackReference(mData->mUuid, getSnapshotId());
             AssertComRC(rc);
         }
     }
@@ -8524,12 +8555,13 @@ HRESULT Machine::loadHardware(const settings::Hardware &data, const settings::De
         mHWData->mAccelerate2DVideoEnabled = data.fAccelerate2DVideo;
         mHWData->mVideoCaptureWidth = data.ulVideoCaptureHorzRes;
         mHWData->mVideoCaptureHeight = data.ulVideoCaptureVertRes;
-        mHWData->mVideoCaptureEnabled = data.fVideoCaptureEnabled;
+        mHWData->mVideoCaptureEnabled = false; /* @todo r=klaus restore to data.fVideoCaptureEnabled */
         mHWData->mVideoCaptureFile = data.strVideoCaptureFile;
         mHWData->mFirmwareType = data.firmwareType;
         mHWData->mPointingHIDType = data.pointingHIDType;
         mHWData->mKeyboardHIDType = data.keyboardHIDType;
         mHWData->mChipsetType = data.chipsetType;
+        mHWData->mEmulatedUSBWebcamEnabled = data.fEmulatedUSBWebcam;
         mHWData->mEmulatedUSBCardReaderEnabled = data.fEmulatedUSBCardReader;
         mHWData->mHPETEnabled = data.fHPETEnabled;
 
@@ -8671,8 +8703,8 @@ HRESULT Machine::loadHardware(const settings::Hardware &data, const settings::De
             const settings::GuestProperty &prop = *it;
             uint32_t fFlags = guestProp::NILFLAG;
             guestProp::validateFlags(prop.strFlags.c_str(), &fFlags);
-            HWData::GuestProperty property = { prop.strName, prop.strValue, (LONG64) prop.timestamp, fFlags };
-            mHWData->mGuestProperties.push_back(property);
+            HWData::GuestProperty property = { prop.strValue, (LONG64) prop.timestamp, fFlags };
+            mHWData->mGuestProperties[prop.strName] = property;
         }
 
         mHWData->mGuestPropertyNotificationPatterns = data.strNotificationPatterns;
@@ -9715,6 +9747,7 @@ HRESULT Machine::saveHardware(settings::Hardware &data, settings::Debugging *pDb
         // chipset
         data.chipsetType = mHWData->mChipsetType;
 
+        data.fEmulatedUSBWebcam     = !!mHWData->mEmulatedUSBWebcamEnabled;
         data.fEmulatedUSBCardReader = !!mHWData->mEmulatedUSBCardReaderEnabled;
 
         // HPET
@@ -9734,7 +9767,7 @@ HRESULT Machine::saveHardware(settings::Hardware &data, settings::Debugging *pDb
         data.fAccelerate2DVideo = !!mHWData->mAccelerate2DVideoEnabled;
         data.ulVideoCaptureHorzRes = mHWData->mVideoCaptureWidth;
         data.ulVideoCaptureVertRes = mHWData->mVideoCaptureHeight;
-        data.fVideoCaptureEnabled  = !! mHWData->mVideoCaptureEnabled;
+        data.fVideoCaptureEnabled  = !!mHWData->mVideoCaptureEnabled;
         data.strVideoCaptureFile = mHWData->mVideoCaptureFile;
 
         /* VRDEServer settings (optional) */
@@ -9854,11 +9887,11 @@ HRESULT Machine::saveHardware(settings::Hardware &data, settings::Debugging *pDb
         // guest properties
         data.llGuestProperties.clear();
 #ifdef VBOX_WITH_GUEST_PROPS
-        for (HWData::GuestPropertyList::const_iterator it = mHWData->mGuestProperties.begin();
+        for (HWData::GuestPropertyMap::const_iterator it = mHWData->mGuestProperties.begin();
              it != mHWData->mGuestProperties.end();
              ++it)
         {
-            HWData::GuestProperty property = *it;
+            HWData::GuestProperty property = it->second;
 
             /* Remove transient guest properties at shutdown unless we
              * are saving state */
@@ -9869,7 +9902,7 @@ HRESULT Machine::saveHardware(settings::Hardware &data, settings::Debugging *pDb
                     || property.mFlags & guestProp::TRANSRESET))
                 continue;
             settings::GuestProperty prop;
-            prop.strName = property.strName;
+            prop.strName = it->first;
             prop.strValue = property.strValue;
             prop.timestamp = property.mTimestamp;
             char szFlags[guestProp::MAX_FLAGS_LEN + 1];
@@ -9984,6 +10017,7 @@ HRESULT Machine::saveStorageDevices(ComObjPtr<StorageController> aStorageControl
                 dev.uuid = pMedium->getId();
             dev.fPassThrough = pAttach->getPassthrough();
             dev.fTempEject = pAttach->getTempEject();
+            dev.fNonRotational = pAttach->getNonRotational();
             dev.fDiscard = pAttach->getDiscard();
         }
 
@@ -10128,7 +10162,7 @@ void Machine::addMediumToRegistry(ComObjPtr<Medium> &pMedium)
  * @note The progress object is not marked as completed, neither on success nor
  *       on failure. This is a responsibility of the caller.
  *
- * @note Locks this object for writing.
+ * @note Locks this object and the media tree for writing.
  */
 HRESULT Machine::createImplicitDiffs(IProgress *aProgress,
                                      ULONG aWeight,
@@ -10151,6 +10185,7 @@ HRESULT Machine::createImplicitDiffs(IProgress *aProgress,
 
     HRESULT rc = S_OK;
 
+    // use appropriate locked media map (online or offline)
     MediumLockListMap lockedMediaOffline;
     MediumLockListMap *lockedMediaMap;
     if (aOnline)
@@ -10282,6 +10317,8 @@ HRESULT Machine::createImplicitDiffs(IProgress *aProgress,
             if (aOnline)
             {
                 alock.release();
+                /* The currently attached medium will be read-only, change
+                 * the lock type to read. */
                 rc = pMediumLockList->Update(pMedium, false);
                 alock.acquire();
                 AssertComRCThrowRC(rc);
@@ -10334,21 +10371,13 @@ HRESULT Machine::createImplicitDiffs(IProgress *aProgress,
     }
     catch (HRESULT aRC) { rc = aRC; }
 
-    /* unlock all hard disks we locked */
+    /* unlock all hard disks we locked when there is no VM */
     if (!aOnline)
     {
         ErrorInfoKeeper eik;
 
         HRESULT rc1 = lockedMediaMap->Clear();
         AssertComRC(rc1);
-    }
-
-    if (FAILED(rc))
-    {
-        MultiResult mrc = rc;
-
-        alock.release();
-        mrc = deleteImplicitDiffs();
     }
 
     return rc;
@@ -10361,98 +10390,224 @@ HRESULT Machine::createImplicitDiffs(IProgress *aProgress,
  * Note that to delete hard disks created by #AttachDevice() this method is
  * called from #fixupMedia() when the changes are rolled back.
  *
- * @note Locks this object for writing.
+ * @note Locks this object and the media tree for writing.
  */
-HRESULT Machine::deleteImplicitDiffs()
+HRESULT Machine::deleteImplicitDiffs(bool aOnline)
 {
+    LogFlowThisFunc(("aOnline=%d\n", aOnline));
+
     AutoCaller autoCaller(this);
     AssertComRCReturn(autoCaller.rc(), autoCaller.rc());
 
-    AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-    LogFlowThisFuncEnter();
+    AutoMultiWriteLock2 alock(this->lockHandle(),
+                              &mParent->getMediaTreeLockHandle() COMMA_LOCKVAL_SRC_POS);
 
+    /* We absolutely must have backed up state. */
     AssertReturn(mMediaData.isBackedUp(), E_FAIL);
 
-    HRESULT rc = S_OK;
-
-    MediaData::AttachmentList implicitAtts;
-
-    const MediaData::AttachmentList &oldAtts = mMediaData.backedUpData()->mAttachments;
-
-    /* enumerate new attachments */
+    /* Check if there are any implicitly created diff images. */
+    bool fImplicitDiffs = false;
     for (MediaData::AttachmentList::const_iterator it = mMediaData->mAttachments.begin();
          it != mMediaData->mAttachments.end();
          ++it)
     {
-        ComObjPtr<Medium> hd = (*it)->getMedium();
-        if (hd.isNull())
-            continue;
-
-        if ((*it)->isImplicit())
+        const ComObjPtr<MediumAttachment> &pAtt = *it;
+        if (pAtt->isImplicit())
         {
-            /* deassociate and mark for deletion */
-            LogFlowThisFunc(("Detaching '%s', pending deletion\n", (*it)->getLogName()));
-            rc = hd->removeBackReference(mData->mUuid);
-            AssertComRC(rc);
-            implicitAtts.push_back(*it);
-            continue;
+            fImplicitDiffs = true;
+            break;
         }
-
-        /* was this hard disk attached before? */
-        if (!findAttachment(oldAtts, hd))
-        {
-            /* no: de-associate */
-            LogFlowThisFunc(("Detaching '%s', no deletion\n", (*it)->getLogName()));
-            rc = hd->removeBackReference(mData->mUuid);
-            AssertComRC(rc);
-            continue;
-        }
-        LogFlowThisFunc(("Not detaching '%s'\n", (*it)->getLogName()));
     }
+    /* If there is nothing to do, leave early. This saves lots of image locking
+     * effort. It also avoids a MachineStateChanged event without real reason.
+     * This is important e.g. when loading a VM config, because there should be
+     * no events. Otherwise API clients can become thoroughly confused for
+     * inaccessible VMs (the code for loading VM configs uses this method for
+     * cleanup if the config makes no sense), as they take such events as an
+     * indication that the VM is alive, and they would force the VM config to
+     * be reread, leading to an endless loop. */
+    if (!fImplicitDiffs)
+        return S_OK;
 
-    /* rollback hard disk changes */
-    mMediaData.rollback();
+    HRESULT rc = S_OK;
+    MachineState_T oldState = mData->mMachineState;
 
-    MultiResult mrc(S_OK);
+    /* will release the lock before the potentially lengthy operation,
+     * so protect with the special state (unless already protected) */
+    if (   oldState != MachineState_Saving
+        && oldState != MachineState_LiveSnapshotting
+        && oldState != MachineState_RestoringSnapshot
+        && oldState != MachineState_DeletingSnapshot
+        && oldState != MachineState_DeletingSnapshotOnline
+        && oldState != MachineState_DeletingSnapshotPaused
+       )
+        setMachineState(MachineState_SettingUp);
 
-    /* delete unused implicit diffs */
-    if (implicitAtts.size() != 0)
+    // use appropriate locked media map (online or offline)
+    MediumLockListMap lockedMediaOffline;
+    MediumLockListMap *lockedMediaMap;
+    if (aOnline)
+        lockedMediaMap = &mData->mSession.mLockedMedia;
+    else
+        lockedMediaMap = &lockedMediaOffline;
+
+    try
     {
-        /* will release the lock before the potentially lengthy
-         * operation, so protect with the special state (unless already
-         * protected) */
-        MachineState_T oldState = mData->mMachineState;
-        if (    oldState != MachineState_Saving
-             && oldState != MachineState_LiveSnapshotting
-             && oldState != MachineState_RestoringSnapshot
-             && oldState != MachineState_DeletingSnapshot
-             && oldState != MachineState_DeletingSnapshotOnline
-             && oldState != MachineState_DeletingSnapshotPaused
-           )
-            setMachineState(MachineState_SettingUp);
+        if (!aOnline)
+        {
+            /* lock all attached hard disks early to detect "in use"
+             * situations before deleting actual diffs */
+            for (MediaData::AttachmentList::const_iterator it = mMediaData->mAttachments.begin();
+               it != mMediaData->mAttachments.end();
+               ++it)
+            {
+                MediumAttachment* pAtt = *it;
+                if (pAtt->getType() == DeviceType_HardDisk)
+                {
+                    Medium* pMedium = pAtt->getMedium();
+                    Assert(pMedium);
 
-        alock.release();
+                    MediumLockList *pMediumLockList(new MediumLockList());
+                    alock.release();
+                    rc = pMedium->createMediumLockList(true /* fFailIfInaccessible */,
+                                                       false /* fMediumLockWrite */,
+                                                       NULL,
+                                                       *pMediumLockList);
+                    alock.acquire();
 
-        for (MediaData::AttachmentList::const_iterator it = implicitAtts.begin();
-             it != implicitAtts.end();
+                    if (FAILED(rc))
+                    {
+                        delete pMediumLockList;
+                        throw rc;
+                    }
+
+                    rc = lockedMediaMap->Insert(pAtt, pMediumLockList);
+                    if (FAILED(rc))
+                        throw rc;
+                }
+            }
+
+            if (FAILED(rc))
+                throw rc;
+        } // end of offline
+
+        /* Lock lists are now up to date and include implicitly created media */
+
+        /* Go through remembered attachments and delete all implicitly created
+         * diffs and fix up the attachment information */
+        const MediaData::AttachmentList &oldAtts = mMediaData.backedUpData()->mAttachments;
+        MediaData::AttachmentList implicitAtts;
+        for (MediaData::AttachmentList::const_iterator it = mMediaData->mAttachments.begin();
+             it != mMediaData->mAttachments.end();
              ++it)
         {
-            LogFlowThisFunc(("Deleting '%s'\n", (*it)->getLogName()));
-            ComObjPtr<Medium> hd = (*it)->getMedium();
+            ComObjPtr<MediumAttachment> pAtt = *it;
+            ComObjPtr<Medium> pMedium = pAtt->getMedium();
+            if (pMedium.isNull())
+                continue;
 
-            rc = hd->deleteStorage(NULL /*aProgress*/, true /*aWait*/);
-            AssertMsg(SUCCEEDED(rc), ("rc=%Rhrc it=%s hd=%s\n", rc, (*it)->getLogName(), hd->getLocationFull().c_str() ));
-            mrc = rc;
+            // Implicit attachments go on the list for deletion and back references are removed.
+            if (pAtt->isImplicit())
+            {
+                /* Deassociate and mark for deletion */
+                LogFlowThisFunc(("Detaching '%s', pending deletion\n", pAtt->getLogName()));
+                rc = pMedium->removeBackReference(mData->mUuid);
+                if (FAILED(rc))
+                   throw rc;
+                implicitAtts.push_back(pAtt);
+                continue;
+            }
+
+            /* Was this medium attached before? */
+            if (!findAttachment(oldAtts, pMedium))
+            {
+                /* no: de-associate */
+                LogFlowThisFunc(("Detaching '%s', no deletion\n", pAtt->getLogName()));
+                rc = pMedium->removeBackReference(mData->mUuid);
+                if (FAILED(rc))
+                    throw rc;
+                continue;
+            }
+            LogFlowThisFunc(("Not detaching '%s'\n", pAtt->getLogName()));
         }
 
-        alock.acquire();
+        /* If there are implicit attachments to delete, throw away the lock
+         * map contents (which will unlock all media) since the medium
+         * attachments will be rolled back. Below we need to completely
+         * recreate the lock map anyway since it is infinitely complex to
+         * do this incrementally (would need reconstructing each attachment
+         * change, which would be extremely hairy). */
+        if (implicitAtts.size() != 0)
+        {
+            ErrorInfoKeeper eik;
 
-        if (mData->mMachineState == MachineState_SettingUp)
-            setMachineState(oldState);
+            HRESULT rc1 = lockedMediaMap->Clear();
+            AssertComRC(rc1);
+        }
+
+        /* rollback hard disk changes */
+        mMediaData.rollback();
+
+        MultiResult mrc(S_OK);
+
+        // Delete unused implicit diffs.
+        if (implicitAtts.size() != 0)
+        {
+            alock.release();
+
+            for (MediaData::AttachmentList::const_iterator it = implicitAtts.begin();
+                 it != implicitAtts.end();
+                 ++it)
+            {
+                // Remove medium associated with this attachment.
+                ComObjPtr<MediumAttachment> pAtt = *it;
+                Assert(pAtt);
+                LogFlowThisFunc(("Deleting '%s'\n", pAtt->getLogName()));
+                ComObjPtr<Medium> pMedium = pAtt->getMedium();
+                Assert(pMedium);
+
+                rc = pMedium->deleteStorage(NULL /*aProgress*/, true /*aWait*/);
+                // continue on delete failure, just collect error messages
+                AssertMsg(SUCCEEDED(rc), ("rc=%Rhrc it=%s hd=%s\n", rc, pAtt->getLogName(), pMedium->getLocationFull().c_str() ));
+                mrc = rc;
+            }
+
+            alock.acquire();
+
+            /* if there is a VM recreate media lock map as mentioned above,
+             * otherwise it is a waste of time and we leave things unlocked */
+            if (aOnline)
+            {
+                const ComObjPtr<SessionMachine> pMachine = mData->mSession.mMachine;
+                /* must never be NULL, but better safe than sorry */
+                if (!pMachine.isNull())
+                {
+                    alock.release();
+                    rc = mData->mSession.mMachine->lockMedia();
+                    alock.acquire();
+                    if (FAILED(rc))
+                        throw rc;
+                }
+            }
+        }
+    }
+    catch (HRESULT aRC) {rc = aRC;}
+
+    if (mData->mMachineState == MachineState_SettingUp)
+        setMachineState(oldState);
+
+    /* unlock all hard disks we locked when there is no VM */
+    if (!aOnline)
+    {
+        ErrorInfoKeeper eik;
+
+        HRESULT rc1 = lockedMediaMap->Clear();
+        AssertComRC(rc1);
     }
 
-    return mrc;
+    return rc;
 }
+
 
 /**
  * Looks through the given list of media attachments for one with the given parameters
@@ -10881,11 +11036,10 @@ void Machine::commitMedia(bool aOnline /*= false*/)
 void Machine::rollbackMedia()
 {
     AutoCaller autoCaller(this);
-    AssertComRCReturnVoid (autoCaller.rc());
+    AssertComRCReturnVoid(autoCaller.rc());
 
-    AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-
-    LogFlowThisFunc(("Entering\n"));
+    // AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
+    LogFlowThisFunc(("Entering rollbackMedia\n"));
 
     HRESULT rc = S_OK;
 
@@ -10927,7 +11081,7 @@ void Machine::rollbackMedia()
 
     /** @todo convert all this Machine-based voodoo to MediumAttachment
      * based rollback logic. */
-    deleteImplicitDiffs();
+    deleteImplicitDiffs(Global::IsOnline(mData->mMachineState));
 
     return;
 }
@@ -11363,6 +11517,26 @@ bool Machine::isControllerHotplugCapable(StorageControllerType_T enmCtrlType)
 
 #ifdef VBOX_WITH_RESOURCE_USAGE_API
 
+void Machine::getDiskList(MediaList &list)
+{
+    for (MediaData::AttachmentList::const_iterator it = mMediaData->mAttachments.begin();
+         it != mMediaData->mAttachments.end();
+         ++it)
+    {
+        MediumAttachment* pAttach = *it;
+        /* just in case */
+        AssertStmt(pAttach, continue);
+
+        AutoCaller localAutoCallerA(pAttach);
+        if (FAILED(localAutoCallerA.rc())) continue;
+
+        AutoReadLock local_alockA(pAttach COMMA_LOCKVAL_SRC_POS);
+
+        if (pAttach->getType() == DeviceType_HardDisk)
+            list.push_back(pAttach->getMedium());
+    }
+}
+
 void Machine::registerMetrics(PerformanceCollector *aCollector, Machine *aMachine, RTPROCESS pid)
 {
     AssertReturnVoid(isWriteLockOnCurrentThread());
@@ -11376,6 +11550,12 @@ void Machine::registerMetrics(PerformanceCollector *aCollector, Machine *aMachin
         "Percentage of processor time spent in kernel mode by the VM process.");
     pm::SubMetric *ramUsageUsed  = new pm::SubMetric("RAM/Usage/Used",
         "Size of resident portion of VM process in memory.");
+    pm::SubMetric *diskUsageUsed  = new pm::SubMetric("Disk/Usage/Used",
+        "Actual size of all VM disks combined.");
+    pm::SubMetric *machineNetRx = new pm::SubMetric("Net/Rate/Rx",
+        "Network receive rate.");
+    pm::SubMetric *machineNetTx = new pm::SubMetric("Net/Rate/Tx",
+        "Network transmit rate.");
     /* Create and register base metrics */
     pm::BaseMetric *cpuLoad = new pm::MachineCpuLoadRaw(hal, aMachine, pid,
                                                         cpuLoadUser, cpuLoadKernel);
@@ -11383,6 +11563,11 @@ void Machine::registerMetrics(PerformanceCollector *aCollector, Machine *aMachin
     pm::BaseMetric *ramUsage = new pm::MachineRamUsage(hal, aMachine, pid,
                                                        ramUsageUsed);
     aCollector->registerBaseMetric(ramUsage);
+    MediaList disks;
+    getDiskList(disks);
+    pm::BaseMetric *diskUsage = new pm::MachineDiskUsage(hal, aMachine, disks,
+                                                         diskUsageUsed);
+    aCollector->registerBaseMetric(diskUsage);
 
     aCollector->registerMetric(new pm::Metric(cpuLoad, cpuLoadUser, 0));
     aCollector->registerMetric(new pm::Metric(cpuLoad, cpuLoadUser,
@@ -11405,6 +11590,14 @@ void Machine::registerMetrics(PerformanceCollector *aCollector, Machine *aMachin
     aCollector->registerMetric(new pm::Metric(ramUsage, ramUsageUsed,
                                               new pm::AggregateMin()));
     aCollector->registerMetric(new pm::Metric(ramUsage, ramUsageUsed,
+                                              new pm::AggregateMax()));
+
+    aCollector->registerMetric(new pm::Metric(diskUsage, diskUsageUsed, 0));
+    aCollector->registerMetric(new pm::Metric(diskUsage, diskUsageUsed,
+                                              new pm::AggregateAvg()));
+    aCollector->registerMetric(new pm::Metric(diskUsage, diskUsageUsed,
+                                              new pm::AggregateMin()));
+    aCollector->registerMetric(new pm::Metric(diskUsage, diskUsageUsed,
                                               new pm::AggregateMax()));
 
 
@@ -11432,6 +11625,10 @@ void Machine::registerMetrics(PerformanceCollector *aCollector, Machine *aMachin
     pm::SubMetric *guestPagedTotal = new pm::SubMetric("Guest/Pagefile/Usage/Total",    "Total amount of space in the page file.");
 
     /* Create and register base metrics */
+    pm::BaseMetric *machineNetRate = new pm::MachineNetRate(mCollectorGuest, aMachine,
+                                                            machineNetRx, machineNetTx);
+    aCollector->registerBaseMetric(machineNetRate);
+
     pm::BaseMetric *guestCpuLoad = new pm::GuestCpuLoad(mCollectorGuest, aMachine,
                                                         guestLoadUser, guestLoadKernel, guestLoadIdle);
     aCollector->registerBaseMetric(guestCpuLoad);
@@ -11441,6 +11638,16 @@ void Machine::registerMetrics(PerformanceCollector *aCollector, Machine *aMachin
                                                         guestMemBalloon, guestMemShared,
                                                         guestMemCache, guestPagedTotal);
     aCollector->registerBaseMetric(guestCpuMem);
+
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetRx, 0));
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetRx, new pm::AggregateAvg()));
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetRx, new pm::AggregateMin()));
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetRx, new pm::AggregateMax()));
+
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetTx, 0));
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetTx, new pm::AggregateAvg()));
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetTx, new pm::AggregateMin()));
+    aCollector->registerMetric(new pm::Metric(machineNetRate, machineNetTx, new pm::AggregateMax()));
 
     aCollector->registerMetric(new pm::Metric(guestCpuLoad, guestLoadUser, 0));
     aCollector->registerMetric(new pm::Metric(guestCpuLoad, guestLoadUser, new pm::AggregateAvg()));
@@ -12013,19 +12220,20 @@ RWLockHandle *SessionMachine::lockHandle() const
 /**
  *  Passes collected guest statistics to performance collector object
  */
-STDMETHODIMP SessionMachine::ReportGuestStatistics(ULONG aValidStats, ULONG aCpuUser,
-                                                   ULONG aCpuKernel, ULONG aCpuIdle,
-                                                   ULONG aMemTotal, ULONG aMemFree,
-                                                   ULONG aMemBalloon, ULONG aMemShared,
-                                                   ULONG aMemCache, ULONG aPageTotal,
-                                                   ULONG aAllocVMM, ULONG aFreeVMM,
-                                                   ULONG aBalloonedVMM, ULONG aSharedVMM)
+STDMETHODIMP SessionMachine::ReportVmStatistics(ULONG aValidStats, ULONG aCpuUser,
+                                                ULONG aCpuKernel, ULONG aCpuIdle,
+                                                ULONG aMemTotal, ULONG aMemFree,
+                                                ULONG aMemBalloon, ULONG aMemShared,
+                                                ULONG aMemCache, ULONG aPageTotal,
+                                                ULONG aAllocVMM, ULONG aFreeVMM,
+                                                ULONG aBalloonedVMM, ULONG aSharedVMM,
+                                                ULONG aVmNetRx, ULONG aVmNetTx)
 {
     if (mCollectorGuest)
         mCollectorGuest->updateStats(aValidStats, aCpuUser, aCpuKernel, aCpuIdle,
                                      aMemTotal, aMemFree, aMemBalloon, aMemShared,
                                      aMemCache, aPageTotal, aAllocVMM, aFreeVMM,
-                                     aBalloonedVMM, aSharedVMM);
+                                     aBalloonedVMM, aSharedVMM, aVmNetRx, aVmNetTx);
 
     return S_OK;
 }
@@ -12591,18 +12799,18 @@ STDMETHODIMP SessionMachine::PullGuestProperties(ComSafeArrayOut(BSTR, aNames),
     com::SafeArray<LONG64> timestamps(cEntries);
     com::SafeArray<BSTR> flags(cEntries);
     unsigned i = 0;
-    for (HWData::GuestPropertyList::iterator it = mHWData->mGuestProperties.begin();
+    for (HWData::GuestPropertyMap::iterator it = mHWData->mGuestProperties.begin();
          it != mHWData->mGuestProperties.end();
          ++it)
     {
         char szFlags[MAX_FLAGS_LEN + 1];
-        it->strName.cloneTo(&names[i]);
-        it->strValue.cloneTo(&values[i]);
-        timestamps[i] = it->mTimestamp;
+        it->first.cloneTo(&names[i]);
+        it->second.strValue.cloneTo(&values[i]);
+        timestamps[i] = it->second.mTimestamp;
         /* If it is NULL, keep it NULL. */
-        if (it->mFlags)
+        if (it->second.mFlags)
         {
-            writeFlags(it->mFlags, szFlags);
+            writeFlags(it->second.mFlags, szFlags);
             Bstr(szFlags).cloneTo(&flags[i]);
         }
         else
@@ -12679,29 +12887,18 @@ STDMETHODIMP SessionMachine::PushGuestProperty(IN_BSTR aName,
         setModified(IsModified_MachineData);
         mHWData.backup();
 
-        /** @todo r=bird: The careful memory handling doesn't work out here because
-         *  the catch block won't undo any damage we've done.  So, if push_back throws
-         *  bad_alloc then you've lost the value.
-         *
-         *  Another thing. Doing a linear search here isn't extremely efficient, esp.
-         *  since values that changes actually bubbles to the end of the list.  Using
-         *  something that has an efficient lookup and can tolerate a bit of updates
-         *  would be nice.  RTStrSpace is one suggestion (it's not perfect).  Some
-         *  combination of RTStrCache (for sharing names and getting uniqueness into
-         *  the bargain) and hash/tree is another. */
-        for (HWData::GuestPropertyList::iterator iter = mHWData->mGuestProperties.begin();
-             iter != mHWData->mGuestProperties.end();
-             ++iter)
-            if (utf8Name == iter->strName)
-            {
-                mHWData->mGuestProperties.erase(iter);
-                mData->mGuestPropertiesModified = TRUE;
-                break;
-            }
-        if (aValue != NULL)
+        HWData::GuestPropertyMap::iterator it = mHWData->mGuestProperties.find(utf8Name);
+        if (it != mHWData->mGuestProperties.end())
         {
-            HWData::GuestProperty property = { aName, aValue, aTimestamp, fFlags };
-            mHWData->mGuestProperties.push_back(property);
+            if (RT_VALID_PTR(aValue) && *(aValue) != '\0')
+            {
+                it->second.strValue   = aValue;
+                it->second.mFlags     = fFlags;
+                it->second.mTimestamp = aTimestamp;
+            }
+            else
+                mHWData->mGuestProperties.erase(it);
+
             mData->mGuestPropertiesModified = TRUE;
         }
 
@@ -12731,6 +12928,29 @@ STDMETHODIMP SessionMachine::PushGuestProperty(IN_BSTR aName,
 #else
     ReturnComNotImplemented();
 #endif
+}
+
+STDMETHODIMP SessionMachine::LockMedia()
+{
+    AutoCaller autoCaller(this);
+    AssertComRCReturn(autoCaller.rc(), autoCaller.rc());
+
+    AutoMultiWriteLock2 alock(this->lockHandle(),
+                              &mParent->getMediaTreeLockHandle() COMMA_LOCKVAL_SRC_POS);
+
+    AssertReturn(   mData->mMachineState == MachineState_Starting
+                 || mData->mMachineState == MachineState_Restoring
+                 || mData->mMachineState == MachineState_TeleportingIn, E_FAIL);
+
+    clearError();
+    alock.release();
+    return lockMedia();
+}
+
+STDMETHODIMP SessionMachine::UnlockMedia()
+{
+    unlockMedia();
+    return S_OK;
 }
 
 STDMETHODIMP SessionMachine::EjectMedium(IMediumAttachment *aAttachment,
@@ -13052,7 +13272,7 @@ HRESULT SessionMachine::onCPUChange(ULONG aCPU, BOOL aRemove)
     LogFlowThisFunc(("\n"));
 
     AutoCaller autoCaller(this);
-    AssertComRCReturn (autoCaller.rc(), autoCaller.rc());
+    AssertComRCReturn(autoCaller.rc(), autoCaller.rc());
 
     ComPtr<IInternalSessionControl> directControl;
     {
@@ -13072,7 +13292,7 @@ HRESULT SessionMachine::onCPUExecutionCapChange(ULONG aExecutionCap)
     LogFlowThisFunc(("\n"));
 
     AutoCaller autoCaller(this);
-    AssertComRCReturn (autoCaller.rc(), autoCaller.rc());
+    AssertComRCReturn(autoCaller.rc(), autoCaller.rc());
 
     ComPtr<IInternalSessionControl> directControl;
     {
@@ -13210,7 +13430,7 @@ HRESULT SessionMachine::onBandwidthGroupChange(IBandwidthGroup *aBandwidthGroup)
     LogFlowThisFunc(("\n"));
 
     AutoCaller autoCaller(this);
-    AssertComRCReturn (autoCaller.rc(), autoCaller.rc());
+    AssertComRCReturn(autoCaller.rc(), autoCaller.rc());
 
     ComPtr<IInternalSessionControl> directControl;
     {
@@ -13456,8 +13676,7 @@ void SessionMachine::releaseSavedStateFile(const Utf8Str &strStateFile,
  * locked as described above; on failure no media is locked at all (all
  * succeeded individual locks will be undone).
  *
- * This method is intended to be called when the machine is in Starting or
- * Restoring state and asserts otherwise.
+ * The caller is responsible for doing the necessary state sanity checks.
  *
  * The locks made by this method must be undone by calling #unlockMedia() when
  * no more needed.
@@ -13470,13 +13689,9 @@ HRESULT SessionMachine::lockMedia()
     AutoMultiWriteLock2 alock(this->lockHandle(),
                               &mParent->getMediaTreeLockHandle() COMMA_LOCKVAL_SRC_POS);
 
-    AssertReturn(   mData->mMachineState == MachineState_Starting
-                 || mData->mMachineState == MachineState_Restoring
-                 || mData->mMachineState == MachineState_TeleportingIn, E_FAIL);
     /* bail out if trying to lock things with already set up locking */
     AssertReturn(mData->mSession.mLockedMedia.IsEmpty(), E_FAIL);
 
-    clearError();
     MultiResult mrc(S_OK);
 
     /* Collect locking information for all medium objects attached to the VM. */
@@ -13749,13 +13964,13 @@ HRESULT SessionMachine::setMachineState(MachineState_T aMachineState)
         /* Make sure any transient guest properties get removed from the
          * property store on shutdown. */
 
-        HWData::GuestPropertyList::iterator it;
+        HWData::GuestPropertyMap::const_iterator it;
         BOOL fNeedsSaving = mData->mGuestPropertiesModified;
         if (!fNeedsSaving)
             for (it = mHWData->mGuestProperties.begin();
                  it != mHWData->mGuestProperties.end(); ++it)
-                if (   (it->mFlags & guestProp::TRANSIENT)
-                    || (it->mFlags & guestProp::TRANSRESET))
+                if (   (it->second.mFlags & guestProp::TRANSIENT)
+                    || (it->second.mFlags & guestProp::TRANSRESET))
                 {
                     fNeedsSaving = true;
                     break;

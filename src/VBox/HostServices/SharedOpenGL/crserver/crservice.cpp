@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2008 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -472,7 +472,7 @@ static CRVBOXSVCBUFFER_t* svcGetBuffer(uint32_t iBuffer, uint32_t cbBufferSize)
         {
             if (pBuffer->uiId == iBuffer)
             {
-                if (pBuffer->uiSize!=cbBufferSize)
+                if (cbBufferSize && pBuffer->uiSize!=cbBufferSize)
                 {
                     static int shown=0;
 
@@ -1073,7 +1073,7 @@ static DECLCALLBACK(int) svcHostCall (void *, uint32_t u32Function, uint32_t cPa
 
             Assert(sizeof(RTRECT)==4*sizeof(GLint));
 
-            rc = crVBoxServerSetRootVisibleRegion(paParms[1].u.uint32, (GLint*)paParms[0].u.pointer.addr);
+            rc = crVBoxServerSetRootVisibleRegion(paParms[1].u.uint32, (const RTRECT*)paParms[0].u.pointer.addr);
             break;
         }
         case SHCRGL_HOST_FN_SCREEN_CHANGED:

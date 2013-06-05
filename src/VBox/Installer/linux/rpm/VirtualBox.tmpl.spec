@@ -80,6 +80,9 @@ mv *.r0 $RPM_BUILD_ROOT/usr/lib/virtualbox
 mv *.rel $RPM_BUILD_ROOT/usr/lib/virtualbox || true
 mv VBoxNetDHCP $RPM_BUILD_ROOT/usr/lib/virtualbox
 mv VBoxNetAdpCtl $RPM_BUILD_ROOT/usr/lib/virtualbox
+if [ -f VBoxVolInfo ]; then
+  mv VBoxVolInfo $RPM_BUILD_ROOT/usr/lib/virtualbox
+fi
 mv VBoxXPCOMIPCD $RPM_BUILD_ROOT/usr/lib/virtualbox
 mv components $RPM_BUILD_ROOT/usr/lib/virtualbox/components
 mv *.so $RPM_BUILD_ROOT/usr/lib/virtualbox
@@ -118,6 +121,9 @@ if %WEBSVC%; then
 fi
 for i in VBoxSDL VirtualBox VBoxHeadless VBoxNetDHCP VBoxNetAdpCtl; do
   chmod 4511 $RPM_BUILD_ROOT/usr/lib/virtualbox/$i; done
+if [ -f $RPM_BUILD_ROOT/usr/lib/virtualbox/VBoxVolInfo ]; then
+  chmod 4511 $RPM_BUILD_ROOT/usr/lib/virtualbox/VBoxVolInfo
+fi
 if [ -d ExtensionPacks/VNC ]; then
   mv ExtensionPacks/VNC $RPM_BUILD_ROOT/usr/lib/virtualbox/ExtensionPacks
 fi
@@ -445,13 +451,13 @@ rm -rf $RPM_BUILD_ROOT
 %{?rpm_suse: /sbin/rcvboxballoonctrl-service}
 %{?rpm_suse: /sbin/rcvboxautostart-service}
 %{?rpm_suse: /sbin/rcvboxweb-service}
-/lib/modules
 /etc/vbox
-/usr/bin
+/usr/bin/*
 /usr/src/vbox*
 /usr/lib/virtualbox
-/usr/share/applications
-/usr/share/icons
-/usr/share/mime/packages
-/usr/share/pixmaps
+/usr/share/applications/*
+/usr/share/icons/hicolor/*/apps/*
+/usr/share/icons/hicolor/*/mimetypes/*
+/usr/share/mime/packages/*
+/usr/share/pixmaps/*
 /usr/share/virtualbox

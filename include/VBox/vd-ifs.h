@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -307,7 +307,7 @@ DECLINLINE(int) vdIfErrorMessage(PVDINTERFACEERROR pIfError, const char *pszForm
     int rc = VINF_SUCCESS;
     va_list va;
     va_start(va, pszFormat);
-    if (pIfError)
+    if (pIfError && pIfError->pfnMessage)
         rc = pIfError->pfnMessage(pIfError->Core.pvUser, pszFormat, va);
     va_end(va);
     return rc;

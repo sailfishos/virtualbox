@@ -38,6 +38,8 @@ UIGChooserItem::UIGChooserItem(UIGChooserItem *pParent, bool fTemporary)
     : m_fRoot(!pParent)
     , m_fTemporary(fTemporary)
     , m_pParent(pParent)
+    , m_iPreviousMinimumWidthHint(0)
+    , m_iPreviousMinimumHeightHint(0)
     , m_dragTokenPlace(DragToken_Off)
     , m_fHovered(false)
     , m_pHighlightMachine(0)
@@ -47,7 +49,6 @@ UIGChooserItem::UIGChooserItem(UIGChooserItem *pParent, bool fTemporary)
     , m_iDefaultDarkness(100)
     , m_iHighlightDarkness(90)
     , m_iAnimationDarkness(m_iDefaultDarkness)
-    , m_iStrokeDarkness(130)
     , m_iDragTokenDarkness(110)
 {
     /* Basic item setup: */
@@ -133,6 +134,7 @@ void UIGChooserItem::hide()
 void UIGChooserItem::setRoot(bool fRoot)
 {
     m_fRoot = fRoot;
+    handleRootStatusChange();
 }
 
 bool UIGChooserItem::isRoot() const
@@ -154,6 +156,37 @@ void UIGChooserItem::setHovered(bool fHovered)
         emit sigHoverLeave();
 }
 
+void UIGChooserItem::updateGeometry()
+{
+    /* Call to base-class: */
+    QIGraphicsWidget::updateGeometry();
+
+    /* Update parent's geometry: */
+    if (parentItem())
+        parentItem()->updateGeometry();
+
+    /* Special handling for root-items: */
+    if (isRoot())
+    {
+        /* Root-item should notify chooser-view if minimum-width-hint was changed: */
+        int iMinimumWidthHint = minimumWidthHint();
+        if (m_iPreviousMinimumWidthHint != iMinimumWidthHint)
+        {
+            /* Save new minimum-width-hint, notify listener: */
+            m_iPreviousMinimumWidthHint = iMinimumWidthHint;
+            emit sigMinimumWidthHintChanged(m_iPreviousMinimumWidthHint);
+        }
+        /* Root-item should notify chooser-view if minimum-height-hint was changed: */
+        int iMinimumHeightHint = minimumHeightHint();
+        if (m_iPreviousMinimumHeightHint != iMinimumHeightHint)
+        {
+            /* Save new minimum-height-hint, notify listener: */
+            m_iPreviousMinimumHeightHint = iMinimumHeightHint;
+            emit sigMinimumHeightHintChanged(m_iPreviousMinimumHeightHint);
+        }
+    }
+}
+
 void UIGChooserItem::makeSureItsVisible()
 {
     /* If item is not visible: */
@@ -165,7 +198,7 @@ void UIGChooserItem::makeSureItsVisible()
             /* We should make parent visible: */
             pParentItem->makeSureItsVisible();
             /* And make sure its opened: */
-            if (pParentItem->closed())
+            if (pParentItem->isClosed())
                 pParentItem->open(false);
         }
     }
@@ -339,6 +372,18 @@ void UIGChooserItem::paintText(QPainter *pPainter, QPoint point,
     pPainter->setFont(font);
     pPainter->drawText(point, strText);
     pPainter->restore();
+}
+
+/* static */
+QSize UIGChooserItem::textSize(const QFont &font, QPaintDevice *pPaintDevice, const QString &strText)
+{
+    /* Make sure text is not empty: */
+    if (strText.isEmpty())
+        return QSize(0, 0);
+
+    /* Return text size, based on font-metrics: */
+    QFontMetrics fm(font, pPaintDevice);
+    return QSize(fm.width(strText), fm.height());
 }
 
 /* static */

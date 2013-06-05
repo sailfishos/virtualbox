@@ -1064,6 +1064,10 @@
         <source>Shared &amp;Clipboard</source>
         <translation>Appunti &amp;condivisi</translation>
     </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translation>Trascina e rilascia</translation>
+    </message>
 </context>
 <context>
     <name>UIApplianceEditorWidget</name>
@@ -2586,6 +2590,22 @@ p, li { white-space: pre-wrap; }
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
         <translation>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation>Contrai il gruppo</translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation>Espandi il gruppo</translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation>Chiudi il gruppo</translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation>Apri il gruppo</translation>
     </message>
 </context>
 <context>

@@ -737,11 +737,11 @@
     <message>
         <source>&amp;Ungroup...</source>
         <translatorcomment>ontgroepen kennen wij niet</translatorcomment>
-        <translation>Groep &amp;aanpassen...</translation>
+        <translation>Groep ophe&amp;ffen...</translation>
     </message>
     <message>
         <source>Ungroup items of the selected virtual machine group</source>
-        <translation>Laat items geen deel meer uitmaken van de geselecteerde virtuele machine groep</translation>
+        <translation>Hef de geselecteerde virtuele machine groep op</translation>
     </message>
     <message>
         <source>Sort</source>
@@ -758,6 +758,11 @@
     <message>
         <source>Shared &amp;Clipboard</source>
         <translation>&amp;Gedeeld klembord</translation>
+    </message>
+    <message>
+        <source>Drag&apos;n&apos;Drop</source>
+        <translatorcomment>Zoals bij Mozillavertalingen</translatorcomment>
+        <translation>Slepen naar</translation>
     </message>
 </context>
 <context>
@@ -1859,6 +1864,22 @@
         <source>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</source>
         <comment>Group item tool-tip / Machine info wrapper, including running</comment>
         <translation>&lt;nobr&gt;%1 %2&lt;/nobr&gt;</translation>
+    </message>
+    <message>
+        <source>Collapse group</source>
+        <translation>Groep invouwen</translation>
+    </message>
+    <message>
+        <source>Expand group</source>
+        <translation>Groep uitvouwen</translation>
+    </message>
+    <message>
+        <source>Enter group</source>
+        <translation>Groep binnengaan</translation>
+    </message>
+    <message>
+        <source>Exit group</source>
+        <translation>Groep verlaten</translation>
     </message>
 </context>
 <context>
@@ -3055,7 +3076,7 @@
     <message>
         <source>&lt;p style=&apos;white-space:pre&apos;&gt;&lt;nobr&gt;Indicates the activity of the CD/DVD devices:&lt;/nobr&gt;%1&lt;/p&gt;</source>
         <comment>CD/DVD tooltip</comment>
-        <translation>&lt;p style=&apos;white-space:pre&apos;&gt;&lt;nobr&gt;Geeft de activiteit van de CD/DVD apparaten weer:&lt;/nobr&gt;%1&lt;/p&gt;</translation>
+        <translation>&lt;p style=&apos;white-space:pre&apos;&gt;&lt;nobr&gt;Geeft de activiteit van de CD/DVD-apparaten weer:&lt;/nobr&gt;%1&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p style=&apos;white-space:pre&apos;&gt;&lt;nobr&gt;Indicates the activity of the floppy devices:&lt;/nobr&gt;%1&lt;/p&gt;</source>
@@ -3124,7 +3145,7 @@
     </message>
     <message>
         <source>Indicates whether the keyboard is captured by the guest OS (&lt;img src=:/hostkey_captured_16px.png/&gt;) or not (&lt;img src=:/hostkey_16px.png/&gt;).</source>
-        <translation>Geeft aan of het toetsenbord van de host is afgevangen door het gastbesturingssysteem (&lt;img src=:/hostkey_captured_16px.png/&gt;) of niet (&lt;img src=:/hostkey_16px.png/&gt;).</translation>
+        <translation>Geeft aan of het toetsenbord van de host door het gastbesturingssysteem is afgevangen (&lt;img src=:/hostkey_captured_16px.png/&gt;) of niet (&lt;img src=:/hostkey_16px.png/&gt;).</translation>
     </message>
     <message>
         <source>Indicates whether the Remote Desktop Server is enabled (&lt;img src=:/vrdp_16px.png/&gt;) or not (&lt;img src=:/vrdp_disabled_16px.png/&gt;).</source>
@@ -3163,11 +3184,11 @@
     </message>
     <message>
         <source>No CD/DVD Devices Attached</source>
-        <translation>Geen CD/DVD apparaten gekoppeld</translation>
+        <translation>Geen CD/DVD-apparaten gekoppeld</translation>
     </message>
     <message>
         <source>No CD/DVD devices attached to that VM</source>
-        <translation>Geen CD/DVD apparaten gekoppeld aan die VM</translation>
+        <translation>Geen CD/DVD-apparaten gekoppeld aan die VM</translation>
     </message>
     <message>
         <source>No Floppy Devices Attached</source>
@@ -3194,7 +3215,7 @@
     <name>UIMachineSettingsAudio</name>
     <message>
         <source>When checked, a virtual PCI audio card will be plugged into the virtual machine and will communicate with the host audio system using the specified driver.</source>
-        <translation>Als dit is ingesteld zal de virtuele PCI-audiokaart aangesloten worden op de virtuele machine en zal het gespecificeerde stuurprogramma gebruikt worden om met de audiokaart van de host te communiceren.</translation>
+        <translation>Als dit is ingesteld zal de virtuele PCI-audiokaart op de virtuele machine worden aangesloten en zal het gespecificeerde stuurprogramma worden gebruikt om met de audiokaart van de host te communiceren.</translation>
     </message>
     <message>
         <source>Enable &amp;Audio</source>
@@ -4187,7 +4208,7 @@
     </message>
     <message>
         <source>you have assigned more virtual CPUs to the virtual machine than the number of physical CPUs on your host system (&lt;b&gt;%1&lt;/b&gt;). This is likely to degrade the performance of your virtual machine. Please consider reducing the number of virtual CPUs.</source>
-        <translation>U hebt meer virtuele CPU&apos;s toegewezen aan de virtuele machine dan het aantal fysieke CPU&apos;s in uw hostcomputer (&lt;b&gt;%1&lt;/b&gt;). Dit verlaagt de prestaties van uw virtuele machine. Overweeg gerust het aantal virtuele CPU&apos;s te verlagen. Ik zou het doen.</translation>
+        <translation>U hebt meer virtuele CPU&apos;s toegewezen aan de virtuele machine dan het aantal fysieke CPU&apos;s in uw hostcomputer (&lt;b&gt;%1&lt;/b&gt;). Dit verlaagt de prestaties van uw virtuele machine. Overweeg het aantal virtuele CPU&apos;s te verlagen.</translation>
     </message>
     <message>
         <source>you have assigned more than one virtual CPU to this VM. This will not work unless the IO-APIC feature is also enabled. This will be done automatically when you accept the VM Settings by pressing the OK button.</source>
@@ -4268,7 +4289,7 @@
     </message>
     <message>
         <source>When checked, the Physical Address Extension (PAE) feature of the host CPU will be exposed to the virtual machine.</source>
-        <translation>Als dit is ingesteld zal de fysieke adresuitbreiding (PAE) optie van de fysieke CPU voor de virtuele machine zichtbaar worden.</translation>
+        <translation>Als dit is ingesteld zal de fysieke-adresuitbreiding (Physical Address Extension/PAE) optie van de fysieke CPU, voor de virtuele machine zichtbaar worden.</translation>
     </message>
     <message>
         <source>Enable PA&amp;E/NX</source>
@@ -4321,11 +4342,11 @@
     </message>
     <message>
         <source>Controls the number of virtual CPUs in the virtual machine. You need hardware virtualization support on your host system to use more than one virtual CPU.</source>
-        <translation>Stelt het aantal virtuele CPUs in de virtuele machine in. U hebt hardware virtualisatie ondersteuning nodig op uw hostsysteem om meer dan één virtuele CPU te kunnen gebruiken.</translation>
+        <translation>Stelt het aantal virtuele CPUs in de virtuele machine in. U hebt hardware-virtualisatie-ondersteuning op uw hostsysteem nodig om meer dan één virtuele CPU te kunnen gebruiken.</translation>
     </message>
     <message>
         <source>If checked, an absolute pointing device (a USB tablet) will be supported. Otherwise, only a standard PS/2 mouse will be emulated.</source>
-        <translation>Als dit is ingesteld wordt een USB tablet ondersteund. Anders wordt alleen een standaard PS/2 muis geëmuleerd.</translation>
+        <translation>Als dit is ingesteld wordt een USB-tablet ondersteund. Anders wordt alleen een standaard PS/2-muis geëmuleerd.</translation>
     </message>
     <message>
         <source>Enable &amp;absolute pointing device</source>
@@ -4337,7 +4358,7 @@
     </message>
     <message>
         <source>Selects the chipset to be emulated in this virtual machine. Note that the ICH9 chipset emulation is experimental and not recommended except for guest systems (such as Mac OS X) which require it.</source>
-        <translation>Selecteert de chipset die in deze VM moet worden geëmuleerd. Besef dat de ICH9 chipset-emulatie experimenteel is en niet wordt aangeraden, behalve voor gastsystemen (zoals Mac OS X) die niet zonder kunnen.</translation>
+        <translation>Selecteert de chipset die in deze VM moet worden geëmuleerd. Besef dat de ICH9-chipset-emulatie experimenteel is en niet wordt aangeraden, behalve voor gastsystemen die niet zonder kunnen (zoals Mac OS X).</translation>
     </message>
     <message>
         <source>&amp;Execution Cap:</source>
@@ -4347,15 +4368,15 @@
     <message>
         <source>Limits the amount of time that each virtual CPU is allowed to run for. Each virtual CPU will be allowed to use up to this percentage of the processing time available on one physical CPU. The execution cap can be disabled by setting it to 100%. Setting the cap too low can make the machine feel slow to respond.</source>
         <translatorcomment>timeslicing dus</translatorcomment>
-        <translation>Beperkt de tijdsduur waarbinnen instructies door elke virtuele CPU kunnen worden uitgevoerd. Elke virtuele CPU zal dit percentage van de beschikbare processortijd worden toegestaan op één fysieke CPU. De execution cap kan worden uitgeschakeld door deze in te stellen op 100%. De cap te laag zetten kan de indruk wekken dat de machine langzaam reageert.</translation>
+        <translation>Beperkt de tijdsduur waarbinnen instructies door elke virtuele CPU kunnen worden uitgevoerd. Elke virtuele CPU zal dit percentage van de beschikbare processortijd worden toegestaan op één fysieke CPU. De execution-cap kan worden uitgeschakeld door deze in te stellen op 100%. De cap te laag zetten kan de indruk wekken dat de machine langzaam reageert.</translation>
     </message>
     <message>
         <source>you have set the processor execution cap to a low value. This can make the machine feel slow to respond.</source>
-        <translation>U hebt de processor execution cap op een lage waarde ingesteld. Dit kan de indruk wekken dat de machine langzaam reageert.</translation>
+        <translation>U hebt de processor-execution-cap op een lage waarde ingesteld. Dit kan de indruk wekken dat de machine langzaam reageert.</translation>
     </message>
     <message>
         <source>you have enabled a USB HID (Human Interface Device). This will not work unless USB emulation is also enabled. This will be done automatically when you accept the VM Settings by pressing the OK button.</source>
-        <translation>U hebt een USB HID (Human Interface Device) ingeschakeld. Deze zal niet werken zolang de USB-emulatie niet is ingeschakeld. Dit wordt automatisch gedaan als u de VM instellingen accepteert door op de OK-knop te klikken.</translation>
+        <translation>U hebt een USB-HID (Human Interface Device) ingeschakeld. Deze zal niet werken zolang USB-emulatie niet is ingeschakeld. Dit wordt automatisch gedaan wanneer u de VM instellingen accepteert door op de OK-knop te klikken.</translation>
     </message>
     <message>
         <source>&lt;qt&gt;%1%&lt;/qt&gt;</source>
@@ -4369,7 +4390,7 @@
     </message>
     <message>
         <source>you have assigned ICH9 chipset type to this VM. It will not work properly unless the IO-APIC feature is also enabled. This will be done automatically when you accept the VM Settings by pressing the OK button.</source>
-        <translation>U hebt het ICH9 chipset type aan deze VM toegewezen. Dit zal niet eerder naar behoren werken totdat de IO-APIC feature eveneens is ingeschakeld.  Dit gebeurt automatisch als u de VM instellingen accepteert door op de OK knop te klikken.</translation>
+        <translation>U hebt het ICH9-chipsettype aan deze VM toegewezen. Dit zal niet eerder naar behoren werken totdat IO-APIC eveneens is ingeschakeld.  Dit gebeurt automatisch wanneer u de VM instellingen accepteert door op de OK knop te klikken.</translation>
     </message>
     <message>
         <source>you have hardware virtualization (VT-x/AMD-V) enabled. Your host configuration does not support hardware virtualization, so it will be disabled. This will be done automatically when you accept the VM Settings by pressing the OK button.</source>
@@ -4619,7 +4640,7 @@
     <name>UIMachineWindowNormal</name>
     <message>
         <source>Shows the currently assigned Host key.&lt;br&gt;This key, when pressed alone, toggles the keyboard and mouse capture state. It can also be used in combination with other keys to quickly perform actions from the main menu.</source>
-        <translation>Toont de huidige Hosttoets.&lt;br&gt;Door alleen deze toets in te drukken wordt de status van het toetsenbord en de muis omgewisseld.De toets wordt ook in combinatie met andere toetsen gebruikt om snelacties uit het hoofdmenu uit te voeren.</translation>
+        <translation>Toont de huidige Hosttoets.&lt;br&gt;Door alleen deze toets in te drukken wordt de status van het toetsenbord en de muis omgewisseld. De toets wordt ook in combinatie met andere toetsen gebruikt om snelacties uit het hoofdmenu uit te voeren.</translation>
     </message>
 </context>
 <context>
@@ -5899,7 +5920,7 @@
     <name>UINetworkManagerDialog</name>
     <message>
         <source>Network Operations Manager</source>
-        <translation>Netwerkoperaties Manager</translation>
+        <translation>Manager Netwerkoperaties</translation>
     </message>
     <message>
         <source>There are no active network operations.</source>
@@ -6593,7 +6614,7 @@
     </message>
     <message>
         <source>&lt;p&gt;Saves the current execution state of the virtual machine to the physical hard disk of the host PC.&lt;/p&gt;&lt;p&gt;Next time this machine is started, it will be restored from the saved state and continue execution from the same place you saved it at, which will let you continue your work immediately.&lt;/p&gt;&lt;p&gt;Note that saving the machine state may take a long time, depending on the guest operating system type and the amount of memory you assigned to the virtual machine.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Bewaart de huidige uitvoeringsstatus van de virtuele machine op de fysieke harde schijf van de host-PC.&lt;/p&gt;&lt;p&gt;De volgende keer als deze machine wordt gestart wordt de opgeslagen staat hersteld en doorgegaan vanaf hetzelfde punt waarop u het hebt opgeslagen; hierdoor kunt u direct doorgaan met waar u mee bezig was.&lt;/p&gt;&lt;p&gt;Wees bewust dat het opslaan van de staat van de machine enige tijd kan duren, afhankelijk van het soort besturingssysteem van de gast en de hoeveelheid geheugen die aan de virtuele machine is toegewezen.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Bewaart de huidige uitvoeringsstatus van de virtuele machine op de fysieke harde schijf van de host-PC.&lt;/p&gt;&lt;p&gt;De volgende keer als deze machine wordt gestart, wordt de opgeslagen staat hersteld en doorgegaan vanaf hetzelfde punt, waarop u het hebt opgeslagen; hierdoor kunt u direct doorgaan met waar u mee bezig was.&lt;/p&gt;&lt;p&gt;Bedenk dat het opslaan van de staat van de machine enige tijd kan duren, afhankelijk van het soort besturingssysteem van de gast en de hoeveelheid geheugen die aan de virtuele machine is toegewezen.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&amp;Save the machine state</source>
@@ -6601,7 +6622,7 @@
     </message>
     <message>
         <source>&lt;p&gt;Sends the ACPI Power Button press event to the virtual machine.&lt;/p&gt;&lt;p&gt;Normally, the guest operating system running inside the virtual machine will detect this event and perform a clean shutdown procedure. This is a recommended way to turn off the virtual machine because all applications running inside it will get a chance to save their data and state.&lt;/p&gt;&lt;p&gt;If the machine doesn&apos;t respond to this action then the guest operating system may be misconfigured or doesn&apos;t understand ACPI Power Button events at all. In this case you should select the &lt;b&gt;Power off the machine&lt;/b&gt; action to stop virtual machine execution.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Stuurt een ACPI startknopgebeurtenis naar de virtuele machine.&lt;/p&gt;&lt;p&gt;Normaal gesproken zal het besturingssysteem van de gast in de virtuele machine deze gebeurtenis opmerken en een nette afsluitprocedure uitvoeren. Dit is de aan te bevelen manier om een virtuele machine uit te zetten omdat alle programma&apos;s, die daarop uitgevoerd worden, de kans krijgen om hun gegevens en hun status op te slaan.&lt;/p&gt;&lt;p&gt;Reageert de machine niet op deze actie, is het mogelijk dat het besturingssteem van de gast verkeerd geconfigureerd is of dat het gastbesturingssysteem de ACPI startknopgebeurtenis niet begrijpt. Selecteer in dat geval de&lt;b&gt;Machine uitzetten&lt;/b&gt;actie om virtuele machine daadwerkelijk te stoppen.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Stuurt een ACPI-startknopgebeurtenis naar de virtuele machine.&lt;/p&gt;&lt;p&gt;Normaal gesproken zal het besturingssysteem van de gast in de virtuele machine deze gebeurtenis opmerken en een nette afsluitprocedure uitvoeren. Dit is de aanbevolen manier om een virtuele machine uit te zetten, omdat alle programma&apos;s die daarop uitgevoerd worden, de kans krijgen om hun gegevens en hun status op te slaan.&lt;/p&gt;&lt;p&gt;Reageert de machine niet op deze actie, dan is het mogelijk dat het besturingssteem van de gast verkeerd geconfigureerd is, of dat het gastbesturingssysteem een ACPI-startknopgebeurtenis niet begrijpt. Selecteer in dat geval de&lt;b&gt;Machine uitzetten&lt;/b&gt;-actie om de virtuele machine daadwerkelijk te stoppen.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>S&amp;end the shutdown signal</source>
@@ -6609,7 +6630,7 @@
     </message>
     <message>
         <source>&lt;p&gt;Turns off the virtual machine.&lt;/p&gt;&lt;p&gt;Note that this action will stop machine execution immediately so that the guest operating system running inside it will not be able to perform a clean shutdown procedure which may result in &lt;i&gt;data loss&lt;/i&gt; inside the virtual machine. Selecting this action is recommended only if the virtual machine does not respond to the &lt;b&gt;Send the shutdown signal&lt;/b&gt; action.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Schakelt de virtuele machine uit.&lt;/p&gt;&lt;p&gt;Let er op dat deze actie de machine direct stopzet en dus het besturingssysteem van de gast niet in de gelegenheid stelt een nette afsluitprocedure uit te voeren. Dit kan lijden tot &lt;i&gt;verlies van gegevens&lt;/i&gt; binnen de virtuele machine. Het selecteren van deze actie is alleen aan te bevelen als de virtuele machine niet reageert op het &lt;b&gt;Stuur het shutdown signaal&lt;/b&gt;.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Schakelt de virtuele machine uit.&lt;/p&gt;&lt;p&gt;Let er op dat deze actie de machine direct stopzet en dus het besturingssysteem van de gast niet in de gelegenheid stelt een nette afsluitprocedure uit te voeren. Dit kan leiden tot &lt;i&gt;verlies van gegevens&lt;/i&gt; binnen de virtuele machine. Het selecteren van deze actie is alleen aan te bevelen als de virtuele machine niet reageert op het &lt;b&gt;Stuur het shutdown signaal&lt;/b&gt;.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&amp;Power off the machine</source>
@@ -6793,7 +6814,7 @@
     </message>
     <message>
         <source>Please choose the type of file that you would like to use for the new virtual hard drive. If you do not need to use it with other virtualization software you can leave this setting unchanged.</source>
-        <translation>Kies het bestandstype dat u wilt gebruiken voor deze nieuwe virtuele schijf. Indien u niet van plan bent deze virtuele schijf met andersoortige virtualisatiesoftware te gebruiken kunt u deze instelling onveranderd laten.</translation>
+        <translation>Kies het bestandstype dat u voor deze nieuwe virtuele schijf wilt gebruiken. Indien u niet van plan bent deze virtuele schijf met andersoortige virtualisatiesoftware te gebruiken kunt u deze instelling onveranderd laten.</translation>
     </message>
     <message>
         <source>Storage on physical hard drive</source>
@@ -6805,7 +6826,7 @@
     </message>
     <message>
         <source>&lt;p&gt;A &lt;b&gt;dynamically allocated&lt;/b&gt; hard drive file will only use space on your physical hard drive as it fills up (up to a maximum &lt;b&gt;fixed size&lt;/b&gt;), although it will not shrink again automatically when space on it is freed.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Een &lt;b&gt;dynamisch gealloceerd&lt;/b&gt; virtuele schijf bestand zal tijdens gebruik groeien tot de aangegeven maximale grootte en zo in het begin minder ruimte op uw fysieke harde schijf innemen, hoewel het schijfbestand niet automatisch zal krimpen wanneer ruimte wordt vrijgemaakt.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Een &lt;b&gt;dynamisch gealloceerd&lt;/b&gt; virtuele schijf bestand zal tijdens gebruik tot de aangegeven maximale grootte groeien en zo in het begin minder ruimte op uw fysieke harde schijf innemen.Het schijfbestand zal echter niet automatisch krimpen wanneer ruimte wordt vrijgemaakt.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&lt;p&gt;A &lt;b&gt;fixed size&lt;/b&gt; hard drive file may take longer to create on some systems but is often faster to use.&lt;/p&gt;</source>
@@ -6813,7 +6834,7 @@
     </message>
     <message>
         <source>&lt;p&gt;You can also choose to &lt;b&gt;split&lt;/b&gt; the hard drive file into several files of up to two gigabytes each. This is mainly useful if you wish to store the virtual machine on removable USB devices or old systems, some of which cannot handle very large files.</source>
-        <translation>&lt;p&gt;U kunt er ook voor kiezen het virtuele schijf bestand &lt;b&gt;te splitsen&lt;/b&gt; in meerdere bestanden van maximaal twee gigabytes elk. Dit is hoofdzakelijk handig indien u de virtuele machine wilt opslaan op verwijderbare USB-apparaten of op oudere systemen, waarvan sommige niet kunnen omgaan met erg grote bestanden.</translation>
+        <translation>&lt;p&gt;U kunt er ook voor kiezen het virtuele schijf bestand &lt;b&gt;te splitsen&lt;/b&gt; in meerdere bestanden van maximaal twee gigabytes elk. Dit is hoofdzakelijk handig indien u de virtuele machine op verwijderbare USB-apparaten of op oudere systemen wilt opslaan, waarvan sommige niet kunnen omgaan met erg grote bestanden.</translation>
     </message>
     <message>
         <source>&amp;Dynamically allocated</source>
@@ -6885,11 +6906,11 @@
     </message>
     <message>
         <source>&lt;p&gt;Please choose a name for the new virtual machine. The new machine will be a clone of the machine &lt;b&gt;%1&lt;/b&gt;.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Kies een naam voor de nieuwe virtuele machine. De nieuwe machine zal een kloon zijn van de machine &lt;b&gt;%1&lt;/b&gt;.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Kies een naam voor de nieuwe virtuele machine. De nieuwe machine zal een kloon zijn van machine &lt;b&gt;%1&lt;/b&gt;.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>When checked a new unique MAC address will be assigned to all configured network cards.</source>
-        <translation>Als dit is ingesteld zal een nieuw, uniek MAC-adres worden toegewezen aan alle geconfigureerde netwerkkaarten.</translation>
+        <translation>Als dit is ingesteld zal een nieuw, uniek MAC-adres aan alle geconfigureerde netwerkkaarten worden toegewezen.</translation>
     </message>
     <message>
         <source>&amp;Reinitialize the MAC address of all network cards</source>
@@ -7074,7 +7095,7 @@
     </message>
     <message>
         <source>This is the descriptive information which will be added to the virtual appliance.  You can change it by double clicking on individual lines.</source>
-        <translation>Dit is de beschrijvende informatie die aan de virtuele appliance zal worden toegevoegd. U kunt dit wijzigen door te dubbelklikken op een regel.</translation>
+        <translation>Dit is de beschrijvende informatie die aan de virtuele appliance zal worden toegevoegd. U kunt dit wijzigen door op een regel te dubbelklikken.</translation>
     </message>
     <message>
         <source>Virtual &amp;machines to export</source>
@@ -7120,11 +7141,11 @@
     </message>
     <message>
         <source>&lt;p&gt;Please select a virtual optical disk file or a physical optical drive containing a disk to start your new virtual machine from.&lt;/p&gt;&lt;p&gt;The disk should be suitable for starting a computer from and should contain the operating system you wish to install on the virtual machine if you want to do that now. The disk will be ejected from the virtual drive automatically next time you switch the virtual machine off, but you can also do this yourself if needed using the Devices menu.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Kies een virtuele optische schijf of een fysieke optisch station met schijf om uw nieuwe virtuele machine van op te starten.&lt;/p&gt;De schijf moet opstartbaar zijn en het besturingssysteem bevatten, dat u op uw virtuele machine wilt installeren indien u dat nu wilt doen. De eerstvolgende keer dat u de virtuele machine uitzet, zal de schijf automatisch worden uitgeworpen uit het (virtuele) station. Indien nodig kunt u dat ook handmatig doen via het Apparaten-menu.&lt;/p&gt; </translation>
+        <translation>&lt;p&gt;Kies een virtuele optische schijf -of een fysieke optisch station met schijf- om uw nieuwe virtuele machine van op te starten.&lt;/p&gt;De schijf moet opstartbaar zijn en het besturingssysteem bevatten, dat u op uw virtuele machine wilt installeren als u dat nu gelijk wilt doen. De eerstvolgende keer dat u de virtuele machine uitzet, zal de schijf automatisch uit het (virtuele) station worden geworpen. Indien nodig kunt u dat ook handmatig doen via het Apparaten-menu.&lt;/p&gt; </translation>
     </message>
     <message>
         <source>&lt;p&gt;Please select a virtual optical disk file or a physical optical drive containing a disk to start your new virtual machine from.&lt;/p&gt;&lt;p&gt;The disk should be suitable for starting a computer from. As this virtual machine has no hard drive you will not be able to install an operating system on it at the moment.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Kies een virtuele optische schijf of een fysieke optisch station met schijf om uw nieuwe virtuele machine van op te starten.&lt;/p&gt;De schijf moet geschikt zijn om een computer van op te starten. Aangezien deze virtuele machine geen harde schijf heeft, kunt u op dit moment geen besturingssysteem installeren.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Kies een virtuele optische schijf -of een fysieke optisch station met schijf- om uw nieuwe virtuele machine van op te starten.&lt;/p&gt;De schijf moet geschikt zijn om een computer van op te starten. Aangezien deze virtuele machine geen harde schijf heeft, kunt u op dit moment geen besturingssysteem installeren.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Choose a virtual optical disk file...</source>
@@ -7151,7 +7172,7 @@
     </message>
     <message>
         <source>&lt;p&gt;VirtualBox currently supports importing appliances saved in the Open Virtualization Format (OVF). To continue, select the file to import below.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;VirtualBox ondersteunt momenteel het importeren van appliances opgeslagen in Open Virtualization Format (OVF). Om door te gaan selecteert u het te importeren bestand hieronder.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;VirtualBox ondersteunt momenteel importeren van appliances opgeslagen in Open Virtualization Format (OVF). Om door te gaan selecteert u het te importeren bestand hieronder.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>Open appliance...</source>
@@ -7159,7 +7180,7 @@
     </message>
     <message>
         <source>Select an appliance to import</source>
-        <translation>Selecteer een appliance om te importeren</translation>
+        <translation>Selecteer een te importeren appliance</translation>
     </message>
     <message>
         <source>Open Virtualization Format (%1)</source>
@@ -7171,7 +7192,7 @@
     </message>
     <message>
         <source>These are the virtual machines contained in the appliance and the suggested settings of the imported VirtualBox machines. You can change many of the properties shown by double-clicking on the items and disable others using the check boxes below.</source>
-        <translation>Dit zijn de virtuele machines vervat in de appliance en voorgestelde instellingen voor de geïmporteerde VirtuelBox machines. U kun veel van de weergegeven eigenschappen aanpassen door op de items te dubbelklikken, of andere uitschakelen door middel van onderstaande keuzevakjes.</translation>
+        <translation>Dit zijn de virtuele machines binnen de appliance en voorgestelde instellingen voor de geïmporteerde VirtuelBox machines. U kunt veel van de weergegeven eigenschappen aanpassen door op de items te dubbelklikken, of andere uitschakelen door middel van onderstaande keuzevakjes.</translation>
     </message>
 </context>
 <context>
@@ -7190,7 +7211,7 @@
     </message>
     <message>
         <source>Please choose the type of file that you would like to use for the new virtual hard drive. If you do not need to use it with other virtualization software you can leave this setting unchanged.</source>
-        <translation>Kies het bestandstype dat u wilt gebruiken voor deze nieuwe virtuele schijf. Indien u niet van plan bent deze virtuele schijf met andersoortige virtualisatiesoftware te gebruiken kunt u deze instelling onveranderd laten.</translation>
+        <translation>Kies het bestandstype dat u wilt gebruiken voor deze nieuwe virtuele schijf. Indien u niet van plan bent deze virtuele schijf met andersoortige virtualisatiesoftware te gebruiken, kunt u deze instelling onveranderd laten.</translation>
     </message>
     <message>
         <source>Storage on physical hard drive</source>
@@ -7211,7 +7232,7 @@
     </message>
     <message>
         <source>&lt;p&gt;You can also choose to &lt;b&gt;split&lt;/b&gt; the hard drive file into several files of up to two gigabytes each. This is mainly useful if you wish to store the virtual machine on removable USB devices or old systems, some of which cannot handle very large files.</source>
-        <translation>&lt;p&gt;U kunt er ook voor kiezen het virtuele schijf bestand &lt;b&gt;te splitsen&lt;/b&gt; in meerdere bestanden van maximaal twee gigabytes elk. Dit is hoofdzakelijk handig indien u de virtuele machine wilt opslaan op verwijderbare USB-apparaten of op oudere systemen, waarvan sommige niet kunnen omgaan met erg grote bestanden.</translation>
+        <translation>&lt;p&gt;U kunt er ook voor kiezen het virtuele schijf bestand &lt;b&gt;te splitsen&lt;/b&gt; in meerdere bestanden van maximaal twee gigabytes elk. Dit is voornamelijk handig indien u de virtuele machine wilt opslaan op verwijderbare USB-apparaten of op oudere systemen, waarvan sommige niet kunnen omgaan met erg grote bestanden.</translation>
     </message>
     <message>
         <source>&amp;Dynamically allocated</source>
@@ -7243,11 +7264,11 @@
     </message>
     <message>
         <source>Select the size of the virtual hard drive in megabytes. This size is the limit on the amount of file data that a virtual machine will be able to store on the hard drive.</source>
-        <translation>Kies de grootte van de virtuele harde schijf in megabytes. Deze grootte begrenst de hoeveelheid bestandsdata die een virtuele machine op deze schijf kan opslaan.</translation>
+        <translation>Kies de grootte van de virtuele harde schijf in megabytes. Deze grootte bepaalt de hoeveelheid bestandsdata die een virtuele machine uiteindelijk op deze schijf kan opslaan.</translation>
     </message>
     <message>
         <source>File &amp;location</source>
-        <translation>&amp;Locatie bestand</translation>
+        <translation>&amp;Locatie van bestand</translation>
     </message>
     <message>
         <source>File &amp;size</source>
@@ -7294,7 +7315,7 @@
     </message>
     <message>
         <source>Please choose a descriptive name for the new virtual machine and select the type of operating system you intend to install on it. The name you choose will be used throughout VirtualBox to identify this machine.</source>
-        <translation>Kies een herkenbare naam voor de nieuwe virtuele machine en selecteer het type besturingssysteem dat u erop wilt installeren. De naam die u kiest zal binnen VirtualBox gebruikt worden om deze machine te identificeren.</translation>
+        <translation>Kies een herkenbare naam voor de nieuwe virtuele machine en selecteer het type besturingssysteem dat u er op wilt installeren. De naam die u kiest zal binnen VirtualBox gebruikt worden om deze machine te identificeren.</translation>
     </message>
     <message>
         <source>Memory size</source>
@@ -7310,7 +7331,7 @@
     </message>
     <message>
         <source>&lt;p&gt;If you wish you can add a virtual hard drive to the new machine. You can either create a new hard drive file or select one from the list or from another location using the folder icon.&lt;/p&gt;&lt;p&gt;If you need a more complex storage set-up you can skip this step and make the changes to the machine settings once the machine is created.&lt;/p&gt;&lt;p&gt;The recommended size of the hard drive is &lt;b&gt;%1&lt;/b&gt;.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Indien u dat wilt, kunt u een virtuele harde schijf aan de nieuwe machine toevoegen. U kunt een geheel nieuw harde schijf bestand aanmaken, of een van de lijst selecteren, of een bestand op een andere lokatie selecteren met gehulp van de mapicoon.&lt;/p&gt;&lt;p&gt;Indien u een wat meer complexe opslaginstelling nodig hebt, kunt u deze stap ook overslaan en deze instellingen aanbrengen wanneer de machine eenmaal is aangemaakt.&lt;/p&gt;&lt;p&gt;De aanbevolen grootte van de harde schijf is &lt;b&gt;%1&lt;/b&gt;.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Indien u dat wilt, kunt u een virtuele harde schijf aan de nieuwe machine toevoegen. U kunt een geheel nieuw harde schijf bestand aanmaken, of een uit de lijst selecteren, of een bestand op een andere lokatie selecteren met gehulp van de mapicoon.&lt;/p&gt;&lt;p&gt;Indien u een wat meer complexe opslaginstelling nodig hebt, kunt u deze stap ook overslaan en deze instellingen aanbrengen wanneer de machine eenmaal is aangemaakt.&lt;/p&gt;&lt;p&gt;De aanbevolen grootte van de harde schijf is &lt;b&gt;%1&lt;/b&gt;.&lt;/p&gt;</translation>
     </message>
     <message>
         <source>&amp;Do not add virtual hard drive</source>
@@ -8300,17 +8321,17 @@
         <source>Attaching this hard disk will be performed indirectly using a newly created differencing hard disk.</source>
         <comment>medium</comment>
         <translatorcomment>RL - Definitie: &quot;A differencing disk is a virtual hard disk you use to isolate changes to a virtual hard disk or the guest operating system by storing them in a separate file.&quot; Een techterm dus. Niet vertalen.</translatorcomment>
-        <translation>Aankoppelen van deze harde schijf wordt indirect uitgevoerd bij gebruik van een nieuw aangemaakte differencing harde schijf.</translation>
+        <translation>Aankoppelen van deze harde schijf wordt indirect uitgevoerd met gebruik van een nieuw aangemaakte differencing harde schijf.</translation>
     </message>
     <message>
         <source>Some of the media in this hard disk chain are inaccessible. Please use the Virtual Media Manager in &lt;b&gt;Show Differencing Hard Disks&lt;/b&gt; mode to inspect these media.</source>
         <comment>medium</comment>
-        <translation>Enkele media in deze keten van harde schijven zijn niet te benaderen. Gebruik de Virtuele Media Manager in &lt;b&gt;Geef differencing harde schijven weer&lt;/b&gt; modus om deze media te inspecteren.</translation>
+        <translation>Enkele media in deze keten van harde schijven zijn niet te benaderen. Gebruik de Virtuele Media Manager in &lt;b&gt;Geef differencing harde schijven weer&lt;/b&gt;-modus om deze media te inspecteren.</translation>
     </message>
     <message>
         <source>This base hard disk is indirectly attached using the following differencing hard disk:</source>
         <comment>medium</comment>
-        <translation>Deze basis harde schijf wordt indirect gekoppeld wanneer de volgende differencing harde schijf wordt gebruikt:</translation>
+        <translation>Deze basis harde schijf wordt indirect gekoppeld met gebruik van de volgende differencing harde schijf:</translation>
     </message>
     <message numerus="yes">
         <source>%n year(s)</source>
@@ -9706,7 +9727,7 @@
     <message>
         <source>Drag&apos;n&apos;Drop Mode</source>
         <translatorcomment>RL: Of &apos;Slepen-en-Neerzetten&apos; - &apos;t blijft een eeuwige discussie</translatorcomment>
-        <translation>Drag&apos;n&apos;Drop-modus</translation>
+        <translation>Slepen-naar-modus</translation>
     </message>
 </context>
 <context>

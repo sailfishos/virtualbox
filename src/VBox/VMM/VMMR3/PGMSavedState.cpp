@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2009 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -3214,6 +3214,7 @@ static DECLCALLBACK(int) pgmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, 
             if (   pVM->pgm.s.fMappingsFixed
                 && pgmMapAreMappingsEnabled(pVM))
             {
+#ifndef PGM_WITHOUT_MAPPINGS
                 RTGCPTR     GCPtrFixed    = pVM->pgm.s.GCPtrMappingFixed;
                 uint32_t    cbFixed       = pVM->pgm.s.cbMappingFixed;
                 pVM->pgm.s.fMappingsFixed = false;
@@ -3234,6 +3235,9 @@ static DECLCALLBACK(int) pgmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, 
                     pVM->pgm.s.GCPtrMappingFixed      = GCPtrFixed;
                     pVM->pgm.s.cbMappingFixed         = cbFixed;
                 }
+#else
+                AssertFailed();
+#endif
             }
             else
             {

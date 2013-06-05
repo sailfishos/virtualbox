@@ -26,6 +26,9 @@
 #include "QIGraphicsWidget.h"
 #include "QIWithRetranslateUI.h"
 
+/* Other VBox includes: */
+#include <iprt/cdefs.h>
+
 /* Forward declaration: */
 class UIGChooserModel;
 class UIGChooserItemGroup;
@@ -44,6 +47,14 @@ enum UIGChooserItemType
     UIGChooserItemType_Machine = QGraphicsItem::UserType + 2
 };
 
+/* Item search flags: */
+enum UIGChooserItemSearchFlag
+{
+    UIGChooserItemSearchFlag_Machine   = RT_BIT(0),
+    UIGChooserItemSearchFlag_Group     = RT_BIT(1),
+    UIGChooserItemSearchFlag_ExactName = RT_BIT(2)
+};
+
 /* Drag token placement: */
 enum DragToken { DragToken_Off, DragToken_Up, DragToken_Down };
 
@@ -55,6 +66,10 @@ class UIGChooserItem : public QIWithRetranslateUI4<QIGraphicsWidget>
     Q_PROPERTY(int animationDarkness READ animationDarkness WRITE setAnimationDarkness);
 
 signals:
+
+    /* Notifiers: Size-hint stuff: */
+    void sigMinimumWidthHintChanged(int iMinimumWidthHint);
+    void sigMinimumHeightHintChanged(int iMinimumHeightHint);
 
     /* Notifiers: Hover stuff: */
     void sigHoverEnter();
@@ -79,7 +94,10 @@ public:
     virtual void show();
     virtual void hide();
     virtual void startEditing() = 0;
+    virtual void updateToolTip() = 0;
     virtual QString name() const = 0;
+    virtual QString fullName() const = 0;
+    virtual QString definition() const = 0;
     void setRoot(bool fRoot);
     bool isRoot() const;
     bool isHovered() const;
@@ -92,9 +110,14 @@ public:
     virtual QList<UIGChooserItem*> items(UIGChooserItemType type = UIGChooserItemType_Any) const = 0;
     virtual bool hasItems(UIGChooserItemType type = UIGChooserItemType_Any) const = 0;
     virtual void clearItems(UIGChooserItemType type = UIGChooserItemType_Any) = 0;
+    virtual void updateAll(const QString &strId) = 0;
+    virtual void removeAll(const QString &strId) = 0;
+    virtual UIGChooserItem* searchForItem(const QString &strSearchTag, int iItemSearchFlags) = 0;
+    virtual UIGChooserItemMachine* firstMachineItem() = 0;
+    virtual void sortItems() = 0;
 
     /* API: Layout stuff: */
-    virtual void updateSizeHint() = 0;
+    void updateGeometry();
     virtual void updateLayout() = 0;
     virtual int minimumWidthHint() const = 0;
     virtual int minimumHeightHint() const = 0;
@@ -130,6 +153,11 @@ protected:
     /* Drop event: */
     void dropEvent(QGraphicsSceneDragDropEvent *pEvent);
 
+    /* Helper: Update stuff: */
+    virtual void handleRootStatusChange() {}
+    void setPreviousGeometry(const QRectF &previousGeometry) { m_previousGeometry = previousGeometry; }
+    const QRectF& previousGeometry() const { return m_previousGeometry; }
+
     /* Static paint stuff: */
     static void configurePainterShape(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption, int iRadius);
     static void paintFrameRect(QPainter *pPainter, const QRect &rect, bool fIsSelected, int iRadius);
@@ -150,10 +178,10 @@ protected:
     void setAnimationDarkness(int iAnimationDarkness) { m_iAnimationDarkness = iAnimationDarkness; update(); }
 
     /* Other color stuff: */
-    int strokeDarkness() const { return m_iStrokeDarkness; }
     int dragTokenDarkness() const { return m_iDragTokenDarkness; }
 
-    /* Helpers: Text compression stuff: */
+    /* Helpers: Text processing stuff: */
+    static QSize textSize(const QFont &font, QPaintDevice *pPaintDevice, const QString &strText);
     static int textWidth(const QFont &font, QPaintDevice *pPaintDevice, int iCount);
     static QString compressText(const QFont &font, QPaintDevice *pPaintDevice, QString strText, int iWidth);
 
@@ -163,6 +191,9 @@ private:
     bool m_fRoot;
     bool m_fTemporary;
     UIGChooserItem *m_pParent;
+    QRectF m_previousGeometry;
+    int m_iPreviousMinimumWidthHint;
+    int m_iPreviousMinimumHeightHint;
     DragToken m_dragTokenPlace;
 
     /* Highlight animation stuff: */
@@ -174,7 +205,6 @@ private:
     int m_iDefaultDarkness;
     int m_iHighlightDarkness;
     int m_iAnimationDarkness;
-    int m_iStrokeDarkness;
     int m_iDragTokenDarkness;
 };
 

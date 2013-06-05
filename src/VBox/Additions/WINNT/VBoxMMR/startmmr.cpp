@@ -23,9 +23,7 @@
 
 #include <VBox/Log.h>
 #include <VBox/VBoxGuestLib.h>
-#include <VBox/HostServices/VBoxHostChannel.h>
 
-const char *g_pszVRDETSMF      = "/vrde/tsmf";
 const char *g_pszMMRDLL        = "VBoxMMRHook";
 const char *g_pszMMRPROC       = "CBTProc";
 const WCHAR *g_pwszMMRFlags    = L"VBoxMMR";
@@ -69,30 +67,6 @@ BOOL MMRIsEnabled()
     return fEnabled;
 }
 
-BOOL TSMFIsAvailable()
-{
-    uint32_t u32HGCMClientId = 0;
-    int rc = VbglR3HostChannelInit(&u32HGCMClientId);
-
-    if (RT_SUCCESS(rc))
-    {
-        uint32_t u32Size = 0;
-
-        rc = VbglR3HostChannelQuery(g_pszVRDETSMF, u32HGCMClientId,
-            VBOX_HOST_CHANNEL_CTRL_EXISTS, NULL, 0, NULL, 0, &u32Size);
-
-        VbglR3HostChannelTerm(u32HGCMClientId);
-    }
-
-    if (!RT_SUCCESS(rc))
-    {
-        LogRel(("VBoxMMR: TSMF HGCM unavailable: hgcmid: %d, rc: %d\n",
-            u32HGCMClientId, rc));
-    }
-
-    return RT_SUCCESS(rc);
-}
-
 BOOL CtrlHandler(DWORD type)
 {
     SetEvent(g_hCtrlEvent);
@@ -123,7 +97,7 @@ int APIENTRY WinMain(
         return rc;
     }
 
-    if (MMRIsEnabled() && TSMFIsAvailable())
+    if (MMRIsEnabled())
     {
         hMod = LoadLibraryA(g_pszMMRDLL);
         if (hMod == NULL)

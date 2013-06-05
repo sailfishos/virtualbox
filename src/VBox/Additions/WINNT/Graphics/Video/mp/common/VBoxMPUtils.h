@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,6 +27,11 @@
 #define LOG_GROUP LOG_GROUP_DRV_MINIPORT
 #include <VBox/log.h>
 #define VBOX_VIDEO_LOG_NAME "VBoxMP"
+#ifdef VBOX_WDDM_MINIPORT
+# ifndef VBOX_WDDM_MINIPORT_WITH_FLOW_LOGGING
+#  define VBOX_VIDEO_LOGFLOW_LOGGER(_m) do {} while (0)
+# endif
+#endif
 #include "common/VBoxVideoLog.h"
 #include <iprt/err.h>
 #include <iprt/assert.h>
