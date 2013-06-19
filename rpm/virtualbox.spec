@@ -84,6 +84,7 @@ Source13:       %{name}-sysconfig.vbox
 # added by lbt as the Mer systemd service
 Source14:       vboxservice.service
 Source98:       rpmlintrc
+Source99:       virtualbox.changes_suse
 BuildRoot:      %{_tmppath}/%{name}-%{version}-build
 #PreReq:         pwdutils permissions
 Requires:       %{name}-host-kmp = %version
