@@ -25,6 +25,7 @@
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
 # include <linux/backing-dev.h>
+# include <linux/completion.h>
 #endif
 
 #include "VBoxGuestR0LibSharedFolders.h"

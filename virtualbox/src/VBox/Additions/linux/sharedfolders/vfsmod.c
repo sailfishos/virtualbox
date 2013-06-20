@@ -39,6 +39,8 @@ MODULE_VERSION(VBOX_VERSION_STRING " (interface " RT_XSTR(VMMDEV_VERSION) ")");
 
 /* globals */
 VBSFCLIENT client_handle;
+/* superblock waits for this so no-one else has to */
+static DECLARE_COMPLETION(client_handle_valid);
 
 /* forward declarations */
 static struct super_operations sf_super_ops;
@@ -144,6 +146,7 @@ static int sf_glob_alloc(struct vbsf_mount_info_new *info, struct sf_glob_info *
 #undef _IS_EMPTY
     }
 
+    wait_for_completion(&client_handle_valid);
     rc = vboxCallMapFolder(&client_handle, str_name, &sf_g->map);
     kfree(str_name);
 
@@ -638,6 +641,7 @@ static int __init init(void)
             "vboxsf: Successfully loaded version " VBOX_VERSION_STRING
             " (interface " RT_XSTR(VMMDEV_VERSION) ")\n");
 
+    complete_all(&client_handle_valid);
     return 0;
 
 fail2:
