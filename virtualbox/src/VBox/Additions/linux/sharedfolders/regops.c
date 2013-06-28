@@ -778,9 +778,11 @@ static int sf_readpages(struct file *file, struct address_space *mapping,
         list_del(&page->lru);
         if (add_to_page_cache_lru(page, mapping, page->index, GFP_KERNEL))
         {
+            printk("vboxsf readpages: skipping page %u\n", page->index);
             page_cache_release(page);
             continue;
         }
+        printk("vboxsf readpages: page %u\n", page->index);
         page_cache_release(page);
 
         /* read the next chunk if needed */
@@ -788,6 +790,7 @@ static int sf_readpages(struct file *file, struct address_space *mapping,
         {
             uint32_t nread = bufsize;
             err = sf_reg_read_aux(__func__, sf_g, sf_r, physbuf, &nread, off);
+            printk("vboxsf readpages: got %d bytes\n", nread);
             if (err || nread == 0)
                 break;
             buf_startindex = page->index;
