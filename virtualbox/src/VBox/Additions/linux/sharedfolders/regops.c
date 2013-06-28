@@ -773,7 +773,7 @@ static int sf_readpages(struct file *file, struct address_space *mapping,
 
     while (!list_empty(pages))
     {
-        struct page *page = list_first_entry(pages, struct page, lru);
+        struct page *page = list_entry(pages->prev, struct page, lru);
         loff_t off = (loff_t) page->index << PAGE_SHIFT;
         list_del(&page->lru);
         if (add_to_page_cache_lru(page, mapping, page->index, GFP_KERNEL))
