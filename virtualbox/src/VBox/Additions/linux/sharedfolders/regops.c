@@ -799,7 +799,7 @@ static int sf_readpages(struct file *file, struct address_space *mapping,
             if (nread != PAGE_ALIGN(nread))
             {
                 pages_in_buf++;
-                printk("vboxsf readpages: fixing up last page %d\n", (pages_in_buf << PAGE_SHIFT) - nread));
+                printk("vboxsf readpages: fixing up last page %d\n", (pages_in_buf << PAGE_SHIFT) - nread);
                 memset(physbuf + nread, 0, (pages_in_buf << PAGE_SHIFT) - nread);
             }
         }
