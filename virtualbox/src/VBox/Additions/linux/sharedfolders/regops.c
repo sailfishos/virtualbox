@@ -762,8 +762,10 @@ static int sf_readpages(struct file *file, struct address_space *mapping,
     /* first try to get everything in one read */
     bufsize = PAGE_SIZE * (list_entry(pages->next, struct page, lru)->index
                            - list_entry(pages->prev, struct page, lru)->index);
+    printk("vboxsf readpages: %d page range\n", bufsize >> PAGE_SHIFT);
     if (bufsize > 32 * PAGE_SIZE)
         bufsize = 32 * PAGE_SIZE;  /* don't go crazy though */
+    printk("vboxsf readpages: bufsize %d\n", bufsize);
 
     physbuf = alloc_pages_exact(bufsize, GFP_KERNEL);
     if (!physbuf)
@@ -782,7 +784,7 @@ static int sf_readpages(struct file *file, struct address_space *mapping,
         page_cache_release(page);
 
         /* read the next chunk if needed */
-        if (page->index >= buf_startindex + pages_in_buf)
+        if (page->index >= buf_startindex + pages_in_buf || page->index < buf_startindex)
         {
             uint32_t nread = bufsize;
             err = sf_reg_read_aux(__func__, sf_g, sf_r, physbuf, &nread, off);
