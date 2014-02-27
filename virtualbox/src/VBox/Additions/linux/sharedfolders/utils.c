@@ -100,6 +100,12 @@ void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
     inode->i_mapping->a_ops = &sf_reg_aops;
     inode->i_mapping->backing_dev_info = &sf_g->bdi;
+    /* Tell generic_read to not use GFP_HIGHUSER. This is needed as
+     * long as sf_reg_read_aux() calls vboxCallRead() which works on
+     * virtual addresses. On Linux cannot reliably determine the
+     * physical address for high memory, see
+     * rtR0MemObjNativeLockKernel(). */
+    mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
 #endif
 
     if (RTFS_IS_DIRECTORY(attr->fMode))
