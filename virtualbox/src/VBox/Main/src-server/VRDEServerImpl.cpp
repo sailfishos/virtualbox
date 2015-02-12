@@ -29,6 +29,7 @@
 
 #include <VBox/err.h>
 #include <VBox/sup.h>
+#include <VBox/com/array.h>
 
 #include <VBox/RemoteDesktop/VRDE.h>
 
@@ -268,6 +269,8 @@ STDMETHODIMP VRDEServer::COMSETTER(Enabled)(BOOL aEnabled)
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
+    HRESULT rc = S_OK;
+
     if (mData->mEnabled != aEnabled)
     {
         mData.backup();
@@ -283,10 +286,10 @@ STDMETHODIMP VRDEServer::COMSETTER(Enabled)(BOOL aEnabled)
         /* Avoid deadlock when onVRDEServerChange eventually calls SetExtraData. */
         adep.release();
 
-        mParent->onVRDEServerChange(/* aRestart */ TRUE);
+        rc = mParent->onVRDEServerChange(/* aRestart */ TRUE);
     }
 
-    return S_OK;
+    return rc;
 }
 
 static int portParseNumber(uint16_t *pu16Port, const char *pszStart, const char *pszEnd)
@@ -393,6 +396,9 @@ STDMETHODIMP VRDEServer::SetVRDEProperty(IN_BSTR aKey, IN_BSTR aValue)
     {
         Bstr ports = aValue;
 
+        if (ports == Bstr("0"))
+            ports = VRDP_DEFAULT_PORT_STR;
+
         /* Verify the string. */
         int vrc = vrdpServerVerifyPortsString(ports);
         if (RT_FAILURE(vrc))
@@ -405,10 +411,7 @@ STDMETHODIMP VRDEServer::SetVRDEProperty(IN_BSTR aKey, IN_BSTR aValue)
              * stop. There is no fool proof here.
              */
             mData.backup();
-            if (ports == Bstr("0"))
-                mData->mProperties["TCP/Ports"] = VRDP_DEFAULT_PORT_STR;
-            else
-                mData->mProperties["TCP/Ports"] = ports;
+            mData->mProperties["TCP/Ports"] = ports;
 
             /* leave the lock before informing callbacks */
             alock.release();

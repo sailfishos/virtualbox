@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -97,11 +97,12 @@ static bool                     g_fPreInited = false;
  * via the pre-init mechanism from the hardened executable stub.  */
 SUPLIBDATA                      g_supLibData =
 {
-    SUP_HDEVICE_NIL
+    /*.hDevice              = */    SUP_HDEVICE_NIL,
+    /*.fUnrestricted        = */    true
 #if   defined(RT_OS_DARWIN)
-    , NULL
+    ,/* .uConnection        = */    NULL
 #elif defined(RT_OS_LINUX)
-    , false
+    ,/* .fSysMadviseWorks   = */    false
 #endif
 };
 
@@ -209,7 +210,7 @@ DECLEXPORT(int) supR3PreInit(PSUPPREINITDATA pPreInitData, uint32_t fFlags)
 }
 
 
-SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession)
+SUPR3DECL(int) SUPR3InitEx(bool fUnrestricted, PSUPDRVSESSION *ppSession)
 {
     /*
      * Perform some sanity checks.
@@ -228,7 +229,16 @@ SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession)
     if (ppSession)
         *ppSession = g_pSession;
     if (g_cInits++ > 0)
+    {
+        if (fUnrestricted && !g_supLibData.fUnrestricted)
+        {
+            g_cInits--;
+            if (ppSession)
+                *ppSession = NIL_RTR0PTR;
+            return VERR_VM_DRIVER_NOT_ACCESSIBLE; /** @todo different status code? */
+        }
         return VINF_SUCCESS;
+    }
 
     /*
      * Check for fake mode.
@@ -251,7 +261,8 @@ SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession)
     /*
      * Open the support driver.
      */
-    int rc = suplibOsInit(&g_supLibData, g_fPreInited);
+    SUPINITOP enmWhat = kSupInitOp_Driver;
+    int rc = suplibOsInit(&g_supLibData, g_fPreInited, fUnrestricted, &enmWhat, NULL);
     if (RT_SUCCESS(rc))
     {
         /*
@@ -267,8 +278,8 @@ SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession)
         CookieReq.Hdr.rc = VERR_INTERNAL_ERROR;
         strcpy(CookieReq.u.In.szMagic, SUPCOOKIE_MAGIC);
         CookieReq.u.In.u32ReqVersion = SUPDRV_IOC_VERSION;
-        const uint32_t uMinVersion = (SUPDRV_IOC_VERSION & 0xffff0000) == 0x00190000
-                                   ? 0x00190003
+        const uint32_t uMinVersion = (SUPDRV_IOC_VERSION & 0xffff0000) == 0x001a0000
+                                   ? 0x001a0008
                                    : SUPDRV_IOC_VERSION & 0xffff0000;
         CookieReq.u.In.u32MinVersion = uMinVersion;
         rc = suplibOsIOCtl(&g_supLibData, SUP_IOCTL_COOKIE, &CookieReq, SUP_IOCTL_COOKIE_SIZE);
@@ -281,64 +292,75 @@ SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession)
                 /*
                  * Query the functions.
                  */
-                PSUPQUERYFUNCS pFuncsReq = (PSUPQUERYFUNCS)RTMemAllocZ(SUP_IOCTL_QUERY_FUNCS_SIZE(CookieReq.u.Out.cFunctions));
-                if (pFuncsReq)
+                PSUPQUERYFUNCS pFuncsReq = NULL;
+                if (g_supLibData.fUnrestricted)
                 {
-                    pFuncsReq->Hdr.u32Cookie            = CookieReq.u.Out.u32Cookie;
-                    pFuncsReq->Hdr.u32SessionCookie     = CookieReq.u.Out.u32SessionCookie;
-                    pFuncsReq->Hdr.cbIn                 = SUP_IOCTL_QUERY_FUNCS_SIZE_IN;
-                    pFuncsReq->Hdr.cbOut                = SUP_IOCTL_QUERY_FUNCS_SIZE_OUT(CookieReq.u.Out.cFunctions);
-                    pFuncsReq->Hdr.fFlags               = SUPREQHDR_FLAGS_DEFAULT;
-                    pFuncsReq->Hdr.rc                   = VERR_INTERNAL_ERROR;
-                    rc = suplibOsIOCtl(&g_supLibData, SUP_IOCTL_QUERY_FUNCS(CookieReq.u.Out.cFunctions), pFuncsReq, SUP_IOCTL_QUERY_FUNCS_SIZE(CookieReq.u.Out.cFunctions));
-                    if (RT_SUCCESS(rc))
-                        rc = pFuncsReq->Hdr.rc;
-                    if (RT_SUCCESS(rc))
+                    pFuncsReq = (PSUPQUERYFUNCS)RTMemAllocZ(SUP_IOCTL_QUERY_FUNCS_SIZE(CookieReq.u.Out.cFunctions));
+                    if (pFuncsReq)
                     {
-                        /*
-                         * Map the GIP into userspace.
-                         */
-                        Assert(!g_pSUPGlobalInfoPage);
-                        SUPGIPMAP GipMapReq;
-                        GipMapReq.Hdr.u32Cookie         = CookieReq.u.Out.u32Cookie;
-                        GipMapReq.Hdr.u32SessionCookie  = CookieReq.u.Out.u32SessionCookie;
-                        GipMapReq.Hdr.cbIn              = SUP_IOCTL_GIP_MAP_SIZE_IN;
-                        GipMapReq.Hdr.cbOut             = SUP_IOCTL_GIP_MAP_SIZE_OUT;
-                        GipMapReq.Hdr.fFlags            = SUPREQHDR_FLAGS_DEFAULT;
-                        GipMapReq.Hdr.rc                = VERR_INTERNAL_ERROR;
-                        GipMapReq.u.Out.HCPhysGip       = NIL_RTHCPHYS;
-                        GipMapReq.u.Out.pGipR0          = NIL_RTR0PTR;
-                        GipMapReq.u.Out.pGipR3          = NULL;
-                        rc = suplibOsIOCtl(&g_supLibData, SUP_IOCTL_GIP_MAP, &GipMapReq, SUP_IOCTL_GIP_MAP_SIZE);
+                        pFuncsReq->Hdr.u32Cookie            = CookieReq.u.Out.u32Cookie;
+                        pFuncsReq->Hdr.u32SessionCookie     = CookieReq.u.Out.u32SessionCookie;
+                        pFuncsReq->Hdr.cbIn                 = SUP_IOCTL_QUERY_FUNCS_SIZE_IN;
+                        pFuncsReq->Hdr.cbOut                = SUP_IOCTL_QUERY_FUNCS_SIZE_OUT(CookieReq.u.Out.cFunctions);
+                        pFuncsReq->Hdr.fFlags               = SUPREQHDR_FLAGS_DEFAULT;
+                        pFuncsReq->Hdr.rc                   = VERR_INTERNAL_ERROR;
+                        rc = suplibOsIOCtl(&g_supLibData, SUP_IOCTL_QUERY_FUNCS(CookieReq.u.Out.cFunctions), pFuncsReq,
+                                           SUP_IOCTL_QUERY_FUNCS_SIZE(CookieReq.u.Out.cFunctions));
                         if (RT_SUCCESS(rc))
-                            rc = GipMapReq.Hdr.rc;
+                            rc = pFuncsReq->Hdr.rc;
                         if (RT_SUCCESS(rc))
                         {
-                            AssertRelease(GipMapReq.u.Out.pGipR3->u32Magic == SUPGLOBALINFOPAGE_MAGIC);
-                            AssertRelease(GipMapReq.u.Out.pGipR3->u32Version >= SUPGLOBALINFOPAGE_VERSION);
-
                             /*
-                             * Set the globals and return success.
+                             * Map the GIP into userspace.
                              */
-                            ASMAtomicXchgSize(&g_HCPhysSUPGlobalInfoPage, GipMapReq.u.Out.HCPhysGip);
-                            ASMAtomicCmpXchgPtr((void * volatile *)&g_pSUPGlobalInfoPage, GipMapReq.u.Out.pGipR3, NULL);
-                            ASMAtomicCmpXchgPtr((void * volatile *)&g_pSUPGlobalInfoPageR0, (void *)GipMapReq.u.Out.pGipR0, NULL);
+                            Assert(!g_pSUPGlobalInfoPage);
+                            SUPGIPMAP GipMapReq;
+                            GipMapReq.Hdr.u32Cookie         = CookieReq.u.Out.u32Cookie;
+                            GipMapReq.Hdr.u32SessionCookie  = CookieReq.u.Out.u32SessionCookie;
+                            GipMapReq.Hdr.cbIn              = SUP_IOCTL_GIP_MAP_SIZE_IN;
+                            GipMapReq.Hdr.cbOut             = SUP_IOCTL_GIP_MAP_SIZE_OUT;
+                            GipMapReq.Hdr.fFlags            = SUPREQHDR_FLAGS_DEFAULT;
+                            GipMapReq.Hdr.rc                = VERR_INTERNAL_ERROR;
+                            GipMapReq.u.Out.HCPhysGip       = NIL_RTHCPHYS;
+                            GipMapReq.u.Out.pGipR0          = NIL_RTR0PTR;
+                            GipMapReq.u.Out.pGipR3          = NULL;
+                            rc = suplibOsIOCtl(&g_supLibData, SUP_IOCTL_GIP_MAP, &GipMapReq, SUP_IOCTL_GIP_MAP_SIZE);
+                            if (RT_SUCCESS(rc))
+                                rc = GipMapReq.Hdr.rc;
+                            if (RT_SUCCESS(rc))
+                            {
+                                /*
+                                 * Set the GIP globals.
+                                 */
+                                AssertRelease(GipMapReq.u.Out.pGipR3->u32Magic == SUPGLOBALINFOPAGE_MAGIC);
+                                AssertRelease(GipMapReq.u.Out.pGipR3->u32Version >= SUPGLOBALINFOPAGE_VERSION);
 
-                            g_u32Cookie         = CookieReq.u.Out.u32Cookie;
-                            g_u32SessionCookie  = CookieReq.u.Out.u32SessionCookie;
-                            g_pSession          = CookieReq.u.Out.pSession;
-                            g_pFunctions        = pFuncsReq;
-                            if (ppSession)
-                                *ppSession = CookieReq.u.Out.pSession;
-                            return VINF_SUCCESS;
+                                ASMAtomicXchgSize(&g_HCPhysSUPGlobalInfoPage, GipMapReq.u.Out.HCPhysGip);
+                                ASMAtomicCmpXchgPtr((void * volatile *)&g_pSUPGlobalInfoPage, GipMapReq.u.Out.pGipR3, NULL);
+                                ASMAtomicCmpXchgPtr((void * volatile *)&g_pSUPGlobalInfoPageR0, (void *)GipMapReq.u.Out.pGipR0, NULL);
+                            }
                         }
                     }
-
-                    /* bailout */
-                    RTMemFree(pFuncsReq);
+                    else
+                        rc = VERR_NO_MEMORY;
                 }
-                else
-                    rc = VERR_NO_MEMORY;
+
+                if (RT_SUCCESS(rc))
+                {
+                    /*
+                     * Set the globals and return success.
+                     */
+                    g_u32Cookie         = CookieReq.u.Out.u32Cookie;
+                    g_u32SessionCookie  = CookieReq.u.Out.u32SessionCookie;
+                    g_pSession          = CookieReq.u.Out.pSession;
+                    g_pFunctions        = pFuncsReq;
+                    if (ppSession)
+                        *ppSession = CookieReq.u.Out.pSession;
+                    return VINF_SUCCESS;
+                }
+
+                /* bailout */
+                RTMemFree(pFuncsReq);
             }
             else
             {
@@ -370,6 +392,12 @@ SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession)
     g_cInits--;
 
     return rc;
+}
+
+
+SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession)
+{
+    return SUPR3InitEx(true, ppSession);
 }
 
 /**
@@ -590,8 +618,8 @@ SUPR3DECL(int) SUPR3CallVMMR0Fast(PVMR0 pVMR0, unsigned uOperation, VMCPUID idCp
     NOREF(pVMR0);
     if (RT_LIKELY(uOperation == SUP_VMMR0_DO_RAW_RUN))
         return suplibOsIOCtlFast(&g_supLibData, SUP_IOCTL_FAST_DO_RAW_RUN, idCpu);
-    if (RT_LIKELY(uOperation == SUP_VMMR0_DO_HWACC_RUN))
-        return suplibOsIOCtlFast(&g_supLibData, SUP_IOCTL_FAST_DO_HWACC_RUN, idCpu);
+    if (RT_LIKELY(uOperation == SUP_VMMR0_DO_HM_RUN))
+        return suplibOsIOCtlFast(&g_supLibData, SUP_IOCTL_FAST_DO_HM_RUN, idCpu);
     if (RT_LIKELY(uOperation == SUP_VMMR0_DO_NOP))
         return suplibOsIOCtlFast(&g_supLibData, SUP_IOCTL_FAST_DO_NOP, idCpu);
 
@@ -606,7 +634,7 @@ SUPR3DECL(int) SUPR3CallVMMR0Ex(PVMR0 pVMR0, VMCPUID idCpu, unsigned uOperation,
      * The following operations don't belong here.
      */
     AssertMsgReturn(    uOperation != SUP_VMMR0_DO_RAW_RUN
-                    &&  uOperation != SUP_VMMR0_DO_HWACC_RUN
+                    &&  uOperation != SUP_VMMR0_DO_HM_RUN
                     &&  uOperation != SUP_VMMR0_DO_NOP,
                     ("%#x\n", uOperation),
                     VERR_INTERNAL_ERROR);
@@ -693,7 +721,7 @@ SUPR3DECL(int) SUPR3CallVMMR0(PVMR0 pVMR0, VMCPUID idCpu, unsigned uOperation, v
      * The following operations don't belong here.
      */
     AssertMsgReturn(    uOperation != SUP_VMMR0_DO_RAW_RUN
-                    &&  uOperation != SUP_VMMR0_DO_HWACC_RUN
+                    &&  uOperation != SUP_VMMR0_DO_HM_RUN
                     &&  uOperation != SUP_VMMR0_DO_NOP,
                     ("%#x\n", uOperation),
                     VERR_INTERNAL_ERROR);
@@ -1439,6 +1467,26 @@ SUPR3DECL(int) SUPR3LowFree(void *pv, size_t cPages)
 }
 
 
+SUPR3DECL(int) SUPR3HardenedVerifyInit(void)
+{
+#ifdef RT_OS_WINDOWS
+    if (g_cInits == 0)
+        return suplibOsHardenedVerifyInit();
+#endif
+    return VINF_SUCCESS;
+}
+
+
+SUPR3DECL(int) SUPR3HardenedVerifyTerm(void)
+{
+#ifdef RT_OS_WINDOWS
+    if (g_cInits == 0)
+        return suplibOsHardenedVerifyTerm();
+#endif
+    return VINF_SUCCESS;
+}
+
+
 SUPR3DECL(int) SUPR3HardenedVerifyFile(const char *pszFilename, const char *pszMsg, PRTFILE phFile)
 {
     /*
@@ -1514,7 +1562,7 @@ SUPR3DECL(int) SUPR3HardenedVerifySelf(const char *pszArgv0, bool fInternal, PRT
     /*
      * Verify that the image file and parent directories are sane.
      */
-    rc = supR3HardenedVerifyFile(szExecPath, RTHCUINTPTR_MAX, pErrInfo);
+    rc = supR3HardenedVerifyFile(szExecPath, RTHCUINTPTR_MAX, false /*fMaybe3rdParty*/, pErrInfo);
     if (RT_FAILURE(rc))
         return rc;
 #endif
@@ -1558,7 +1606,7 @@ SUPR3DECL(int) SUPR3HardenedVerifyPlugIn(const char *pszFilename, PRTERRINFO pEr
      * Only do the actual check in hardened builds.
      */
 #ifdef VBOX_WITH_HARDENING
-    int rc = supR3HardenedVerifyFile(pszFilename, RTHCUINTPTR_MAX, pErrInfo);
+    int rc = supR3HardenedVerifyFile(pszFilename, RTHCUINTPTR_MAX, true /*fMaybe3rdParty*/, pErrInfo);
     if (RT_FAILURE(rc) && !RTErrInfoIsSet(pErrInfo))
         LogRel(("supR3HardenedVerifyFile: Verification of \"%s\" failed, rc=%Rrc\n", pszFilename, rc));
     return rc;
@@ -1578,7 +1626,7 @@ SUPR3DECL(int) SUPR3LoadModule(const char *pszFilename, const char *pszModule, v
     {
         rc = supLoadModule(pszFilename, pszModule, NULL, ppvImageBase);
         if (RT_FAILURE(rc))
-            RTErrInfoSetF(pErrInfo, rc, "supLoadModule returned %Rrc", rc);
+            RTErrInfoSetF(pErrInfo, rc, "SUPR3LoadModule: supLoadModule returned %Rrc", rc);
     }
     return rc;
 }
@@ -1645,7 +1693,7 @@ static DECLCALLBACK(int) supLoadModuleResolveImport(RTLDRMOD hLdrMod, const char
      */
     /** @todo is this actually used??? */
     /* skip the 64-bit ELF import prefix first. */
-    if (!strncmp(pszSymbol, "SUPR0$", sizeof("SUPR0$") - 1))
+    if (!strncmp(pszSymbol, RT_STR_TUPLE("SUPR0$")))
         pszSymbol += sizeof("SUPR0$") - 1;
 
     /*
@@ -1826,7 +1874,10 @@ static int supLoadModule(const char *pszFilename, const char *pszModule, const c
     RTLDRMOD hLdrMod;
     rc = RTLdrOpen(pszFilename, 0, RTLDRARCH_HOST, &hLdrMod);
     if (!RT_SUCCESS(rc))
+    {
+        LogRel(("SUP: RTLdrOpen failed for %s (%s)\n", pszModule, pszFilename, rc));
         return rc;
+    }
 
     SUPLDRCALCSIZEARGS CalcArgs;
     CalcArgs.cbStrings = 0;
@@ -1894,21 +1945,27 @@ static int supLoadModule(const char *pszFilename, const char *pszModule, const c
                     RTUINTPTR ModuleTerm = 0;
                     if (fIsVMMR0)
                     {
-                        rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase, "VMMR0EntryInt", &VMMR0EntryInt);
+                        rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase,
+                                              UINT32_MAX, "VMMR0EntryInt", &VMMR0EntryInt);
                         if (RT_SUCCESS(rc))
-                            rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase, "VMMR0EntryFast", &VMMR0EntryFast);
+                            rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase,
+                                                  UINT32_MAX, "VMMR0EntryFast", &VMMR0EntryFast);
                         if (RT_SUCCESS(rc))
-                            rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase, "VMMR0EntryEx", &VMMR0EntryEx);
+                            rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase,
+                                                  UINT32_MAX, "VMMR0EntryEx", &VMMR0EntryEx);
                     }
                     else if (pszSrvReqHandler)
-                        rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase, pszSrvReqHandler, &SrvReqHandler);
+                        rc = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase,
+                                              UINT32_MAX, pszSrvReqHandler, &SrvReqHandler);
                     if (RT_SUCCESS(rc))
                     {
-                        int rc2 = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase, "ModuleInit", &ModuleInit);
+                        int rc2 = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase,
+                                                   UINT32_MAX, "ModuleInit", &ModuleInit);
                         if (RT_FAILURE(rc2))
                             ModuleInit = 0;
 
-                        rc2 = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase, "ModuleTerm", &ModuleTerm);
+                        rc2 = RTLdrGetSymbolEx(hLdrMod, &pLoadReq->u.In.abImage[0], (uintptr_t)OpenReq.u.Out.pvImageBase,
+                                               UINT32_MAX, "ModuleTerm", &ModuleTerm);
                         if (RT_FAILURE(rc2))
                             ModuleTerm = 0;
                     }
@@ -1971,6 +2028,8 @@ static int supLoadModule(const char *pszFilename, const char *pszModule, const c
                                 rc = suplibOsIOCtl(&g_supLibData, SUP_IOCTL_LDR_LOAD, pLoadReq, SUP_IOCTL_LDR_LOAD_SIZE(cbImageWithTabs));
                                 if (RT_SUCCESS(rc))
                                     rc = pLoadReq->Hdr.rc;
+                                else
+                                    LogRel(("SUP: SUP_IOCTL_LDR_LOAD ioctl for %s (%s) failed rc=%Rrc\n", pszModule, pszFilename, rc));
                             }
                             else
                                 rc = VINF_SUCCESS;
@@ -1995,9 +2054,17 @@ static int supLoadModule(const char *pszFilename, const char *pszModule, const c
                                 RTLdrClose(hLdrMod);
                                 return VINF_SUCCESS;
                             }
+                            else
+                                LogRel(("SUP: Loading failed for %s (%s) rc=%Rrc\n", pszModule, pszFilename, rc));
                         }
+                        else
+                            LogRel(("SUP: RTLdrEnumSymbols failed for %s (%s) rc=%Rrc\n", pszModule, pszFilename, rc));
                     }
+                    else
+                        LogRel(("SUP: Failed to get entry points for %s (%s) rc=%Rrc\n", pszModule, pszFilename, rc));
                 }
+                else
+                    LogRel(("SUP: RTLdrGetBits failed for %s (%s). rc=%Rrc\n", pszModule, pszFilename, rc));
                 RTMemTmpFree(pLoadReq);
             }
             else
@@ -2129,7 +2196,9 @@ static int supR3HardenedLdrLoadIt(const char *pszFilename, PRTLDRMOD phLdrMod, u
     /*
      * Verify the image file.
      */
-    int rc = supR3HardenedVerifyFixedFile(pszFilename, false /* fFatal */);
+    int rc = SUPR3HardenedVerifyInit();
+    if (RT_FAILURE(rc))
+        rc = supR3HardenedVerifyFixedFile(pszFilename, false /* fFatal */);
     if (RT_FAILURE(rc))
     {
         LogRel(("supR3HardenedLdrLoadIt: Verification of \"%s\" failed, rc=%Rrc\n", pszFilename, rc));
@@ -2248,7 +2317,7 @@ SUPR3DECL(int) SUPR3HardenedLdrLoadPlugIn(const char *pszFilename, PRTLDRMOD phL
     /*
      * Verify the image file.
      */
-    int rc = supR3HardenedVerifyFile(pszFilename, RTHCUINTPTR_MAX, pErrInfo);
+    int rc = supR3HardenedVerifyFile(pszFilename, RTHCUINTPTR_MAX, true /*fMaybe3rdParty*/, pErrInfo);
     if (RT_FAILURE(rc))
     {
         if (!RTErrInfoIsSet(pErrInfo))
@@ -2699,5 +2768,28 @@ DECLASM(void) suplibTracerFireProbe(PVTGPROBELOC pProbeLoc, PSUPTRACERUMODFIREPR
     pReq->Hdr.rc                = VINF_SUCCESS;
 
     suplibOsIOCtl(&g_supLibData, SUP_IOCTL_TRACER_UMOD_FIRE_PROBE, pReq, SUP_IOCTL_TRACER_UMOD_FIRE_PROBE_SIZE);
+}
+
+
+SUPR3DECL(int) SUPR3ResumeSuspendedKeyboards(void)
+{
+#ifdef RT_OS_DARWIN
+    /*
+     * Issue IOCtl to the SUPDRV kernel module.
+     */
+    SUPREQHDR Req;
+    Req.u32Cookie       = g_u32Cookie;
+    Req.u32SessionCookie= g_u32SessionCookie;
+    Req.cbIn            = SUP_IOCTL_RESUME_SUSPENDED_KBDS_SIZE_IN;
+    Req.cbOut           = SUP_IOCTL_RESUME_SUSPENDED_KBDS_SIZE_OUT;
+    Req.fFlags          = SUPREQHDR_FLAGS_DEFAULT;
+    Req.rc              = VERR_INTERNAL_ERROR;
+    int rc = suplibOsIOCtl(&g_supLibData, SUP_IOCTL_RESUME_SUSPENDED_KBDS, &Req, SUP_IOCTL_RESUME_SUSPENDED_KBDS_SIZE);
+    if (RT_SUCCESS(rc))
+        rc = Req.rc;
+    return rc;
+#else /* !RT_OS_DARWIN */
+    return VERR_NOT_SUPPORTED;
+#endif
 }
 

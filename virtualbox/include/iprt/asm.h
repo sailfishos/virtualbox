@@ -65,6 +65,10 @@
 # pragma intrinsic(_InterlockedExchangeAdd)
 # pragma intrinsic(_InterlockedCompareExchange)
 # pragma intrinsic(_InterlockedCompareExchange64)
+# pragma intrinsic(_rotl)
+# pragma intrinsic(_rotr)
+# pragma intrinsic(_rotl64)
+# pragma intrinsic(_rotr64)
 # ifdef RT_ARCH_AMD64
 #  pragma intrinsic(__stosq)
 #  pragma intrinsic(_byteswap_uint64)
@@ -2265,7 +2269,7 @@ DECLINLINE(void) ASMAtomicWritePtrVoid(void * volatile *ppv, const void *pv)
 # define ASMAtomicWriteNullPtr(ppv) \
     do \
     { \
-        __typeof__(*(ppv)) volatile * const ppvTypeChecked = (ppv); \
+        __typeof__(*(ppv)) * const ppvTypeChecked = (ppv); \
         AssertCompile(sizeof(*ppv) == sizeof(void *)); \
         Assert(!( (uintptr_t)ppv & ((ARCH_BITS / 8) - 1) )); \
         ASMAtomicWritePtrVoid((void * volatile *)(ppvTypeChecked), NULL); \
@@ -2992,6 +2996,8 @@ DECLINLINE(void) ASMAtomicOrS64(int64_t volatile *pi64, int64_t i64)
 {
     ASMAtomicOrU64((uint64_t volatile *)pi64, i64);
 }
+
+
 /**
  * Atomically And an unsigned 32-bit value, ordered.
  *
@@ -3082,6 +3088,180 @@ DECLINLINE(void) ASMAtomicAndU64(uint64_t volatile *pu64, uint64_t u64)
 DECLINLINE(void) ASMAtomicAndS64(int64_t volatile *pi64, int64_t i64)
 {
     ASMAtomicAndU64((uint64_t volatile *)pi64, (uint64_t)i64);
+}
+
+
+/**
+ * Atomically OR an unsigned 32-bit value, unordered but interrupt safe.
+ *
+ * @param   pu32   Pointer to the pointer variable to OR u32 with.
+ * @param   u32    The value to OR *pu32 with.
+ */
+#if RT_INLINE_ASM_EXTERNAL
+DECLASM(void) ASMAtomicUoOrU32(uint32_t volatile *pu32, uint32_t u32);
+#else
+DECLINLINE(void) ASMAtomicUoOrU32(uint32_t volatile *pu32, uint32_t u32)
+{
+# if RT_INLINE_ASM_GNU_STYLE
+    __asm__ __volatile__("orl %1, %0\n\t"
+                         : "=m" (*pu32)
+                         : "ir" (u32),
+                           "m" (*pu32));
+# else
+    __asm
+    {
+        mov     eax, [u32]
+#  ifdef RT_ARCH_AMD64
+        mov     rdx, [pu32]
+        or      [rdx], eax
+#  else
+        mov     edx, [pu32]
+        or      [edx], eax
+#  endif
+    }
+# endif
+}
+#endif
+
+
+/**
+ * Atomically OR a signed 32-bit value, unordered.
+ *
+ * @param   pi32   Pointer to the pointer variable to OR u32 with.
+ * @param   i32    The value to OR *pu32 with.
+ */
+DECLINLINE(void) ASMAtomicUoOrS32(int32_t volatile *pi32, int32_t i32)
+{
+    ASMAtomicUoOrU32((uint32_t volatile *)pi32, i32);
+}
+
+
+/**
+ * Atomically OR an unsigned 64-bit value, unordered.
+ *
+ * @param   pu64   Pointer to the pointer variable to OR u64 with.
+ * @param   u64    The value to OR *pu64 with.
+ */
+#if RT_INLINE_ASM_EXTERNAL
+DECLASM(void) ASMAtomicUoOrU64(uint64_t volatile *pu64, uint64_t u64);
+#else
+DECLINLINE(void) ASMAtomicUoOrU64(uint64_t volatile *pu64, uint64_t u64)
+{
+# if RT_INLINE_ASM_GNU_STYLE && defined(RT_ARCH_AMD64)
+    __asm__ __volatile__("orq %1, %q0\n\t"
+                         : "=m" (*pu64)
+                         : "r" (u64),
+                           "m" (*pu64));
+# else
+    for (;;)
+    {
+        uint64_t u64Old = ASMAtomicUoReadU64(pu64);
+        uint64_t u64New = u64Old | u64;
+        if (ASMAtomicCmpXchgU64(pu64, u64New, u64Old))
+            break;
+        ASMNopPause();
+    }
+# endif
+}
+#endif
+
+
+/**
+ * Atomically Or a signed 64-bit value, unordered.
+ *
+ * @param   pi64   Pointer to the pointer variable to OR u64 with.
+ * @param   i64    The value to OR *pu64 with.
+ */
+DECLINLINE(void) ASMAtomicUoOrS64(int64_t volatile *pi64, int64_t i64)
+{
+    ASMAtomicUoOrU64((uint64_t volatile *)pi64, i64);
+}
+
+
+/**
+ * Atomically And an unsigned 32-bit value, unordered.
+ *
+ * @param   pu32   Pointer to the pointer variable to AND u32 with.
+ * @param   u32    The value to AND *pu32 with.
+ */
+#if RT_INLINE_ASM_EXTERNAL
+DECLASM(void) ASMAtomicUoAndU32(uint32_t volatile *pu32, uint32_t u32);
+#else
+DECLINLINE(void) ASMAtomicUoAndU32(uint32_t volatile *pu32, uint32_t u32)
+{
+# if RT_INLINE_ASM_GNU_STYLE
+    __asm__ __volatile__("andl %1, %0\n\t"
+                         : "=m" (*pu32)
+                         : "ir" (u32),
+                           "m" (*pu32));
+# else
+    __asm
+    {
+        mov     eax, [u32]
+#  ifdef RT_ARCH_AMD64
+        mov     rdx, [pu32]
+        and     [rdx], eax
+#  else
+        mov     edx, [pu32]
+        and     [edx], eax
+#  endif
+    }
+# endif
+}
+#endif
+
+
+/**
+ * Atomically And a signed 32-bit value, unordered.
+ *
+ * @param   pi32   Pointer to the pointer variable to AND i32 with.
+ * @param   i32    The value to AND *pi32 with.
+ */
+DECLINLINE(void) ASMAtomicUoAndS32(int32_t volatile *pi32, int32_t i32)
+{
+    ASMAtomicUoAndU32((uint32_t volatile *)pi32, (uint32_t)i32);
+}
+
+
+/**
+ * Atomically And an unsigned 64-bit value, unordered.
+ *
+ * @param   pu64   Pointer to the pointer variable to AND u64 with.
+ * @param   u64    The value to AND *pu64 with.
+ */
+#if RT_INLINE_ASM_EXTERNAL
+DECLASM(void) ASMAtomicUoAndU64(uint64_t volatile *pu64, uint64_t u64);
+#else
+DECLINLINE(void) ASMAtomicUoAndU64(uint64_t volatile *pu64, uint64_t u64)
+{
+# if RT_INLINE_ASM_GNU_STYLE && defined(RT_ARCH_AMD64)
+    __asm__ __volatile__("andq %1, %0\n\t"
+                         : "=m" (*pu64)
+                         : "r" (u64),
+                           "m" (*pu64));
+# else
+    for (;;)
+    {
+        uint64_t u64Old = ASMAtomicUoReadU64(pu64);
+        uint64_t u64New = u64Old & u64;
+        if (ASMAtomicCmpXchgU64(pu64, u64New, u64Old))
+            break;
+        ASMNopPause();
+    }
+# endif
+}
+#endif
+
+
+/**
+ * Atomically And a signed 64-bit value, unordered.
+ *
+ * @param   pi64   Pointer to the pointer variable to AND i64 with.
+ * @param   i64    The value to AND *pi64 with.
+ */
+DECLINLINE(void) ASMAtomicUoAndS64(int64_t volatile *pi64, int64_t i64)
+{
+    ASMAtomicUoAndU64((uint64_t volatile *)pi64, (uint64_t)i64);
 }
 
 
@@ -4633,6 +4813,121 @@ DECLINLINE(uint64_t) ASMByteSwapU64(uint64_t u64)
     return u64;
 }
 
+
+/**
+ * Rotate 32-bit unsigned value to the left by @a cShift.
+ *
+ * @returns Rotated value.
+ * @param   u32                 The value to rotate.
+ * @param   cShift              How many bits to rotate by.
+ */
+DECLINLINE(uint32_t) ASMRotateLeftU32(uint32_t u32, uint32_t cShift)
+{
+#if RT_INLINE_ASM_USES_INTRIN
+    return _rotl(u32, cShift);
+#elif RT_INLINE_ASM_GNU_STYLE && (defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86))
+    __asm__ __volatile__("roll %b1, %0" : "=g" (u32) : "Ic" (cShift), "0" (u32));
+    return u32;
+#else
+    cShift &= 31;
+    return (u32 << cShift) | (u32 >> (32 - cShift));
+#endif
+}
+
+
+/**
+ * Rotate 32-bit unsigned value to the right by @a cShift.
+ *
+ * @returns Rotated value.
+ * @param   u32                 The value to rotate.
+ * @param   cShift              How many bits to rotate by.
+ */
+DECLINLINE(uint32_t) ASMRotateRightU32(uint32_t u32, uint32_t cShift)
+{
+#if RT_INLINE_ASM_USES_INTRIN
+    return _rotr(u32, cShift);
+#elif RT_INLINE_ASM_GNU_STYLE && (defined(RT_ARCH_AMD64) || defined(RT_ARCH_X86))
+    __asm__ __volatile__("rorl %b1, %0" : "=g" (u32) : "Ic" (cShift), "0" (u32));
+    return u32;
+#else
+    cShift &= 31;
+    return (u32 >> cShift) | (u32 << (32 - cShift));
+#endif
+}
+
+
+/**
+ * Rotate 64-bit unsigned value to the left by @a cShift.
+ *
+ * @returns Rotated value.
+ * @param   u64                 The value to rotate.
+ * @param   cShift              How many bits to rotate by.
+ */
+DECLINLINE(uint64_t) ASMRotateLeftU64(uint64_t u64, uint32_t cShift)
+{
+#if RT_INLINE_ASM_USES_INTRIN
+    return _rotl64(u64, cShift);
+#elif RT_INLINE_ASM_GNU_STYLE && defined(RT_ARCH_AMD64)
+    __asm__ __volatile__("rolq %b1, %0" : "=g" (u64) : "Jc" (cShift), "0" (u64));
+    return u64;
+#elif RT_INLINE_ASM_GNU_STYLE && defined(RT_ARCH_X86)
+    uint32_t uSpill;
+    __asm__ __volatile__("testb $0x20, %%cl\n\t"        /* if (cShift >= 0x20) { swap(u64.hi, u64lo); cShift -= 0x20; } */
+                         "jz    1f\n\t"
+                         "xchgl %%eax, %%edx\n\t"
+                         "1:\n\t"
+                         "andb  $0x1f, %%cl\n\t"        /* if (cShift & 0x1f) { */
+                         "jz    2f\n\t"
+                         "movl  %%edx, %2\n\t"          /*   save the hi value in %3. */
+                         "shldl %%cl,%%eax,%%edx\n\t"   /*   shift the hi value left, feeding MSBits from the low value. */
+                         "shldl %%cl,%2,%%eax\n\t"      /*   shift the lo value left, feeding MSBits from the saved hi value. */
+                         "2:\n\t"                       /* } */
+                         : "=A" (u64), "=c" (cShift), "=r" (uSpill)
+                         : "0" (u64),
+                           "1" (cShift));
+    return u64;
+#else
+    cShift &= 63;
+    return (u64 << cShift) | (u64 >> (64 - cShift));
+#endif
+}
+
+
+/**
+ * Rotate 64-bit unsigned value to the right by @a cShift.
+ *
+ * @returns Rotated value.
+ * @param   u64                 The value to rotate.
+ * @param   cShift              How many bits to rotate by.
+ */
+DECLINLINE(uint64_t) ASMRotateRightU64(uint64_t u64, uint32_t cShift)
+{
+#if RT_INLINE_ASM_USES_INTRIN
+    return _rotr64(u64, cShift);
+#elif RT_INLINE_ASM_GNU_STYLE && defined(RT_ARCH_AMD64)
+    __asm__ __volatile__("rorq %b1, %0" : "=g" (u64) : "Jc" (cShift), "0" (u64));
+    return u64;
+#elif RT_INLINE_ASM_GNU_STYLE && defined(RT_ARCH_X86)
+    uint32_t uSpill;
+    __asm__ __volatile__("testb $0x20, %%cl\n\t"        /* if (cShift >= 0x20) { swap(u64.hi, u64lo); cShift -= 0x20; } */
+                         "jz    1f\n\t"
+                         "xchgl %%eax, %%edx\n\t"
+                         "1:\n\t"
+                         "andb  $0x1f, %%cl\n\t"        /* if (cShift & 0x1f) { */
+                         "jz    2f\n\t"
+                         "movl  %%edx, %2\n\t"          /*   save the hi value in %3. */
+                         "shrdl %%cl,%%eax,%%edx\n\t"   /*   shift the hi value right, feeding LSBits from the low value. */
+                         "shrdl %%cl,%2,%%eax\n\t"      /*   shift the lo value right, feeding LSBits from the saved hi value. */
+                         "2:\n\t"                       /* } */
+                         : "=A" (u64), "=c" (cShift), "=r" (uSpill)
+                         : "0" (u64),
+                           "1" (cShift));
+    return u64;
+#else
+    cShift &= 63;
+    return (u64 >> cShift) | (u64 << (64 - cShift));
+#endif
+}
 
 /** @} */
 

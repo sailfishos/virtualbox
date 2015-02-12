@@ -20,7 +20,6 @@
 #include <VBox/com/string.h>
 #include <VBox/com/Guid.h>
 #include <VBox/com/ErrorInfo.h>
-#include <VBox/com/EventQueue.h>
 #include <VBox/com/VirtualBox.h>
 
 #include <iprt/stream.h>
@@ -168,7 +167,7 @@ bool VBoxSDLFB::init(bool fShowSDLConfig)
 
 #ifdef RT_OS_WINDOWS
     /* default to DirectX if nothing else set */
-    if (!RTEnvGet("SDL_VIDEODRIVER"))
+    if (!RTEnvExist("SDL_VIDEODRIVER"))
     {
         _putenv("SDL_VIDEODRIVER=directx");
 //        _putenv("SDL_VIDEODRIVER=windib");
@@ -621,6 +620,12 @@ STDMETHODIMP VBoxSDLFB::ProcessVHWACommand(BYTE *pCommand)
 {
     return E_NOTIMPL;
 }
+
+STDMETHODIMP VBoxSDLFB::Notify3DEvent(ULONG uType, BYTE *pReserved)
+{
+    return E_NOTIMPL;
+}
+
 //
 // Internal public methods
 //

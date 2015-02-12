@@ -107,6 +107,12 @@ static RTEXITCODE handleBandwidthControlAdd(HandlerArg *a, ComPtr<IBandwidthCont
 
 
     Bstr name(a->argv[2]);
+    if (name.isEmpty())
+    {
+        errorArgument("Bandwidth group name must not be empty!\n");
+        return RTEXITCODE_FAILURE;
+    }
+
     const char *pszType  = NULL;
     int64_t cMaxBytesPerSec = INT64_MAX;
 
@@ -166,7 +172,7 @@ static RTEXITCODE handleBandwidthControlAdd(HandlerArg *a, ComPtr<IBandwidthCont
         errorArgument("Invalid bandwidth group type\n");
         return RTEXITCODE_FAILURE;
     }
-    
+
     CHECK_ERROR2_RET(bwCtrl, CreateBandwidthGroup(name.raw(), enmType, (LONG64)cMaxBytesPerSec), RTEXITCODE_FAILURE);
 
     return RTEXITCODE_SUCCESS;
@@ -226,7 +232,7 @@ static RTEXITCODE handleBandwidthControlSet(HandlerArg *a, ComPtr<IBandwidthCont
         }
     }
 
-    
+
     if (cMaxBytesPerSec != INT64_MAX)
     {
         ComPtr<IBandwidthGroup> bwGroup;
@@ -274,8 +280,11 @@ static RTEXITCODE handleBandwidthControlList(HandlerArg *pArgs, ComPtr<IBandwidt
     {
         switch (c)
         {
-            case 'M':   enmDetails = VMINFO_MACHINEREADABLE; break;
-            default:    return errorGetOpt(USAGE_BANDWIDTHCONTROL, c, &ValueUnion);
+            case 'M':
+                enmDetails = VMINFO_MACHINEREADABLE;
+                break;
+            default:
+                return errorGetOpt(USAGE_BANDWIDTHCONTROL, c, &ValueUnion);
         }
     }
 

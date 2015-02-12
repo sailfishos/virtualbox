@@ -47,6 +47,7 @@
 #endif
 
 #include <VBox/err.h>
+#include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/pdmdrv.h>
 #include <iprt/assert.h>
 #include <iprt/file.h>
@@ -303,6 +304,7 @@ int slirp_init(PNATState *ppData, uint32_t u32NetAddr, uint32_t u32Netmask,
         return VERR_NO_MEMORY;
     pData->fPassDomain = !fUseHostResolver ? fPassDomain : false;
     pData->fUseHostResolver = fUseHostResolver;
+    pData->fUseHostResolverPermanent = fUseHostResolver;
     pData->pvUser = pvUser;
     pData->netmask = u32Netmask;
 
@@ -325,8 +327,6 @@ int slirp_init(PNATState *ppData, uint32_t u32NetAddr, uint32_t u32Netmask,
     }
     pData->phEvents[VBOX_SOCKET_EVENT_INDEX] = CreateEvent(NULL, FALSE, FALSE, NULL);
 #endif
-
-    link_up = 1;
 
     rc = bootp_dhcp_init(pData);
     if (RT_FAILURE(rc))
@@ -351,8 +351,7 @@ int slirp_init(PNATState *ppData, uint32_t u32NetAddr, uint32_t u32Netmask,
 
     /* set default addresses */
     inet_aton("127.0.0.1", &loopback_addr);
-    rc = slirpInitializeDnsSettings(pData);
-    AssertRCReturn(rc, VINF_NAT_DNS);
+
     rc = slirpTftpInit(pData);
     AssertRCReturn(rc, VINF_NAT_DNS);
 
@@ -395,6 +394,8 @@ int slirp_init(PNATState *ppData, uint32_t u32NetAddr, uint32_t u32Netmask,
     pData->pInSockAddrHomeAddress[0].sin_len = sizeof(struct sockaddr_in);
 # endif
 #endif
+
+    slirp_link_up(pData);
     return VINF_SUCCESS;
 }
 
@@ -440,7 +441,14 @@ void slirp_deregister_statistics(PNATState pData, PPDMDRVINS pDrvIns)
 void slirp_link_up(PNATState pData)
 {
     struct arp_cache_entry *ac;
+
+    if (link_up == 1)
+        return;
+
     link_up = 1;
+
+    if (!pData->fUseHostResolverPermanent)
+        slirpInitializeDnsSettings(pData);
 
     if (LIST_EMPTY(&pData->arp_cache))
         return;
@@ -458,6 +466,12 @@ void slirp_link_down(PNATState pData)
 {
     struct socket *so;
     struct port_forward_rule *rule;
+
+    if (link_up == 0)
+        return;
+
+    if (!pData->fUseHostResolverPermanent)
+        slirpReleaseDnsSettings(pData);
 
     while ((so = tcb.so_next) != &tcb)
     {
@@ -495,8 +509,10 @@ void slirp_term(PNATState pData)
         return;
     icmp_finit(pData);
 
+    /* Signal to slirp_link_down() to release DNS data. */
+    pData->fUseHostResolverPermanent = 0;
+
     slirp_link_down(pData);
-    slirpReleaseDnsSettings(pData);
     ftp_alias_unload(pData);
     nbt_alias_unload(pData);
     if (pData->fUseHostResolver)
@@ -736,7 +752,15 @@ void slirp_select_fill(PNATState pData, int *pnfds, struct pollfd *polls)
                 Log2(("NAT: %R[natsock] expired\n", so));
                 if (so->so_timeout != NULL)
                 {
+                    /* so_timeout - might change the so_expire value or
+                     * drop so_timeout* from so.
+                     */
                     so->so_timeout(pData, so, so->so_timeout_arg);
+                    /* on 4.2 so->
+                     */
+                    if (   so_next->so_prev != so /* so_timeout freed the socket */
+                        || so->so_timeout)  /* so_timeout just freed so_timeout */
+                      CONTINUE_NO_UNLOCK(udp);
                 }
                 UDP_DETACH(pData, so, so_next);
                 CONTINUE_NO_UNLOCK(udp);
@@ -826,12 +850,21 @@ static bool slirpConnectOrWrite(PNATState pData, struct socket *so, bool fConnec
         /* continue; */
     }
     else if (!fConnectOnly)
+    {
         SOWRITE(ret, pData, so);
-    /*
-     * XXX If we wrote something (a lot), there could be the need
-     * for a window update. In the worst case, the remote will send
-     * a window probe to get things going again.
-     */
+        if (RT_LIKELY(ret > 0))
+        {
+            /*
+             * Make sure we will send window update to peer.  This is
+             * a moral equivalent of calling tcp_output() for PRU_RCVD
+             * in tcp_usrreq() of the real stack.
+             */
+            struct tcpcb *tp = sototcpcb(so);
+            if (RT_LIKELY(tp != NULL))
+                tp->t_flags |= TF_DELACK;
+        }
+    }
+
     LogFlowFunc(("LEAVE: true\n"));
     return true;
 }
@@ -1579,7 +1612,7 @@ int slirp_remove_redirect(PNATState pData, int is_udp, struct in_addr host_addr,
             && rule->activated)
         {
             LogRel(("NAT: remove redirect %s host port %d => guest port %d @ %RTnaipv4\n",
-                   rule->proto == IPPROTO_UDP ? "UDP" : "TCP", rule->host_port, rule->guest_port, guest_addr));
+                   rule->proto == IPPROTO_UDP ? "UDP" : "TCP", rule->host_port, rule->guest_port, guest_addr.s_addr));
 
             LibAliasUninit(rule->so->so_la);
             if (is_udp)
@@ -1976,11 +2009,12 @@ void slirp_set_mtu(PNATState pData, int mtu)
 /**
  * Info handler.
  */
-void slirp_info(PNATState pData, PCDBGFINFOHLP pHlp, const char *pszArgs)
+void slirp_info(PNATState pData, const void *pvArg, const char *pszArgs)
 {
     struct socket *so, *so_next;
     struct arp_cache_entry *ac;
     struct port_forward_rule *rule;
+    PCDBGFINFOHLP pHlp = (PCDBGFINFOHLP)pvArg;
     NOREF(pszArgs);
 
     pHlp->pfnPrintf(pHlp, "NAT parameters: MTU=%d\n", if_mtu);
@@ -2010,4 +2044,13 @@ void slirp_info(PNATState pData, PCDBGFINFOHLP pHlp, const char *pszArgs)
                         rule->host_port, rule->guest_addr.s_addr, rule->guest_port,
                         rule->activated ? ' ' : '*');
     }
+}
+
+
+int slirp_host_network_configuration_change_strategy_selector(const PNATState pData)
+{
+    if (pData->fUseHostResolverPermanent) return VBOX_NAT_HNCE_HOSTRESOLVER;
+    if (pData->fUseHostResolver) return VBOX_NAT_HNCE_HOSTRESOLVER_TEMPORARY;
+    if (pData->fUseDnsProxy) return VBOX_NAT_HNCE_DNSPROXY;
+    return VBOX_NAT_HNCE_EXSPOSED_NAME_RESOLUTION_INFO;
 }

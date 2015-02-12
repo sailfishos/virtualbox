@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
-<WixLocalization xmlns="http://schemas.microsoft.com/wix/2003/11/localization" Codepage="1252" Culture="de_DE">
+<WixLocalization xmlns="http://schemas.microsoft.com/wix/2006/localization" Codepage="1252" Culture="de_DE">
 
     <!--
             Language Definition Include for VirtualBox WiX script.
 
-            Copyright (C) 2011-2012 Oracle Corporation
+            Copyright (C) 2011-2014 Oracle Corporation
 
             This file is part of VirtualBox Open Source Edition (OSE), as
             available from http://www.virtualbox.org. This file is free software;
@@ -119,6 +119,7 @@
     <String Id="Customize2Dlg_Desc">Bitte unten die gewünschten Optionen auswählen:</String>
     <String Id="Customize2Dlg_CreateShortcut">Verknüpfung auf dem Desktop anlegen</String>
     <String Id="Customize2Dlg_CreateQuickLaunch">Verknüpfung in der Schnellstartleiste anlegen</String>
+    <String Id="Customize2Dlg_RegisterFileExtensions">Dateizuordnungen registrieren</String>
 
     <!---->
 

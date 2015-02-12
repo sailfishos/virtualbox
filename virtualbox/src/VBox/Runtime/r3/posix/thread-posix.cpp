@@ -53,6 +53,9 @@
 # define IPRT_MAY_HAVE_PTHREAD_SET_NAME_NP
 # include <dlfcn.h>
 #endif
+#if defined(RT_OS_HAIKU)
+# include <OS.h>
+#endif
 
 #include <iprt/thread.h>
 #include <iprt/log.h>
@@ -117,20 +120,14 @@ static void rtThreadKeyDestruct(void *pvValue);
 static void rtThreadPosixPokeSignal(int iSignal);
 
 
-DECLHIDDEN(int) rtThreadNativeInit(void)
+#ifdef RTTHREAD_POSIX_WITH_POKE
+/**
+ * Try register the dummy signal handler for RTThreadPoke.
+ */
+static void rtThreadPosixSelectPokeSignal(void)
 {
     /*
-     * Allocate the TLS (key in posix terms) where we store the pointer to
-     * a threads RTTHREADINT structure.
-     */
-    int rc = pthread_key_create(&g_SelfKey, rtThreadKeyDestruct);
-    if (rc)
-        return VERR_NO_TLS_FOR_SELF;
-
-#ifdef RTTHREAD_POSIX_WITH_POKE
-    /*
-     * Try register the dummy signal handler for RTThreadPoke.
-     * Avoid SIGRTMIN thru SIGRTMIN+2 because of LinuxThreads.
+     * Note! Avoid SIGRTMIN thru SIGRTMIN+2 because of LinuxThreads.
      */
     static const int s_aiSigCandidates[] =
     {
@@ -175,13 +172,58 @@ DECLHIDDEN(int) rtThreadNativeInit(void)
                 AssertMsgFailed(("rc=%Rrc errno=%d\n", RTErrConvertFromErrno(errno), errno));
         }
     }
+}
 #endif /* RTTHREAD_POSIX_WITH_POKE */
+
+
+DECLHIDDEN(int) rtThreadNativeInit(void)
+{
+    /*
+     * Allocate the TLS (key in posix terms) where we store the pointer to
+     * a threads RTTHREADINT structure.
+     */
+    int rc = pthread_key_create(&g_SelfKey, rtThreadKeyDestruct);
+    if (rc)
+        return VERR_NO_TLS_FOR_SELF;
+
+#ifdef RTTHREAD_POSIX_WITH_POKE
+    rtThreadPosixSelectPokeSignal();
+#endif
 
 #ifdef IPRT_MAY_HAVE_PTHREAD_SET_NAME_NP
     if (RT_SUCCESS(rc))
         g_pfnThreadSetName = (PFNPTHREADSETNAME)(uintptr_t)dlsym(RTLD_DEFAULT, "pthread_setname_np");
 #endif
     return rc;
+}
+
+static void rtThreadPosixBlockSignals(void)
+{
+    /*
+     * Block SIGALRM - required for timer-posix.cpp.
+     * This is done to limit harm done by OSes which doesn't do special SIGALRM scheduling.
+     * It will not help much if someone creates threads directly using pthread_create. :/
+     */
+    if (!RTR3InitIsUnobtrusive())
+    {
+        sigset_t SigSet;
+        sigemptyset(&SigSet);
+        sigaddset(&SigSet, SIGALRM);
+        sigprocmask(SIG_BLOCK, &SigSet, NULL);
+    }
+#ifdef RTTHREAD_POSIX_WITH_POKE
+    if (g_iSigPokeThread != -1)
+        siginterrupt(g_iSigPokeThread, 1);
+#endif
+}
+
+DECLHIDDEN(void) rtThreadNativeReInitObtrusive(void)
+{
+#ifdef RTTHREAD_POSIX_WITH_POKE
+    Assert(!RTR3InitIsUnobtrusive());
+    rtThreadPosixSelectPokeSignal();
+#endif
+    rtThreadPosixBlockSignals();
 }
 
 
@@ -226,22 +268,7 @@ static void rtThreadPosixPokeSignal(int iSignal)
  */
 DECLHIDDEN(int) rtThreadNativeAdopt(PRTTHREADINT pThread)
 {
-    /*
-     * Block SIGALRM - required for timer-posix.cpp.
-     * This is done to limit harm done by OSes which doesn't do special SIGALRM scheduling.
-     * It will not help much if someone creates threads directly using pthread_create. :/
-     */
-    if (!RTR3InitIsUnobtrusive())
-    {
-        sigset_t SigSet;
-        sigemptyset(&SigSet);
-        sigaddset(&SigSet, SIGALRM);
-        sigprocmask(SIG_BLOCK, &SigSet, NULL);
-    }
-#ifdef RTTHREAD_POSIX_WITH_POKE
-    if (g_iSigPokeThread != -1)
-        siginterrupt(g_iSigPokeThread, 1);
-#endif
+    rtThreadPosixBlockSignals();
 
     int rc = pthread_setspecific(g_SelfKey, pThread);
     if (!rc)
@@ -274,19 +301,7 @@ static void *rtThreadNativeMain(void *pvArgs)
     ASMMemoryFence();
 #endif
 
-    /*
-     * Block SIGALRM - required for timer-posix.cpp.
-     * This is done to limit harm done by OSes which doesn't do special SIGALRM scheduling.
-     * It will not help much if someone creates threads directly using pthread_create. :/
-     */
-    sigset_t SigSet;
-    sigemptyset(&SigSet);
-    sigaddset(&SigSet, SIGALRM);
-    sigprocmask(SIG_BLOCK, &SigSet, NULL);
-#ifdef RTTHREAD_POSIX_WITH_POKE
-    if (g_iSigPokeThread != -1)
-        siginterrupt(g_iSigPokeThread, 1);
-#endif
+    rtThreadPosixBlockSignals();
 
     /*
      * Set the TLS entry and, if possible, the thread name.
@@ -418,6 +433,15 @@ RTR3DECL(int) RTThreadGetExecutionTimeMilli(uint64_t *pKernelTime, uint64_t *pUs
 
     *pKernelTime = ThreadInfo.system_time.seconds * 1000 + ThreadInfo.system_time.microseconds / 1000;
     *pUserTime   = ThreadInfo.user_time.seconds   * 1000 + ThreadInfo.user_time.microseconds   / 1000;
+
+    return VINF_SUCCESS;
+#elif defined(RT_OS_HAIKU)
+    thread_info       ThreadInfo;
+    status_t status = get_thread_info(find_thread(NULL), &ThreadInfo);
+    AssertReturn(status == B_OK, RTErrConvertFromErrno(status));
+
+    *pKernelTime = ThreadInfo.kernel_time / 1000;
+    *pUserTime   = ThreadInfo.user_time / 1000;
 
     return VINF_SUCCESS;
 #else

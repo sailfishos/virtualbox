@@ -46,6 +46,7 @@ typedef FNVBOXCRHGSMI_CTLCON_GETCLIENTID *PFNVBOXCRHGSMI_CTLCON_GETCLIENTID;
 #else
 int vboxCrHgsmiPrivateCtlConCall(struct VBOXUHGSMI_PRIVATE_BASE *pHgsmi, struct VBoxGuestHGCMCallInfo *pCallInfo, int cbCallInfo);
 int vboxCrHgsmiPrivateCtlConGetClientID(struct VBOXUHGSMI_PRIVATE_BASE *pHgsmi, uint32_t *pu32ClientID);
+int vboxCrHgsmiPrivateCtlConGetHostCaps(struct VBOXUHGSMI_PRIVATE_BASE *pHgsmi, uint32_t *pu32HostCaps);
 #endif
 
 typedef DECLCALLBACK(int) FNVBOXCRHGSMI_ESCAPE(struct VBOXUHGSMI_PRIVATE_BASE *pHgsmi, void *pvData, uint32_t cbData, BOOL fHwAccess);
@@ -67,14 +68,14 @@ typedef struct VBOXUHGSMI_BUFFER_PRIVATE_BASE
 
 typedef struct VBOXUHGSMI_BUFFER_PRIVATE_ESC_BASE
 {
-    VBOXUHGSMI_BUFFER_PRIVATE_BASE PrivateBase;
+    VBOXUHGSMI_BUFFER_PRIVATE_BASE BasePrivate;
     VBOXVIDEOCM_UM_ALLOC Alloc;
     HANDLE hSynch;
 } VBOXUHGSMI_BUFFER_PRIVATE_ESC_BASE, *PVBOXUHGSMI_BUFFER_PRIVATE_ESC_BASE;
 
 typedef struct VBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE
 {
-    VBOXUHGSMI_BUFFER_PRIVATE_BASE PrivateBase;
+    VBOXUHGSMI_BUFFER_PRIVATE_BASE BasePrivate;
     D3DKMT_HANDLE hAllocation;
     UINT aLockPageIndices[1];
 } VBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE, *PVBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE;
@@ -83,13 +84,14 @@ typedef struct VBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE
 #define VBOXUHGSMIBASE_GET(_p) VBOXUHGSMIBASE_GET_PRIVATE(_p, VBOXUHGSMI_PRIVATE_BASE)
 #define VBOXUHGSMIBASE_GET_BUFFER(_p) VBOXUHGSMIBASE_GET_PRIVATE(_p, VBOXUHGSMI_BUFFER_PRIVATE_BASE)
 
-#define VBOXUHGSMIPRIVATEBASE_GET_PRIVATE(_p, _t) ((_t*)(((uint8_t*)_p) - RT_OFFSETOF(_t, PrivateBase.Base)))
+#define VBOXUHGSMIPRIVATEBASE_GET_PRIVATE(_p, _t) ((_t*)(((uint8_t*)_p) - RT_OFFSETOF(_t, BasePrivate.Base)))
 #define VBOXUHGSMIESCBASE_GET_BUFFER(_p) VBOXUHGSMIPRIVATEBASE_GET_PRIVATE(_p, VBOXUHGSMI_BUFFER_PRIVATE_ESC_BASE)
 #define VBOXUHGSMDXALLOCBASE_GET_BUFFER(_p) VBOXUHGSMIPRIVATEBASE_GET_PRIVATE(_p, VBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE)
 
-DECLINLINE(int) vboxUhgsmiBaseLockData(PVBOXUHGSMI_BUFFER pBuf, uint32_t offLock, uint32_t cbLock, VBOXUHGSMI_BUFFER_LOCK_FLAGS fFlags,
-                                    D3DDDICB_LOCKFLAGS *pfFlags, UINT *pNumPages, UINT* pPages)
+DECLINLINE(int) vboxUhgsmiBaseDxLockData(PVBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE pPrivate, uint32_t offLock, uint32_t cbLock, VBOXUHGSMI_BUFFER_LOCK_FLAGS fFlags,
+                                    D3DDDICB_LOCKFLAGS *pfFlags, UINT *pNumPages)
 {
+    PVBOXUHGSMI_BUFFER pBuf = &pPrivate->BasePrivate.Base;
     D3DDDICB_LOCKFLAGS fLockFlags;
     fLockFlags.Value = 0;
     if (fFlags.bLockEntire)
@@ -126,7 +128,7 @@ DECLINLINE(int) vboxUhgsmiBaseLockData(PVBOXUHGSMI_BUFFER pBuf, uint32_t offLock
             *pNumPages = cPages;
             for (UINT i = 0, j = iFirstPage; i < cPages; ++i, ++j)
             {
-                pPages[i] = j;
+                pPrivate->aLockPageIndices[i] = j;
             }
         }
 
@@ -140,8 +142,18 @@ DECLINLINE(int) vboxUhgsmiBaseLockData(PVBOXUHGSMI_BUFFER pBuf, uint32_t offLock
     return VINF_SUCCESS;
 }
 
-#if 0
-DECLINLINE(int) vboxUhgsmiBaseDmaFill(PVBOXUHGSMI_BUFFER_SUBMIT aBuffers, uint32_t cBuffers,
+DECLINLINE(void) vboxUhgsmiBaseDxAllocInfoFill(D3DDDI_ALLOCATIONINFO *pDdiAllocInfo, VBOXWDDM_ALLOCINFO *pAllocInfo, uint32_t cbBuffer, VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType)
+{
+    memset(pDdiAllocInfo, 0, sizeof (*pDdiAllocInfo));
+    pDdiAllocInfo->pPrivateDriverData = pAllocInfo;
+    pDdiAllocInfo->PrivateDriverDataSize = sizeof (*pAllocInfo);
+    memset(pAllocInfo, 0, sizeof (*pAllocInfo));
+    pAllocInfo->enmType = VBOXWDDM_ALLOC_TYPE_UMD_HGSMI_BUFFER;
+    pAllocInfo->cbBuffer = cbBuffer;
+    pAllocInfo->fUhgsmiType = fUhgsmiType;
+}
+
+DECLINLINE(int) vboxUhgsmiBaseDxDmaFill(PVBOXUHGSMI_BUFFER_SUBMIT aBuffers, uint32_t cBuffers,
         VOID* pCommandBuffer, UINT *pCommandBufferSize,
         D3DDDI_ALLOCATIONLIST *pAllocationList, UINT AllocationListSize,
         D3DDDI_PATCHLOCATIONLIST *pPatchLocationList, UINT PatchLocationListSize)
@@ -162,25 +174,24 @@ DECLINLINE(int) vboxUhgsmiBaseDmaFill(PVBOXUHGSMI_BUFFER_SUBMIT aBuffers, uint32
 
     PVBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD pHdr = (PVBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD)pCommandBuffer;
     pHdr->Base.enmCmd = VBOXVDMACMD_TYPE_CHROMIUM_CMD;
-    pHdr->Base.u32CmdReserved = cBuffers;
+    pHdr->Base.u32CmdReserved = 0;
 
     PVBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO pBufSubmInfo = pHdr->aBufInfos;
 
     for (uint32_t i = 0; i < cBuffers; ++i)
     {
         PVBOXUHGSMI_BUFFER_SUBMIT pBufInfo = &aBuffers[i];
-        PVBOXUHGSMI_BUFFER_PRIVATE_BASE pBuffer = VBOXUHGSMIBASE_GET_BUFFER(pBufInfo->pBuf);
+        PVBOXUHGSMI_BUFFER_PRIVATE_DX_ALLOC_BASE pBuffer = VBOXUHGSMDXALLOCBASE_GET_BUFFER(pBufInfo->pBuf);
 
         memset(pAllocationList, 0, sizeof (D3DDDI_ALLOCATIONLIST));
         pAllocationList->hAllocation = pBuffer->hAllocation;
         pAllocationList->Value = 0;
         pAllocationList->WriteOperation = !pBufInfo->fFlags.bHostReadOnly;
         pAllocationList->DoNotRetireInstance = pBufInfo->fFlags.bDoNotRetire;
-        pBufSubmInfo->bDoNotSignalCompletion = 0;
         if (pBufInfo->fFlags.bEntireBuffer)
         {
             pBufSubmInfo->offData = 0;
-            pBufSubmInfo->cbData = pBuffer->Base.cbBuffer;
+            pBufSubmInfo->cbData = pBuffer->BasePrivate.Base.cbBuffer;
         }
         else
         {
@@ -194,7 +205,6 @@ DECLINLINE(int) vboxUhgsmiBaseDmaFill(PVBOXUHGSMI_BUFFER_SUBMIT aBuffers, uint32
 
     return VINF_SUCCESS;
 }
-#endif
 
 DECLCALLBACK(int) vboxUhgsmiBaseEscBufferLock(PVBOXUHGSMI_BUFFER pBuf, uint32_t offLock, uint32_t cbLock, VBOXUHGSMI_BUFFER_LOCK_FLAGS fFlags, void**pvLock);
 DECLCALLBACK(int) vboxUhgsmiBaseEscBufferUnlock(PVBOXUHGSMI_BUFFER pBuf);

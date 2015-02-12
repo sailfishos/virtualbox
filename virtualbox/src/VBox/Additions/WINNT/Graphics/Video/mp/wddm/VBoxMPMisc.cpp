@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -179,7 +179,7 @@ PVOID vboxWddmHTableIterRemoveCur(PVBOXWDDM_HTABLE_ITERATOR pIter)
     }
     return NULL;
 }
-
+#ifdef VBOX_WITH_CROGL
 PVBOXWDDM_SWAPCHAIN vboxWddmSwapchainCreate(UINT w, UINT h)
 {
     PVBOXWDDM_SWAPCHAIN pSwapchain = (PVBOXWDDM_SWAPCHAIN)vboxWddmMemAllocZero(sizeof (VBOXWDDM_SWAPCHAIN));
@@ -193,7 +193,7 @@ PVBOXWDDM_SWAPCHAIN vboxWddmSwapchainCreate(UINT w, UINT h)
         pSwapchain->Pos.x = pSwapchain->Pos.y = VBOXWDDM_INVALID_COORD;
         pSwapchain->width = w;
         pSwapchain->height = h;
-        VBoxWddmVrListInit(&pSwapchain->VisibleRegions);
+        VBoxVrListInit(&pSwapchain->VisibleRegions);
     }
     return pSwapchain;
 }
@@ -208,7 +208,7 @@ DECLINLINE(BOOLEAN) vboxWddmSwapchainRetainLocked(PVBOXWDDM_SWAPCHAIN pSwapchain
     return FALSE;
 }
 
-DECLINLINE(BOOLEAN) vboxWddmSwapchainRetain(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SWAPCHAIN pSwapchain)
+BOOLEAN vboxWddmSwapchainRetain(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SWAPCHAIN pSwapchain)
 {
     KIRQL OldIrql;
     BOOLEAN bRc;
@@ -218,35 +218,40 @@ DECLINLINE(BOOLEAN) vboxWddmSwapchainRetain(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SW
     return bRc;
 }
 
-DECLINLINE(VOID) vboxWddmSwapchainRelease(PVBOXWDDM_SWAPCHAIN pSwapchain)
+VOID vboxWddmSwapchainRelease(PVBOXWDDM_SWAPCHAIN pSwapchain)
 {
     const uint32_t cRefs = ASMAtomicDecU32(&pSwapchain->cRefs);
     Assert(cRefs < UINT32_MAX/2);
     if (!cRefs)
     {
-        VBoxWddmVrListClear(&pSwapchain->VisibleRegions);
+        VBoxVrListClear(&pSwapchain->VisibleRegions);
         vboxWddmMemFree(pSwapchain);
     }
 }
 
-PVBOXWDDM_SWAPCHAIN vboxWddmSwapchainRetainByAlloc(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOCATION pAlloc)
+PVBOXWDDM_SWAPCHAIN vboxWddmSwapchainRetainByAllocData(PVBOXMP_DEVEXT pDevExt, const struct VBOXWDDM_ALLOC_DATA *pAllocData)
 {
     KIRQL OldIrql;
     PVBOXWDDM_SWAPCHAIN pSwapchain;
     KeAcquireSpinLock(&pDevExt->SynchLock, &OldIrql);
-    pSwapchain = pAlloc->pSwapchain;
+    pSwapchain = pAllocData->pSwapchain;
     if (pSwapchain && !vboxWddmSwapchainRetainLocked(pSwapchain))
         pSwapchain = NULL;
     KeReleaseSpinLock(&pDevExt->SynchLock, OldIrql);
     return pSwapchain;
 }
 
+PVBOXWDDM_SWAPCHAIN vboxWddmSwapchainRetainByAlloc(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOCATION *pAlloc)
+{
+    return vboxWddmSwapchainRetainByAllocData(pDevExt, &pAlloc->AllocData);
+}
+
 VOID vboxWddmSwapchainAllocRemove(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SWAPCHAIN pSwapchain, PVBOXWDDM_ALLOCATION pAlloc)
 {
     KIRQL OldIrql;
     KeAcquireSpinLock(&pDevExt->SynchLock, &OldIrql);
-    Assert(pAlloc->pSwapchain == pSwapchain);
-    pAlloc->pSwapchain = NULL;
+    Assert(pAlloc->AllocData.pSwapchain == pSwapchain);
+    pAlloc->AllocData.pSwapchain = NULL;
     RemoveEntryList(&pAlloc->SwapchainEntry);
     KeReleaseSpinLock(&pDevExt->SynchLock, OldIrql);
     vboxWddmSwapchainRelease(pSwapchain);
@@ -256,17 +261,17 @@ BOOLEAN vboxWddmSwapchainAllocAdd(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SWAPCHAIN pS
 {
     KIRQL OldIrql;
     BOOLEAN bRc;
-    Assert(!pAlloc->pSwapchain);
+    Assert(!pAlloc->AllocData.pSwapchain);
     KeAcquireSpinLock(&pDevExt->SynchLock, &OldIrql);
     bRc = vboxWddmSwapchainRetainLocked(pSwapchain);
     if (bRc)
     {
-        if (pAlloc->pSwapchain)
+        if (pAlloc->AllocData.pSwapchain)
         {
             RemoveEntryList(&pAlloc->SwapchainEntry);
         }
         InsertTailList(&pSwapchain->AllocList, &pAlloc->SwapchainEntry);
-        pAlloc->pSwapchain = pSwapchain;
+        pAlloc->AllocData.pSwapchain = pSwapchain;
     }
     KeReleaseSpinLock(&pDevExt->SynchLock, OldIrql);
     return bRc;
@@ -286,8 +291,8 @@ static VOID vboxWddmSwapchainAllocRemoveAllInternal(PVBOXMP_DEVEXT pDevExt, PVBO
         {
             PVBOXWDDM_ALLOCATION pAlloc = VBOXSCENTRY_2_ALLOC(pEntry);
             pEntry = pEntry->Flink;
-            Assert(pAlloc->pSwapchain == pSwapchain);
-            pAlloc->pSwapchain = NULL;
+            Assert(pAlloc->AllocData.pSwapchain == pSwapchain);
+            pAlloc->AllocData.pSwapchain = NULL;
             RemoveEntryList(&pAlloc->SwapchainEntry);
             ++cRemoved;
         }
@@ -311,18 +316,6 @@ VOID vboxWddmSwapchainAllocRemoveAll(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SWAPCHAIN
 VOID vboxWddmSwapchainDestroy(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SWAPCHAIN pSwapchain)
 {
     vboxWddmSwapchainAllocRemoveAllInternal(pDevExt, pSwapchain, TRUE);
-
-#ifndef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
-    Assert(pSwapchain->pContext);
-    if (pSwapchain->pContext)
-    {
-        NTSTATUS tmpStatus = vboxVdmaGgCmdCancel(pDevExt, pSwapchain->pContext, pSwapchain);
-        if (tmpStatus != STATUS_SUCCESS)
-        {
-            WARN(("vboxVdmaGgCmdCancel returned Status (0x%x)", tmpStatus));
-        }
-    }
-#endif
 
     vboxWddmSwapchainRelease(pSwapchain);
 }
@@ -349,7 +342,7 @@ static VOID vboxWddmSwapchainCtxRemoveLocked(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_C
     Assert(pTst == pSwapchain);
     RemoveEntryList(&pSwapchain->DevExtListEntry);
     pSwapchain->hSwapchainKm = NULL;
-    VBoxWddmVrListClear(&pSwapchain->VisibleRegions);
+    VBoxVrListClear(&pSwapchain->VisibleRegions);
     vboxWddmSwapchainRelease(pSwapchain);
 }
 
@@ -405,12 +398,29 @@ VOID vboxWddmSwapchainCtxDestroyAll(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_CONTEXT pC
 /* process the swapchain info passed from user-mode display driver & synchronizes the driver state with it */
 NTSTATUS vboxWddmSwapchainCtxEscape(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_CONTEXT pContext, PVBOXDISPIFESCAPE_SWAPCHAININFO pSwapchainInfo, UINT cbSize)
 {
-    Assert((cbSize >= RT_OFFSETOF(VBOXDISPIFESCAPE_SWAPCHAININFO, SwapchainInfo.ahAllocs[0])));
     if (cbSize < RT_OFFSETOF(VBOXDISPIFESCAPE_SWAPCHAININFO, SwapchainInfo.ahAllocs[0]))
+    {
+        WARN(("invalid cbSize1 %d", cbSize));
         return STATUS_INVALID_PARAMETER;
-    Assert(cbSize >= RT_OFFSETOF(VBOXDISPIFESCAPE_SWAPCHAININFO, SwapchainInfo.ahAllocs[pSwapchainInfo->SwapchainInfo.cAllocs]));
+    }
+
     if (cbSize < RT_OFFSETOF(VBOXDISPIFESCAPE_SWAPCHAININFO, SwapchainInfo.ahAllocs[pSwapchainInfo->SwapchainInfo.cAllocs]))
+    {
         return STATUS_INVALID_PARAMETER;
+        WARN(("invalid cbSize2 %d", cbSize));
+    }
+
+    if (!pSwapchainInfo->SwapchainInfo.winHostID)
+    {
+        WARN(("Zero winHostID specified!"));
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (!pContext)
+    {
+        WARN(("vboxWddmSwapchainCtxEscape: no context specified"));
+        return STATUS_INVALID_PARAMETER;
+    }
 
     PVBOXWDDM_SWAPCHAIN pSwapchain = NULL;
     PVBOXWDDM_ALLOCATION *apAlloc = NULL;
@@ -498,7 +508,7 @@ NTSTATUS vboxWddmSwapchainCtxEscape(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_CONTEXT pC
         /* do not zero up the view rect since it may still be valid */
 //        memset(&pSwapchain->ViewRect, 0, sizeof (pSwapchain->ViewRect));
         /* @todo: do we really need to zero this up here ? */
-        VBoxWddmVrListClear(&pSwapchain->VisibleRegions);
+        VBoxVrListClear(&pSwapchain->VisibleRegions);
 
         vboxWddmSwapchainAllocRemoveAll(pDevExt, pSwapchain);
 
@@ -509,6 +519,11 @@ NTSTATUS vboxWddmSwapchainCtxEscape(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_CONTEXT pC
                 vboxWddmSwapchainAllocAdd(pDevExt, pSwapchain, apAlloc[i]);
             }
             pSwapchain->hSwapchainUm = pSwapchainInfo->SwapchainInfo.hSwapchainUm;
+            if (pSwapchain->winHostID != pSwapchainInfo->SwapchainInfo.winHostID)
+            {
+                pSwapchain->fExposed = FALSE;
+                pSwapchain->winHostID = pSwapchainInfo->SwapchainInfo.winHostID;
+            }
         }
         else
         {
@@ -556,9 +571,7 @@ VOID vboxWddmSwapchainCtxTerm(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_CONTEXT pContext
     vboxWddmSwapchainCtxDestroyAll(pDevExt, pContext);
     vboxWddmHTableDestroy(&pContext->Swapchains);
 }
-
-#define VBOXWDDM_REG_DRVKEY_PREFIX L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Class\\"
-
+#endif
 NTSTATUS vboxWddmRegQueryDrvKeyName(PVBOXMP_DEVEXT pDevExt, ULONG cbBuf, PWCHAR pBuf, PULONG pcbResult)
 {
     WCHAR fallBackBuf[2];
@@ -591,13 +604,6 @@ NTSTATUS vboxWddmRegQueryDrvKeyName(PVBOXMP_DEVEXT pDevExt, ULONG cbBuf, PWCHAR 
     return Status;
 }
 
-#define VBOXWDDM_REG_DISPLAYSETTINGSKEY_PREFIX_VISTA L"\\Registry\\Machine\\System\\CurrentControlSet\\Hardware Profiles\\Current\\System\\CurrentControlSet\\Control\\VIDEO\\"
-#define VBOXWDDM_REG_DISPLAYSETTINGSKEY_PREFIX_WIN7 L"\\Registry\\Machine\\System\\CurrentControlSet\\Hardware Profiles\\UnitedVideo\\CONTROL\\VIDEO\\"
-
-#define VBOXWDDM_REG_DISPLAYSETTINGS_ATTACH_RELX L"Attach.RelativeX"
-#define VBOXWDDM_REG_DISPLAYSETTINGS_ATTACH_RELY L"Attach.RelativeY"
-#define VBOXWDDM_REG_DISPLAYSETTINGS_ATTACH_DESKTOP L"Attach.ToDesktop"
-
 NTSTATUS vboxWddmRegQueryDisplaySettingsKeyName(PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId,
         ULONG cbBuf, PWCHAR pBuf, PULONG pcbResult)
 {
@@ -612,14 +618,14 @@ NTSTATUS vboxWddmRegQueryDisplaySettingsKeyName(PVBOXMP_DEVEXT pDevExt, D3DDDI_V
         return STATUS_UNSUCCESSFUL;
 
     vboxWinVersion_t ver = VBoxQueryWinVersion();
-    if (ver == WINVISTA)
+    if (ver == WINVERSION_VISTA)
     {
         pKeyPrefix = VBOXWDDM_REG_DISPLAYSETTINGSKEY_PREFIX_VISTA;
         cbKeyPrefix = sizeof (VBOXWDDM_REG_DISPLAYSETTINGSKEY_PREFIX_VISTA);
     }
     else
     {
-        Assert(ver == WIN7 || ver == WIN8);
+        Assert(ver > WINVERSION_VISTA);
         pKeyPrefix = VBOXWDDM_REG_DISPLAYSETTINGSKEY_PREFIX_WIN7;
         cbKeyPrefix = sizeof (VBOXWDDM_REG_DISPLAYSETTINGSKEY_PREFIX_WIN7);
     }
@@ -645,14 +651,62 @@ NTSTATUS vboxWddmRegQueryDisplaySettingsKeyName(PVBOXMP_DEVEXT pDevExt, D3DDDI_V
     return Status;
 }
 
-#define VBOXWDDM_REG_DISPLAYSETTINGSVIDEOKEY L"\\Registry\\Machine\\System\\CurrentControlSet\\Control\\Video\\"
-#define VBOXWDDM_REG_DISPLAYSETTINGSVIDEOKEY_SUBKEY L"\\Video"
-
-NTSTATUS vboxWddmRegQueryVideoGuidString(ULONG cbBuf, PWCHAR pBuf, PULONG pcbResult)
+NTSTATUS vboxWddmRegQueryVideoGuidString(PVBOXMP_DEVEXT pDevExt, ULONG cbBuf, PWCHAR pBuf, PULONG pcbResult)
 {
-    HANDLE hKey;
-    NTSTATUS Status = vboxWddmRegOpenKey(&hKey, VBOXWDDM_REG_DISPLAYSETTINGSVIDEOKEY, GENERIC_READ);
-    Assert(Status == STATUS_SUCCESS);
+    BOOLEAN fNewMethodSucceeded = FALSE;
+    HANDLE hKey = NULL;
+    NTSTATUS Status = IoOpenDeviceRegistryKey(pDevExt->pPDO, PLUGPLAY_REGKEY_DEVICE, GENERIC_READ, &hKey);
+    if (NT_SUCCESS(Status))
+    {
+        struct
+        {
+            KEY_VALUE_PARTIAL_INFORMATION Info;
+            UCHAR Buf[1024]; /* should be enough */
+        } KeyData;
+        ULONG cbResult;
+        UNICODE_STRING RtlStr;
+        RtlInitUnicodeString(&RtlStr, L"VideoID");
+        Status = ZwQueryValueKey(hKey,
+                    &RtlStr,
+                    KeyValuePartialInformation,
+                    &KeyData.Info,
+                    sizeof(KeyData),
+                    &cbResult);
+        if (NT_SUCCESS(Status))
+        {
+            if (KeyData.Info.Type == REG_SZ)
+            {
+                fNewMethodSucceeded = TRUE;
+                *pcbResult = KeyData.Info.DataLength + 2;
+                if (cbBuf >= KeyData.Info.DataLength)
+                {
+                    memcpy(pBuf, KeyData.Info.Data, KeyData.Info.DataLength + 2);
+                    Status = STATUS_SUCCESS;
+                }
+                else
+                    Status = STATUS_BUFFER_TOO_SMALL;
+            }
+        }
+        else
+        {
+            WARN(("ZwQueryValueKey failed, Status 0x%x", Status));
+        }
+
+        NTSTATUS tmpStatus = ZwClose(hKey);
+        Assert(tmpStatus == STATUS_SUCCESS);
+    }
+    else
+    {
+        WARN(("IoOpenDeviceRegistryKey failed Status 0x%x", Status));
+    }
+
+    if (fNewMethodSucceeded)
+        return Status;
+    else
+        WARN(("failed to acquire the VideoID, falling back to the old impl"));
+
+    Status = vboxWddmRegOpenKey(&hKey, VBOXWDDM_REG_DISPLAYSETTINGSVIDEOKEY, GENERIC_READ);
+    //Assert(Status == STATUS_SUCCESS);
     if (Status == STATUS_SUCCESS)
     {
         struct
@@ -679,7 +733,7 @@ NTSTATUS vboxWddmRegQueryVideoGuidString(ULONG cbBuf, PWCHAR pBuf, PULONG pcbRes
             pSubBuf += Buf.Name.NameLength/2;
             memcpy(pSubBuf, VBOXWDDM_REG_DISPLAYSETTINGSVIDEOKEY_SUBKEY, sizeof (VBOXWDDM_REG_DISPLAYSETTINGSVIDEOKEY_SUBKEY));
             Status = vboxWddmRegOpenKey(&hSubKey, KeyBuf, GENERIC_READ);
-            Assert(Status == STATUS_SUCCESS);
+            //Assert(Status == STATUS_SUCCESS);
             if (Status == STATUS_SUCCESS)
             {
                 struct
@@ -733,22 +787,27 @@ NTSTATUS vboxWddmRegQueryVideoGuidString(ULONG cbBuf, PWCHAR pBuf, PULONG pcbRes
     return Status;
 }
 
-NTSTATUS vboxWddmRegOpenKey(OUT PHANDLE phKey, IN PWCHAR pName, IN ACCESS_MASK fAccess)
+NTSTATUS vboxWddmRegOpenKeyEx(OUT PHANDLE phKey, IN HANDLE hRootKey, IN PWCHAR pName, IN ACCESS_MASK fAccess)
 {
     OBJECT_ATTRIBUTES ObjAttr;
     UNICODE_STRING RtlStr;
 
     RtlInitUnicodeString(&RtlStr, pName);
-    InitializeObjectAttributes(&ObjAttr, &RtlStr, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, NULL, NULL);
+    InitializeObjectAttributes(&ObjAttr, &RtlStr, OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE, hRootKey, NULL);
 
     return ZwOpenKey(phKey, fAccess, &ObjAttr);
 }
 
-NTSTATUS vboxWddmRegOpenDisplaySettingsKey(IN PVBOXMP_DEVEXT pDeviceExtension, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, OUT PHANDLE phKey)
+NTSTATUS vboxWddmRegOpenKey(OUT PHANDLE phKey, IN PWCHAR pName, IN ACCESS_MASK fAccess)
+{
+    return vboxWddmRegOpenKeyEx(phKey, NULL, pName, fAccess);
+}
+
+NTSTATUS vboxWddmRegOpenDisplaySettingsKey(IN PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, OUT PHANDLE phKey)
 {
     WCHAR Buf[512];
     ULONG cbBuf = sizeof(Buf);
-    NTSTATUS Status = vboxWddmRegQueryDisplaySettingsKeyName(pDeviceExtension, VidPnSourceId, cbBuf, Buf, &cbBuf);
+    NTSTATUS Status = vboxWddmRegQueryDisplaySettingsKeyName(pDevExt, VidPnSourceId, cbBuf, Buf, &cbBuf);
     Assert(Status == STATUS_SUCCESS);
     if (Status == STATUS_SUCCESS)
     {
@@ -791,12 +850,12 @@ NTSTATUS vboxWddmRegDisplaySettingsQueryRelY(HANDLE hKey, int * pResult)
     return Status;
 }
 
-NTSTATUS vboxWddmDisplaySettingsQueryPos(IN PVBOXMP_DEVEXT pDeviceExtension, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, POINT * pPos)
+NTSTATUS vboxWddmDisplaySettingsQueryPos(IN PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, POINT * pPos)
 {
     Assert(KeGetCurrentIrql() == PASSIVE_LEVEL);
     HANDLE hKey;
-    NTSTATUS Status = vboxWddmRegOpenDisplaySettingsKey(pDeviceExtension, VidPnSourceId, &hKey);
-    Assert(Status == STATUS_SUCCESS);
+    NTSTATUS Status = vboxWddmRegOpenDisplaySettingsKey(pDevExt, VidPnSourceId, &hKey);
+    //Assert(Status == STATUS_SUCCESS);
     if (Status == STATUS_SUCCESS)
     {
         int x, y;
@@ -817,6 +876,71 @@ NTSTATUS vboxWddmDisplaySettingsQueryPos(IN PVBOXMP_DEVEXT pDeviceExtension, D3D
     }
 
     return Status;
+}
+
+void vboxWddmDisplaySettingsCheckPos(IN PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId)
+{
+    POINT Pos = {0};
+    NTSTATUS Status = vboxWddmDisplaySettingsQueryPos(pDevExt, VidPnSourceId, &Pos);
+    if (!NT_SUCCESS(Status))
+    {
+        Log(("vboxWddmDisplaySettingsQueryPos failed %#x", Status));
+        return;
+    }
+
+    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[VidPnSourceId];
+
+    if (!memcmp(&pSource->VScreenPos, &Pos, sizeof (Pos)))
+        return;
+
+    pSource->VScreenPos = Pos;
+    pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_DIMENSIONS;
+
+    vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
+}
+
+NTSTATUS vboxWddmRegDrvFlagsSet(PVBOXMP_DEVEXT pDevExt, DWORD fVal)
+{
+    HANDLE hKey = NULL;
+    NTSTATUS Status = IoOpenDeviceRegistryKey(pDevExt->pPDO, PLUGPLAY_REGKEY_DRIVER, GENERIC_WRITE, &hKey);
+    if (!NT_SUCCESS(Status))
+    {
+        WARN(("IoOpenDeviceRegistryKey failed, Status = 0x%x", Status));
+        return Status;
+    }
+
+    Status = vboxWddmRegSetValueDword(hKey, VBOXWDDM_REG_DRV_FLAGS_NAME, fVal);
+    if (!NT_SUCCESS(Status))
+        WARN(("vboxWddmRegSetValueDword failed, Status = 0x%x", Status));
+
+    NTSTATUS tmpStatus = ZwClose(hKey);
+    Assert(tmpStatus == STATUS_SUCCESS);
+
+    return Status;
+}
+
+DWORD vboxWddmRegDrvFlagsGet(PVBOXMP_DEVEXT pDevExt, DWORD fDefault)
+{
+    HANDLE hKey = NULL;
+    NTSTATUS Status = IoOpenDeviceRegistryKey(pDevExt->pPDO, PLUGPLAY_REGKEY_DRIVER, GENERIC_READ, &hKey);
+    if (!NT_SUCCESS(Status))
+    {
+        WARN(("IoOpenDeviceRegistryKey failed, Status = 0x%x", Status));
+        return fDefault;
+    }
+
+    DWORD dwVal = 0;
+    Status = vboxWddmRegQueryValueDword(hKey, VBOXWDDM_REG_DRV_FLAGS_NAME, &dwVal);
+    if (!NT_SUCCESS(Status))
+    {
+        WARN(("vboxWddmRegQueryValueDword failed, Status = 0x%x", Status));
+        dwVal = fDefault;
+    }
+
+    NTSTATUS tmpStatus = ZwClose(hKey);
+    Assert(tmpStatus == STATUS_SUCCESS);
+
+    return dwVal;
 }
 
 NTSTATUS vboxWddmRegQueryValueDword(IN HANDLE hKey, IN PWCHAR pName, OUT PDWORD pDword)
@@ -848,7 +972,7 @@ NTSTATUS vboxWddmRegQueryValueDword(IN HANDLE hKey, IN PWCHAR pName, OUT PDWORD 
     return STATUS_INVALID_PARAMETER;
 }
 
-NTSTATUS vboxWddmRegSetValueDword(IN HANDLE hKey, IN PWCHAR pName, OUT DWORD val)
+NTSTATUS vboxWddmRegSetValueDword(IN HANDLE hKey, IN PWCHAR pName, IN DWORD val)
 {
     UNICODE_STRING RtlStr;
     RtlInitUnicodeString(&RtlStr, pName);
@@ -867,7 +991,7 @@ UNICODE_STRING* vboxWddmVGuidGet(PVBOXMP_DEVEXT pDevExt)
     Assert(KeGetCurrentIrql() == PASSIVE_LEVEL);
     WCHAR VideoGuidBuf[512];
     ULONG cbVideoGuidBuf = sizeof (VideoGuidBuf);
-    NTSTATUS Status = vboxWddmRegQueryVideoGuidString(cbVideoGuidBuf, VideoGuidBuf, &cbVideoGuidBuf);
+    NTSTATUS Status = vboxWddmRegQueryVideoGuidString(pDevExt ,cbVideoGuidBuf, VideoGuidBuf, &cbVideoGuidBuf);
     Assert(Status == STATUS_SUCCESS);
     if (Status == STATUS_SUCCESS)
     {
@@ -958,6 +1082,7 @@ typedef struct VBOXVIDEOCM_ALLOC_REF
     PKEVENT pSynchEvent;
     VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType;
     volatile uint32_t cRefs;
+    PVOID pvUm;
     MDL Mdl;
 } VBOXVIDEOCM_ALLOC_REF, *PVBOXVIDEOCM_ALLOC_REF;
 
@@ -1079,6 +1204,7 @@ NTSTATUS vboxVideoAMgrCtxAllocMap(PVBOXVIDEOCM_ALLOC_CONTEXT pContext, PVBOXVIDE
                           NormalPagePriority);
                 if (pvUm)
                 {
+                    pAllocRef->pvUm = pvUm;
                     pAllocRef->pContext = pContext;
                     pAllocRef->pAlloc = pAlloc;
                     pAllocRef->fUhgsmiType = pUmAlloc->fUhgsmiType;
@@ -1093,6 +1219,8 @@ NTSTATUS vboxVideoAMgrCtxAllocMap(PVBOXVIDEOCM_ALLOC_CONTEXT pContext, PVBOXVIDE
                         pUmAlloc->pvData = (uint64_t)pvUm;
                         return STATUS_SUCCESS;
                     }
+
+                    MmUnmapLockedPages(pvUm, &pAllocRef->Mdl);
                 }
                 else
                 {
@@ -1134,6 +1262,8 @@ NTSTATUS vboxVideoAMgrCtxAllocUnmap(PVBOXVIDEOCM_ALLOC_CONTEXT pContext, VBOXDIS
         /* wait for the dereference, i.e. for all commands involving this allocation to complete */
         vboxWddmCounterU32Wait(&pAllocRef->cRefs, 1);
 
+        MmUnmapLockedPages(pAllocRef->pvUm, &pAllocRef->Mdl);
+
         MmUnlockPages(&pAllocRef->Mdl);
         *ppAlloc = pAllocRef->pAlloc;
         if (pAllocRef->pSynchEvent)
@@ -1153,7 +1283,8 @@ static PVBOXVIDEOCM_ALLOC_REF vboxVideoAMgrCtxAllocRefAcquire(PVBOXVIDEOCM_ALLOC
 {
     ExAcquireFastMutex(&pContext->Mutex);
     PVBOXVIDEOCM_ALLOC_REF pAllocRef = (PVBOXVIDEOCM_ALLOC_REF)vboxWddmHTableGet(&pContext->AllocTable, hSesionHandle);
-    ASMAtomicIncU32(&pAllocRef->cRefs);
+    if (pAllocRef)
+        ASMAtomicIncU32(&pAllocRef->cRefs);
     ExReleaseFastMutex(&pContext->Mutex);
     return pAllocRef;
 }
@@ -1271,7 +1402,7 @@ NTSTATUS vboxVideoAMgrCtxAllocSubmit(PVBOXMP_DEVEXT pDevExt, PVBOXVIDEOCM_ALLOC_
 #endif
                 pBufCmd->offBuffer = pRef->pAlloc->offData + pBufInfo->Info.offData;
                 pBufCmd->cbBuffer = pBufInfo->Info.cbData;
-                pBufCmd->u32GuestData = pBufInfo->Info.bDoNotSignalCompletion;
+                pBufCmd->u32GuestData = 0;
                 pBufCmd->u64GuestData = (uint64_t)pRef;
             }
             else
@@ -1407,6 +1538,8 @@ NTSTATUS vboxVideoAMgrCtxDestroy(PVBOXVIDEOCM_ALLOC_CONTEXT pCtx)
         PVBOXVIDEOCM_ALLOC_REF pRef = (PVBOXVIDEOCM_ALLOC_REF)vboxWddmHTableIterNext(&Iter, NULL);
         if (!pRef)
             break;
+
+        Assert(0);
 
         Status = vboxVideoAMgrCtxAllocDestroy(pCtx, pRef->hSessionHandle);
         Assert(Status == STATUS_SUCCESS);
@@ -1604,750 +1737,6 @@ BOOLEAN vboxShRcTreeRemove(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOCATION pAlloc)
 }
 #endif
 
-
-/* visible rects */
-typedef struct VBOXWDDMVR_REG
-{
-    LIST_ENTRY ListEntry;
-    RECT Rect;
-} VBOXWDDMVR_REG, *PVBOXWDDMVR_REG;
-
-#define PVBOXWDDMVR_REG_FROM_ENTRY(_pEntry) ((PVBOXWDDMVR_REG)(((uint8_t*)(_pEntry)) - RT_OFFSETOF(VBOXWDDMVR_REG, ListEntry)))
-
-#ifdef DEBUG_misha
-//# define VBOXVDBG_VR_LAL_DISABLE
-#endif
-
-#ifndef VBOXVDBG_VR_LAL_DISABLE
-static LOOKASIDE_LIST_EX g_VBoxWddmVrLookasideList;
-#endif
-
-static PVBOXWDDMVR_REG vboxWddmVrRegCreate()
-{
-#ifndef VBOXVDBG_VR_LAL_DISABLE
-    PVBOXWDDMVR_REG pReg = (PVBOXWDDMVR_REG)ExAllocateFromLookasideListEx(&g_VBoxWddmVrLookasideList);
-    if (!pReg)
-    {
-        WARN(("ExAllocateFromLookasideListEx failed!"));
-    }
-    return pReg;
-#else
-    return (PVBOXWDDMVR_REG)vboxWddmMemAlloc(sizeof (VBOXWDDMVR_REG));
-#endif
-}
-
-static void vboxWddmVrRegTerm(PVBOXWDDMVR_REG pReg)
-{
-#ifndef VBOXVDBG_VR_LAL_DISABLE
-    ExFreeToLookasideListEx(&g_VBoxWddmVrLookasideList, pReg);
-#else
-    vboxWddmMemFree(pReg);
-#endif
-}
-
-void VBoxWddmVrListClear(PVBOXWDDMVR_LIST pList)
-{
-    PLIST_ENTRY pNext;
-    for (PLIST_ENTRY pEntry = pList->ListHead.Flink; pEntry != &pList->ListHead; pEntry = pNext)
-    {
-        pNext = pEntry->Flink;
-        PVBOXWDDMVR_REG pReg = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry);
-        vboxWddmVrRegTerm(pReg);
-    }
-    VBoxWddmVrListInit(pList);
-}
-
-#define VBOXWDDMVR_MEMTAG 'vDBV'
-
-NTSTATUS VBoxWddmVrInit()
-{
-#ifndef VBOXVDBG_VR_LAL_DISABLE
-    NTSTATUS Status = ExInitializeLookasideListEx(&g_VBoxWddmVrLookasideList,
-                            NULL, /* PALLOCATE_FUNCTION_EX Allocate */
-                            NULL, /* PFREE_FUNCTION_EX Free */
-                            NonPagedPool,
-                            0, /* ULONG Flags */
-                            sizeof (VBOXWDDMVR_REG),
-                            VBOXWDDMVR_MEMTAG,
-                            0 /* USHORT Depth - reserved, must be null */
-                            );
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("ExInitializeLookasideListEx failed, Status (0x%x)", Status));
-        return Status;
-    }
-#endif
-
-    return STATUS_SUCCESS;
-}
-
-void VBoxWddmVrTerm()
-{
-#ifndef VBOXVDBG_VR_LAL_DISABLE
-    ExDeleteLookasideListEx(&g_VBoxWddmVrLookasideList);
-#endif
-}
-
-typedef DECLCALLBACK(int) FNVBOXWDDMVR_CB_COMPARATOR(const PVBOXWDDMVR_REG pReg1, const PVBOXWDDMVR_REG pReg2);
-typedef FNVBOXWDDMVR_CB_COMPARATOR *PFNVBOXWDDMVR_CB_COMPARATOR;
-
-static DECLCALLBACK(int) vboxWddmVrRegNonintersectedComparator(const RECT* pRect1, const RECT* pRect2)
-{
-    Assert(!vboxWddmRectIsIntersect(pRect1, pRect2));
-    if (pRect1->top != pRect2->top)
-        return pRect1->top - pRect2->top;
-    return pRect1->left - pRect2->left;
-}
-
-#ifdef DEBUG_misha
-static void vboxWddmVrDbgListDoVerify(PVBOXWDDMVR_LIST pList)
-{
-    PLIST_ENTRY pEntry1 = pList->ListHead.Flink;
-
-    for (PLIST_ENTRY pEntry1 = pList->ListHead.Flink; pEntry1 != &pList->ListHead; pEntry1 = pEntry1->Flink)
-    {
-        PVBOXWDDMVR_REG pReg1 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry1);
-        for (PLIST_ENTRY pEntry2 = pEntry1->Flink; pEntry2 != &pList->ListHead; pEntry2 = pEntry2->Flink)
-        {
-            PVBOXWDDMVR_REG pReg2 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry2);
-            Assert(vboxWddmVrRegNonintersectedComparator(&pReg1->Rect, &pReg2->Rect) < 0);
-        }
-    }
-}
-
-#define vboxWddmVrDbgListVerify vboxWddmVrDbgListDoVerify
-#else
-#define vboxWddmVrDbgListVerify(_p) do {} while (0)
-#endif
-
-static NTSTATUS vboxWddmVrListUniteIntersection(PVBOXWDDMVR_LIST pList, PVBOXWDDMVR_LIST pIntersection);
-
-#define VBOXWDDMVR_INVALID_COORD (~0UL)
-
-DECLINLINE(void) vboxWddmVrListRegAdd(PVBOXWDDMVR_LIST pList, PVBOXWDDMVR_REG pReg, PLIST_ENTRY pPlace, BOOLEAN fAfter)
-{
-    if (fAfter)
-        InsertHeadList(pPlace, &pReg->ListEntry);
-    else
-        InsertTailList(pPlace, &pReg->ListEntry);
-    ++pList->cEntries;
-    vboxWddmVrDbgListVerify(pList);
-}
-
-DECLINLINE(void) vboxWddmVrListRegRemove(PVBOXWDDMVR_LIST pList, PVBOXWDDMVR_REG pReg)
-{
-    RemoveEntryList(&pReg->ListEntry);
-    --pList->cEntries;
-}
-
-static void vboxWddmVrListRegAddOrder(PVBOXWDDMVR_LIST pList, PLIST_ENTRY pMemberEntry, PVBOXWDDMVR_REG pReg)
-{
-    do
-    {
-        if (pMemberEntry != &pList->ListHead)
-        {
-            PVBOXWDDMVR_REG pMemberReg = PVBOXWDDMVR_REG_FROM_ENTRY(pMemberEntry);
-            if (vboxWddmVrRegNonintersectedComparator(&pMemberReg->Rect, &pReg->Rect) < 0)
-            {
-                pMemberEntry = pMemberEntry->Flink;
-                continue;
-            }
-        }
-        vboxWddmVrListRegAdd(pList, pReg, pMemberEntry, FALSE);
-        break;
-    } while (1);
-}
-
-static void vboxWddmVrListAddNonintersected(PVBOXWDDMVR_LIST pList1, PVBOXWDDMVR_LIST pList2)
-{
-    PLIST_ENTRY pEntry1 = pList1->ListHead.Flink;
-
-    for (PLIST_ENTRY pEntry2 = pList2->ListHead.Flink; pEntry2 != &pList2->ListHead; pEntry2 = pList2->ListHead.Flink)
-    {
-        PVBOXWDDMVR_REG pReg2 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry2);
-        do {
-            if (pEntry1 != &pList1->ListHead)
-            {
-                PVBOXWDDMVR_REG pReg1 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry1);
-                if (vboxWddmVrRegNonintersectedComparator(&pReg1->Rect, &pReg2->Rect) < 0)
-                {
-                    pEntry1 = pEntry1->Flink;
-                    continue;
-                }
-            }
-            vboxWddmVrListRegRemove(pList2, pReg2);
-            vboxWddmVrListRegAdd(pList1, pReg2, pEntry1, FALSE);
-            break;
-        } while (1);
-    }
-
-    Assert(VBoxWddmVrListIsEmpty(pList2));
-}
-
-static NTSTATUS vboxWddmVrListRegIntersectSubstNoJoin(PVBOXWDDMVR_LIST pList1, PVBOXWDDMVR_REG pReg1, const RECT * pRect2)
-{
-    UINT topLim = VBOXWDDMVR_INVALID_COORD;
-    UINT bottomLim = VBOXWDDMVR_INVALID_COORD;
-    LIST_ENTRY List;
-    PVBOXWDDMVR_REG pBottomReg = NULL;
-#ifdef DEBUG_misha
-    RECT tmpRect = pReg1->Rect;
-    vboxWddmVrDbgListVerify(pList1);
-#endif
-
-    InitializeListHead(&List);
-
-    Assert(vboxWddmRectIsIntersect(&pReg1->Rect, pRect2));
-
-    if (pReg1->Rect.top < pRect2->top)
-    {
-        Assert(pRect2->top < pReg1->Rect.bottom);
-        PVBOXWDDMVR_REG pRegResult = vboxWddmVrRegCreate();
-        pRegResult->Rect.top = pReg1->Rect.top;
-        pRegResult->Rect.left = pReg1->Rect.left;
-        pRegResult->Rect.bottom = pRect2->top;
-        pRegResult->Rect.right = pReg1->Rect.right;
-        topLim = pRect2->top;
-        InsertTailList(&List, &pRegResult->ListEntry);
-    }
-
-    if (pReg1->Rect.bottom > pRect2->bottom)
-    {
-        Assert(pRect2->bottom > pReg1->Rect.top);
-        PVBOXWDDMVR_REG pRegResult = vboxWddmVrRegCreate();
-        pRegResult->Rect.top = pRect2->bottom;
-        pRegResult->Rect.left = pReg1->Rect.left;
-        pRegResult->Rect.bottom = pReg1->Rect.bottom;
-        pRegResult->Rect.right = pReg1->Rect.right;
-        bottomLim = pRect2->bottom;
-        pBottomReg = pRegResult;
-    }
-
-    if (pReg1->Rect.left < pRect2->left)
-    {
-        Assert(pRect2->left < pReg1->Rect.right);
-        PVBOXWDDMVR_REG pRegResult = vboxWddmVrRegCreate();
-        pRegResult->Rect.top = topLim == VBOXWDDMVR_INVALID_COORD ? pReg1->Rect.top : topLim;
-        pRegResult->Rect.left = pReg1->Rect.left;
-        pRegResult->Rect.bottom = bottomLim == VBOXWDDMVR_INVALID_COORD ? pReg1->Rect.bottom : bottomLim;
-        pRegResult->Rect.right = pRect2->left;
-        InsertTailList(&List, &pRegResult->ListEntry);
-    }
-
-    if (pReg1->Rect.right > pRect2->right)
-    {
-        Assert(pRect2->right > pReg1->Rect.left);
-        PVBOXWDDMVR_REG pRegResult = vboxWddmVrRegCreate();
-        pRegResult->Rect.top = topLim == VBOXWDDMVR_INVALID_COORD ? pReg1->Rect.top : topLim;
-        pRegResult->Rect.left = pRect2->right;
-        pRegResult->Rect.bottom = bottomLim == VBOXWDDMVR_INVALID_COORD ? pReg1->Rect.bottom : bottomLim;
-        pRegResult->Rect.right = pReg1->Rect.right;
-        InsertTailList(&List, &pRegResult->ListEntry);
-    }
-
-    if (pBottomReg)
-        InsertTailList(&List, &pBottomReg->ListEntry);
-
-    PLIST_ENTRY pMemberEntry = pReg1->ListEntry.Flink;
-    vboxWddmVrListRegRemove(pList1, pReg1);
-    vboxWddmVrRegTerm(pReg1);
-
-    if (IsListEmpty(&List))
-        return STATUS_SUCCESS; /* the region is covered by the pRect2 */
-
-    PLIST_ENTRY pEntry = List.Flink, pNext;
-    for (; pEntry != &List; pEntry = pNext)
-    {
-        pNext = pEntry->Flink;
-        PVBOXWDDMVR_REG pReg = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry);
-
-        vboxWddmVrListRegAddOrder(pList1, pMemberEntry, pReg);
-        pMemberEntry = pEntry->Flink; /* the following elements should go after the given pEntry since they are ordered already */
-    }
-    return STATUS_SUCCESS;
-}
-
-typedef DECLCALLBACK(PLIST_ENTRY) FNVBOXWDDMVR_CB_INTERSECTED_VISITOR(PVBOXWDDMVR_LIST pList1, PVBOXWDDMVR_REG pReg1, const RECT * pRect2, void *pvContext, PLIST_ENTRY *ppNext);
-typedef FNVBOXWDDMVR_CB_INTERSECTED_VISITOR *PFNVBOXWDDMVR_CB_INTERSECTED_VISITOR;
-
-static void vboxWddmVrListVisitIntersected(PVBOXWDDMVR_LIST pList1, UINT cRects, const RECT *aRects, PFNVBOXWDDMVR_CB_INTERSECTED_VISITOR pfnVisitor, void* pvVisitor)
-{
-    PLIST_ENTRY pEntry1 = pList1->ListHead.Flink;
-    PLIST_ENTRY pNext1;
-    UINT iFirst2 = 0;
-
-    for (; pEntry1 != &pList1->ListHead; pEntry1 = pNext1)
-    {
-        pNext1 = pEntry1->Flink;
-        PVBOXWDDMVR_REG pReg1 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry1);
-        for (UINT i = iFirst2; i < cRects; ++i)
-        {
-            const RECT *pRect2 = &aRects[i];
-            if (pReg1->Rect.bottom <= pRect2->top)
-                continue;
-            else if (pRect2->bottom <= pReg1->Rect.top)
-                continue;
-            /* y coords intersect */
-            else if (pReg1->Rect.right <= pRect2->left)
-                continue;
-            else if (pRect2->right <= pReg1->Rect.left)
-                continue;
-            /* x coords intersect */
-
-            /* the visitor can modify the list 1, apply necessary adjustments after it */
-            PLIST_ENTRY pEntry1 = pfnVisitor (pList1, pReg1, pRect2, pvVisitor, &pNext1);
-            if (pEntry1 == &pList1->ListHead)
-                break;
-        }
-    }
-}
-
-
-static void vboxWddmVrListJoinRectsHV(PVBOXWDDMVR_LIST pList, BOOLEAN fHorizontal)
-{
-    PLIST_ENTRY pNext1, pNext2;
-
-    for (PLIST_ENTRY pEntry1 = pList->ListHead.Flink; pEntry1 != &pList->ListHead; pEntry1 = pNext1)
-    {
-        PVBOXWDDMVR_REG pReg1 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry1);
-        pNext1 = pEntry1->Flink;
-        for (PLIST_ENTRY pEntry2 = pEntry1->Flink; pEntry2 != &pList->ListHead; pEntry2 = pNext2)
-        {
-            PVBOXWDDMVR_REG pReg2 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry2);
-            pNext2 = pEntry2->Flink;
-            if (fHorizontal)
-            {
-                if (pReg1->Rect.top == pReg2->Rect.top)
-                {
-                    if (pReg1->Rect.right == pReg2->Rect.left)
-                    {
-                        /* join rectangles */
-                        vboxWddmVrListRegRemove(pList, pReg2);
-                        if (pReg1->Rect.bottom > pReg2->Rect.bottom)
-                        {
-                            LONG oldRight1 = pReg1->Rect.right;
-                            LONG oldBottom1 = pReg1->Rect.bottom;
-                            pReg1->Rect.right = pReg2->Rect.right;
-                            pReg1->Rect.bottom = pReg2->Rect.bottom;
-
-                            vboxWddmVrDbgListVerify(pList);
-
-                            pReg2->Rect.left = pReg1->Rect.left;
-                            pReg2->Rect.top = pReg1->Rect.bottom;
-                            pReg2->Rect.right = oldRight1;
-                            pReg2->Rect.bottom = oldBottom1;
-                            vboxWddmVrListRegAddOrder(pList, pReg1->ListEntry.Flink, pReg2);
-                            /* restart the pNext1 & pNext2 since regs are splitted into smaller ones in y dimension
-                             * and thus can match one of the previous rects */
-                            pNext1 = pList->ListHead.Flink;
-                            break;
-                        }
-                        else if (pReg1->Rect.bottom < pReg2->Rect.bottom)
-                        {
-                            pReg1->Rect.right = pReg2->Rect.right;
-                            vboxWddmVrDbgListVerify(pList);
-                            pReg2->Rect.top = pReg1->Rect.bottom;
-                            vboxWddmVrListRegAddOrder(pList, pReg1->ListEntry.Flink, pReg2);
-                            /* restart the pNext1 & pNext2 since regs are splitted into smaller ones in y dimension
-                             * and thus can match one of the previous rects */
-                            pNext1 = pList->ListHead.Flink;
-                            break;
-                        }
-                        else
-                        {
-                            pReg1->Rect.right = pReg2->Rect.right;
-                            vboxWddmVrDbgListVerify(pList);
-                            /* reset the pNext1 since it could be the pReg2 being destroyed */
-                            pNext1 = pEntry1->Flink;
-                            /* pNext2 stays the same since it is pReg2->ListEntry.pNext, which is kept intact */
-                            vboxWddmVrRegTerm(pReg2);
-                        }
-                    }
-                    continue;
-                }
-                else if (pReg1->Rect.bottom == pReg2->Rect.bottom)
-                {
-                    Assert(pReg1->Rect.top < pReg2->Rect.top); /* <- since pReg1 > pReg2 && pReg1->Rect.top != pReg2->Rect.top*/
-                    if (pReg1->Rect.right == pReg2->Rect.left)
-                    {
-                        /* join rectangles */
-                        vboxWddmVrListRegRemove(pList, pReg2);
-
-                        pReg1->Rect.bottom = pReg2->Rect.top;
-                        vboxWddmVrDbgListVerify(pList);
-                        pReg2->Rect.left = pReg1->Rect.left;
-
-                        vboxWddmVrListRegAddOrder(pList, pReg2->ListEntry.Flink, pReg2);
-
-                        /* restart the pNext1 & pNext2 since regs are splitted into smaller ones in y dimension
-                         * and thus can match one of the previous rects */
-                        pNext1 = pList->ListHead.Flink;
-                        break;
-                    }
-                    else if (pReg1->Rect.left == pReg2->Rect.right)
-                    {
-                        /* join rectangles */
-                        vboxWddmVrListRegRemove(pList, pReg2);
-
-                        pReg1->Rect.bottom = pReg2->Rect.top;
-                        vboxWddmVrDbgListVerify(pList);
-                        pReg2->Rect.right = pReg1->Rect.right;
-
-                        vboxWddmVrListRegAddOrder(pList, pReg2->ListEntry.Flink, pReg2);
-
-                        /* restart the pNext1 & pNext2 since regs are splitted into smaller ones in y dimension
-                         * and thus can match one of the previous rects */
-                        pNext1 = pList->ListHead.Flink;
-                        break;
-                    }
-                    continue;
-                }
-            }
-            else
-            {
-                if (pReg1->Rect.bottom == pReg2->Rect.top)
-                {
-                    if (pReg1->Rect.left == pReg2->Rect.left)
-                    {
-                        if (pReg1->Rect.right == pReg2->Rect.right)
-                        {
-                            /* join rects */
-                            vboxWddmVrListRegRemove(pList, pReg2);
-
-                            pReg1->Rect.bottom = pReg2->Rect.bottom;
-                            vboxWddmVrDbgListVerify(pList);
-
-                            /* reset the pNext1 since it could be the pReg2 being destroyed */
-                            pNext1 = pEntry1->Flink;
-                            /* pNext2 stays the same since it is pReg2->ListEntry.pNext, which is kept intact */
-                            vboxWddmVrRegTerm(pReg2);
-                            continue;
-                        }
-                        /* no more to be done for for pReg1 */
-                        break;
-                    }
-                    else if (pReg1->Rect.right > pReg2->Rect.left)
-                    {
-                        /* no more to be done for for pReg1 */
-                        break;
-                    }
-
-                    continue;
-                }
-                else if (pReg1->Rect.bottom < pReg2->Rect.top)
-                {
-                    /* no more to be done for for pReg1 */
-                    break;
-                }
-            }
-        }
-    }
-}
-
-static void vboxWddmVrListJoinRects(PVBOXWDDMVR_LIST pList)
-{
-    vboxWddmVrListJoinRectsHV(pList, TRUE);
-    vboxWddmVrListJoinRectsHV(pList, FALSE);
-}
-
-typedef struct VBOXWDDMVR_CBDATA_SUBST
-{
-    NTSTATUS Status;
-    BOOLEAN fChanged;
-} VBOXWDDMVR_CBDATA_SUBST, *PVBOXWDDMVR_CBDATA_SUBST;
-
-static DECLCALLBACK(PLIST_ENTRY) vboxWddmVrListSubstNoJoinCb(PVBOXWDDMVR_LIST pList, PVBOXWDDMVR_REG pReg1, const RECT *pRect2, void *pvContext, PLIST_ENTRY *ppNext)
-{
-    PVBOXWDDMVR_CBDATA_SUBST pData = (PVBOXWDDMVR_CBDATA_SUBST)pvContext;
-    /* store the prev to get the new Flink out of it*/
-    PLIST_ENTRY pPrev = pReg1->ListEntry.Blink;
-    pData->fChanged = TRUE;
-
-    Assert(vboxWddmRectIsIntersect(&pReg1->Rect, pRect2));
-
-    /* NOTE: the pReg1 will be invalid after the vboxWddmVrListRegIntersectSubstNoJoin call!!! */
-    NTSTATUS Status = vboxWddmVrListRegIntersectSubstNoJoin(pList, pReg1, pRect2);
-    if (NT_SUCCESS(Status))
-    {
-        *ppNext = pPrev->Flink;
-        return &pList->ListHead;
-    }
-    WARN(("vboxWddmVrListRegIntersectSubstNoJoin failed!"));
-    Assert(!NT_SUCCESS(Status));
-    pData->Status = Status;
-    *ppNext = &pList->ListHead;
-    return &pList->ListHead;
-}
-
-static NTSTATUS vboxWddmVrListSubstNoJoin(PVBOXWDDMVR_LIST pList, UINT cRects, const PRECT aRects, BOOLEAN *pfChanged)
-{
-    if (VBoxWddmVrListIsEmpty(pList))
-        return STATUS_SUCCESS;
-
-    VBOXWDDMVR_CBDATA_SUBST Data;
-    Data.Status = STATUS_SUCCESS;
-    Data.fChanged = FALSE;
-
-    *pfChanged = FALSE;
-
-    vboxWddmVrListVisitIntersected(pList, cRects, aRects, vboxWddmVrListSubstNoJoinCb, &Data);
-    if (!NT_SUCCESS(Data.Status))
-    {
-        WARN(("vboxWddmVrListVisitIntersected failed!"));
-        return Data.Status;
-    }
-
-    *pfChanged = Data.fChanged;
-    return STATUS_SUCCESS;
-}
-
-#if 0
-static const PRECT vboxWddmVrRectsOrder(UINT cRects, const PRECT aRects)
-{
-#ifdef DEBUG
-    {
-        for (UINT i = 0; i < cRects; ++i)
-        {
-            RECT *pRectI = &aRects[i];
-            for (UINT j = i + 1; j < cRects; ++j)
-            {
-                RECT *pRectJ = &aRects[j];
-                Assert(!vboxWddmRectIsIntersect(pRectI, pRectJ));
-            }
-        }
-    }
-#endif
-
-    RECT * pRects = (RECT *)aRects;
-    /* check if rects are ordered already */
-    for (UINT i = 0; i < cRects - 1; ++i)
-    {
-        RECT *pRect1 = &pRects[i];
-        RECT *pRect2 = &pRects[i+1];
-        if (vboxWddmVrRegNonintersectedComparator(pRect1, pRect2) < 0)
-            continue;
-
-        WARN(("rects are unoreded!"));
-
-        if (pRects == aRects)
-        {
-            pRects = (RECT *)vboxWddmMemAlloc(sizeof (RECT) * cRects);
-            if (!pRects)
-            {
-                WARN(("vboxWddmMemAlloc failed!"));
-                return NULL;
-            }
-
-            memcpy(pRects, aRects, sizeof (RECT) * cRects);
-        }
-
-        Assert(pRects != aRects);
-
-        int j = (int)i - 1;
-        do {
-            RECT Tmp = *pRect1;
-            *pRect1 = *pRect2;
-            *pRect2 = Tmp;
-
-            if (j < 0)
-                break;
-
-            if (vboxWddmVrRegNonintersectedComparator(pRect1, pRect1-1) > 0)
-                break;
-
-            pRect2 = pRect1--;
-            --j;
-        } while (1);
-    }
-
-    return pRects;
-}
-#endif
-
-void VBoxWddmVrListTranslate(PVBOXWDDMVR_LIST pList, LONG x, LONG y)
-{
-    for (PLIST_ENTRY pEntry1 = pList->ListHead.Flink; pEntry1 != &pList->ListHead; pEntry1 = pEntry1->Flink)
-    {
-        PVBOXWDDMVR_REG pReg1 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry1);
-        vboxWddmRectTranslate(&pReg1->Rect, x, y);
-    }
-}
-
-NTSTATUS VBoxWddmVrListRectsSubst(PVBOXWDDMVR_LIST pList, UINT cRects, const PRECT aRects, BOOLEAN *pfChanged)
-{
-#if 0
-    const PRECT pRects = vboxWddmVrRectsOrder(cRects, aRects);
-    if (!pRects)
-    {
-        WARN(("vboxWddmVrRectsOrder failed!"));
-        return STATUS_NO_MEMORY;
-    }
-#endif
-
-    NTSTATUS Status = vboxWddmVrListSubstNoJoin(pList, cRects, aRects, pfChanged);
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("vboxWddmVrListSubstNoJoin failed!"));
-        goto done;
-    }
-
-    if (!*pfChanged)
-        goto done;
-
-    vboxWddmVrListJoinRects(pList);
-
-done:
-#if 0
-    if (pRects != aRects)
-        vboxWddmMemFree(pRects);
-#endif
-    return Status;
-}
-
-NTSTATUS VBoxWddmVrListRectsAdd(PVBOXWDDMVR_LIST pList, UINT cRects, const PRECT aRects, BOOLEAN *pfChanged)
-{
-    UINT cCovered = 0;
-
-#if 0
-#ifdef DEBUG
-    {
-        for (UINT i = 0; i < cRects; ++i)
-        {
-            RECT *pRectI = &aRects[i];
-            for (UINT j = i + 1; j < cRects; ++j)
-            {
-                RECT *pRectJ = &aRects[j];
-                Assert(!vboxWddmRectIsIntersect(pRectI, pRectJ));
-            }
-        }
-    }
-#endif
-#endif
-
-    /* early sort out the case when there are no new rects */
-    for (UINT i = 0; i < cRects; ++i)
-    {
-        for (PLIST_ENTRY pEntry1 = pList->ListHead.Flink; pEntry1 != &pList->ListHead; pEntry1 = pEntry1->Flink)
-        {
-            PVBOXWDDMVR_REG pReg1 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry1);
-            if (vboxWddmRectIsCoveres(&pReg1->Rect, &aRects[i]))
-            {
-                cCovered++;
-                break;
-            }
-        }
-    }
-
-    if (cCovered == cRects)
-    {
-        *pfChanged = FALSE;
-        return STATUS_SUCCESS;
-    }
-
-    /* rects are not covered, need to go the slow way */
-
-    VBOXWDDMVR_LIST DiffList;
-    VBoxWddmVrListInit(&DiffList);
-    PRECT pListRects = NULL;
-    UINT cAllocatedRects = 0;
-    BOOLEAN fNeedRectreate = TRUE;
-    BOOLEAN fChanged = FALSE;
-    NTSTATUS Status = STATUS_SUCCESS;
-
-    for (UINT i = 0; i < cRects; ++i)
-    {
-        PVBOXWDDMVR_REG pReg = vboxWddmVrRegCreate();
-        if (!pReg)
-        {
-            WARN(("vboxWddmVrRegCreate failed!"));
-            Status = STATUS_NO_MEMORY;
-            break;
-        }
-        pReg->Rect = aRects[i];
-
-        UINT cListRects = VBoxWddmVrListRectsCount(pList);
-        if (!cListRects)
-        {
-            vboxWddmVrListRegAdd(pList, pReg, &pList->ListHead, FALSE);
-            fChanged = TRUE;
-            continue;
-        }
-        else
-        {
-            Assert(VBoxWddmVrListIsEmpty(&DiffList));
-            vboxWddmVrListRegAdd(&DiffList, pReg, &DiffList.ListHead, FALSE);
-        }
-
-        if (cAllocatedRects < cListRects)
-        {
-            cAllocatedRects = cListRects + cRects;
-            Assert(fNeedRectreate);
-            if (pListRects)
-                vboxWddmMemFree(pListRects);
-            pListRects = (PRECT)vboxWddmMemAlloc(sizeof (RECT) * cAllocatedRects);
-            if (!pListRects)
-            {
-                WARN(("vboxWddmMemAllocZero failed!"));
-                Status = STATUS_NO_MEMORY;
-                break;
-            }
-        }
-
-
-        if (fNeedRectreate)
-        {
-            Status = VBoxWddmVrListRectsGet(pList, cListRects, pListRects);
-            Assert(Status == STATUS_SUCCESS);
-            fNeedRectreate = FALSE;
-        }
-
-        BOOLEAN fDummyChanged = FALSE;
-        Status = vboxWddmVrListSubstNoJoin(&DiffList, cListRects, pListRects, &fDummyChanged);
-        if (!NT_SUCCESS(Status))
-        {
-            WARN(("vboxWddmVrListSubstNoJoin failed!"));
-            Status = STATUS_NO_MEMORY;
-            break;
-        }
-
-        if (!VBoxWddmVrListIsEmpty(&DiffList))
-        {
-            vboxWddmVrListAddNonintersected(pList, &DiffList);
-            fNeedRectreate = TRUE;
-            fChanged = TRUE;
-        }
-
-        Assert(VBoxWddmVrListIsEmpty(&DiffList));
-    }
-
-    if (pListRects)
-        vboxWddmMemFree(pListRects);
-
-    Assert(VBoxWddmVrListIsEmpty(&DiffList) || Status != STATUS_SUCCESS);
-    VBoxWddmVrListClear(&DiffList);
-
-    if (fChanged)
-        vboxWddmVrListJoinRects(pList);
-
-    *pfChanged = fChanged;
-
-    return STATUS_SUCCESS;
-}
-
-NTSTATUS VBoxWddmVrListRectsGet(PVBOXWDDMVR_LIST pList, UINT cRects, PRECT aRects)
-{
-    if (cRects < VBoxWddmVrListRectsCount(pList))
-        return STATUS_BUFFER_TOO_SMALL;
-
-    UINT i = 0;
-    for (PLIST_ENTRY pEntry1 = pList->ListHead.Flink; pEntry1 != &pList->ListHead; pEntry1 = pEntry1->Flink, ++i)
-    {
-        PVBOXWDDMVR_REG pReg1 = PVBOXWDDMVR_REG_FROM_ENTRY(pEntry1);
-        aRects[i] = pReg1->Rect;
-    }
-    return STATUS_SUCCESS;
-}
-
 NTSTATUS vboxWddmDrvCfgInit(PUNICODE_STRING pRegStr)
 {
     HANDLE hKey;
@@ -2533,16 +1922,24 @@ static int vboxWddmSlConfigure(PVBOXMP_DEVEXT pDevExt, uint32_t fFlags)
 
 NTSTATUS VBoxWddmSlEnableVSyncNotification(PVBOXMP_DEVEXT pDevExt, BOOLEAN fEnable)
 {
+    if (!pDevExt->bVSyncTimerEnabled == !fEnable)
+        return STATUS_SUCCESS;
+
     if (!fEnable)
     {
         KeCancelTimer(&pDevExt->VSyncTimer);
     }
     else
     {
+        KeQuerySystemTime((PLARGE_INTEGER)&pDevExt->VSyncTime);
+
         LARGE_INTEGER DueTime;
         DueTime.QuadPart = -166666LL; /* 60 Hz */
         KeSetTimerEx(&pDevExt->VSyncTimer, DueTime, 16, &pDevExt->VSyncDpc);
     }
+
+    pDevExt->bVSyncTimerEnabled = !!fEnable;
+
     return STATUS_SUCCESS;
 }
 
@@ -2550,19 +1947,39 @@ NTSTATUS VBoxWddmSlGetScanLine(PVBOXMP_DEVEXT pDevExt, DXGKARG_GETSCANLINE *pGet
 {
     Assert((UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays > pGetScanLine->VidPnTargetId);
     VBOXWDDM_TARGET *pTarget = &pDevExt->aTargets[pGetScanLine->VidPnTargetId];
-    Assert(pTarget->HeightTotal);
-    Assert(pTarget->HeightVisible);
-    Assert(pTarget->HeightTotal >= pTarget->HeightVisible);
-    Assert(pTarget->ScanLineState < pTarget->HeightTotal);
-    if (pTarget->HeightTotal)
+    Assert(pTarget->Size.cx);
+    Assert(pTarget->Size.cy);
+    if (pTarget->Size.cy)
     {
-        uint32_t curScanLine = pTarget->ScanLineState;
-        ++pTarget->ScanLineState;
-        if (pTarget->ScanLineState >= pTarget->HeightTotal)
-            pTarget->ScanLineState = 0;
+        uint32_t curScanLine;
+        BOOL bVBlank;
+        LARGE_INTEGER DevVSyncTime;
+        DevVSyncTime.QuadPart =  ASMAtomicReadU64((volatile uint64_t*)&pDevExt->VSyncTime.QuadPart);
+        LARGE_INTEGER VSyncTime;
+        KeQuerySystemTime(&VSyncTime);
 
+        if (VSyncTime.QuadPart < DevVSyncTime.QuadPart)
+        {
+            WARN(("vsync time is less than the one stored in device"));
+            curScanLine = 0;
+        }
+        else
+        {
+            VSyncTime.QuadPart = VSyncTime.QuadPart - DevVSyncTime.QuadPart;
+            /* time is in 100ns, */
+            curScanLine = (uint32_t)((pTarget->Size.cy * VSyncTime.QuadPart) / DevVSyncTime.QuadPart);
+            if (pDevExt->bVSyncTimerEnabled)
+            {
+                if (curScanLine >= pTarget->Size.cy)
+                    curScanLine = 0;
+            }
+            else
+            {
+                curScanLine %= pTarget->Size.cy;
+            }
+        }
 
-        BOOL bVBlank = (!curScanLine || curScanLine > pTarget->HeightVisible);
+        bVBlank = (!curScanLine || curScanLine > pTarget->Size.cy);
         pGetScanLine->ScanLine = curScanLine;
         pGetScanLine->InVerticalBlank = bVBlank;
     }
@@ -2574,6 +1991,32 @@ NTSTATUS VBoxWddmSlGetScanLine(PVBOXMP_DEVEXT pDevExt, DXGKARG_GETSCANLINE *pGet
     return STATUS_SUCCESS;
 }
 
+static BOOLEAN vboxWddmSlVSyncIrqCb(PVOID pvContext)
+{
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)pvContext;
+    DXGKARGCB_NOTIFY_INTERRUPT_DATA notify;
+    BOOLEAN bNeedDpc = FALSE;
+    for (UINT i = 0; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+    {
+        PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
+        if (pTarget->fConnected)
+        {
+            memset(&notify, 0, sizeof(DXGKARGCB_NOTIFY_INTERRUPT_DATA));
+            notify.InterruptType = DXGK_INTERRUPT_CRTC_VSYNC;
+            notify.CrtcVsync.VidPnTargetId = i;
+            pDevExt->u.primary.DxgkInterface.DxgkCbNotifyInterrupt(pDevExt->u.primary.DxgkInterface.DeviceHandle, &notify);
+            bNeedDpc = TRUE;
+        }
+    }
+
+    if (bNeedDpc)
+    {
+        pDevExt->u.primary.DxgkInterface.DxgkCbQueueDpc(pDevExt->u.primary.DxgkInterface.DeviceHandle);
+    }
+
+    return FALSE;
+}
+
 static VOID vboxWddmSlVSyncDpc(
   __in      struct _KDPC *Dpc,
   __in_opt  PVOID DeferredContext,
@@ -2582,39 +2025,31 @@ static VOID vboxWddmSlVSyncDpc(
 )
 {
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)DeferredContext;
-    DXGKARGCB_NOTIFY_INTERRUPT_DATA notify;
-    BOOLEAN bNeedDpc = FALSE;
-    for (UINT i = 0; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[i];
-        PVBOXWDDM_ALLOCATION pPrimary = vboxWddmAquirePrimary(pDevExt, pSource, i);
-        if (pPrimary)
-        {
-            VBOXVIDEOOFFSET offVram = pPrimary->AllocData.Addr.offVram;
-            if (offVram != VBOXVIDEOOFFSET_VOID)
-            {
-                memset(&notify, 0, sizeof(DXGKARGCB_NOTIFY_INTERRUPT_DATA));
-                notify.InterruptType = DXGK_INTERRUPT_CRTC_VSYNC;
-                /* @todo: !!!this is not correct in case we want source[i]->target[i!=j] mapping */
-                notify.CrtcVsync.VidPnTargetId = i;
-                notify.CrtcVsync.PhysicalAddress.QuadPart = offVram;
-                /* yes, we can report VSync at dispatch */
-                pDevExt->u.primary.DxgkInterface.DxgkCbNotifyInterrupt(pDevExt->u.primary.DxgkInterface.DeviceHandle, &notify);
-                bNeedDpc = TRUE;
-            }
+    Assert(!pDevExt->fVSyncInVBlank);
+    ASMAtomicWriteU32(&pDevExt->fVSyncInVBlank, 1);
 
-            vboxWddmAllocationRelease(pPrimary);
-        }
-    }
+    BOOLEAN bDummy;
+    NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbSynchronizeExecution(
+            pDevExt->u.primary.DxgkInterface.DeviceHandle,
+            vboxWddmSlVSyncIrqCb,
+            pDevExt,
+            0, /* IN ULONG MessageNumber */
+            &bDummy);
+    if (!NT_SUCCESS(Status))
+        WARN(("DxgkCbSynchronizeExecution failed Status %#x", Status));
 
-    if (bNeedDpc)
-    {
-        pDevExt->u.primary.DxgkInterface.DxgkCbQueueDpc(pDevExt->u.primary.DxgkInterface.DeviceHandle);
-    }
+    LARGE_INTEGER VSyncTime;
+    KeQuerySystemTime(&VSyncTime);
+    ASMAtomicWriteU64((volatile uint64_t*)&pDevExt->VSyncTime.QuadPart, VSyncTime.QuadPart);
+
+    ASMAtomicWriteU32(&pDevExt->fVSyncInVBlank, 0);
 }
 
 NTSTATUS VBoxWddmSlInit(PVBOXMP_DEVEXT pDevExt)
 {
+    pDevExt->bVSyncTimerEnabled = FALSE;
+    pDevExt->fVSyncInVBlank = 0;
+    KeQuerySystemTime((PLARGE_INTEGER)&pDevExt->VSyncTime);
     KeInitializeTimer(&pDevExt->VSyncTimer);
     KeInitializeDpc(&pDevExt->VSyncDpc, vboxWddmSlVSyncDpc, pDevExt);
     return STATUS_SUCCESS;
@@ -2657,25 +2092,16 @@ void vboxWddmDiToAllocData(PVBOXMP_DEVEXT pDevExt, const DXGK_DISPLAY_INFORMATIO
             vboxWddmVramAddrToOffset(pDevExt, pInfo->PhysicAddress));
 }
 
-void vboxWddmDmAdjustDefaultVramLocations(PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_SOURCE_ID ModifiedVidPnSourceId)
+void vboxWddmDmSetupDefaultVramLocation(PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_SOURCE_ID ModifiedVidPnSourceId, VBOXWDDM_SOURCE *paSources)
 {
-    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[ModifiedVidPnSourceId];
-    PHYSICAL_ADDRESS PhAddr;
-    AssertRelease(pSource->AllocData.Addr.SegmentId);
-    AssertRelease(pSource->AllocData.Addr.offVram != VBOXVIDEOOFFSET_VOID);
-    PhAddr.QuadPart = pSource->AllocData.Addr.offVram;
+    PVBOXWDDM_SOURCE pSource = &paSources[ModifiedVidPnSourceId];
+    AssertRelease(g_VBoxDisplayOnly);
+    ULONG offVram = vboxWddmVramCpuVisibleSegmentSize(pDevExt);
+    offVram /= VBoxCommonFromDeviceExt(pDevExt)->cDisplays;
+    offVram &= ~PAGE_OFFSET_MASK;
+    offVram *= ModifiedVidPnSourceId;
 
-    for (UINT i = ModifiedVidPnSourceId + 1; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        /* increaze the phaddr based on the previous source size info */
-        PhAddr.QuadPart += pSource->AllocData.SurfDesc.cbSize;
-        PhAddr.QuadPart = ROUND_TO_PAGES(PhAddr.QuadPart);
-        pSource = &pDevExt->aSources[i];
-        if (pSource->AllocData.Addr.offVram != PhAddr.QuadPart
-                || pSource->AllocData.Addr.SegmentId != 1)
-            pSource->bGhSynced = FALSE;
-        pSource->AllocData.Addr.SegmentId = 1;
-        pSource->AllocData.Addr.offVram = PhAddr.QuadPart;
-    }
+    if (vboxWddmAddrSetVram(&pSource->AllocData.Addr, 1, offVram))
+        pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_LOCATION;
 }
 #endif

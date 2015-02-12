@@ -61,6 +61,9 @@
 /** Device name. */
 # define VBOXGUEST_DEVICE_NAME_DOS      L"\\DosDevices\\VBoxGuest"
 
+#elif defined(RT_OS_HAIKU)
+# define VBOXGUEST_DEVICE_NAME          "/dev/misc/vboxguest"
+
 #else /* (PORTME) */
 # define VBOXGUEST_DEVICE_NAME          "/dev/vboxguest"
 # if defined(RT_OS_LINUX)
@@ -146,7 +149,7 @@ typedef const VBGLBIGREQ *PCVBGLBIGREQ;
 
 
 #if defined(RT_OS_WINDOWS)
-/* @todo Remove IOCTL_CODE later! Integrate it in VBOXGUEST_IOCTL_CODE below. */
+/** @todo Remove IOCTL_CODE later! Integrate it in VBOXGUEST_IOCTL_CODE below. */
 /** @todo r=bird: IOCTL_CODE is supposedly defined in some header included by Windows.h or ntddk.h, which is why it wasn't in the #if 0 earlier. See HostDrivers/Support/SUPDrvIOC.h... */
 # define IOCTL_CODE(DeviceType, Function, Method, Access, DataSize_ignored) \
   ( ((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method))
@@ -175,6 +178,13 @@ typedef const VBGLBIGREQ *PCVBGLBIGREQ;
 # define VBOXGUEST_IOCTL_CODE_FAST_(Function)       _IO(  'V', (Function))
 # define VBOXGUEST_IOCTL_STRIP_SIZE(Code)           VBOXGUEST_IOCTL_CODE_(_IOC_NR((Code)), 0)
 
+#elif defined(RT_OS_HAIKU)
+  /* No automatic buffering, size not encoded. */
+  /** @todo do something better */
+# define VBOXGUEST_IOCTL_CODE_(Function, Size)      (0x56420000 | (Function))
+# define VBOXGUEST_IOCTL_CODE_FAST_(Function)       (0x56420000 | (Function))
+# define VBOXGUEST_IOCTL_STRIP_SIZE(Code)           (Code)
+
 #elif defined(RT_OS_FREEBSD) /** @todo r=bird: Please do it like SUPDRVIOC to keep it as similar as possible. */
 # include <sys/ioccom.h>
 
@@ -185,8 +195,8 @@ typedef const VBGLBIGREQ *PCVBGLBIGREQ;
 #else /* BSD Like */
   /* Automatic buffering, size limited to 4KB on *BSD and 8KB on Darwin - commands the limit, 4KB. */
 # include <sys/ioccom.h>
-# define VBOXGUEST_IOCTL_CODE_(Function, Size)      _IOC(IOC_INOUT, 'V', (Function) | VBOXGUEST_IOCTL_FLAG, (Size))
-# define VBOXGUEST_IOCTL_CODE_FAST_(Function)       _IO('V', (Function) | VBOXGUEST_IOCTL_FLAG)
+# define VBOXGUEST_IOCTL_CODE_(Function, Size)      _IOC(IOC_INOUT, 'V', (Function), (Size))
+# define VBOXGUEST_IOCTL_CODE_FAST_(Function)       _IO('V', (Function))
 # define VBOXGUEST_IOCTL_STRIP_SIZE(uIOCtl)         ( (uIOCtl) & ~_IOC(0,0,0,IOCPARM_MASK) )
 #endif
 
@@ -321,7 +331,7 @@ typedef struct VBoxGuestWriteCoreDump
 AssertCompileSize(VBoxGuestWriteCoreDump, 4);
 
 /** IOCTL to VBoxGuest to update the mouse status features. */
-# define VBOXGUEST_IOCTL_SET_MOUSE_STATUS         VBOXGUEST_IOCTL_CODE_(10, sizeof(uint32_t))
+# define VBOXGUEST_IOCTL_SET_MOUSE_STATUS           VBOXGUEST_IOCTL_CODE_(10, sizeof(uint32_t))
 
 #ifdef VBOX_WITH_HGCM
 /** IOCTL to VBoxGuest to connect to a HGCM service. */
@@ -340,7 +350,7 @@ AssertCompileSize(VBoxGuestWriteCoreDump, 4);
 /** IOCTL to VBoxGuest passed from the Kernel Mode driver, but containing a user mode data in VBoxGuestHGCMCallInfo
  * the driver received from the UM. Called in the context of the process passing the data.
  * @see VBoxGuestHGCMCallInfo */
-# define VBOXGUEST_IOCTL_HGCM_CALL_USERDATA(Size)      VBOXGUEST_IOCTL_CODE(21, (Size))
+# define VBOXGUEST_IOCTL_HGCM_CALL_USERDATA(Size)   VBOXGUEST_IOCTL_CODE(21, (Size))
 
 # ifdef RT_ARCH_AMD64
 /** @name IOCTL numbers that 32-bit clients, like the Windows OpenGL guest
@@ -353,10 +363,6 @@ AssertCompileSize(VBoxGuestWriteCoreDump, 4);
 /** @} */
 # endif /* RT_ARCH_AMD64 */
 
-#ifdef VBOX_WITH_DPC_LATENCY_CHECKER
-#define VBOXGUEST_IOCTL_DPC VBOXGUEST_IOCTL_CODE(30, 0)
-#endif
-
 /** Get the pointer to the first HGCM parameter.  */
 # define VBOXGUEST_HGCM_CALL_PARMS(a)             ( (HGCMFunctionParameter   *)((uint8_t *)(a) + sizeof(VBoxGuestHGCMCallInfo)) )
 /** Get the pointer to the first HGCM parameter in a 32-bit request.  */
@@ -364,8 +370,56 @@ AssertCompileSize(VBoxGuestWriteCoreDump, 4);
 
 #endif /* VBOX_WITH_HGCM */
 
-/** IOCTL to for setting the mouse driver callback. (kernel only)  */
-#define VBOXGUEST_IOCTL_SET_MOUSE_NOTIFY_CALLBACK   VBOXGUEST_IOCTL_CODE_(31, sizeof(VBoxGuestMouseSetNotifyCallback))
+#ifdef VBOX_WITH_DPC_LATENCY_CHECKER
+/** IOCTL to VBoxGuest to perform DPC latency tests, printing the result in
+ * the release log on the host.  Takes no data, returns no data. */
+# define VBOXGUEST_IOCTL_DPC_LATENCY_CHECKER        VBOXGUEST_IOCTL_CODE_(30, 0)
+#endif
+
+/** IOCTL to for setting the mouse driver callback. (kernel only) */
+#define VBOXGUEST_IOCTL_SET_MOUSE_NOTIFY_CALLBACK   VBOXGUEST_IOCTL_CODE(31, sizeof(VBoxGuestMouseSetNotifyCallback))
+
+typedef enum VBOXGUESTCAPSACQUIRE_FLAGS
+{
+    VBOXGUESTCAPSACQUIRE_FLAGS_NONE = 0,
+    /* configures VBoxGuest to use the specified caps in Acquire mode, w/o making any caps acquisition/release.
+     * so far it is only possible to set acquire mode for caps, but not clear it,
+     * so u32NotMask is ignored for this request */
+    VBOXGUESTCAPSACQUIRE_FLAGS_CONFIG_ACQUIRE_MODE,
+    /* to ensure enum is 32bit*/
+    VBOXGUESTCAPSACQUIRE_FLAGS_32bit = 0x7fffffff
+} VBOXGUESTCAPSACQUIRE_FLAGS;
+
+typedef struct VBoxGuestCapsAquire
+{
+    /* result status
+     * VINF_SUCCESS - on success
+     * VERR_RESOURCE_BUSY    - some caps in the u32OrMask are acquired by some other VBoxGuest connection.
+     *                         NOTE: no u32NotMask caps are cleaned in this case, i.e. no modifications are done on failure
+     * VER_INVALID_PARAMETER - invalid Caps are specified with either u32OrMask or u32NotMask. No modifications are done on failure.
+     */
+    int32_t rc;
+    /* Acquire command */
+    VBOXGUESTCAPSACQUIRE_FLAGS enmFlags;
+    /* caps to acquire, OR-ed VMMDEV_GUEST_SUPPORTS_XXX flags */
+    uint32_t u32OrMask;
+    /* caps to release, OR-ed VMMDEV_GUEST_SUPPORTS_XXX flags */
+    uint32_t u32NotMask;
+} VBoxGuestCapsAquire;
+
+/** IOCTL to for Acquiring/Releasing Guest Caps
+ * This is used for multiple purposes:
+ * 1. By doing Acquire r3 client application (e.g. VBoxTray) claims it will use
+ *    the given connection for performing operations like Seamles or Auto-resize,
+ *    thus, if the application terminates, the driver will automatically cleanup the caps reported to host,
+ *    so that host knows guest does not support them anymore
+ * 2. In a multy-user environment this will not allow r3 applications (like VBoxTray)
+ *    running in different user sessions simultaneously to interfere with each other.
+ *    An r3 client application (like VBoxTray) is responsible for Acquiring/Releasing caps properly as needed.
+ **/
+#define VBOXGUEST_IOCTL_GUEST_CAPS_ACQUIRE          VBOXGUEST_IOCTL_CODE(32, sizeof(VBoxGuestCapsAquire))
+
+
 
 typedef DECLCALLBACK(void) FNVBOXGUESTMOUSENOTIFY(void *pfnUser);
 typedef FNVBOXGUESTMOUSENOTIFY *PFNVBOXGUESTMOUSENOTIFY;
@@ -453,6 +507,28 @@ typedef VBOXGUESTOS2IDCCONNECT *PVBOXGUESTOS2IDCCONNECT;
 # define VBOXGUEST_IOCTL_OS2_IDC_DISCONNECT     VBOXGUEST_IOCTL_CODE(48, sizeof(uint32_t))
 
 #endif /* RT_OS_OS2 */
+
+#if defined(RT_OS_LINUX) || defined(RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
+
+/* Private IOCtls between user space and the kernel video driver.  DRM private
+ * IOCtls always have the type 'd' and a number between 0x40 and 0x99 (0x9F?) */
+
+# define VBOX_DRM_IOCTL(a) (0x40 + DRM_VBOX_ ## a)
+
+/** Stop using HGSMI in the kernel driver until it is re-enabled, so that a
+ *  user-space driver can use it.  It must be re-enabled before the kernel
+ *  driver can be used again in a sensible way. */
+/** @note These are only implemented on Linux currently and should fail
+ *        silently on other platforms. */
+# define DRM_VBOX_DISABLE_HGSMI    0
+# define DRM_IOCTL_VBOX_DISABLE_HGSMI    VBOX_DRM_IOCTL(DISABLE_HGSMI)
+# define VBOXVIDEO_IOCTL_DISABLE_HGSMI   _IO('d', DRM_IOCTL_VBOX_DISABLE_HGSMI)
+/** Enable HGSMI in the kernel driver after it was previously disabled. */
+# define DRM_VBOX_ENABLE_HGSMI     1
+# define DRM_IOCTL_VBOX_ENABLE_HGSMI     VBOX_DRM_IOCTL(ENABLE_HGSMI)
+# define VBOXVIDEO_IOCTL_ENABLE_HGSMI    _IO('d', DRM_IOCTL_VBOX_ENABLE_HGSMI)
+
+#endif /* RT_OS_LINUX || RT_OS_SOLARIS || RT_OS_FREEBSD */
 
 /** @} */
 #endif /* !defined(IN_RC) && !defined(IN_RING0_AGNOSTIC) && !defined(IPRT_NO_CRT) */

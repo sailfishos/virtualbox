@@ -39,8 +39,6 @@ MODULE_VERSION(VBOX_VERSION_STRING " (interface " RT_XSTR(VMMDEV_VERSION) ")");
 
 /* globals */
 VBSFCLIENT client_handle;
-/* superblock waits for this so no-one else has to */
-static DECLARE_COMPLETION(client_handle_valid);
 
 /* forward declarations */
 static struct super_operations sf_super_ops;
@@ -146,7 +144,6 @@ static int sf_glob_alloc(struct vbsf_mount_info_new *info, struct sf_glob_info *
 #undef _IS_EMPTY
     }
 
-    wait_for_completion(&client_handle_valid);
     rc = vboxCallMapFolder(&client_handle, str_name, &sf_g->map);
     kfree(str_name);
 
@@ -255,7 +252,6 @@ static int sf_read_super_aux(struct super_block *sb, void *data, int flags)
         goto fail1;
     }
 
-    INIT_LIST_HEAD(&sf_i->handles);
     sf_i->handle = SHFL_HANDLE_NIL;
     sf_i->path = kmalloc(sizeof(SHFLSTRING) + 1, GFP_KERNEL);
     if (!sf_i->path)
@@ -318,8 +314,8 @@ static int sf_read_super_aux(struct super_block *sb, void *data, int flags)
         goto fail4;
     }
 
-    SET_INODE_INFO(iroot, sf_i);
     sf_init_inode(sf_g, iroot, &fsinfo);
+    SET_INODE_INFO(iroot, sf_i);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 4, 25)
     unlock_new_inode(iroot);
@@ -391,7 +387,6 @@ static void sf_clear_inode(struct inode *inode)
     if (!sf_i)
         return;
 
-    WARN_ON(!list_empty(&sf_i->handles));
     BUG_ON(!sf_i->path);
     kfree(sf_i->path);
     kfree(sf_i);
@@ -414,7 +409,6 @@ static void sf_evict_inode(struct inode *inode)
     if (!sf_i)
         return;
 
-    WARN_ON(!list_empty(&sf_i->handles));
     BUG_ON(!sf_i->path);
     kfree(sf_i->path);
     kfree(sf_i);
@@ -470,7 +464,7 @@ static int sf_remount_fs(struct super_block *sb, int *flags, char *data)
     BUG_ON(!sf_g);
     if (data && data[0] != 0)
     {
-        struct vbsf_mount_info_new *info = 
+        struct vbsf_mount_info_new *info =
             (struct vbsf_mount_info_new *)data;
         if (   info->signature[0] == VBSF_MOUNT_SIGNATURE_BYTE_0
             && info->signature[1] == VBSF_MOUNT_SIGNATURE_BYTE_1
@@ -641,7 +635,6 @@ static int __init init(void)
             "vboxsf: Successfully loaded version " VBOX_VERSION_STRING
             " (interface " RT_XSTR(VMMDEV_VERSION) ")\n");
 
-    complete_all(&client_handle_valid);
     return 0;
 
 fail2:

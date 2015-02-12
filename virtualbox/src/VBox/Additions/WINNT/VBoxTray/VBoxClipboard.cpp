@@ -609,7 +609,7 @@ static LRESULT CALLBACK vboxClipboardWndProc(HWND hwnd, UINT msg, WPARAM wParam,
 
 int VBoxClipboardInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread)
 {
-    Log(("VBoxTray: VboxClipboardInit\n"));
+    Log(("VBoxTray: VBoxClipboardInit\n"));
     if (gCtx.pEnv)
     {
         /* Clipboard was already initialized. 2 or more instances are not supported. */
@@ -675,7 +675,7 @@ unsigned __stdcall VBoxClipboardThread(void *pInstance)
                 break;
             }
             continue;
-       }
+        }
         else
         {
             Log(("VBoxTray: VBoxClipboardThread: VbglR3ClipboardGetHostMsg u32Msg = %ld, u32Formats = %ld\n", u32Msg, u32Formats));

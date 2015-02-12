@@ -18,7 +18,6 @@
  */
 
 /* Qt includes: */
-#include <QNetworkReply>
 #include <QTimer>
 #include <QDir>
 #include <QPointer>
@@ -29,8 +28,10 @@
 #include "UIUpdateManager.h"
 #include "UINetworkManager.h"
 #include "UINetworkCustomer.h"
+#include "UINetworkRequest.h"
 #include "VBoxGlobal.h"
 #include "UIMessageCenter.h"
+#include "UIModalWindowManager.h"
 #include "VBoxUtils.h"
 #include "UIDownloaderExtensionPack.h"
 #include "UIGlobalSettingsExtension.h"
@@ -130,9 +131,9 @@ protected:
     /* Network pregress handler dummy: */
     void processNetworkReplyProgress(qint64, qint64) {}
     /* Network reply canceled handler dummy: */
-    void processNetworkReplyCanceled(QNetworkReply*) {}
+    void processNetworkReplyCanceled(UINetworkReply*) {}
     /* Network reply canceled handler dummy: */
-    void processNetworkReplyFinished(QNetworkReply*) {}
+    void processNetworkReplyFinished(UINetworkReply*) {}
 };
 
 /* Update-step to check for the new VirtualBox version: */
@@ -145,7 +146,7 @@ public:
     /* Constructor: */
     UIUpdateStepVirtualBox(UIUpdateQueue *pQueue, bool fForceCall)
         : UIUpdateStep(pQueue, fForceCall)
-        , m_url("http://update.virtualbox.org/query.php")
+        , m_url("https://update.virtualbox.org/query.php")
     {
     }
 
@@ -195,18 +196,18 @@ private:
         QNetworkRequest request;
         request.setUrl(url);
         request.setRawHeader("User-Agent", strUserAgent.toAscii());
-        createNetworkRequest(request, UINetworkRequestType_GET, tr("Checking for a new VirtualBox version..."));
+        createNetworkRequest(request, UINetworkRequestType_GET_Our, tr("Checking for a new VirtualBox version..."));
     }
 
     /* Handle network reply canceled: */
-    void processNetworkReplyCanceled(QNetworkReply* /* pReply */)
+    void processNetworkReplyCanceled(UINetworkReply* /* pReply */)
     {
         /* Notify about step completion: */
         emit sigStepComplete();
     }
 
     /* Handle network reply: */
-    void processNetworkReplyFinished(QNetworkReply *pReply)
+    void processNetworkReplyFinished(UINetworkReply *pReply)
     {
         /* Deserialize incoming data: */
         QString strResponseData(pReply->readAll());
@@ -265,76 +266,50 @@ private:
         strPlatform += QString(".%1").arg(ARCH_BITS);
 
         /* Add more system information: */
-#if defined (Q_OS_WIN)
-        OSVERSIONINFO versionInfo;
-        ZeroMemory(&versionInfo, sizeof(OSVERSIONINFO));
-        versionInfo.dwOSVersionInfoSize = sizeof(OSVERSIONINFO);
-        GetVersionEx(&versionInfo);
-        int iMajor = versionInfo.dwMajorVersion;
-        int iMinor = versionInfo.dwMinorVersion;
-        int iBuild = versionInfo.dwBuildNumber;
-        QString strVersionInfo = QString::fromUtf16((ushort*)versionInfo.szCSDVersion);
+        int vrc;
+#if defined(Q_OS_LINUX)
+        /* On linux we wish to send information about the distribution
+           and such like, so we try invoke a helper script that retrives
+           and formats it for us. */
 
-        QString strDistributiveInfo;
-        if (iMajor == 6)
-            strDistributiveInfo = QString("Windows Vista %1");
-        else if (iMajor == 5)
-        {
-            if (iMinor == 2)
-                strDistributiveInfo = QString("Windows Server 2003 %1");
-            else if (iMinor == 1)
-                strDistributiveInfo = QString("Windows XP %1");
-            else if (iMinor == 0)
-                strDistributiveInfo = QString("Windows 2000 %1");
-            else
-                strDistributiveInfo = QString("Unknown %1");
-        }
-        else if (iMajor == 4)
-        {
-            if (iMinor == 90)
-                strDistributiveInfo = QString("Windows Me %1");
-            else if (iMinor == 10)
-                strDistributiveInfo = QString("Windows 98 %1");
-            else if (iMinor == 0)
-                strDistributiveInfo = QString("Windows 95 %1");
-            else
-                strDistributiveInfo = QString("Unknown %1");
-        }
-        else strDistributiveInfo = QString("Unknown %1");
-        // TODO: Windows Server 2008 == Vista? */
-        strDistributiveInfo = strDistributiveInfo.arg(strVersionInfo);
-        QString strVersion = QString("%1.%2").arg(iMajor).arg(iMinor);
-        QString strKernel = QString("%1").arg(iBuild);
-        strPlatform += QString(" [Distribution: %1 | Version: %2 | Build: %3]")
-            .arg(strDistributiveInfo).arg(strVersion).arg(strKernel);
-#elif defined (Q_OS_LINUX)
         /* Get script path: */
         char szAppPrivPath[RTPATH_MAX];
-        int rc = RTPathAppPrivateNoArch(szAppPrivPath, sizeof(szAppPrivPath)); NOREF(rc);
-        AssertRC(rc);
-        /* Run script: */
-        QByteArray result = QIProcess::singleShot(QString(szAppPrivPath) + "/VBoxSysInfo.sh");
-        if (!result.isNull())
-            strPlatform += QString(" [%1]").arg(QString(result).trimmed());
-#else
-        /* Use RTSystemQueryOSInfo: */
-        char szTmp[256];
-        QStringList components;
-        int vrc = RTSystemQueryOSInfo(RTSYSOSINFO_PRODUCT, szTmp, sizeof(szTmp));
-        if ((RT_SUCCESS(vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
-            components << QString("Product: %1").arg(szTmp);
-        vrc = RTSystemQueryOSInfo(RTSYSOSINFO_RELEASE, szTmp, sizeof(szTmp));
-        if ((RT_SUCCESS(vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
-            components << QString("Release: %1").arg(szTmp);
-        vrc = RTSystemQueryOSInfo(RTSYSOSINFO_VERSION, szTmp, sizeof(szTmp));
-        if ((RT_SUCCESS(vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
-            components << QString("Version: %1").arg(szTmp);
-        vrc = RTSystemQueryOSInfo(RTSYSOSINFO_SERVICE_PACK, szTmp, sizeof(szTmp));
-        if ((RT_SUCCESS (vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
-            components << QString("SP: %1").arg(szTmp);
-        if (!components.isEmpty())
-            strPlatform += QString(" [%1]").arg(components.join(" | "));
+        vrc = RTPathAppPrivateNoArch(szAppPrivPath, sizeof(szAppPrivPath)); AssertRC(vrc);
+        if (RT_SUCCESS(vrc))
+        {
+            /* Run script: */
+            QByteArray result = QIProcess::singleShot(QString(szAppPrivPath) + "/VBoxSysInfo.sh");
+            if (!result.isNull())
+                strPlatform += QString(" [%1]").arg(QString(result).trimmed());
+            else
+                vrc = VERR_TRY_AGAIN; /* (take the fallback path) */
+        }
+        if (RT_FAILURE(vrc))
 #endif
+        {
+            /* Use RTSystemQueryOSInfo: */
+            char szTmp[256];
+            QStringList components;
+
+            vrc = RTSystemQueryOSInfo(RTSYSOSINFO_PRODUCT, szTmp, sizeof(szTmp));
+            if ((RT_SUCCESS(vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
+                components << QString("Product: %1").arg(szTmp);
+
+            vrc = RTSystemQueryOSInfo(RTSYSOSINFO_RELEASE, szTmp, sizeof(szTmp));
+            if ((RT_SUCCESS(vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
+                components << QString("Release: %1").arg(szTmp);
+
+            vrc = RTSystemQueryOSInfo(RTSYSOSINFO_VERSION, szTmp, sizeof(szTmp));
+            if ((RT_SUCCESS(vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
+                components << QString("Version: %1").arg(szTmp);
+
+            vrc = RTSystemQueryOSInfo(RTSYSOSINFO_SERVICE_PACK, szTmp, sizeof(szTmp));
+            if ((RT_SUCCESS(vrc) || vrc == VERR_BUFFER_OVERFLOW) && szTmp[0] != '\0')
+                components << QString("SP: %1").arg(szTmp);
+
+            if (!components.isEmpty())
+                strPlatform += QString(" [%1]").arg(components.join(" | "));
+        }
 
         return strPlatform;
     }
@@ -405,14 +380,14 @@ private slots:
         if (strExtPackEdition.contains("ENTERPRISE"))
         {
             /* Inform the user that he should update the extension pack: */
-            msgCenter().requestUserDownloadExtensionPack(GUI_ExtPackName, strExtPackVersion, strVBoxVersion);
+            msgCenter().askUserToDownloadExtensionPack(GUI_ExtPackName, strExtPackVersion, strVBoxVersion);
             /* Never try to download for ENTERPRISE version: */
             emit sigStepComplete();
             return;
         }
 
         /* Ask the user about extension pack downloading: */
-        if (!msgCenter().proposeDownloadExtensionPack(GUI_ExtPackName, strExtPackVersion))
+        if (!msgCenter().warAboutOutdatedExtensionPack(GUI_ExtPackName, strExtPackVersion))
         {
             emit sigStepComplete();
             return;
@@ -434,7 +409,7 @@ private slots:
     {
         /* Warn the user about extension pack was downloaded and saved, propose to install it: */
         if (msgCenter().proposeInstallExtentionPack(GUI_ExtPackName, strSource, QDir::toNativeSeparators(strTarget)))
-            UIGlobalSettingsExtension::doInstallation(strTarget, strDigest, msgCenter().mainWindowShown(), NULL);
+            UIGlobalSettingsExtension::doInstallation(strTarget, strDigest, windowManager().networkManagerOrMainWindowShown(), NULL);
     }
 };
 
@@ -483,7 +458,9 @@ UIUpdateManager::UIUpdateManager()
 
 #ifdef VBOX_WITH_UPDATE_REQUEST
     /* Ask updater to check for the first time: */
-    if (!vboxGlobal().isVMConsoleProcess())
+    CVirtualBox vbox = vboxGlobal().virtualBox();
+    if (VBoxGlobal::shouldWeAllowApplicationUpdate(vbox) &&
+        !vboxGlobal().isVMConsoleProcess())
         QTimer::singleShot(0, this, SLOT(sltCheckIfUpdateIsNecessary()));
 #endif /* VBOX_WITH_UPDATE_REQUEST */
 }

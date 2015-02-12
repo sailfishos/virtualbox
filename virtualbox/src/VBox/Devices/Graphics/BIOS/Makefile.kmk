@@ -115,7 +115,7 @@ $$(VgaBiosBin_0_OUTDIR)/vbetables.h: $(MAKEFILE_CURRENT) $$(vbetables-gen_1_TARG
 # The VBE tables.
 #
 BLDPROGS += vbetables-gen
-vbetables-gen_TEMPLATE = VBOXBLDPROG
+vbetables-gen_TEMPLATE = VBoxBldProg
 vbetables-gen_SOURCES  = vbetables-gen.c
 vbetables-gen_CLEAN    = $(vbetables-gen)
 
@@ -134,6 +134,15 @@ $$(VgaDefBiosLogo_0_OUTDIR)/VgaDefBiosLogo.c: $(VBOX_BRAND_BIOS_LOGO) $(VBOX_BIN
 	$(call MSG_TOOL,bin2c,VgaDefBiosLogo,$<,$@)
 	$(QUIET)$(VBOX_BIN2C) VgaDefBiosLogo $< $@
 
+
+ifdef VBOX_WITH_OPEN_WATCOM
+ #
+ # Install the symbol file for the BIOS.
+ #
+ INSTALLS += VBoxVgaBiosSym
+ VBoxVgaBiosSym_TEMPLATE = VBoxDbgSyms
+ VBoxVgaBiosSym_SOURCES = $(basename $(VBoxVgaBios_1_TARGET)).sym
+endif
 
 include $(FILE_KBUILD_SUB_FOOTER)
 

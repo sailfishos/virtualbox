@@ -104,6 +104,9 @@ endif
 ifdef VBOX_WITH_CROGL
  VBoxDispD3D_DEFS   += VBOX_WITH_CROGL
 endif
+ifdef VBOX_WITH_NEW_WINE
+ VBoxDispD3D_DEFS   += VBOX_WITH_NEW_WINE
+endif
 VBoxDispD3D_INCS     = \
 	../../../include \
 	.. \
@@ -112,9 +115,7 @@ VBoxDispD3D_SOURCES  = \
 	wddm/VBoxDispD3D.cpp \
 	wddm/VBoxDispD3DIf.cpp \
 	wddm/VBoxDispCm.cpp \
-	wddm/VBoxDispMp.cpp \
 	wddm/VBoxScreen.cpp \
-	wddm/VBoxDispMpTst.cpp \
 	wddm/VBoxDispKmt.cpp \
 	wddm/VBoxDispDbg.cpp \
 	wddm/VBoxD3DIf.cpp \
@@ -208,7 +209,7 @@ tstMvWnd_TEMPLATE = VBOXR3EXE
 tstMvWnd_DEFS     = UNICODE _UNICODE
 tstMvWnd_SOURCES  = \
 	wddm/dbg/tstMvWnd.cpp
-tstMvWnd_LIBS     = $(LIB_RUNTIME)
+tstMvWnd_LIBS     = $(VBOX_LIB_IPRT_GUEST_R3)
 tstMvWnd_LDFLAGS.win = /SUBSYSTEM:windows
 
 PROGRAMS += DumpD3DCaps9
@@ -217,7 +218,7 @@ DumpD3DCaps9_SDKS     = ReorderCompilerIncs $(VBOX_WINDDK_GST_WLH)
 DumpD3DCaps9_DEFS     = UNICODE _UNICODE
 DumpD3DCaps9_SOURCES  = \
 	wddm/dbg/DumpD3DCaps9.cpp
-DumpD3DCaps9_LIBS     = $(LIB_RUNTIME)
+DumpD3DCaps9_LIBS     = $(VBOX_LIB_IPRT_GUEST_R3) d3d9.lib
 DumpD3DCaps9_LDFLAGS.win = /SUBSYSTEM:CONSOLE
 
 endif #VBOXVIDEOWINDBG

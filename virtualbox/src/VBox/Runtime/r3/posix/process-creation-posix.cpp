@@ -29,6 +29,8 @@
 *   Header Files                                                               *
 *******************************************************************************/
 #define LOG_GROUP RTLOGGROUP_PROCESS
+#include <iprt/cdefs.h>
+
 #include <unistd.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -37,20 +39,28 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <grp.h>
 #if defined(RT_OS_LINUX) || defined(RT_OS_SOLARIS)
 # include <crypt.h>
 # include <pwd.h>
 # include <shadow.h>
 #endif
+
 #if defined(RT_OS_LINUX) || defined(RT_OS_OS2)
 /* While Solaris has posix_spawn() of course we don't want to use it as
  * we need to have the child in a different process contract, no matter
  * whether it is started detached or not. */
 # define HAVE_POSIX_SPAWN 1
 #endif
+#if defined(RT_OS_DARWIN) && defined(MAC_OS_X_VERSION_MIN_REQUIRED)
+# if MAC_OS_X_VERSION_MIN_REQUIRED >= 1050
+#  define HAVE_POSIX_SPAWN 1
+# endif
+#endif
 #ifdef HAVE_POSIX_SPAWN
 # include <spawn.h>
 #endif
+
 #ifdef RT_OS_DARWIN
 # include <mach-o/dyld.h>
 #endif
@@ -103,11 +113,18 @@ static int rtCheckCredentials(const char *pszUser, const char *pszPasswd, gid_t 
     if (spwd)
         pw->pw_passwd = spwd->sp_pwdp;
 
-    /* be reentrant */
-    struct crypt_data *data = (struct crypt_data*)RTMemTmpAllocZ(sizeof(*data));
-    char *pszEncPasswd = crypt_r(pszPasswd, pw->pw_passwd, data);
-    int fCorrect = !strcmp(pszEncPasswd, pw->pw_passwd);
-    RTMemTmpFree(data);
+    /* Default fCorrect=true if no password specified. In that case, pw->pw_passwd
+     * must be NULL (no password set for this user). Fail if a password is specified
+     * but the user does not have one assigned. */
+    int fCorrect = !pszPasswd || !*pszPasswd;
+    if (pw->pw_passwd && *pw->pw_passwd)
+    {
+        struct crypt_data *data = (struct crypt_data*)RTMemTmpAllocZ(sizeof(*data));
+        /* be reentrant */
+        char *pszEncPasswd = crypt_r(pszPasswd, pw->pw_passwd, data);
+        fCorrect = pszEncPasswd && !strcmp(pszEncPasswd, pw->pw_passwd);
+        RTMemTmpFree(data);
+    }
     if (!fCorrect)
         return VERR_PERMISSION_DENIED;
 
@@ -297,6 +314,10 @@ RTR3DECL(int)   RTProcCreateEx(const char *pszExec, const char * const *papszArg
     AssertReturn(!pszAsUser || *pszAsUser, VERR_INVALID_PARAMETER);
     AssertReturn(!pszPassword || pszAsUser, VERR_INVALID_PARAMETER);
     AssertPtrNullReturn(pszPassword, VERR_INVALID_POINTER);
+#if defined(RT_OS_OS2)
+    if (fFlags & RTPROC_FLAGS_DETACHED)
+        return VERR_PROC_DETACH_NOT_SUPPORTED;
+#endif
 
     /*
      * Get the file descriptors for the handles we've been passed.
@@ -550,15 +571,20 @@ RTR3DECL(int)   RTProcCreateEx(const char *pszExec, const char * const *papszArg
 #endif
     {
 #ifdef RT_OS_SOLARIS
-        int templateFd = rtSolarisContractPreFork();
-        if (templateFd == -1)
-            return VERR_OPEN_FAILED;
+        int templateFd = -1;
+        if (!(fFlags & RTPROC_FLAGS_SAME_CONTRACT))
+        {
+            templateFd = rtSolarisContractPreFork();
+            if (templateFd == -1)
+                return VERR_OPEN_FAILED;
+        }
 #endif /* RT_OS_SOLARIS */
         pid = fork();
         if (!pid)
         {
 #ifdef RT_OS_SOLARIS
-            rtSolarisContractPostForkChild(templateFd);
+            if (!(fFlags & RTPROC_FLAGS_SAME_CONTRACT))
+                rtSolarisContractPostForkChild(templateFd);
 #endif /* RT_OS_SOLARIS */
             if (!(fFlags & RTPROC_FLAGS_DETACHED))
                 setpgid(0, 0); /* see comment above */
@@ -567,6 +593,17 @@ RTR3DECL(int)   RTProcCreateEx(const char *pszExec, const char * const *papszArg
              * Change group and user if requested.
              */
 #if 1 /** @todo This needs more work, see suplib/hardening. */
+            if (pszAsUser)
+            {
+                int ret = initgroups(pszAsUser, gid);
+                if (ret)
+                {
+                    if (fFlags & RTPROC_FLAGS_DETACHED)
+                        _Exit(126);
+                    else
+                        exit(126);
+                }
+            }
             if (gid != ~(gid_t)0)
             {
                 if (setgid(gid))
@@ -645,7 +682,8 @@ RTR3DECL(int)   RTProcCreateEx(const char *pszExec, const char * const *papszArg
                 exit(127);
         }
 #ifdef RT_OS_SOLARIS
-        rtSolarisContractPostForkParent(templateFd, pid);
+        if (!(fFlags & RTPROC_FLAGS_SAME_CONTRACT))
+            rtSolarisContractPostForkParent(templateFd, pid);
 #endif /* RT_OS_SOLARIS */
         if (pid > 0)
         {

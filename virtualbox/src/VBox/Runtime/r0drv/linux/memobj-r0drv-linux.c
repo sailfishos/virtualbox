@@ -1,4 +1,4 @@
-/* $Revision: 83687 $ */
+/* $Revision: 94832 $ */
 /** @file
  * IPRT - Ring-0 Memory Objects, Linux.
  */
@@ -320,9 +320,9 @@ static int rtR0MemObjLinuxAllocPages(PRTR0MEMOBJLNX *ppMemLnx, RTR0MEMOBJTYPE en
         ||  cb <= PAGE_SIZE * 2)
     {
 # ifdef VBOX_USE_INSERT_PAGE
-        paPages = alloc_pages(fFlagsLnx |  __GFP_COMP, rtR0MemObjLinuxOrder(cPages));
+        paPages = alloc_pages(fFlagsLnx | __GFP_COMP | __GFP_NOWARN, rtR0MemObjLinuxOrder(cPages));
 # else
-        paPages = alloc_pages(fFlagsLnx, rtR0MemObjLinuxOrder(cPages));
+        paPages = alloc_pages(fFlagsLnx | __GFP_NOWARN, rtR0MemObjLinuxOrder(cPages));
 # endif
         if (paPages)
         {
@@ -341,7 +341,7 @@ static int rtR0MemObjLinuxAllocPages(PRTR0MEMOBJLNX *ppMemLnx, RTR0MEMOBJTYPE en
     {
         for (iPage = 0; iPage < cPages; iPage++)
         {
-            pMemLnx->apPages[iPage] = alloc_page(fFlagsLnx);
+            pMemLnx->apPages[iPage] = alloc_page(fFlagsLnx | __GFP_NOWARN);
             if (RT_UNLIKELY(!pMemLnx->apPages[iPage]))
             {
                 while (iPage-- > 0)
@@ -1170,7 +1170,7 @@ DECLHIDDEN(int) rtR0MemObjNativeReserveKernel(PPRTR0MEMOBJINTERNAL ppMem, void *
      * Allocate a dummy page and create a page pointer array for vmap such that
      * the dummy page is mapped all over the reserved area.
      */
-    pDummyPage = alloc_page(GFP_HIGHUSER);
+    pDummyPage = alloc_page(GFP_HIGHUSER | __GFP_NOWARN);
     if (!pDummyPage)
         return VERR_NO_MEMORY;
     papPages = RTMemAlloc(sizeof(*papPages) * cPages);
@@ -1407,7 +1407,7 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
     /*
      * Allocate a dummy page for use when mapping the memory.
      */
-    pDummyPage = alloc_page(GFP_USER);
+    pDummyPage = alloc_page(GFP_USER | __GFP_NOWARN);
     if (!pDummyPage)
         return VERR_NO_MEMORY;
     SetPageReserved(pDummyPage);
@@ -1526,6 +1526,32 @@ DECLHIDDEN(int) rtR0MemObjNativeMapUser(PPRTR0MEMOBJINTERNAL ppMem, RTR0MEMOBJ p
                     }
                 }
             }
+
+#ifdef CONFIG_NUMA_BALANCING
+# if LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0)
+#  ifdef RHEL_RELEASE_CODE
+#   if RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7, 0)
+#    define VBOX_NUMA_HACK_OLD
+#   endif
+#  endif
+# endif
+            if (RT_SUCCESS(rc))
+            {
+                /** @todo Ugly hack! But right now we have no other means to
+                 *        disable automatic NUMA page balancing. */
+# ifdef RT_OS_X86
+#  ifdef VBOX_NUMA_HACK_OLD
+                pTask->mm->numa_next_reset = jiffies + 0x7fffffffUL;
+#  endif
+                pTask->mm->numa_next_scan  = jiffies + 0x7fffffffUL;
+# else
+#  ifdef VBOX_NUMA_HACK_OLD
+                pTask->mm->numa_next_reset = jiffies + 0x7fffffffffffffffUL;
+#  endif
+                pTask->mm->numa_next_scan  = jiffies + 0x7fffffffffffffffUL;
+# endif
+            }
+#endif /* CONFIG_NUMA_BALANCING */
 
             up_write(&pTask->mm->mmap_sem);
 

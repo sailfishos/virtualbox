@@ -1,4 +1,4 @@
-# $Id: VCC100.kmk 2625 2012-08-07 20:26:48Z bird $
+# $Id: VCC100.kmk 2677 2013-02-01 15:04:53Z bird $
 ## @file
 # kBuild Tool Config - Visual C++ 10.0 (aka Visual 2010 and MSC v16), targeting $(KBUILD_TARGET).
 #
@@ -312,7 +312,7 @@ endef
 TOOL_VCC100_LINK_PROGRAM_DEPEND = $(foreach lib,$(libs),$(if $(findstring $(lib),$(subst /,x,$(lib))),, $(lib))) $(othersrc)
 TOOL_VCC100_LINK_PROGRAM_DEPORD =
 TOOL_VCC100_LINK_PROGRAM_OUTPUT = $(outbase).map $(outbase).rsp
-TOOL_VCC100_LINK_PROGRAM_OUTPUT_MAYBE = $(outbase).map $(outbase).lib $(outbase).exp $(outbase).ilk $(out).manifest
+TOOL_VCC100_LINK_PROGRAM_OUTPUT_MAYBE = $(outbase).lib $(outbase).exp $(outbase).ilk $(out).manifest
 TOOL_VCC100_LINK_PROGRAM_OUTPUT_DEBUG = $(outbase).pdb
 TOOL_VCC100_LINK_PROGRAM_DEBUG_INSTALL_FN = $(2).pdb=>$(basename $(3)).pdb
 define TOOL_VCC100_LINK_PROGRAM_CMDS

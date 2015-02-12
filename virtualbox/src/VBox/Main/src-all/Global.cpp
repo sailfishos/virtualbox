@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,11 +26,15 @@
 /* static */
 const Global::OSType Global::sOSTypes[] =
 {
-    /* NOTE1: we assume that unknown is always the first entry!
+    /* NOTE1: we assume that unknown is always the first two entries!
      * NOTE2: please use powers of 2 when specifying the size of harddisks since
      *        '2GB' looks better than '1.95GB' (= 2000MB) */
     { "Other",   "Other",             "Other",              "Other/Unknown",
       VBOXOSTYPE_Unknown,         VBOXOSHINT_NONE,
+        64,   4,  2 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+      StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97 },
+    { "Other",   "Other",             "Other_64",           "Other/Unknown (64-bit)",
+      VBOXOSTYPE_Unknown_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_PAE | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC,
         64,   4,  2 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
       StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97 },
     { "Windows", "Microsoft Windows", "Windows31",          "Windows 3.1",
@@ -57,7 +61,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Win2k,            VBOXOSHINT_USBTABLET,
        168,  16,  4 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Windows", "Microsoft Windows", "WindowsXP",          "Windows XP",
+    { "Windows", "Microsoft Windows", "WindowsXP",          "Windows XP (32 bit)",
       VBOXOSTYPE_WinXP,            VBOXOSHINT_USBTABLET,
        192,  16, 10 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -65,7 +69,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_WinXP_x64,       VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
        192,  16, 10 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Windows", "Microsoft Windows", "Windows2003",        "Windows 2003",
+    { "Windows", "Microsoft Windows", "Windows2003",        "Windows 2003 (32 bit)",
       VBOXOSTYPE_Win2k3,           VBOXOSHINT_USBTABLET,
        256,  16, 20 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -73,7 +77,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Win2k3_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
        256,  16, 20 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_HDA  },
-    { "Windows", "Microsoft Windows", "WindowsVista",       "Windows Vista",
+    { "Windows", "Microsoft Windows", "WindowsVista",       "Windows Vista (32 bit)",
       VBOXOSTYPE_WinVista,         VBOXOSHINT_USBTABLET,
        512,  16, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
@@ -81,7 +85,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_WinVista_x64,    VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
        512,  16, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
-    { "Windows", "Microsoft Windows", "Windows2008",        "Windows 2008",
+    { "Windows", "Microsoft Windows", "Windows2008",        "Windows 2008 (32 bit)",
       VBOXOSTYPE_Win2k8,           VBOXOSHINT_USBTABLET,
        512,  16, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
@@ -89,7 +93,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Win2k8_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
        512,  16, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
-    { "Windows", "Microsoft Windows", "Windows7",           "Windows 7",
+    { "Windows", "Microsoft Windows", "Windows7",           "Windows 7 (32 bit)",
       VBOXOSTYPE_Win7,             VBOXOSHINT_USBTABLET,
        512,  16, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
@@ -97,7 +101,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Win7_x64,        VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
        512,  16, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
-    { "Windows", "Microsoft Windows", "Windows8",           "Windows 8",
+    { "Windows", "Microsoft Windows", "Windows8",           "Windows 8 (32 bit)",
       VBOXOSTYPE_Win8,             VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET | VBOXOSHINT_PAE,
        1024,128, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
@@ -105,19 +109,31 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Win8_x64,        VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
        2048,128, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
+    { "Windows", "Microsoft Windows", "Windows81",          "Windows 8.1 (32 bit)",
+      VBOXOSTYPE_Win81,            VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET | VBOXOSHINT_PAE,
+       1024,128, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+        StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
+    { "Windows", "Microsoft Windows", "Windows81_64",       "Windows 8.1 (64 bit)",
+      VBOXOSTYPE_Win81_x64,       VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
+       2048,128, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+        StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
     { "Windows", "Microsoft Windows", "Windows2012_64",     "Windows 2012 (64 bit)",
       VBOXOSTYPE_Win2k12_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
        2048,128, 25 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_HDA  },
-    { "Windows", "Microsoft Windows", "WindowsNT",          "Other Windows",
+    { "Windows", "Microsoft Windows", "WindowsNT",          "Other Windows (32 bit)",
       VBOXOSTYPE_WinNT,           VBOXOSHINT_NONE,
        512,  16, 20 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+        StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
+    { "Windows", "Microsoft Windows", "WindowsNT_64",       "Other Windows (64-bit)",
+      VBOXOSTYPE_WinNT_x64,       VBOXOSHINT_64BIT | VBOXOSHINT_PAE | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
+       512,  16, 20 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
     { "Linux",   "Linux",             "Linux22",            "Linux 2.2",
       VBOXOSTYPE_Linux22,         VBOXOSHINT_RTCUTC,
         64,   4,  2 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Linux24",            "Linux 2.4",
+    { "Linux",   "Linux",             "Linux24",            "Linux 2.4 (32 bit)",
       VBOXOSTYPE_Linux24,         VBOXOSHINT_RTCUTC,
        128,   4,  4 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -125,31 +141,31 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Linux24_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC,
        128,   4,  4 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Linux26",            "Linux 2.6",
+    { "Linux",   "Linux",             "Linux26",            "Linux 2.6 / 3.x (32 bit)",
       VBOXOSTYPE_Linux26,         VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
-       256,   4,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
-        StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Linux26_64",         "Linux 2.6 (64 bit)",
-      VBOXOSTYPE_Linux26_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
-       256,   4,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
-        StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "ArchLinux",          "Arch Linux",
-      VBOXOSTYPE_ArchLinux,       VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        256,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+        StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
+    { "Linux",   "Linux",             "Linux26_64",         "Linux 2.6 / 3.x (64 bit)",
+      VBOXOSTYPE_Linux26_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+       256,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+        StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
+    { "Linux",   "Linux",             "ArchLinux",          "Arch Linux (32 bit)",
+      VBOXOSTYPE_ArchLinux,       VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+       512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
     { "Linux",   "Linux",             "ArchLinux_64",       "Arch Linux (64 bit)",
       VBOXOSTYPE_ArchLinux_x64,   VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
-       256,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+       512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Debian",             "Debian",
+    { "Linux",   "Linux",             "Debian",             "Debian (32 bit)",
       VBOXOSTYPE_Debian,          VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
-       384,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+       512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
     { "Linux",   "Linux",             "Debian_64",          "Debian (64 bit)",
       VBOXOSTYPE_Debian_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
-       384,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+       512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97},
-    { "Linux",   "Linux",             "OpenSUSE",           "openSUSE",
+    { "Linux",   "Linux",             "OpenSUSE",           "openSUSE (32 bit)",
       VBOXOSTYPE_OpenSUSE,        VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -157,7 +173,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_OpenSUSE_x64,    VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Fedora",             "Fedora",
+    { "Linux",   "Linux",             "Fedora",             "Fedora (32 bit)",
       VBOXOSTYPE_FedoraCore,      VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        768,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -165,15 +181,15 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_FedoraCore_x64,  VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        768,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Gentoo",             "Gentoo",
+    { "Linux",   "Linux",             "Gentoo",             "Gentoo (32 bit)",
       VBOXOSTYPE_Gentoo,          VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
-       256,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+       512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
     { "Linux",   "Linux",             "Gentoo_64",          "Gentoo (64 bit)",
       VBOXOSTYPE_Gentoo_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
-       256,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+       512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Mandriva",           "Mandriva",
+    { "Linux",   "Linux",             "Mandriva",           "Mandriva (32 bit)",
       VBOXOSTYPE_Mandriva,        VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -181,7 +197,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Mandriva_x64,    VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "RedHat",             "Red Hat",
+    { "Linux",   "Linux",             "RedHat",             "Red Hat (32 bit)",
       VBOXOSTYPE_RedHat,          VBOXOSHINT_RTCUTC | VBOXOSHINT_PAE,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -189,7 +205,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_RedHat_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_PAE | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Turbolinux",         "Turbolinux",
+    { "Linux",   "Linux",             "Turbolinux",         "Turbolinux (32 bit)",
       VBOXOSTYPE_Turbolinux,      VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        384,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -197,7 +213,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Turbolinux_x64,  VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        384,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Ubuntu",             "Ubuntu",
+    { "Linux",   "Linux",             "Ubuntu",             "Ubuntu (32 bit)",
       VBOXOSTYPE_Ubuntu,          VBOXOSHINT_RTCUTC | VBOXOSHINT_PAE | VBOXOSHINT_USBTABLET,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -205,7 +221,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Ubuntu_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Xandros",            "Xandros",
+    { "Linux",   "Linux",             "Xandros",            "Xandros (32 bit)",
       VBOXOSTYPE_Xandros,         VBOXOSHINT_RTCUTC,
        256,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -213,7 +229,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Xandros_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC,
        256,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Oracle",             "Oracle",
+    { "Linux",   "Linux",             "Oracle",             "Oracle (32 bit)",
       VBOXOSTYPE_Oracle,          VBOXOSHINT_RTCUTC | VBOXOSHINT_PAE,
        512,  12, 12 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -221,11 +237,15 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Oracle_x64,      VBOXOSHINT_64BIT | VBOXOSHINT_PAE | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC,
        512,  12, 12 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Linux",   "Linux",             "Linux",              "Other Linux",
+    { "Linux",   "Linux",             "Linux",              "Other Linux (32 bit)",
       VBOXOSTYPE_Linux,           VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
        256,  12,  8 * _1G64, NetworkAdapterType_Am79C973, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Solaris", "Solaris",           "Solaris",            "Oracle Solaris 10 5/09 and earlier",
+    { "Linux",   "Linux",             "Linux_64",           "Other Linux (64-bit)",
+      VBOXOSTYPE_Linux_x64,       VBOXOSHINT_64BIT | VBOXOSHINT_PAE | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+       512,  12,  8 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
+        StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
+    { "Solaris", "Solaris",           "Solaris",            "Oracle Solaris 10 5/09 and earlier (32 bit)",
       VBOXOSTYPE_Solaris,         VBOXOSHINT_NONE,
        768,  12, 16 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -233,7 +253,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Solaris_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC,
       1536,  12, 16 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "Solaris", "Solaris",           "OpenSolaris",        "Oracle Solaris 10 10/09 and later",
+    { "Solaris", "Solaris",           "OpenSolaris",        "Oracle Solaris 10 10/09 and later (32 bit)",
       VBOXOSTYPE_OpenSolaris,     VBOXOSHINT_USBTABLET,
        768,  12, 16 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_IntelAhci, StorageBus_SATA,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -245,7 +265,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_Solaris11_x64, VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_USBTABLET,
       1536,  12, 16 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_IntelAhci, StorageBus_SATA,
         StorageControllerType_IntelAhci, StorageBus_SATA, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "BSD",     "BSD",               "FreeBSD",            "FreeBSD",
+    { "BSD",     "BSD",               "FreeBSD",            "FreeBSD (32 bit)",
       VBOXOSTYPE_FreeBSD,         VBOXOSHINT_NONE,
        128,   4,  2 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -253,7 +273,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_FreeBSD_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC,
        128,   4,  2 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "BSD",     "BSD",               "OpenBSD",            "OpenBSD",
+    { "BSD",     "BSD",               "OpenBSD",            "OpenBSD (32 bit)",
       VBOXOSTYPE_OpenBSD,         VBOXOSHINT_HWVIRTEX,
         64,   4,  2 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -261,7 +281,7 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_OpenBSD_x64,     VBOXOSHINT_64BIT | VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC,
         64,   4,  2 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
-    { "BSD",     "BSD",               "NetBSD",             "NetBSD",
+    { "BSD",     "BSD",               "NetBSD",             "NetBSD (32 bit)",
       VBOXOSTYPE_NetBSD,          VBOXOSHINT_NONE,
         64,   4,  2 * _1G64, NetworkAdapterType_I82540EM, 0, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_AC97  },
@@ -289,15 +309,47 @@ const Global::OSType Global::sOSTypes[] =
       VBOXOSTYPE_OS2,             VBOXOSHINT_HWVIRTEX | VBOXOSHINT_FLOPPY | VBOXOSHINT_NOUSB,
         96,   4,  2 * _1G64, NetworkAdapterType_Am79C973, 1, StorageControllerType_PIIX4, StorageBus_IDE,
         StorageControllerType_PIIX4, StorageBus_IDE, ChipsetType_PIIX3, AudioControllerType_SB16  },
-    { "MacOS",   "Mac OS X",          "MacOS",              "Mac OS X",
-      VBOXOSTYPE_MacOS,           VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_USBTABLET,
-      2048,   4, 20 * _1G64, NetworkAdapterType_I82543GC, 0,
-       StorageControllerType_ICH6, StorageBus_IDE, StorageControllerType_IntelAhci, StorageBus_SATA,
+    { "MacOS",   "Mac OS X",          "MacOS",              "Mac OS X (32 bit)",
+      VBOXOSTYPE_MacOS,           VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE
+                                | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+      2048,   4, 20 * _1G64, NetworkAdapterType_I82545EM, 0,
+       StorageControllerType_IntelAhci, StorageBus_SATA, StorageControllerType_IntelAhci, StorageBus_SATA,
       ChipsetType_ICH9, AudioControllerType_HDA  },
     { "MacOS",   "Mac OS X",          "MacOS_64",           "Mac OS X (64 bit)",
-      VBOXOSTYPE_MacOS_x64,       VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE |  VBOXOSHINT_64BIT | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_USBTABLET,
-      2048,   4, 20 * _1G64, NetworkAdapterType_I82543GC, 0,
-      StorageControllerType_ICH6, StorageBus_IDE, StorageControllerType_IntelAhci, StorageBus_SATA,
+      VBOXOSTYPE_MacOS_x64,       VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE |  VBOXOSHINT_64BIT
+                                | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+      2048,   4, 20 * _1G64, NetworkAdapterType_I82545EM, 0,
+      StorageControllerType_IntelAhci, StorageBus_SATA, StorageControllerType_IntelAhci, StorageBus_SATA,
+      ChipsetType_ICH9, AudioControllerType_HDA  },
+    { "MacOS",   "Mac OS X",          "MacOS106",           "Mac OS X 10.6 Snow Leopard (32 bit)",
+      VBOXOSTYPE_MacOS106,        VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE
+                                | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+      2048,   4, 20 * _1G64, NetworkAdapterType_I82545EM, 0,
+       StorageControllerType_IntelAhci, StorageBus_SATA, StorageControllerType_IntelAhci, StorageBus_SATA,
+      ChipsetType_ICH9, AudioControllerType_HDA  },
+    { "MacOS",   "Mac OS X",          "MacOS106_64",        "Mac OS X 10.6 Snow Leopard (64 bit)",
+      VBOXOSTYPE_MacOS106_x64,    VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE |  VBOXOSHINT_64BIT
+                                | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+      2048,   4, 20 * _1G64, NetworkAdapterType_I82545EM, 0,
+      StorageControllerType_IntelAhci, StorageBus_SATA, StorageControllerType_IntelAhci, StorageBus_SATA,
+      ChipsetType_ICH9, AudioControllerType_HDA  },
+    { "MacOS",   "Mac OS X",          "MacOS107_64",        "Mac OS X 10.7 Lion (64 bit)",
+      VBOXOSTYPE_MacOS107_x64,    VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE |  VBOXOSHINT_64BIT
+                                | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+      2048,   4, 20 * _1G64, NetworkAdapterType_I82545EM, 0,
+      StorageControllerType_IntelAhci, StorageBus_SATA, StorageControllerType_IntelAhci, StorageBus_SATA,
+      ChipsetType_ICH9, AudioControllerType_HDA  },
+    { "MacOS",   "Mac OS X",          "MacOS108_64",        "Mac OS X 10.8 Mountain Lion (64 bit)",  /* Aka "Mountain Kitten". */
+      VBOXOSTYPE_MacOS108_x64,    VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE |  VBOXOSHINT_64BIT
+                                | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+      2048,   4, 20 * _1G64, NetworkAdapterType_I82545EM, 0,
+      StorageControllerType_IntelAhci, StorageBus_SATA, StorageControllerType_IntelAhci, StorageBus_SATA,
+      ChipsetType_ICH9, AudioControllerType_HDA  },
+    { "MacOS",   "Mac OS X",          "MacOS109_64",        "Mac OS X 10.9 Mavericks (64 bit)", /* Not to be confused with McCain. */
+      VBOXOSTYPE_MacOS109_x64,    VBOXOSHINT_HWVIRTEX | VBOXOSHINT_IOAPIC | VBOXOSHINT_EFI | VBOXOSHINT_PAE |  VBOXOSHINT_64BIT
+                                | VBOXOSHINT_USBHID | VBOXOSHINT_HPET | VBOXOSHINT_RTCUTC | VBOXOSHINT_USBTABLET,
+      2048,   4, 20 * _1G64, NetworkAdapterType_I82545EM, 0,
+      StorageControllerType_IntelAhci, StorageBus_SATA, StorageControllerType_IntelAhci, StorageBus_SATA,
       ChipsetType_ICH9, AudioControllerType_HDA  },
     { "Other",   "Other",             "DOS",                "DOS",
       VBOXOSTYPE_DOS,             VBOXOSHINT_FLOPPY | VBOXOSHINT_NOUSB,
@@ -433,6 +485,26 @@ Global::stringifyDeviceType(DeviceType_T aType)
             AssertMsgFailed(("%d (%#x)\n", aType, aType));
             static char s_szMsg[48];
             RTStrPrintf(s_szMsg, sizeof(s_szMsg), "InvalidType-0x%08x\n", aType);
+            return s_szMsg;
+        }
+    }
+}
+
+
+/*static*/ const char *
+Global::stringifyReason(Reason_T aReason)
+{
+    switch (aReason)
+    {
+        case Reason_Unspecified:      return "unspecified";
+        case Reason_HostSuspend:      return "host suspend";
+        case Reason_HostResume:       return "host resume";
+        case Reason_HostBatteryLow:   return "host battery low";
+        default:
+        {
+            AssertMsgFailed(("%d (%#x)\n", aReason, aReason));
+            static char s_szMsg[48];
+            RTStrPrintf(s_szMsg, sizeof(s_szMsg), "invalid reason %#010x\n", aReason);
             return s_szMsg;
         }
     }

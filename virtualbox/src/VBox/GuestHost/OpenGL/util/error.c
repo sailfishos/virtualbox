@@ -1,3 +1,102 @@
+/* $Id: error.c $ */
+/** @file
+ * VBox crOpenGL error logging
+ */
+
+/*
+ * Copyright (C) 2014 Oracle Corporation
+ *
+ * This file is part of VirtualBox Open Source Edition (OSE), as
+ * available from http://www.virtualbox.org. This file is free software;
+ * you can redistribute it and/or modify it under the terms of the GNU
+ * General Public License (GPL) as published by the Free Software
+ * Foundation, in version 2 as it comes in the "COPYING" file of the
+ * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+ * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ */
+#ifdef VBOX
+
+#include <iprt/string.h>
+#include <iprt/stream.h>
+#ifndef IN_GUEST
+#define LOG_GROUP LOG_GROUP_SHARED_CROPENGL
+#endif
+#include <VBox/log.h>
+
+bool fWarningsEnabled = true;
+
+static void logMessage(const char *pszPrefix, const char *pszFormat, va_list va)
+{
+    char *pszMessage;
+    int rc = RTStrAPrintfV(&pszMessage, pszFormat, va);
+    if (RT_SUCCESS(rc))
+    {
+        LogRel(("%s%s\n", pszPrefix, pszMessage));
+#ifdef IN_GUEST
+        RTStrmPrintf(g_pStdErr, "%s%s\n", pszPrefix, pszMessage);
+#endif
+        RTStrFree(pszMessage);
+    }
+}
+
+static void logDebug(const char *pszPrefix, const char *pszFormat, va_list va)
+{
+    char *pszMessage;
+    int rc = RTStrAPrintfV(&pszMessage, pszFormat, va);
+    if (RT_SUCCESS(rc))
+    {
+        Log(("%s%s\n", pszPrefix, pszMessage));
+        RTStrFree(pszMessage);
+    }
+}
+
+DECLEXPORT(void) crError(const char *pszFormat, ... )
+{
+    va_list va;
+
+    va_start(va, pszFormat);
+    logMessage("OpenGL Error: ", pszFormat, va);
+    va_end(va);
+    AssertLogRelFailed();
+}
+
+DECLEXPORT(void) crEnableWarnings(int fEnabled)
+{
+    fWarningsEnabled = RT_BOOL(fEnabled);
+}
+
+DECLEXPORT(void) crWarning(const char *pszFormat, ... )
+{
+    if (fWarningsEnabled)
+    {
+        va_list va;
+
+        va_start(va, pszFormat);
+        logMessage("OpenGL Warning: ", pszFormat, va);
+        va_end(va);
+    }
+}
+
+DECLEXPORT(void) crInfo(const char *pszFormat, ... )
+{
+    va_list va;
+
+    va_start(va, pszFormat);
+    logMessage("OpenGL Info: ", pszFormat, va);
+    va_end(va);
+}
+
+DECLEXPORT(void) crDebug(const char *pszFormat, ... )
+{
+    va_list va;
+
+    va_start(va, pszFormat);
+    logDebug("OpenGL Debug: ", pszFormat, va);
+    va_end(va);
+}
+
+#else
+
 /* Copyright (c) 2001, Stanford University
  * All rights reserved
  *
@@ -31,6 +130,8 @@
 
 #if defined(WINDOWS)
 # define CR_DEBUG_CONSOLE_ENABLE
+
+# include "Shlwapi.h"
 #endif
 
 #if defined(WINDOWS) && defined(IN_GUEST)
@@ -125,7 +226,7 @@ static void __crCheckAustralia(void)
 
 static void outputChromiumMessage( FILE *output, char *str )
 {
-    fprintf( output, "%s%s%s%s\n", str, 
+    fprintf( output, "%s%s%s%s\n", str,
             swedish_chef ? " BORK BORK BORK!" : "",
             canada ? ", eh?" : "",
             australia ? ", mate!" : ""
@@ -219,7 +320,7 @@ DECLEXPORT(void) crError(const char *format, ... )
         MessageBox( NULL, txt, "Chromium Error", MB_OK );
     }
     else
-    {   
+    {
 #endif
         va_end( args );
 #ifdef WINDOWS
@@ -241,10 +342,13 @@ DECLEXPORT(void) crError(const char *format, ... )
 }
 
 void crEnableWarnings(int onOff)
-{          
+{
     warnings_enabled = onOff;
 }
 
+#ifdef DEBUG_misha
+# undef crWarning
+#endif
 DECLEXPORT(void) crWarning(const char *format, ... )
 {
     if (warnings_enabled) {
@@ -268,7 +372,7 @@ DECLEXPORT(void) crWarning(const char *format, ... )
 #endif
         va_end( args );
 
-#if defined(WINDOWS) && defined(DEBUG) && !defined(IN_GUEST)
+#if defined(WINDOWS) && defined(DEBUG) && !defined(IN_GUEST) && defined(DEBUG_misha)
         DebugBreak();
 #endif
     }
@@ -310,7 +414,7 @@ static DECLCALLBACK(void) crDebugBackdoorDispMp(char* pcszStr)
 #endif
 
 
-#if defined(DEBUG) && defined(WINDOWS) /* && (!defined(DEBUG_misha) || !defined(IN_GUEST) ) */
+#if defined(WINDOWS) /* && (!defined(DEBUG_misha) || !defined(IN_GUEST) ) */
 # define CR_DEBUG_DBGPRINT_ENABLE
 #endif
 
@@ -320,6 +424,75 @@ static void crDebugDbgPrint(const char *str)
     OutputDebugString(str);
     OutputDebugString("\n");
 }
+
+static void crDebugDbgPrintF(const char * szString, ...)
+{
+    char szBuffer[4096] = {0};
+    va_list pArgList;
+    va_start(pArgList, szString);
+    vsprintf( szBuffer, szString, pArgList );
+    va_end(pArgList);
+
+    OutputDebugStringA(szBuffer);
+}
+
+static void crDebugDmlPrint(const char* pszDesc, const char* pszCmd)
+{
+    crDebugDbgPrintF("<?dml?><exec cmd=\"%s\">%s</exec>, ( %s )\n", pszCmd, pszDesc, pszCmd);
+}
+
+
+DECLEXPORT(void) crDbgCmdPrint(const char *description1, const char *description2, const char *cmd, ...)
+{
+    va_list args;
+    char aTxt[8092];
+    char aCmd[8092];
+
+    sprintf( aTxt, "%s%s", description1, description2 );
+
+    va_start( args, cmd );
+
+    vsprintf( aCmd, cmd, args );
+
+    va_end( args );
+
+    crDebugDmlPrint(aTxt, aCmd);
+
+    crDebug("%s: %s", aTxt, aCmd);
+}
+
+DECLEXPORT(void) crDbgCmdSymLoadPrint(const char *modName, const void*pvAddress)
+{
+    static bool fEnable = false;
+    static bool fInitialized = false;
+    const char * pszName;
+    static const char * pszModulePath = NULL;
+
+    if (!fInitialized)
+    {
+#ifndef DEBUG_misha
+        if (crGetenv( "CR_DEBUG_MODULE_ENABLE" ))
+#endif
+        {
+            fEnable = true;
+        }
+
+        fInitialized = true;
+    }
+
+    if (!fEnable)
+        return;
+
+    pszName = PathFindFileNameA(modName);
+
+    if (!pszModulePath)
+        pszModulePath = crGetenv("CR_DEBUG_MODULE_PATH");
+    if (!pszModulePath)
+        pszModulePath = "c:\\Users\\senmk\\Downloads\\Data\\Data";
+
+    crDbgCmdPrint("load modules for ", pszName, ".reload /i /f %s\\%s=%#p", pszModulePath, pszName, pvAddress);
+}
+
 #endif
 
 DECLEXPORT(void) crDebug(const char *format, ... )
@@ -373,13 +546,13 @@ DECLEXPORT(void) crDebug(const char *format, ... )
             if (crStrlen(fnamePrefix) < sizeof (str) - sizeof (pname) - 20)
             {
                 crGetProcName(pname, 1024);
-                sprintf(str, "%s_%s_%u.txt", fnamePrefix, pname,
+                sprintf(str,
 #ifdef RT_OS_WINDOWS
-                        GetCurrentProcessId()
+                "%s_%s_%u.txt", fnamePrefix, pname, GetCurrentProcessId()
 #else
-                        crGetPID()
+                "%s_%s_%lu.txt", fnamePrefix, pname, crGetPID()
 #endif
-                        );
+                );
                 fname = &str[0];
             }
         }
@@ -399,7 +572,7 @@ DECLEXPORT(void) crDebug(const char *format, ... )
             output = fopen( fname, "w" );
             if (!output)
             {
-                crError( "Couldn't open debug log %s", fname ); 
+                crError( "Couldn't open debug log %s", fname );
             }
         }
         else
@@ -495,20 +668,42 @@ DECLEXPORT(void) crDebug(const char *format, ... )
     outputChromiumMessage( output, txt );
 #else
     if (!output
-# ifndef DEBUG_misha
+#ifndef DEBUG_misha
             || output==stderr
-# endif
+#endif
             )
     {
         LogRel(("%s\n", txt));
     }
     else
     {
-# ifndef DEBUG_misha
         LogRel(("%s\n", txt));
-# endif
         outputChromiumMessage(output, txt);
     }
 #endif
     va_end( args );
 }
+
+#if defined(DEBUG_misha) && defined(RT_OS_WINDOWS)
+BOOL WINAPI DllMain(HINSTANCE hDLLInst, DWORD fdwReason, LPVOID lpvReserved)
+{
+    (void) lpvReserved;
+
+    switch (fdwReason)
+    {
+        case DLL_PROCESS_ATTACH:
+        {
+            char aName[MAX_PATH];
+             GetModuleFileNameA(hDLLInst, aName, RT_ELEMENTS(aName));
+             crDbgCmdSymLoadPrint(aName, hDLLInst);
+            break;
+        }
+        default:
+            break;
+    }
+
+    return TRUE;
+}
+#endif
+
+#endif /* !VBOX */

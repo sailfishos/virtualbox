@@ -70,6 +70,11 @@ VBox-kStuff_SOURCES = \
 	iprt/kHlpString-iprt.cpp \
 	iprt/kRdrFile-iprt.cpp
 
+ifdef VBOX_WITH_32_ON_64_MAIN_API # 32-bit edition.
+ LIBRARIES += VBox-kStuff-x86
+ VBox-kStuff-x86_TEMPLATE = VBoxR3Dll-x86
+ VBox-kStuff-x86_EXTENDS = VBox-kStuff
+endif
 
 #
 # The library for static linking.
@@ -80,7 +85,7 @@ VBox-kStuffStatic_EXTENDS = VBox-kStuff
 
 
 LIBRARIES += VBox-kStuffStaticBldProg
-VBox-kStuffStaticBldProg_TEMPLATE = VBOXBLDPROG
+VBox-kStuffStaticBldProg_TEMPLATE = VBoxBldProg
 VBox-kStuffStaticBldProg_EXTENDS = VBox-kStuff
 
 

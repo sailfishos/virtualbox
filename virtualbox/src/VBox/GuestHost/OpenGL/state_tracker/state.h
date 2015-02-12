@@ -46,6 +46,7 @@ extern CRContext *__currentContext;
 extern GLboolean g_bVBoxEnableDiffOnMakeCurrent;
 
 extern CRContext *g_pAvailableContexts[CR_MAX_CONTEXTS];
+extern uint32_t g_cContexts;
 
 extern void crStateTextureInitTextureObj (CRContext *ctx, CRTextureObj *tobj, GLuint name, GLenum target);
 extern void crStateTextureInitTextureFormat( CRTextureLevel *tl, GLenum internalFormat );
@@ -69,13 +70,11 @@ void crStateClientDiff(CRClientBits *cb, CRbitvalue *bitID, CRContext *from, CRC
                                              
 void crStateClientSwitch(CRClientBits *cb, CRbitvalue *bitID,   CRContext *from, CRContext *to);
 
-void crStateGetTextureObjectAndImage(CRContext *g, GLenum texTarget, GLint level,
-                                     CRTextureObj **obj, CRTextureLevel **img);
-
 void crStateFreeBufferObject(void *data);
 void crStateFreeFBO(void *data);
 void crStateFreeRBO(void *data);
 
 void crStateGenNames(CRContext *g, CRHashTable *table, GLsizei n, GLuint *names);
 void crStateRegNames(CRContext *g, CRHashTable *table, GLsizei n, GLuint *names);
+void crStateOnTextureUsageRelease(CRSharedState *pS, CRTextureObj *pObj);
 #endif

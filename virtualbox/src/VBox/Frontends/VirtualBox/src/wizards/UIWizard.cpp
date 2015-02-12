@@ -98,10 +98,17 @@ UIWizard::UIWizard(QWidget *pParent, UIWizardType type, UIWizardMode mode)
 #endif /* Q_WS_WIN */
 
 #ifdef Q_WS_MAC
+    /* Since wizards are now represented as Mac OS X Sheets
+     * we would like to have possibility to cancel them. */
+    setOption(QWizard::NoCancelButton, false);
     /* I'm really not sure why there shouldn't be any default button on Mac OS X.
      * This prevents the using of Enter to jump to the next page. */
     setOptions(options() ^ QWizard::NoDefaultButton);
 #endif /* Q_WS_MAC */
+
+    /* All our wizards would like to have window-modality,
+     * Under Mac OS it will be represented as Mac OS Sheet. */
+    setWindowModality(Qt::WindowModal);
 
     /* Setup connections: */
     connect(this, SIGNAL(currentIdChanged(int)), this, SLOT(sltCurrentIdChanged(int)));

@@ -23,7 +23,7 @@
 #include "UIMachineWindow.h"
 
 /* Forward declarations: */
-class VBoxMiniToolBar;
+class UIRuntimeMiniToolBar;
 
 /* Seamless machine-window implementation: */
 class UIMachineWindowSeamless : public UIMachineWindow
@@ -42,18 +42,18 @@ private slots:
     void sltMachineStateChanged();
 #endif /* !Q_WS_MAC */
 
-    /* Show in necessary mode: */
-    void sltShowInNecessaryMode() { showInNecessaryMode(); }
-
     /* Popup main menu: */
     void sltPopupMainMenu();
 
-#ifndef RT_OS_DARWIN
-    /* Current Qt on MAC has something broken in moc generation,
-     * so we have to use RT_OS_DARWIN instead of Q_WS_MAC here. */
-    /* Update mini tool-bar mask: */
-    void sltUpdateMiniToolBarMask();
-#endif /* !RT_OS_DARWIN */
+    /** Revokes keyboard-focus. */
+    void sltRevokeFocus();
+
+#ifndef VBOX_WITH_TRANSLUCENT_SEAMLESS
+# ifdef Q_WS_X11
+    /** Assigns mini-toolbar seamless mask. */
+    void sltUpdateMiniToolbarMask(const QRect &geo);
+# endif /* Q_WS_X11 */
+#endif /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
 
 private:
 
@@ -75,29 +75,40 @@ private:
     void placeOnScreen();
     void showInNecessaryMode();
 
+    /** Adjusts machine-view size to correspond current machine-window size. */
+    virtual void adjustMachineViewSize();
+
 #ifndef Q_WS_MAC
     /* Update routines: */
     void updateAppearanceOf(int iElement);
 #endif /* !Q_WS_MAC */
 
-#ifdef Q_WS_MAC
-    /* Event handlers: */
-    bool event(QEvent *pEvent);
-#endif /* Q_WS_MAC */
+#if defined(VBOX_WITH_TRANSLUCENT_SEAMLESS) && defined(Q_WS_WIN)
+    /* Handler: Translucency stuff: */
+    void showEvent(QShowEvent *pEvent);
+#endif /* VBOX_WITH_TRANSLUCENT_SEAMLESS && Q_WS_WIN */
 
-    /* Helpers: */
-    void setMask(const QRegion &region);
+#ifndef VBOX_WITH_TRANSLUCENT_SEAMLESS
+    /** Assigns guest seamless mask. */
+    void setMask(const QRegion &maskGuest);
+#endif /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
 
     /* Widgets: */
     QMenu *m_pMainMenu;
 #ifndef Q_WS_MAC
-    VBoxMiniToolBar *m_pMiniToolBar;
+    UIRuntimeMiniToolBar *m_pMiniToolBar;
 #endif /* !Q_WS_MAC */
 
-    /* Variables: */
-#ifdef Q_WS_WIN
-    QRegion m_prevRegion;
-#endif /* Q_WS_WIN */
+#ifndef VBOX_WITH_TRANSLUCENT_SEAMLESS
+    /** Holds the full seamless mask. */
+    QRegion m_maskFull;
+    /** Holds the guest seamless mask. */
+    QRegion m_maskGuest;
+# ifdef Q_WS_X11
+    /** Holds the mini-toolbar seamless mask. */
+    QRect m_maskMiniToolbar;
+# endif /* Q_WS_X11 */
+#endif /* !VBOX_WITH_TRANSLUCENT_SEAMLESS */
 
     /* Factory support: */
     friend class UIMachineWindow;

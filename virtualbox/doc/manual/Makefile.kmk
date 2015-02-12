@@ -64,14 +64,8 @@ BLDDIRS += $(VBOX_PATH_MANUAL_OUTBASE)
 #  Main targets
 #
 ##########################################################################################
+
 ifdef VBOX_WITH_DOCS
- # Default language
- VBOX_MANUAL_LANGUAGES = en_US
-
- ifdef VBOX_WITH_DOCS_TRANSLATIONS
-  VBOX_MANUAL_ADD_LANGUAGES = fr_FR
- endif
-
  if defined(VBOX_ONLY_SDK) || defined(VBOX_WITH_DOCS_SDKREF)
   ## @todo make this an install target, drop the BLDDIRS.
   OTHERS += \
@@ -317,7 +311,11 @@ $(foreach f,$(VBOX_MANUAL_LANGUAGES),$(VBOX_PATH_MANUAL_OUTBASE)/$f/user_ChangeL
 	$(QUIET)$(SED) -e '1,/<!--\$$VIRTUALBOX_CHANGELOG_IMPL-->/!d' \
 	               -e 's/<!--\$$VIRTUALBOX_CHANGELOG_IMPL-->//' \
 	               --output $@ $@.tmp
-	$(QUIET)$(SED) -e 's/<?xml version=\"1.0\" encoding=\"UTF-8\"?>//g' --append $@ $(VBOX_PATH_MANUAL_SRC)/user_ChangeLogImpl.xml
+	$(QUIET)var=`$(SED) -n '/!--\$$VIRTUALBOX_CHANGELOG_IMPL-->/p' $<`; \
+	               test -n "$${var}" && \
+	               $(SED) -e 's/<?xml version=\"1.0\" encoding=\"UTF-8\"?>//g' \
+	                       --append $@ $(VBOX_PATH_MANUAL_SRC)/user_ChangeLogImpl.xml; \
+                       true
 	$(QUIET)$(SED) -e '/<!--\$$VIRTUALBOX_CHANGELOG_IMPL-->/,$$!d' \
 	               -e 's/<!--\$$VIRTUALBOX_CHANGELOG_IMPL-->//' --append $@ $@.tmp
 

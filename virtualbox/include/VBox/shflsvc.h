@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -204,14 +204,14 @@ DECLINLINE(PSHFLSTRING) ShflStringInitBuffer(void *pvBuffer, uint32_t u32Size)
 }
 
 /**
- * Validates a HGCM string parameter.
+ * Validates a HGCM string output parameter.
  *
  * @returns true if valid, false if not.
  *
  * @param   pString     The string buffer pointer.
  * @param   cbBuf       The buffer size from the parameter.
  */
-DECLINLINE(bool) ShflStringIsValid(PCSHFLSTRING pString, uint32_t cbBuf)
+DECLINLINE(bool) ShflStringIsValidOut(PCSHFLSTRING pString, uint32_t cbBuf)
 {
     if (RT_UNLIKELY(cbBuf <= RT_UOFFSETOF(SHFLSTRING, String)))
         return false;
@@ -223,17 +223,57 @@ DECLINLINE(bool) ShflStringIsValid(PCSHFLSTRING pString, uint32_t cbBuf)
 }
 
 /**
- * Validates an optional HGCM string parameter.
+ * Validates a HGCM string input parameter.
+ *
+ * @returns true if valid, false if not.
+ *
+ * @param   pString     The string buffer pointer.
+ * @param   cbBuf       The buffer size from the parameter.
+ * @param   fUtf8Not16  Set if UTF-8 encoding, clear if UTF-16 encoding.
+ */
+DECLINLINE(bool) ShflStringIsValidIn(PCSHFLSTRING pString, uint32_t cbBuf, bool fUtf8Not16)
+{
+    int rc;
+    if (RT_UNLIKELY(cbBuf <= RT_UOFFSETOF(SHFLSTRING, String)))
+        return false;
+    if (RT_UNLIKELY((uint32_t)pString->u16Size + RT_UOFFSETOF(SHFLSTRING, String) > cbBuf))
+        return false;
+    if (fUtf8Not16)
+    {
+        /* UTF-8: */
+        if (RT_UNLIKELY(pString->u16Length >= pString->u16Size))
+            return false;
+        rc = RTStrValidateEncodingEx((const char *)&pString->String.utf8[0], pString->u16Length + 1,
+                                     RTSTR_VALIDATE_ENCODING_EXACT_LENGTH | RTSTR_VALIDATE_ENCODING_ZERO_TERMINATED);
+    }
+    else
+    {
+        /* UTF-16: */
+        if (RT_UNLIKELY(pString->u16Length & 1))
+            return false;
+        if (RT_UNLIKELY((uint32_t)sizeof(RTUTF16) + pString->u16Length > pString->u16Size))
+            return false;
+        rc = RTUtf16ValidateEncodingEx(&pString->String.ucs2[0], pString->u16Length / 2 + 1,
+                                       RTSTR_VALIDATE_ENCODING_EXACT_LENGTH | RTSTR_VALIDATE_ENCODING_ZERO_TERMINATED);
+    }
+    if (RT_FAILURE(rc))
+        return false;
+    return true;
+}
+
+/**
+ * Validates an optional HGCM string input parameter.
  *
  * @returns true if valid, false if not.
  *
  * @param   pString     The string buffer pointer. Can be NULL.
  * @param   cbBuf       The buffer size from the parameter.
+ * @param   fUtf8Not16  Set if UTF-8 encoding, clear if UTF-16 encoding.
  */
-DECLINLINE(bool) ShflStringIsValidOrNull(PCSHFLSTRING pString, uint32_t cbBuf)
+DECLINLINE(bool) ShflStringIsValidOrNullIn(PCSHFLSTRING pString, uint32_t cbBuf, bool fUtf8Not16)
 {
     if (pString)
-        return ShflStringIsValid(pString, cbBuf);
+        return ShflStringIsValidIn(pString, cbBuf, fUtf8Not16);
     if (RT_UNLIKELY(cbBuf > 0))
         return false;
     return true;

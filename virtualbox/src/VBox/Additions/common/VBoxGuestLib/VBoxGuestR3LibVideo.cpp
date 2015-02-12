@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2013 Oracle Corporation
+ * Copyright (C) 2007-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,7 +29,7 @@
 *   Header Files                                                               *
 *******************************************************************************/
 #include <iprt/assert.h>
-#ifndef VBOX_VBGLR3_XFREE86
+#if !defined(VBOX_VBGLR3_XFREE86) && !defined(VBOX_VBGLR3_XORG)
 # include <iprt/mem.h>
 #endif
 #include <iprt/string.h>

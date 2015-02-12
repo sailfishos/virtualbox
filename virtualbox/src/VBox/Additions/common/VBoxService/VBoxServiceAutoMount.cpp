@@ -243,29 +243,40 @@ static int VBoxServiceAutoMountSharedFolder(const char *pszShareName, const char
 
     int rc = VINF_SUCCESS;
     char szAlreadyMountedTo[RTPATH_MAX];
-    /* If a Shared Folder already is mounted but not to our desired mount point,
-     * do an unmount first! */
-    if (   VBoxServiceAutoMountShareIsMounted(pszShareName, szAlreadyMountedTo, sizeof(szAlreadyMountedTo))
-        && RTStrICmp(pszMountPoint, szAlreadyMountedTo))
+    bool fSkip = false;
+
+    /* Already mounted? */
+    if (VBoxServiceAutoMountShareIsMounted(pszShareName, szAlreadyMountedTo, sizeof(szAlreadyMountedTo)))
     {
-        VBoxServiceVerbose(3, "VBoxServiceAutoMountWorker: Shared folder \"%s\" already mounted to \"%s\", unmounting ...\n",
-                           pszShareName, szAlreadyMountedTo);
-        rc = VBoxServiceAutoMountUnmount(szAlreadyMountedTo);
-        if (RT_FAILURE(rc))
-            VBoxServiceError("VBoxServiceAutoMountWorker: Failed to unmount \"%s\", %s (%d)!\n",
-                             szAlreadyMountedTo, strerror(errno), errno);
+        fSkip = true;
+        /* Do if it not mounted to our desired mount point */
+        if (RTStrICmp(pszMountPoint, szAlreadyMountedTo))
+        {
+            VBoxServiceVerbose(3, "VBoxServiceAutoMountWorker: Shared folder \"%s\" already mounted to \"%s\", unmounting ...\n",
+                               pszShareName, szAlreadyMountedTo);
+            rc = VBoxServiceAutoMountUnmount(szAlreadyMountedTo);
+            if (RT_FAILURE(rc))
+                VBoxServiceError("VBoxServiceAutoMountWorker: Failed to unmount \"%s\", %s (%d)!\n",
+                                 szAlreadyMountedTo, strerror(errno), errno);
+            else
+                fSkip = false;
+        }
+        if (fSkip)
+            VBoxServiceVerbose(3, "VBoxServiceAutoMountWorker: Shared folder \"%s\" already mounted to \"%s\", skipping\n",
+                               pszShareName, szAlreadyMountedTo);
     }
 
-    if (RT_SUCCESS(rc))
+    if (!fSkip && RT_SUCCESS(rc))
         rc = VBoxServiceAutoMountPrepareMountPoint(pszMountPoint, pszShareName, pOpts);
-    if (RT_SUCCESS(rc))
+    if (!fSkip && RT_SUCCESS(rc))
     {
 #ifdef RT_OS_SOLARIS
         char achOptBuf[MAX_MNTOPT_STR] = { '\0', };
         int flags = 0;
         if (pOpts->ronly)
             flags |= MS_RDONLY;
-        RTStrPrintf(achOptBuf, sizeof(achOptBuf), "uid=%d,gid=%d", pOpts->uid, pOpts->gid);
+        RTStrPrintf(achOptBuf, sizeof(achOptBuf), "uid=%d,gid=%d,dmode=%0o,fmode=%0o,dmask=%0o,fmask=%0o",
+                    pOpts->uid, pOpts->gid, pOpts->dmode, pOpts->fmode, pOpts->dmask, pOpts->fmask);
         int r = mount(pszShareName,
                       pszMountPoint,
                       flags | MS_OPTIONSTR,

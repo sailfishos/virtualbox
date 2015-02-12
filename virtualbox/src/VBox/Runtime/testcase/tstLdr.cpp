@@ -121,7 +121,7 @@ static int testLdrOne(const char *pszFilename)
 
         /* open it */
         int rc;
-        if (!strncmp(aLoads[i].pszName, "kLdr-", sizeof("kLdr-") - 1))
+        if (!strncmp(aLoads[i].pszName, RT_STR_TUPLE("kLdr-")))
             rc = RTLdrOpenkLdr(pszFilename, 0, RTLDRARCH_WHATEVER, &aLoads[i].hLdrMod);
         else
             rc = RTLdrOpen(pszFilename, 0, RTLDRARCH_WHATEVER, &aLoads[i].hLdrMod);
@@ -236,7 +236,8 @@ static int testLdrOne(const char *pszFilename)
                 for (unsigned iSym = 0; iSym < RT_ELEMENTS(aSyms); iSym++)
                 {
                     RTUINTPTR Value;
-                    int rc = RTLdrGetSymbolEx(aLoads[i].hLdrMod, aLoads[i].pvBits, aLoads[i].Addr, aSyms[iSym].pszName, &Value);
+                    int rc = RTLdrGetSymbolEx(aLoads[i].hLdrMod, aLoads[i].pvBits, aLoads[i].Addr,
+                                              UINT32_MAX, aSyms[iSym].pszName, &Value);
                     if (RT_SUCCESS(rc))
                     {
                         unsigned off = Value - aLoads[i].Addr;

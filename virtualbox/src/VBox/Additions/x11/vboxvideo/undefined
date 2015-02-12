@@ -1,3 +1,5 @@
+DRI2CloseScreen
+DRI2ScreenInit
 DRICloseScreen
 DRICreateInfoRec
 DRICreatePCIBusID
@@ -25,8 +27,13 @@ chdir
 chmod
 chown
 close
+__ctype_mask
+drmClose
+drmDropMaster
 drmFreeVersion
 drmGetVersion
+drmIoctl
+drmSetMaster
 fbPictureInit
 fbScreenInit
 fchmod
@@ -35,6 +42,7 @@ fcntl
 fflush
 flock
 fprintf
+__fprintf_chk
 fputs
 free
 fstat
@@ -51,6 +59,7 @@ iconv
 iconv_close
 iconv_open
 ioctl
+isspace
 lchown
 lseek
 lseek64
@@ -111,12 +120,17 @@ strncpy
 __strncpy_chk
 strpbrk
 strstr
+strtoul
+__strtoul_internal
 symlink
 tolower
 unlink
 unsetenv
 utimes
 vfprintf
+__vfprintf_chk
+vsnprintf
+__vsnprintf_chk
 vgaHWFreeHWRec
 vgaHWGetHWRec
 vgaHWGetIOBase

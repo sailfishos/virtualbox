@@ -1,9 +1,10 @@
+/* $Id: DevVGA_VBVA.cpp $ */
 /** @file
  * VirtualBox Video Acceleration (VBVA).
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -14,6 +15,9 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+/*******************************************************************************
+*   Header Files                                                               *
+*******************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_VGA
 #include <VBox/vmm/pdmifs.h>
 #include <VBox/vmm/pdmdev.h>
@@ -36,9 +40,12 @@
 #if 0 // def DEBUG_sunlover
 #define LOGVBVABUFFER(a) LogFlow(a)
 #else
-#define LOGVBVABUFFER(a) do {} while(0)
+#define LOGVBVABUFFER(a) do {} while (0)
 #endif
 
+/*******************************************************************************
+*   Structures and Typedefs                                                    *
+*******************************************************************************/
 typedef struct VBVAPARTIALRECORD
 {
     uint8_t *pu8;
@@ -68,20 +75,23 @@ typedef struct VBVAMOUSESHAPEINFO
     uint8_t *pu8Shape;
 } VBVAMOUSESHAPEINFO;
 
-/* @todo saved state: save and restore VBVACONTEXT */
+/** @todo saved state: save and restore VBVACONTEXT */
 typedef struct VBVACONTEXT
 {
     uint32_t cViews;
     VBVAVIEW aViews[64 /* @todo SchemaDefs::MaxGuestMonitors*/];
     VBVAMOUSESHAPEINFO mouseShapeInfo;
+    bool fPaused;
 } VBVACONTEXT;
 
-/* Copies 'cb' bytes from the VBVA ring buffer to the 'pu8Dst'.
+
+
+/** Copies @a cb bytes from the VBVA ring buffer to the @a pu8Dst.
  * Used for partial records or for records which cross the ring boundary.
  */
 static void vbvaFetchBytes (VBVABUFFER *pVBVA, uint8_t *pu8Dst, uint32_t cb)
 {
-    /* @todo replace the 'if' with an assert. The caller must ensure this condition. */
+    /** @todo replace the 'if' with an assert. The caller must ensure this condition. */
     if (cb >= pVBVA->cbData)
     {
         AssertMsgFailed (("cb = 0x%08X, ring buffer size 0x%08X", cb, pVBVA->cbData));
@@ -485,7 +495,7 @@ static int vbvaEnable (unsigned uScreenId, PVGASTATE pVGAState, VBVACONTEXT *pCt
         pVBVA->hostFlags.u32HostEvents = 0;
         pVBVA->hostFlags.u32SupportedOrders = 0;
 
-        rc = pVGAState->pDrv->pfnVBVAEnable (pVGAState->pDrv, uScreenId, &pVBVA->hostFlags);
+        rc = pVGAState->pDrv->pfnVBVAEnable (pVGAState->pDrv, uScreenId, &pVBVA->hostFlags, false);
     }
     else
     {
@@ -512,6 +522,9 @@ static int vbvaEnable (unsigned uScreenId, PVGASTATE pVGAState, VBVACONTEXT *pCt
 
         pCtx->aViews[uScreenId].pVBVA = pVBVA;
         pCtx->aViews[uScreenId].u32VBVAOffset = u32Offset;
+
+        /* VBVA is working so disable the pause. */
+        pCtx->fPaused = false;
     }
 
     return rc;
@@ -620,6 +633,13 @@ static int vbvaMousePointerShape (PVGASTATE pVGAState, VBVACONTEXT *pCtx, const 
 
     if (fShape)
     {
+         if (pShape->u32Width > 8192 || pShape->u32Height > 8192)
+         {
+             Log(("vbvaMousePointerShape: unsupported size %ux%u\n",
+                   pShape->u32Width, pShape->u32Height));
+             return VERR_INVALID_PARAMETER;
+         }
+
          cbPointerData = ((((pShape->u32Width + 7) / 8) * pShape->u32Height + 3) & ~3)
                          + pShape->u32Width * 4 * pShape->u32Height;
     }
@@ -757,7 +777,7 @@ static void vbvaVHWAHHCommandReinit(VBOXVHWACMD* pHdr, VBOXVHWACMD_TYPE enmCmd, 
 
 static VBOXVHWACMD* vbvaVHWAHHCommandCreate (PVGASTATE pVGAState, VBOXVHWACMD_TYPE enmCmd, int32_t iDisplay, VBOXVHWACMD_LENGTH cbCmd)
 {
-    VBOXVHWACMD* pHdr = (VBOXVHWACMD*)RTMemAlloc(cbCmd + VBOXVHWACMD_HEADSIZE());
+    VBOXVHWACMD* pHdr = (VBOXVHWACMD*)RTMemAllocZ(cbCmd + VBOXVHWACMD_HEADSIZE());
     Assert(pHdr);
     if (pHdr)
         vbvaVHWAHHCommandReinit(pHdr, enmCmd, iDisplay);
@@ -779,15 +799,237 @@ DECLINLINE(void) vbvaVHWAHHCommandRetain (VBOXVHWACMD* pCmd)
     ASMAtomicIncU32(&pCmd->cRefs);
 }
 
-static unsigned vbvaVHWAHandleCommand (PVGASTATE pVGAState, VBVACONTEXT *pCtx, PVBOXVHWACMD pCmd)
+static void vbvaVHWACommandComplete(PVGASTATE pVGAState, PVBOXVHWACMD pCommand, bool fAsyncCommand)
 {
-    if (pVGAState->pDrv->pfnVHWACommandProcess)
-        pVGAState->pDrv->pfnVHWACommandProcess(pVGAState->pDrv, pCmd);
-#ifdef DEBUG_misha
+    if (fAsyncCommand)
+    {
+        Assert(pCommand->Flags & VBOXVHWACMD_FLAG_HG_ASYNCH);
+        vbvaVHWACommandCompleteAsync(&pVGAState->IVBVACallbacks, pCommand);
+    }
     else
+    {
+        Log(("VGA Command <<< Sync rc %d %#p, %d\n", pCommand->rc, pCommand, pCommand->enmCmd));
+        pCommand->Flags &= (~VBOXVHWACMD_FLAG_HG_ASYNCH);
+    }
+
+}
+
+static void vbvaVHWACommandCompleteAllPending(PVGASTATE pVGAState, int rc)
+{
+    if (!ASMAtomicUoReadU32(&pVGAState->pendingVhwaCommands.cPending))
+        return;
+
+    VBOX_VHWA_PENDINGCMD *pIter, *pNext;
+
+    PDMCritSectEnter(&pVGAState->CritSect, VERR_SEM_BUSY);
+
+    RTListForEachSafe(&pVGAState->pendingVhwaCommands.PendingList, pIter, pNext, VBOX_VHWA_PENDINGCMD, Node)
+    {
+        pIter->pCommand->rc = rc;
+        vbvaVHWACommandComplete(pVGAState, pIter->pCommand, true);
+
+        /* the command is submitted/processed, remove from the pend list */
+        RTListNodeRemove(&pIter->Node);
+        ASMAtomicDecU32(&pVGAState->pendingVhwaCommands.cPending);
+        RTMemFree(pIter);
+    }
+
+    PDMCritSectLeave(&pVGAState->CritSect);
+}
+
+static void vbvaVHWACommandClearAllPending(PVGASTATE pVGAState)
+{
+    if (!ASMAtomicUoReadU32(&pVGAState->pendingVhwaCommands.cPending))
+        return;
+
+    VBOX_VHWA_PENDINGCMD *pIter, *pNext;
+
+    PDMCritSectEnter(&pVGAState->CritSect, VERR_SEM_BUSY);
+
+    RTListForEachSafe(&pVGAState->pendingVhwaCommands.PendingList, pIter, pNext, VBOX_VHWA_PENDINGCMD, Node)
+    {
+        RTListNodeRemove(&pIter->Node);
+        ASMAtomicDecU32(&pVGAState->pendingVhwaCommands.cPending);
+        RTMemFree(pIter);
+    }
+
+    PDMCritSectLeave(&pVGAState->CritSect);
+}
+
+static void vbvaVHWACommandPend(PVGASTATE pVGAState, PVBOXVHWACMD pCommand)
+{
+    int rc = VERR_BUFFER_OVERFLOW;
+
+    if (ASMAtomicUoReadU32(&pVGAState->pendingVhwaCommands.cPending) < VBOX_VHWA_MAX_PENDING_COMMANDS)
+    {
+        VBOX_VHWA_PENDINGCMD *pPend = (VBOX_VHWA_PENDINGCMD*)RTMemAlloc(sizeof (*pPend));
+        if (pPend)
+        {
+            pCommand->Flags |= VBOXVHWACMD_FLAG_HG_ASYNCH;
+            pPend->pCommand = pCommand;
+            PDMCritSectEnter(&pVGAState->CritSect, VERR_SEM_BUSY);
+            if (ASMAtomicUoReadU32(&pVGAState->pendingVhwaCommands.cPending) < VBOX_VHWA_MAX_PENDING_COMMANDS)
+            {
+                RTListAppend(&pVGAState->pendingVhwaCommands.PendingList, &pPend->Node);
+                ASMAtomicIncU32(&pVGAState->pendingVhwaCommands.cPending);
+                PDMCritSectLeave(&pVGAState->CritSect);
+                return;
+            }
+            PDMCritSectLeave(&pVGAState->CritSect);
+            LogRel(("Pending command count has reached its threshold.. completing them all.."));
+            RTMemFree(pPend);
+        }
+        else
+            rc = VERR_NO_MEMORY;
+    }
+    else
+        LogRel(("Pending command count has reached its threshold, completing them all.."));
+
+    vbvaVHWACommandCompleteAllPending(pVGAState, rc);
+
+    pCommand->rc = rc;
+
+    vbvaVHWACommandComplete(pVGAState, pCommand, false);
+}
+
+static bool vbvaVHWACommandCanPend(PVBOXVHWACMD pCommand)
+{
+    switch (pCommand->enmCmd)
+    {
+        case VBOXVHWACMD_TYPE_HH_CONSTRUCT:
+        case VBOXVHWACMD_TYPE_HH_SAVESTATE_SAVEBEGIN:
+        case VBOXVHWACMD_TYPE_HH_SAVESTATE_SAVEEND:
+        case VBOXVHWACMD_TYPE_HH_SAVESTATE_SAVEPERFORM:
+        case VBOXVHWACMD_TYPE_HH_SAVESTATE_LOADPERFORM:
+            return false;
+        default:
+            return true;
+    }
+}
+
+static int vbvaVHWACommandSavePending(PVGASTATE pVGAState, PSSMHANDLE pSSM)
+{
+    int rc = SSMR3PutU32(pSSM, pVGAState->pendingVhwaCommands.cPending);
+    AssertRCReturn(rc, rc);
+    VBOX_VHWA_PENDINGCMD *pIter;
+    RTListForEach(&pVGAState->pendingVhwaCommands.PendingList, pIter, VBOX_VHWA_PENDINGCMD, Node)
+    {
+        rc = SSMR3PutU32(pSSM, (uint32_t)(((uint8_t*)pIter->pCommand) - ((uint8_t*)pVGAState->vram_ptrR3)));
+        AssertRCReturn(rc, rc);
+    }
+    return rc;
+}
+
+static int vbvaVHWACommandLoadPending(PVGASTATE pVGAState, PSSMHANDLE pSSM, uint32_t u32Version)
+{
+    if (u32Version < VGA_SAVEDSTATE_VERSION_WITH_PENDVHWA)
+        return VINF_SUCCESS;
+
+    int rc;
+    uint32_t u32;
+    rc = SSMR3GetU32(pSSM, &u32);
+    AssertRCReturn(rc, rc);
+    for (uint32_t i = 0; i < u32; ++i)
+    {
+        uint32_t off32;
+        rc = SSMR3GetU32(pSSM, &off32);
+        AssertRCReturn(rc, rc);
+        PVBOXVHWACMD pCommand = (PVBOXVHWACMD)(((uint8_t*)pVGAState->vram_ptrR3) + off32);
+        vbvaVHWACommandPend(pVGAState, pCommand);
+    }
+    return rc;
+}
+
+
+static bool vbvaVHWACommandSubmit(PVGASTATE pVGAState, PVBOXVHWACMD pCommand, bool fAsyncCommand)
+{
+    unsigned id = (unsigned)pCommand->iDisplay;
+    bool fPend = false;
+
+    if (pVGAState->pDrv->pfnVHWACommandProcess)
+    {
+        Log(("VGA Command >>> %#p, %d\n", pCommand, pCommand->enmCmd));
+        int rc = pVGAState->pDrv->pfnVHWACommandProcess(pVGAState->pDrv, pCommand);
+        if (rc == VINF_CALLBACK_RETURN)
+        {
+            Log(("VGA Command --- Going Async %#p, %d\n", pCommand, pCommand->enmCmd));
+            return true; /* command will be completed asynchronously, return right away */
+        }
+        else if (rc == VERR_INVALID_STATE)
+        {
+            Log(("VGA Command --- Trying Pend %#p, %d\n", pCommand, pCommand->enmCmd));
+            fPend = vbvaVHWACommandCanPend(pCommand);
+            if (!fPend)
+            {
+                Log(("VGA Command --- Can NOT Pend %#p, %d\n", pCommand, pCommand->enmCmd));
+                pCommand->rc = rc;
+            }
+            else
+                Log(("VGA Command --- Can Pend %#p, %d\n", pCommand, pCommand->enmCmd));
+        }
+        else
+        {
+            Log(("VGA Command --- Going Complete Sync rc %d %#p, %d\n", rc, pCommand, pCommand->enmCmd));
+            pCommand->rc = rc;
+        }
+
+        /* the command was completed, take a special care about it (seee below) */
+    }
+    else
+    {
         AssertFailed();
-#endif
-    return 0;
+        pCommand->rc = VERR_INVALID_STATE;
+    }
+
+    if (fPend)
+        return false;
+
+    vbvaVHWACommandComplete(pVGAState, pCommand, fAsyncCommand);
+
+    return true;
+}
+
+static bool vbvaVHWACheckPendingCommands(PVGASTATE pVGAState)
+{
+    if (!ASMAtomicUoReadU32(&pVGAState->pendingVhwaCommands.cPending))
+        return true;
+
+    VBOX_VHWA_PENDINGCMD *pIter, *pNext;
+
+    PDMCritSectEnter(&pVGAState->CritSect, VERR_SEM_BUSY);
+
+    RTListForEachSafe(&pVGAState->pendingVhwaCommands.PendingList, pIter, pNext, VBOX_VHWA_PENDINGCMD, Node)
+    {
+        if (!vbvaVHWACommandSubmit(pVGAState, pIter->pCommand, true))
+        {
+            PDMCritSectLeave(&pVGAState->CritSect);
+            return false; /* the command should be pended still */
+        }
+
+        /* the command is submitted/processed, remove from the pend list */
+        RTListNodeRemove(&pIter->Node);
+        ASMAtomicDecU32(&pVGAState->pendingVhwaCommands.cPending);
+        RTMemFree(pIter);
+    }
+
+    PDMCritSectLeave(&pVGAState->CritSect);
+
+    return true;
+}
+
+void vbvaTimerCb(PVGASTATE pVGAState)
+{
+    vbvaVHWACheckPendingCommands(pVGAState);
+}
+static void vbvaVHWAHandleCommand(PVGASTATE pVGAState, PVBOXVHWACMD pCmd)
+{
+    if (vbvaVHWACheckPendingCommands(pVGAState))
+    {
+        if (vbvaVHWACommandSubmit(pVGAState, pCmd, false))
+            return;
+    }
+
+    vbvaVHWACommandPend(pVGAState, pCmd);
 }
 
 static DECLCALLBACK(void) vbvaVHWAHHCommandSetEventCallback(void * pContext)
@@ -805,7 +1047,7 @@ static int vbvaVHWAHHCommandPost(PVGASTATE pVGAState, VBOXVHWACMD* pCmd)
         /* ensure the cmd is not deleted until we process it */
         vbvaVHWAHHCommandRetain (pCmd);
         VBOXVHWA_HH_CALLBACK_SET(pCmd, vbvaVHWAHHCommandSetEventCallback, (void*)hComplEvent);
-        vbvaVHWAHandleCommand(pVGAState, NULL, pCmd);
+        vbvaVHWAHandleCommand(pVGAState, pCmd);
         if((ASMAtomicReadU32((volatile uint32_t *)&pCmd->Flags)  & VBOXVHWACMD_FLAG_HG_ASYNCH) != 0)
         {
             rc = RTSemEventWaitNoResume(hComplEvent, RT_INDEFINITE_WAIT);
@@ -827,6 +1069,9 @@ static int vbvaVHWAHHCommandPost(PVGASTATE pVGAState, VBOXVHWACMD* pCmd)
 
 int vbvaVHWAConstruct (PVGASTATE pVGAState)
 {
+    pVGAState->pendingVhwaCommands.cPending = 0;
+    RTListInit(&pVGAState->pendingVhwaCommands.PendingList);
+
     VBOXVHWACMD *pCmd = vbvaVHWAHHCommandCreate(pVGAState, VBOXVHWACMD_TYPE_HH_CONSTRUCT, 0, sizeof(VBOXVHWACMD_HH_CONSTRUCT));
     Assert(pCmd);
     if(pCmd)
@@ -880,6 +1125,8 @@ int vbvaVHWAConstruct (PVGASTATE pVGAState)
 
 int vbvaVHWAReset (PVGASTATE pVGAState)
 {
+    vbvaVHWACommandClearAllPending(pVGAState);
+
     /* ensure we have all pending cmds processed and h->g cmds disabled */
     VBOXVHWACMD *pCmd = vbvaVHWAHHCommandCreate(pVGAState, VBOXVHWACMD_TYPE_HH_RESET, 0, 0);
     Assert(pCmd);
@@ -996,9 +1243,11 @@ int vboxVBVASaveStateDone (PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
     return vbvaVHWAEnable(PDMINS_2_DATA(pDevIns, PVGASTATE), true);
 }
 
-int vbvaVHWACommandCompleteAsynch(PPDMIDISPLAYVBVACALLBACKS pInterface, PVBOXVHWACMD pCmd)
+int vbvaVHWACommandCompleteAsync(PPDMIDISPLAYVBVACALLBACKS pInterface, PVBOXVHWACMD pCmd)
 {
     int rc;
+    Log(("VGA Command <<< Async rc %d %#p, %d\n", pCmd->rc, pCmd, pCmd->enmCmd));
+
     if((pCmd->Flags & VBOXVHWACMD_FLAG_HH_CMD) == 0)
     {
         PVGASTATE pVGAState = PPDMIDISPLAYVBVACALLBACKS_2_PVGASTATE(pInterface);
@@ -1231,8 +1480,10 @@ static DECLCALLBACK(bool) vboxVBVALoadStatePerformPreCb(PVGASTATE pVGAState, VBO
     switch (u32)
     {
         case VBOXVBVASAVEDSTATE_VHWAAVAILABLE_MAGIC:
+            pData->ab2DOn[iDisplay] = true;
             return true;
         case VBOXVBVASAVEDSTATE_VHWAUNAVAILABLE_MAGIC:
+            pData->ab2DOn[iDisplay] = false;
             return false;
         default:
             pData->rc = VERR_INVALID_STATE;
@@ -1384,6 +1635,9 @@ int vboxVBVASaveStateExec (PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
                 AssertRC(rc);
                 if (RT_SUCCESS(rc))
                 {
+                    rc = vbvaVHWACommandSavePending(pVGAState, pSSM);
+                    AssertRCReturn(rc, rc);
+
                     vbvaVHWAHHCommandReinit(pCmd, VBOXVHWACMD_TYPE_HH_SAVESTATE_SAVEEND, 0);
                     vbvaVHWAHHPost (pVGAState, pCmd, vboxVBVASaveStateEndPreCb, NULL, &VhwaData);
                     rc = VhwaData.rc;
@@ -1405,6 +1659,9 @@ int vboxVBVASaveStateExec (PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
             AssertRCReturn(rc, rc);
         }
     }
+
+    /* no pending commands */
+    SSMR3PutU32(pSSM, 0);
 #endif
     return rc;
 }
@@ -1497,8 +1754,7 @@ int vboxVBVALoadStateExec (PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t u32Vers
                     AssertRCReturn(rc, rc);
                 }
 
-                if (   pView->u32VBVAOffset == HGSMIOFFSET_VOID
-                    || pView->screen.u32LineSize == 0) /* Earlier broken saved states. */
+                if (pView->u32VBVAOffset == HGSMIOFFSET_VOID)
                 {
                     pView->pVBVA = NULL;
                 }
@@ -1567,6 +1823,19 @@ int vboxVBVALoadStateExec (PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t u32Vers
 
             if (u32Version > VGA_SAVEDSTATE_VERSION_WDDM)
             {
+#define VBOX_VHWA_SOLARIS_ARCH "solaris."
+
+                bool fLoadCommands;
+
+                if (u32Version < VGA_SAVEDSTATE_VERSION_FIXED_PENDVHWA)
+                {
+                    const char *pcszOsArch = SSMR3HandleHostOSAndArch(pSSM);
+                    Assert(pcszOsArch);
+                    fLoadCommands = !pcszOsArch || RTStrNCmp(pcszOsArch, VBOX_VHWA_SOLARIS_ARCH, sizeof (VBOX_VHWA_SOLARIS_ARCH) - 1);
+                }
+                else
+                    fLoadCommands = true;
+
 #ifdef VBOX_WITH_VIDEOHWACCEL
                 uint32_t cbCmd = sizeof (VBOXVHWACMD_HH_SAVESTATE_LOADPERFORM); /* maximum cmd size */
                 VBOXVHWACMD *pCmd = vbvaVHWAHHCommandCreate(pVGAState, VBOXVHWACMD_TYPE_HH_SAVESTATE_LOADPERFORM, 0, cbCmd);
@@ -1579,16 +1848,45 @@ int vboxVBVALoadStateExec (PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t u32Vers
                     pLoad->pSSM = pSSM;
                     vbvaVHWAHHPost (pVGAState, pCmd, vboxVBVALoadStatePerformPreCb, vboxVBVALoadStatePerformPostCb, &VhwaData);
                     rc = VhwaData.rc;
-                    AssertRC(rc);
                     vbvaVHWAHHCommandRelease(pCmd);
+                    AssertRCReturn(rc, rc);
+
+                    if (fLoadCommands)
+                    {
+                        rc = vbvaVHWACommandLoadPending(pVGAState, pSSM, u32Version);
+                        AssertRCReturn(rc, rc);
+                    }
                 }
                 else
                 {
                     rc = VERR_OUT_OF_RESOURCES;
                 }
 #else
-                rc = SSMR3SkipToEndOfUnit(pSSM);
-                AssertRCReturn(rc, rc);
+                uint32_t u32;
+
+                for (uint32_t i = 0; i < pVGAState->cMonitors; ++i)
+                {
+                    rc = SSMR3GetU32(pSSM, &u32);
+                    AssertRCReturn(rc, rc);
+
+                    if (u32 != VBOXVBVASAVEDSTATE_VHWAUNAVAILABLE_MAGIC)
+                    {
+                        LogRel(("2D data while 2D is not supported\n"));
+                        return VERR_NOT_SUPPORTED;
+                    }
+                }
+
+                if (fLoadCommands)
+                {
+                    rc = SSMR3GetU32(pSSM, &u32);
+                    AssertRCReturn(rc, rc);
+
+                    if (u32)
+                    {
+                        LogRel(("2D pending command while 2D is not supported\n"));
+                        return VERR_NOT_SUPPORTED;
+                    }
+                }
 #endif
             }
 
@@ -1615,6 +1913,9 @@ int vboxVBVALoadStateDone (PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
 
             if (pView->pVBVA)
             {
+#ifdef VBOX_WITH_CRHGSMI
+                Assert(!vboxCmdVBVAIsEnabled(pVGAState));
+#endif
                 vbvaEnable (iView, pVGAState, pCtx, pView->pVBVA, pView->u32VBVAOffset, true /* fRestored */);
                 vbvaResize (pVGAState, pView, &pView->screen);
             }
@@ -1632,10 +1933,103 @@ int vboxVBVALoadStateDone (PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
 void VBVARaiseIrq (PVGASTATE pVGAState, uint32_t fFlags)
 {
     PPDMDEVINS pDevIns = pVGAState->pDevInsR3;
-    PDMCritSectEnter(&pVGAState->lock, VERR_SEM_BUSY);
+    PDMCritSectEnter(&pVGAState->CritSect, VERR_SEM_BUSY);
+
     HGSMISetHostGuestFlags(pVGAState->pHGSMI, HGSMIHOSTFLAGS_IRQ | fFlags);
     PDMDevHlpPCISetIrq(pDevIns, 0, PDM_IRQ_LEVEL_HIGH);
-    PDMCritSectLeave(&pVGAState->lock);
+
+    PDMCritSectLeave(&pVGAState->CritSect);
+}
+
+static DECLCALLBACK(int) vbvaRaiseIrqEMT(PVGASTATE pVGAState, uint32_t fFlags)
+{
+    VBVARaiseIrq(pVGAState, fFlags);
+    return VINF_SUCCESS;
+}
+
+void VBVARaiseIrqNoWait(PVGASTATE pVGAState, uint32_t fFlags)
+{
+    /* we can not use PDMDevHlpPCISetIrqNoWait here, because we need to set IRG host flag and raise IRQ atomically,
+     * otherwise there might be a situation, when:
+     * 1. Flag is set
+     * 2. guest issues an IRQ clean request, that cleans up the flag and the interrupt
+     * 3. IRQ is set */
+    VMR3ReqCallNoWait(PDMDevHlpGetVM(pVGAState->pDevInsR3), VMCPUID_ANY, (PFNRT)vbvaRaiseIrqEMT, 2, pVGAState, fFlags);
+}
+
+int VBVAInfoView(PVGASTATE pVGAState, VBVAINFOVIEW *pView)
+{
+    LogFlowFunc(("VBVA_INFO_VIEW: index %d, offset 0x%x, size 0x%x, max screen size 0x%x\n",
+                     pView->u32ViewIndex, pView->u32ViewOffset, pView->u32ViewSize, pView->u32MaxScreenSize));
+
+    PHGSMIINSTANCE pIns = pVGAState->pHGSMI;
+    VBVACONTEXT *pCtx = (VBVACONTEXT *)HGSMIContext (pIns);
+
+    /* @todo verify view data. */
+    if (pView->u32ViewIndex >= pCtx->cViews)
+    {
+        Log(("View index too large %d!!!\n",
+             pView->u32ViewIndex));
+        return VERR_INVALID_PARAMETER;
+    }
+
+    pCtx->aViews[pView->u32ViewIndex].view = *pView;
+
+    return VINF_SUCCESS;
+}
+
+int VBVAInfoScreen(PVGASTATE pVGAState, VBVAINFOSCREEN *pScreen)
+{
+    PHGSMIINSTANCE pIns = pVGAState->pHGSMI;
+    VBVACONTEXT *pCtx = (VBVACONTEXT *)HGSMIContext (pIns);
+    VBVAINFOVIEW *pView = &pCtx->aViews[pScreen->u32ViewIndex].view;
+    /* Calculate the offset of the  end of the screen so we can make
+     * sure it is inside the view.  I assume that screen rollover is not
+     * implemented. */
+    int64_t offEnd =   (int64_t)pScreen->u32Height * pScreen->u32LineSize
+                     + pScreen->u32Width + pScreen->u32StartOffset;
+    LogRel(("VBVA_INFO_SCREEN: [%d] @%d,%d %dx%d, line 0x%x, BPP %d, flags 0x%x\n",
+                    pScreen->u32ViewIndex, pScreen->i32OriginX, pScreen->i32OriginY,
+                    pScreen->u32Width, pScreen->u32Height,
+                    pScreen->u32LineSize,  pScreen->u16BitsPerPixel, pScreen->u16Flags));
+
+    if (   pScreen->u32ViewIndex < RT_ELEMENTS (pCtx->aViews)
+        && pScreen->u16BitsPerPixel <= 32
+        && pScreen->u32Width <= UINT16_MAX
+        && pScreen->u32Height <= UINT16_MAX
+        && pScreen->u32LineSize <= UINT16_MAX * 4
+        && offEnd < pView->u32MaxScreenSize)
+    {
+        vbvaResize (pVGAState, &pCtx->aViews[pScreen->u32ViewIndex], pScreen);
+        return VINF_SUCCESS;
+    }
+
+    LogRelFlow(("VBVA_INFO_SCREEN [%lu]: bad data: %lux%lu, line 0x%lx, BPP %u, start offset %lu, max screen size %lu\n",
+                    (unsigned long)pScreen->u32ViewIndex,
+                    (unsigned long)pScreen->u32Width,
+                    (unsigned long)pScreen->u32Height,
+                    (unsigned long)pScreen->u32LineSize,
+                    (unsigned long)pScreen->u16BitsPerPixel,
+                    (unsigned long)pScreen->u32StartOffset,
+                    (unsigned long)pView->u32MaxScreenSize));
+    return VERR_INVALID_PARAMETER;
+}
+
+int VBVAGetInfoViewAndScreen(PVGASTATE pVGAState, uint32_t u32ViewIndex, VBVAINFOVIEW *pView, VBVAINFOSCREEN *pScreen)
+{
+    if (u32ViewIndex >= pVGAState->cMonitors)
+        return VERR_INVALID_PARAMETER;
+
+    PHGSMIINSTANCE pIns = pVGAState->pHGSMI;
+    VBVACONTEXT *pCtx = (VBVACONTEXT *)HGSMIContext (pIns);
+
+    if (pView)
+        *pView = pCtx->aViews[u32ViewIndex].view;
+
+    if (pScreen)
+        *pScreen = pCtx->aViews[u32ViewIndex].screen;
+
+    return VINF_SUCCESS;
 }
 
 /*
@@ -1653,7 +2047,7 @@ static DECLCALLBACK(void) vbvaNotifyGuest (void *pvCallback)
 {
 #if defined(VBOX_WITH_HGSMI) && (defined(VBOX_WITH_VIDEOHWACCEL) || defined(VBOX_WITH_VDMA) || defined(VBOX_WITH_WDDM))
     PVGASTATE pVGAState = (PVGASTATE)pvCallback;
-    VBVARaiseIrq (pVGAState, 0);
+    VBVARaiseIrqNoWait (pVGAState, 0);
 #else
     NOREF(pvCallback);
     /* Do nothing. Later the VMMDev/VGA IRQ can be used for the notification. */
@@ -1674,6 +2068,37 @@ static DECLCALLBACK(int) vbvaChannelHandler (void *pvHandler, uint16_t u16Channe
 
     switch (u16ChannelInfo)
     {
+        case VBVA_CMDVBVA_SUBMIT:
+        {
+# ifdef VBOX_WITH_CRHGSMI
+            rc = vboxCmdVBVACmdSubmit(pVGAState);
+#endif
+            break;
+        }
+        case VBVA_CMDVBVA_FLUSH:
+        {
+# ifdef VBOX_WITH_CRHGSMI
+            rc =vboxCmdVBVACmdFlush(pVGAState);
+#endif
+            break;
+        }
+        case VBVA_CMDVBVA_CTL:
+        {
+#ifdef VBOX_WITH_CRHGSMI
+            if (cbBuffer < VBoxSHGSMIBufferHeaderSize() + sizeof (VBOXCMDVBVA_CTL))
+            {
+                Log(("buffer too small\n"));
+#ifdef DEBUG_misha
+                AssertMsgFailed(("buffer too small\n"));
+#endif
+                rc = VERR_INVALID_PARAMETER;
+                break;
+            }
+            VBOXCMDVBVA_CTL *pCtl = (VBOXCMDVBVA_CTL*)VBoxSHGSMIBufferData((PVBOXSHGSMIHEADER)pvBuffer);
+            rc = vboxCmdVBVACmdCtl(pVGAState, pCtl, cbBuffer - VBoxSHGSMIBufferHeaderSize());
+#endif
+            break;
+        }
 #ifdef VBOX_WITH_VDMA
         case VBVA_VDMA_CMD:
         {
@@ -1759,6 +2184,15 @@ static DECLCALLBACK(int) vbvaChannelHandler (void *pvHandler, uint16_t u16Channe
 
         case VBVA_INFO_VIEW:
         {
+#ifdef VBOX_WITH_CRHGSMI
+            if (vboxCmdVBVAIsEnabled(pVGAState))
+            {
+                AssertMsgFailed(("VBVA_INFO_VIEW is not acceptible for CmdVbva\n"));
+                rc = VERR_INVALID_PARAMETER;
+                break;
+            }
+#endif
+
             if (cbBuffer < sizeof (VBVAINFOVIEW))
             {
                 rc = VERR_INVALID_PARAMETER;
@@ -1772,19 +2206,10 @@ static DECLCALLBACK(int) vbvaChannelHandler (void *pvHandler, uint16_t u16Channe
                  cbBuffer >= sizeof (VBVAINFOVIEW);
                  pView++, cbBuffer -= sizeof (VBVAINFOVIEW))
             {
-                LogFlowFunc(("VBVA_INFO_VIEW: index %d, offset 0x%x, size 0x%x, max screen size 0x%x\n",
-                             pView->u32ViewIndex, pView->u32ViewOffset, pView->u32ViewSize, pView->u32MaxScreenSize));
-
-                /* @todo verify view data. */
-                if (pView->u32ViewIndex >= pCtx->cViews)
-                {
-                    Log(("View index too large %d!!!\n",
-                         pView->u32ViewIndex));
-                    rc = VERR_INVALID_PARAMETER;
+                VBVAINFOVIEW View = *pView;
+                rc = VBVAInfoView(pVGAState, &View);
+                if (RT_FAILURE(rc))
                     break;
-                }
-
-                pCtx->aViews[pView->u32ViewIndex].view = *pView;
             }
         } break;
 
@@ -1826,43 +2251,31 @@ static DECLCALLBACK(int) vbvaChannelHandler (void *pvHandler, uint16_t u16Channe
                 break;
             }
 
-            VBVAINFOSCREEN *pScreen = (VBVAINFOSCREEN *)pvBuffer;
-            VBVAINFOVIEW *pView = &pCtx->aViews[pScreen->u32ViewIndex].view;
-            /* Calculate the offset of the  end of the screen so we can make
-             * sure it is inside the view.  I assume that screen rollover is not
-             * implemented. */
-            int64_t offEnd =   (int64_t)pScreen->u32Height * pScreen->u32LineSize
-                             + pScreen->u32Width + pScreen->u32StartOffset;
-            LogRelFlowFunc(("VBVA_INFO_SCREEN: [%d] @%d,%d %dx%d, line 0x%x, BPP %d, flags 0x%x\n",
-                            pScreen->u32ViewIndex, pScreen->i32OriginX, pScreen->i32OriginY,
-                            pScreen->u32Width, pScreen->u32Height,
-                            pScreen->u32LineSize,  pScreen->u16BitsPerPixel, pScreen->u16Flags));
-
-            if (   pScreen->u32ViewIndex < RT_ELEMENTS (pCtx->aViews)
-                && pScreen->u16BitsPerPixel <= 32
-                && pScreen->u32Width <= UINT16_MAX
-                && pScreen->u32Height <= UINT16_MAX
-                && pScreen->u32LineSize <= UINT16_MAX * 4
-                && offEnd < pView->u32MaxScreenSize)
+#ifdef VBOX_WITH_CRHGSMI
+            if (vboxCmdVBVAIsEnabled(pVGAState))
             {
-                vbvaResize (pVGAState, &pCtx->aViews[pScreen->u32ViewIndex], pScreen);
-            }
-            else
-            {
-                LogRelFlow(("VBVA_INFO_SCREEN [%lu]: bad data: %lux%lu, line 0x%lx, BPP %u, start offset %lu, max screen size %lu\n",
-                            (unsigned long)pScreen->u32ViewIndex,
-                            (unsigned long)pScreen->u32Width,
-                            (unsigned long)pScreen->u32Height,
-                            (unsigned long)pScreen->u32LineSize,
-                            (unsigned long)pScreen->u16BitsPerPixel,
-                            (unsigned long)pScreen->u32StartOffset,
-                            (unsigned long)pView->u32MaxScreenSize));
+                AssertMsgFailed(("VBVA_INFO_SCREEN is not acceptible for CmdVbva\n"));
                 rc = VERR_INVALID_PARAMETER;
+                break;
             }
+#endif
+
+            VBVAINFOSCREEN *pScreen = (VBVAINFOSCREEN *)pvBuffer;
+            VBVAINFOSCREEN Screen = *pScreen;
+            rc = VBVAInfoScreen(pVGAState, &Screen);
         } break;
 
         case VBVA_ENABLE:
         {
+#ifdef VBOX_WITH_CRHGSMI
+            if (vboxCmdVBVAIsEnabled(pVGAState))
+            {
+                AssertMsgFailed(("VBVA_ENABLE is not acceptible for CmdVbva\n"));
+                rc = VERR_INVALID_PARAMETER;
+                break;
+            }
+#endif
+
             if (cbBuffer < sizeof (VBVAENABLE))
             {
                 rc = VERR_INVALID_PARAMETER;
@@ -1962,7 +2375,14 @@ static DECLCALLBACK(int) vbvaChannelHandler (void *pvHandler, uint16_t u16Channe
 #ifdef VBOX_WITH_VIDEOHWACCEL
         case VBVA_VHWA_CMD:
         {
-            rc = vbvaVHWAHandleCommand (pVGAState, pCtx, (PVBOXVHWACMD)pvBuffer);
+            if (cbBuffer < sizeof (VBOXVHWACMD))
+            {
+                rc = VERR_INVALID_PARAMETER;
+                break;
+            }
+            vbvaVHWAHandleCommand(pVGAState, (PVBOXVHWACMD)pvBuffer);
+            rc = VINF_SUCCESS;
+            break;
         } break;
 #endif
 
@@ -1999,6 +2419,24 @@ static DECLCALLBACK(int) vbvaChannelHandler (void *pvHandler, uint16_t u16Channe
     }
 
     return rc;
+}
+
+/* When VBVA is paused, then VGA device is allowed to work but
+ * no HGSMI etc state is changed.
+ */
+void VBVAPause(PVGASTATE pVGAState, bool fPause)
+{
+    if (!pVGAState || !pVGAState->pHGSMI)
+    {
+        return;
+    }
+
+    VBVACONTEXT *pCtx = (VBVACONTEXT *)HGSMIContext(pVGAState->pHGSMI);
+
+    if (pCtx)
+    {
+        pCtx->fPaused = fPause;
+    }
 }
 
 void VBVAReset (PVGASTATE pVGAState)
@@ -2049,14 +2487,17 @@ int VBVAUpdateDisplay (PVGASTATE pVGAState)
 
     if (pCtx)
     {
-        rc = vbvaFlush (pVGAState, pCtx);
-
-        if (RT_SUCCESS (rc))
+        if (!pCtx->fPaused)
         {
-            if (!pCtx->aViews[0].pVBVA)
+            rc = vbvaFlush (pVGAState, pCtx);
+
+            if (RT_SUCCESS (rc))
             {
-                /* VBVA is not enabled for the first view, so VGA device must do updates. */
-                rc = VERR_NOT_SUPPORTED;
+                if (!pCtx->aViews[0].pVBVA)
+                {
+                    /* VBVA is not enabled for the first view, so VGA device must do updates. */
+                    rc = VERR_NOT_SUPPORTED;
+                }
             }
         }
     }
@@ -2093,6 +2534,7 @@ int VBVAInit (PVGASTATE pVGAState)
          {
              VBVACONTEXT *pCtx = (VBVACONTEXT *)HGSMIContext (pVGAState->pHGSMI);
              pCtx->cViews = pVGAState->cMonitors;
+             pCtx->fPaused = true;
          }
      }
 

@@ -1,4 +1,4 @@
-# $Id: OPENWATCOM-WL.kmk 2572 2012-04-27 13:19:55Z bird $
+# $Id: OPENWATCOM-WL.kmk 2663 2012-10-15 13:13:45Z bird $
 ## @file
 # kBuild Tool Config - Open Watcom v1.4 and later, using wlink.
 #
@@ -49,11 +49,11 @@ TOOL_OPENWATCOM-WL_LINK_PROGRAM_DEPORD =
 define TOOL_OPENWATCOM-WL_LINK_PROGRAM_CMDS
 	$(QUIET)$(APPEND) -tn $(outbase).rsp \
 		$(if $(flags),'$(flags)',) \
-		'Name $(call TOOL_OPENWATCOM_FIX_SLASHES,$(out)$(if $(suffix $(out)),,.))' \
-		'Option Map=$(call TOOL_OPENWATCOM_FIX_SLASHES,$(outbase)).map' \
-		$(foreach p,$(call TOOL_OPENWATCOM_FIX_SLASHES,$(libpath)),'LIBPath $p') \
-        $(foreach o,$(call TOOL_OPENWATCOM_FIX_SLASHES,$(filter-out %.res,$(objs)) $(othersrc)),'$(if $(filter %.lib %.a,$l),LIB,)File $o') \
-		$(foreach l,$(call TOOL_OPENWATCOM_FIX_SLASHES,$(libs)),'Library $l')
+		'Name $(call TOOL_OPENWATCOM_FIX_SLASHES_SQ,$(out)$(if $(suffix $(out)),,.))' \
+		'Option Map=$(call TOOL_OPENWATCOM_FIX_SLASHES_SQ,$(outbase)).map' \
+		$(foreach p,$(call TOOL_OPENWATCOM_FIX_SLASHES_SQ,$(libpath)),'LIBPath $p') \
+        	$(foreach o,$(call TOOL_OPENWATCOM_FIX_SLASHES_SQ,$(filter-out %.res,$(objs)) $(othersrc)),'$(if $(filter %.lib %.a,$l),LIB,)File $o') \
+		$(foreach l,$(call TOOL_OPENWATCOM_FIX_SLASHES_SQ,$(libs)),'Library $l')
 	$(QUIET)$(call TOOL_OPENWATCOM_ENV_SETUP) \
 		$(TOOL_OPENWATCOM_WLINK) @$(outbase).rsp
 	$(if $(filter %.res,$(objs)), $(QUIET)$(call TOOL_OPENWATCOM_ENV_SETUP) \

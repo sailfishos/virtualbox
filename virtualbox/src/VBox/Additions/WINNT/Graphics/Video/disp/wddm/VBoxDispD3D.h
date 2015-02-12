@@ -20,7 +20,7 @@
 #define ___VBoxDispD3D_h___
 
 #include "VBoxDispD3DIf.h"
-#include "common/wddm/VBoxMPIf.h"
+#include "../../common/wddm/VBoxMPIf.h"
 #ifdef VBOX_WITH_CRHGSMI
 #include "VBoxUhgsmiDisp.h"
 #endif
@@ -78,6 +78,7 @@ typedef struct VBOXWDDMDISP_ADAPTER
     D3DDDI_ADAPTERCALLBACKS RtCallbacks;
     VBOXWDDMDISP_D3D D3D;
     VBOXWDDMDISP_FORMATS Formats;
+    uint32_t u32VBox3DCaps;
 #ifdef VBOX_WDDMDISP_WITH_PROFILE
     VBoxDispProfileFpsCounter ProfileDdiFps;
     VBoxDispProfileSet ProfileDdiFunc;
@@ -202,13 +203,19 @@ typedef struct VBOXWDDMDISP_DEVICE
      * is split into two calls : SetViewport & SetZRange */
     D3DVIEWPORT9 ViewPort;
     VBOXWDDMDISP_CONTEXT DefaultContext;
+#ifdef VBOX_WITH_CRHGSMI
     VBOXUHGSMI_PRIVATE_D3D Uhgsmi;
+#endif
 
     /* no lock is needed for this since we're guaranteed the per-device calls are not reentrant */
     RTLISTANCHOR DirtyAllocList;
 
     UINT cSamplerTextures;
     struct VBOXWDDMDISP_RESOURCE *aSamplerTextures[VBOXWDDMDISP_TOTAL_SAMPLERS];
+
+    struct VBOXWDDMDISP_RESOURCE *pDepthStencilRc;
+
+    HMODULE hHgsmiTransportModule;
 
 #ifdef VBOX_WDDMDISP_WITH_PROFILE
     VBoxDispProfileFpsCounter ProfileDdiFps;
@@ -266,7 +273,9 @@ typedef struct VBOXWDDMDISP_ALLOCATION
     VBOXDISP_D3DIFTYPE enmD3DIfType;
     /* list entry used to add allocation to the dirty alloc list */
     RTLISTNODE DirtyAllocListEntry;
+    BOOLEAN fEverWritten;
     BOOLEAN fDirtyWrite;
+    BOOLEAN fAllocLocked;
     HANDLE hSharedHandle;
     VBOXWDDMDISP_LOCKINFO LockInfo;
     VBOXWDDM_DIRTYREGION DirtyRegion; /* <- dirty region to notify host about */

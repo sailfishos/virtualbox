@@ -57,6 +57,8 @@
 # include <iprt/err.h>
 # include <iprt/req.h>
 # include <iprt/mem.h>
+# include <iprt/time.h>
+# include <iprt/thread.h>
 #endif /* VBOX */
 
 #if defined(DCONNECT_MULTITHREADED)
@@ -130,6 +132,9 @@ static const nsID kDConnectTargetID = DCONNECT_IPC_TARGETID;
 
 // DCON_OP_SETUP_REPLY and DCON_OP_INVOKE_REPLY flags
 #define DCON_OP_FLAGS_REPLY_EXCEPTION   0x0001
+
+// Within this time all the worker threads must be terminated.
+#define VBOX_XPCOM_SHUTDOWN_TIMEOUT_MS  (5000)
 
 #pragma pack(1)
 
@@ -1580,7 +1585,7 @@ DConnectStub::AddRefIPC()
   // DConnectInstance::CreateStub
 
   nsrefcnt count = AddRef();
-  mRefCntLevels.Push((void *) count);
+  mRefCntLevels.Push((void *)(uintptr_t) count);
   return count;
 }
 
@@ -1981,7 +1986,13 @@ ipcDConnectService::SerializeException(ipcMessageWriter &writer,
     if (!xcpt)
     {
       // write null address
+#ifdef VBOX
+      // see ipcDConnectService::DeserializeException()!
+      PtrBits bits = 0;
+      writer.PutBytes(&bits, sizeof(bits));
+#else
       writer.PutBytes(&xcpt, sizeof(xcpt));
+#endif
     }
     else
     {
@@ -2232,10 +2243,13 @@ ipcDConnectService::DeserializeException(ipcMessageReader &reader,
 DConnectStub::~DConnectStub()
 {
 #ifdef IPC_LOGGING
-  const char *name = NULL;
-  mIInfo->GetNameShared(&name);
-  LOG(("{%p} DConnectStub::<dtor>(): peer=%d instance=0x%Lx {%s}\n",
-       this, mPeerID, mInstance, name));
+  if (IPC_LOG_ENABLED())
+  {
+    const char *name = NULL;
+    mIInfo->GetNameShared(&name);
+    LOG(("{%p} DConnectStub::<dtor>(): peer=%d instance=0x%Lx {%s}\n",
+         this, mPeerID, mInstance, name));
+  }
 #endif
 
   // release the cached nsISupports instance if it's not the same object
@@ -2273,10 +2287,13 @@ DConnectStub::Release()
 
 
     #ifdef IPC_LOGGING
-    const char *name;
-    mIInfo->GetNameShared(&name);
-    LOG(("{%p} DConnectStub::Release(): peer=%d instance=0x%Lx {%s}, new count=%d\n",
-        this, mPeerID, mInstance, name, count));
+    if (IPC_LOG_ENABLED())
+    {
+      const char *name;
+      mIInfo->GetNameShared(&name);
+      LOG(("{%p} DConnectStub::Release(): peer=%d instance=0x%Lx {%s}, new count=%d\n",
+          this, mPeerID, mInstance, name, count));
+    }
     #endif
 
     // mRefCntLevels may already be empty here (due to the "stabilize" trick below)
@@ -2431,6 +2448,7 @@ DConnectStub::QueryInterface(const nsID &aIID, void **aInstancePtr)
   // else, we need to query the peer object by making an IPC call
 
 #ifdef IPC_LOGGING
+  if (IPC_LOG_ENABLED())
   {
     const char *name;
     mIInfo->GetNameShared(&name);
@@ -2517,13 +2535,16 @@ DConnectStub::CallMethod(PRUint16 aMethodIndex,
   PRUint8 i, paramCount = aInfo->GetParamCount();
 
 #ifdef IPC_LOGGING
-  const char *name;
-  nsCOMPtr<nsIInterfaceInfo> iinfo;
-  GetInterfaceInfo(getter_AddRefs(iinfo));
-  iinfo->GetNameShared(&name);
-  LOG(("  instance=0x%Lx {%s}\n", mInstance, name));
-  LOG(("  name=%s\n", aInfo->GetName()));
-  LOG(("  param-count=%u\n", (PRUint32) paramCount));
+  if (IPC_LOG_ENABLED())
+  {
+    const char *name;
+    nsCOMPtr<nsIInterfaceInfo> iinfo;
+    GetInterfaceInfo(getter_AddRefs(iinfo));
+    iinfo->GetNameShared(&name);
+    LOG(("  instance=0x%Lx {%s}\n", mInstance, name));
+    LOG(("  name=%s\n", aInfo->GetName()));
+    LOG(("  param-count=%u\n", (PRUint32) paramCount));
+  }
 #endif
 
 
@@ -2885,13 +2906,17 @@ public:
 
   NS_DECL_NSIRUNNABLE
 
-  DConnectWorker(ipcDConnectService *aDConnect) : mDConnect (aDConnect) {}
+  DConnectWorker(ipcDConnectService *aDConnect) : mDConnect (aDConnect), mIsRunnable (PR_FALSE) {}
   NS_HIDDEN_(nsresult) Init();
   NS_HIDDEN_(void) Join() { mThread->Join(); };
+  NS_HIDDEN_(bool) IsRunning() { return mIsRunnable; };
 
 private:
   nsCOMPtr <nsIThread> mThread;
   ipcDConnectService *mDConnect;
+
+  // Indicate if thread might be quickly joined on shutdown.
+  volatile bool mIsRunnable;
 };
 
 NS_IMPL_QUERY_INTERFACE1(DConnectWorker, nsIRunnable)
@@ -2906,6 +2931,8 @@ NS_IMETHODIMP
 DConnectWorker::Run()
 {
   LOG(("DConnect Worker thread started.\n"));
+
+  mIsRunnable = PR_TRUE;
 
   nsAutoMonitor mon(mDConnect->mPendingMon);
 
@@ -2955,6 +2982,8 @@ DConnectWorker::Run()
       mon.Enter();
     }
   }
+
+  mIsRunnable = PR_FALSE;
 
   LOG(("DConnect Worker thread stopped.\n"));
   return NS_OK;
@@ -3006,10 +3035,13 @@ EnumerateInstanceMapAndDelete (const DConnectInstanceKey::Key &aKey,
   // disregarding the reference counter
 
 #ifdef IPC_LOGGING
-  const char *name;
-  aData->InterfaceInfo()->GetNameShared(&name);
-  LOG(("ipcDConnectService: WARNING: deleting unreleased "
-       "instance=%p iface=%p {%s}\n", aData, aData->RealInstance(), name));
+  if (IPC_LOG_ENABLED())
+  {
+    const char *name;
+    aData->InterfaceInfo()->GetNameShared(&name);
+    LOG(("ipcDConnectService: WARNING: deleting unreleased "
+         "instance=%p iface=%p {%s}\n", aData, aData->RealInstance(), name));
+  }
 #endif
 
   delete aData;
@@ -3172,14 +3204,44 @@ ipcDConnectService::Shutdown()
   LOG((" => number of worker threads: %d\n", mWorkers.Count()));
 #endif
 
-  // destroy all worker threads
-  for (int i = 0; i < mWorkers.Count(); i++)
+
+  // Iterate over currently running worker threads
+  // during VBOX_XPCOM_SHUTDOWN_TIMEOUT_MS, join() those who
+  // exited a working loop and abandon ones which have not
+  // managed to do that when timeout occurred.
+  LOG(("Worker threads: %d\n", mWorkers.Count()));
+  uint64_t tsStart = RTTimeMilliTS();
+  while ((tsStart + VBOX_XPCOM_SHUTDOWN_TIMEOUT_MS ) > RTTimeMilliTS() && mWorkers.Count() > 0)
   {
-    DConnectWorker *worker = NS_STATIC_CAST(DConnectWorker *, mWorkers[i]);
-    worker->Join();
-    delete worker;
+    // Some array elements might be deleted while iterating. Going from the last
+    // to the first array element (intentionally) in order to do not conflict with
+    // array indexing once element is deleted.
+    for (int i = mWorkers.Count() - 1; i >= 0; i--)
+    {
+      DConnectWorker *worker = NS_STATIC_CAST(DConnectWorker *, mWorkers[i]);
+      if (worker->IsRunning() == PR_FALSE)
+      {
+        LOG(("Worker %p joined.\n", worker));
+        worker->Join();
+        delete worker;
+        mWorkers.RemoveElementAt(i);
+      }
+    }
+
+    /* Double-ckeck if we already allowed to quit. */
+    if ((tsStart + VBOX_XPCOM_SHUTDOWN_TIMEOUT_MS ) < RTTimeMilliTS() || mWorkers.Count() == 0)
+        break;
+
+    // Relax a bit before the next round.
+    RTThreadSleep(10);
   }
-  mWorkers.Clear();
+
+  LOG(("There are %d thread(s) left.\n", mWorkers.Count()));
+
+  // If there are some running threads left, terminate the process.
+  if (mWorkers.Count() > 0)
+    exit(1);
+
 
   nsAutoMonitor::DestroyMonitor(mWaitingWorkersMon);
   nsAutoMonitor::DestroyMonitor(mPendingMon);
@@ -3251,10 +3313,13 @@ nsresult
 ipcDConnectService::StoreInstance(DConnectInstance *wrapper)
 {
 #ifdef IPC_LOGGING
-  const char *name;
-  wrapper->InterfaceInfo()->GetNameShared(&name);
-  LOG(("ipcDConnectService::StoreInstance(): instance=%p iface=%p {%s}\n",
-       wrapper, wrapper->RealInstance(), name));
+  if (IPC_LOG_ENABLED())
+  {
+    const char *name;
+    wrapper->InterfaceInfo()->GetNameShared(&name);
+    LOG(("ipcDConnectService::StoreInstance(): instance=%p iface=%p {%s}\n",
+         wrapper, wrapper->RealInstance(), name));
+  }
 #endif
 
   nsresult rv = mInstanceSet.Put(wrapper);
@@ -3276,10 +3341,13 @@ ipcDConnectService::DeleteInstance(DConnectInstance *wrapper,
     PR_Lock(mLock);
 
 #ifdef IPC_LOGGING
-  const char *name;
-  wrapper->InterfaceInfo()->GetNameShared(&name);
-  LOG(("ipcDConnectService::DeleteInstance(): instance=%p iface=%p {%s}\n",
-       wrapper, wrapper->RealInstance(), name));
+  if (IPC_LOG_ENABLED())
+  {
+    const char *name;
+    wrapper->InterfaceInfo()->GetNameShared(&name);
+    LOG(("ipcDConnectService::DeleteInstance(): instance=%p iface=%p {%s}\n",
+         wrapper, wrapper->RealInstance(), name));
+  }
 #endif
 
   mInstances.Remove(wrapper->GetKey());
@@ -3318,12 +3386,15 @@ nsresult
 ipcDConnectService::StoreStub(DConnectStub *stub)
 {
 #ifdef IPC_LOGGING
-  const char *name;
-  nsCOMPtr<nsIInterfaceInfo> iinfo;
-  stub->GetInterfaceInfo(getter_AddRefs(iinfo));
-  iinfo->GetNameShared(&name);
-  LOG(("ipcDConnectService::StoreStub(): stub=%p instance=0x%Lx {%s}\n",
-       stub, stub->Instance(), name));
+  if (IPC_LOG_ENABLED())
+  {
+    const char *name;
+    nsCOMPtr<nsIInterfaceInfo> iinfo;
+    stub->GetInterfaceInfo(getter_AddRefs(iinfo));
+    iinfo->GetNameShared(&name);
+    LOG(("ipcDConnectService::StoreStub(): stub=%p instance=0x%Lx {%s}\n",
+         stub, stub->Instance(), name));
+  }
 #endif
 
   return mStubs.Put(stub->GetKey(), stub)
@@ -3334,12 +3405,15 @@ void
 ipcDConnectService::DeleteStub(DConnectStub *stub)
 {
 #ifdef IPC_LOGGING
-  const char *name;
-  nsCOMPtr<nsIInterfaceInfo> iinfo;
-  stub->GetInterfaceInfo(getter_AddRefs(iinfo));
-  iinfo->GetNameShared(&name);
-  LOG(("ipcDConnectService::DeleteStub(): stub=%p instance=0x%Lx {%s}\n",
-       stub, stub->Instance(), name));
+  if (IPC_LOG_ENABLED())
+  {
+    const char *name;
+    nsCOMPtr<nsIInterfaceInfo> iinfo;
+    stub->GetInterfaceInfo(getter_AddRefs(iinfo));
+    iinfo->GetNameShared(&name);
+    LOG(("ipcDConnectService::DeleteStub(): stub=%p instance=0x%Lx {%s}\n",
+         stub, stub->Instance(), name));
+  }
 #endif
 
   // this method is intended to be called only from DConnectStub::Release().
