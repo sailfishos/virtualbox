@@ -62,7 +62,7 @@ BuildRequires:  yasm
 BuildRequires:   systemd
 
 Version:        4.3.20
-Release:        1
+Release:        2
 Summary:        VirtualBox is an Emulator
 License:        GPL-2.0+
 Group:          System/Emulators/PC
