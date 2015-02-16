@@ -30,6 +30,10 @@
 #include <VBoxDisplay.h> /* this is from Additions/WINNT/include/ to include escape codes */
 #include <VBox/Hardware/VBoxVideoVBE.h>
 
+#include <stdio.h>
+
+#define VBOXWDDM_DUMMY_DMABUFFER_SIZE (sizeof (VBOXCMDVBVA_HDR) / 2)
+
 DWORD g_VBoxLogUm = 0;
 #ifdef VBOX_WDDM_WIN8
 DWORD g_VBoxDisplayOnly = 0;
@@ -44,7 +48,8 @@ PVOID vboxWddmMemAlloc(IN SIZE_T cbSize)
 PVOID vboxWddmMemAllocZero(IN SIZE_T cbSize)
 {
     PVOID pvMem = vboxWddmMemAlloc(cbSize);
-    memset(pvMem, 0, cbSize);
+    if (pvMem)
+        memset(pvMem, 0, cbSize);
     return pvMem;
 }
 
@@ -54,12 +59,31 @@ VOID vboxWddmMemFree(PVOID pvMem)
     ExFreePool(pvMem);
 }
 
+DECLINLINE(void) VBoxWddmOaHostIDReleaseLocked(PVBOXWDDM_OPENALLOCATION pOa)
+{
+    Assert(pOa->cHostIDRefs);
+    PVBOXWDDM_ALLOCATION pAllocation = pOa->pAllocation;
+    Assert(pAllocation->AllocData.cHostIDRefs >= pOa->cHostIDRefs);
+    Assert(pAllocation->AllocData.hostID);
+    --pOa->cHostIDRefs;
+    --pAllocation->AllocData.cHostIDRefs;
+    if (!pAllocation->AllocData.cHostIDRefs)
+        pAllocation->AllocData.hostID = 0;
+}
+
+DECLINLINE(void) VBoxWddmOaHostIDCheckReleaseLocked(PVBOXWDDM_OPENALLOCATION pOa)
+{
+    if (pOa->cHostIDRefs)
+        VBoxWddmOaHostIDReleaseLocked(pOa);
+}
+
 DECLINLINE(void) VBoxWddmOaRelease(PVBOXWDDM_OPENALLOCATION pOa)
 {
     PVBOXWDDM_ALLOCATION pAllocation = pOa->pAllocation;
     KIRQL OldIrql;
     KeAcquireSpinLock(&pAllocation->OpenLock, &OldIrql);
     Assert(pAllocation->cOpens);
+    VBoxWddmOaHostIDCheckReleaseLocked(pOa);
     --pAllocation->cOpens;
     uint32_t cOpens = --pOa->cOpens;
     Assert(cOpens < UINT32_MAX/2);
@@ -94,6 +118,47 @@ DECLINLINE(PVBOXWDDM_OPENALLOCATION) VBoxWddmOaSearch(PVBOXWDDM_DEVICE pDevice, 
     pOa = VBoxWddmOaSearchLocked(pDevice, pAllocation);
     KeReleaseSpinLock(&pAllocation->OpenLock, OldIrql);
     return pOa;
+}
+
+DECLINLINE(int) VBoxWddmOaSetHostID(PVBOXWDDM_DEVICE pDevice, PVBOXWDDM_ALLOCATION pAllocation, uint32_t hostID, uint32_t *pHostID)
+{
+    PVBOXWDDM_OPENALLOCATION pOa;
+    KIRQL OldIrql;
+    int rc = VINF_SUCCESS;
+    KeAcquireSpinLock(&pAllocation->OpenLock, &OldIrql);
+    pOa = VBoxWddmOaSearchLocked(pDevice, pAllocation);
+    if (!pOa)
+    {
+        KeReleaseSpinLock(&pAllocation->OpenLock, OldIrql);;
+        WARN(("no open allocation!"));
+        return VERR_INVALID_STATE;
+    }
+
+    if (hostID)
+    {
+        if (pAllocation->AllocData.hostID == 0)
+        {
+            pAllocation->AllocData.hostID = hostID;
+        }
+        else if (pAllocation->AllocData.hostID != hostID)
+        {
+            WARN(("hostID differ: alloc(%d), trying to assign(%d)", pAllocation->AllocData.hostID, hostID));
+            hostID = pAllocation->AllocData.hostID;
+            rc = VERR_NOT_EQUAL;
+        }
+
+        ++pAllocation->AllocData.cHostIDRefs;
+        ++pOa->cHostIDRefs;
+    }
+    else
+        VBoxWddmOaHostIDCheckReleaseLocked(pOa);
+
+    KeReleaseSpinLock(&pAllocation->OpenLock, OldIrql);
+
+    if (pHostID)
+        *pHostID = hostID;
+
+    return rc;
 }
 
 DECLINLINE(PVBOXWDDM_ALLOCATION) vboxWddmGetAllocationFromHandle(PVBOXMP_DEVEXT pDevExt, D3DKMT_HANDLE hAllocation)
@@ -137,62 +202,45 @@ static void vboxWddmPopulateDmaAllocInfoWithOffset(PVBOXWDDM_DMA_ALLOCINFO pInfo
     pInfo->srcId = pAlloc->AllocData.SurfDesc.VidPnSourceId;
 }
 
-NTSTATUS vboxWddmGhDisplayPostInfoScreenBySDesc (PVBOXMP_DEVEXT pDevExt, const PVBOXWDDM_SURFACE_DESC pDesc, const POINT * pVScreenPos, uint16_t fFlags)
+int vboxWddmGhDisplayPostInfoScreen(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOC_DATA *pAllocData, const POINT * pVScreenPos, uint16_t fFlags)
 {
     void *p = VBoxHGSMIBufferAlloc (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx,
                                       sizeof (VBVAINFOSCREEN),
                                       HGSMI_CH_VBVA,
                                       VBVA_INFO_SCREEN);
-    Assert(p);
-    if (p)
+    if (!p)
     {
-        VBVAINFOSCREEN *pScreen = (VBVAINFOSCREEN *)p;
+        WARN(("VBoxHGSMIBufferAlloc failed"));
 
-        pScreen->u32ViewIndex    = pDesc->VidPnSourceId;
-        pScreen->i32OriginX      = pVScreenPos->x;
-        pScreen->i32OriginY      = pVScreenPos->y;
-        pScreen->u32StartOffset  = 0; //(uint32_t)offVram; /* we pretend the view is located at the start of each framebuffer */
-        pScreen->u32LineSize     = pDesc->pitch;
-        pScreen->u32Width        = pDesc->width;
-        pScreen->u32Height       = pDesc->height;
-        pScreen->u16BitsPerPixel = (uint16_t)pDesc->bpp;
-        pScreen->u16Flags        = fFlags;
-
-        VBoxHGSMIBufferSubmit (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
-
-        VBoxHGSMIBufferFree (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
+        return VERR_OUT_OF_RESOURCES;
     }
 
-    return STATUS_SUCCESS;
+    VBVAINFOSCREEN *pScreen = (VBVAINFOSCREEN *)p;
 
+    int rc = vboxWddmScreenInfoInit(pScreen, pAllocData, pVScreenPos, fFlags);
+    if (RT_SUCCESS(rc))
+    {
+        pScreen->u32StartOffset  = 0; //(uint32_t)offVram; /* we pretend the view is located at the start of each framebuffer */
+
+        rc = VBoxHGSMIBufferSubmit (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
+        if (RT_FAILURE(rc))
+            WARN(("VBoxHGSMIBufferSubmit failed %d", rc));
+    }
+    else
+        WARN(("VBoxHGSMIBufferSubmit failed %d", rc));
+
+    VBoxHGSMIBufferFree (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
+
+    return rc;
 }
 
-NTSTATUS vboxWddmGhDisplayPostInfoScreen(PVBOXMP_DEVEXT pDevExt, const PVBOXWDDM_ALLOC_DATA pAllocData, const POINT * pVScreenPos)
+int vboxWddmGhDisplayPostInfoView(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOC_DATA *pAllocData)
 {
-    NTSTATUS Status = vboxWddmGhDisplayPostInfoScreenBySDesc(pDevExt, &pAllocData->SurfDesc, pVScreenPos, VBVA_SCREEN_F_ACTIVE);
-    if (!NT_SUCCESS(Status))
-        WARN(("vboxWddmGhDisplayPostInfoScreenBySDesc failed Status 0x%x", Status));
-    return Status;
-}
-
-NTSTATUS vboxWddmGhDisplayHideScreen(PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
-{
-    VBOXWDDM_SURFACE_DESC SurfDesc = {0};
-    POINT VScreenPos = {0};
-    SurfDesc.VidPnSourceId = VidPnTargetId;
-    NTSTATUS Status = vboxWddmGhDisplayPostInfoScreenBySDesc(pDevExt, &SurfDesc, &VScreenPos, VBVA_SCREEN_F_ACTIVE | VBVA_SCREEN_F_DISABLED);
-    if (!NT_SUCCESS(Status))
-        WARN(("vboxWddmGhDisplayPostInfoScreenBySDesc failed Status 0x%x", Status));
-    return Status;
-}
-
-NTSTATUS vboxWddmGhDisplayPostInfoView(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOC_DATA pAllocData)
-{
-    VBOXVIDEOOFFSET offVram = pAllocData->Addr.offVram;
+    VBOXVIDEOOFFSET offVram = vboxWddmAddrFramOffset(&pAllocData->Addr);
     if (offVram == VBOXVIDEOOFFSET_VOID)
     {
         WARN(("offVram == VBOXVIDEOOFFSET_VOID"));
-        return STATUS_INVALID_PARAMETER;
+        return VERR_INVALID_PARAMETER;
     }
 
     /* Issue the screen info command. */
@@ -200,34 +248,69 @@ NTSTATUS vboxWddmGhDisplayPostInfoView(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOC_D
                                       sizeof (VBVAINFOVIEW),
                                       HGSMI_CH_VBVA,
                                       VBVA_INFO_VIEW);
-    Assert(p);
-    if (p)
+    if (!p)
     {
-        VBVAINFOVIEW *pView = (VBVAINFOVIEW *)p;
+        WARN(("VBoxHGSMIBufferAlloc failed"));
+        return VERR_OUT_OF_RESOURCES;
+    }
 
-        pView->u32ViewIndex     = pAllocData->SurfDesc.VidPnSourceId;
-        pView->u32ViewOffset    = (uint32_t)offVram; /* we pretend the view is located at the start of each framebuffer */
-        pView->u32ViewSize      = vboxWddmVramCpuVisibleSegmentSize(pDevExt)/VBoxCommonFromDeviceExt(pDevExt)->cDisplays;
+    VBVAINFOVIEW *pView = (VBVAINFOVIEW *)p;
 
-        pView->u32MaxScreenSize = pView->u32ViewSize;
+    pView->u32ViewIndex     = pAllocData->SurfDesc.VidPnSourceId;
+    pView->u32ViewOffset    = (uint32_t)offVram; /* we pretend the view is located at the start of each framebuffer */
+    pView->u32ViewSize      = vboxWddmVramCpuVisibleSegmentSize(pDevExt)/VBoxCommonFromDeviceExt(pDevExt)->cDisplays;
 
-        VBoxHGSMIBufferSubmit (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
+    pView->u32MaxScreenSize = pView->u32ViewSize;
 
-        VBoxHGSMIBufferFree (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
+    int rc = VBoxHGSMIBufferSubmit (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
+    if (RT_FAILURE(rc))
+        WARN(("VBoxHGSMIBufferSubmit failed %d", rc));
+
+    VBoxHGSMIBufferFree (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx, p);
+
+    return rc;
+}
+
+NTSTATUS vboxWddmGhDisplayPostResizeLegacy(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOC_DATA *pAllocData, const POINT * pVScreenPos, uint16_t fFlags)
+{
+    int rc;
+
+    if (!(fFlags & VBVA_SCREEN_F_DISABLED))
+    {
+        rc = vboxWddmGhDisplayPostInfoView(pDevExt, pAllocData);
+        if (RT_FAILURE(rc))
+        {
+            WARN(("vboxWddmGhDisplayPostInfoView failed %d", rc));
+            return STATUS_UNSUCCESSFUL;
+        }
+    }
+
+    rc = vboxWddmGhDisplayPostInfoScreen(pDevExt, pAllocData, pVScreenPos, fFlags);
+    if (RT_FAILURE(rc))
+    {
+        WARN(("vboxWddmGhDisplayPostInfoScreen failed %d", rc));
+        return STATUS_UNSUCCESSFUL;
     }
 
     return STATUS_SUCCESS;
 }
 
-NTSTATUS vboxWddmGhDisplaySetMode(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOC_DATA pAllocData)
+NTSTATUS vboxWddmGhDisplayPostResizeNew(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOC_DATA *pAllocData, const uint32_t *pTargetMap, const POINT * pVScreenPos, uint16_t fFlags)
 {
-//    PVBOXWDDM_ALLOCATION_SHAREDPRIMARYSURFACE pPrimaryInfo = VBOXWDDM_ALLOCATION_BODY(pAllocation, VBOXWDDM_ALLOCATION_SHAREDPRIMARYSURFACE);
-    if (/*pPrimaryInfo->*/pAllocData->SurfDesc.VidPnSourceId)
+    int rc = VBoxCmdVbvaConCmdResize(pDevExt, pAllocData, pTargetMap, pVScreenPos, fFlags);
+    if (RT_SUCCESS(rc))
         return STATUS_SUCCESS;
 
-    if (pAllocData->Addr.offVram == VBOXVIDEOOFFSET_VOID)
+    WARN(("VBoxCmdVbvaConCmdResize failed %d", rc));
+    return STATUS_UNSUCCESSFUL;
+}
+
+NTSTATUS vboxWddmGhDisplaySetMode(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOC_DATA *pAllocData)
+{
+    VBOXVIDEOOFFSET offVram = vboxWddmAddrFramOffset(&pAllocData->Addr);;
+    if (offVram == VBOXVIDEOOFFSET_VOID)
     {
-        WARN(("pAllocData->Addr.offVram == VBOXVIDEOOFFSET_VOID"));
+        WARN(("offVram == VBOXVIDEOOFFSET_VOID"));
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -235,8 +318,8 @@ NTSTATUS vboxWddmGhDisplaySetMode(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOC_DATA p
     USHORT height = pAllocData->SurfDesc.height;
     USHORT bpp    = pAllocData->SurfDesc.bpp;
     ULONG cbLine  = VBOXWDDM_ROUNDBOUND(((width * bpp) + 7) / 8, 4);
-    ULONG yOffset = (ULONG)pAllocData->Addr.offVram / cbLine;
-    ULONG xOffset = (ULONG)pAllocData->Addr.offVram % cbLine;
+    ULONG yOffset = (ULONG)offVram / cbLine;
+    ULONG xOffset = (ULONG)offVram % cbLine;
 
     if (bpp == 4)
     {
@@ -256,159 +339,318 @@ NTSTATUS vboxWddmGhDisplaySetMode(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOC_DATA p
     return STATUS_SUCCESS;
 }
 
-NTSTATUS vboxWddmGhDisplayUpdateScreenPos(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SOURCE pSource, const POINT *pVScreenPos)
+NTSTATUS vboxWddmGhDisplaySetInfoLegacy(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOC_DATA *pAllocData, const POINT * pVScreenPos, uint8_t u8CurCyncState)
 {
-    if (pSource->VScreenPos.x == pVScreenPos->x
-            && pSource->VScreenPos.y == pVScreenPos->y)
-        return STATUS_SUCCESS;
-
-    pSource->VScreenPos = *pVScreenPos;
-
-    NTSTATUS Status = vboxWddmGhDisplayPostInfoScreen(pDevExt, &pSource->AllocData, &pSource->VScreenPos);
-    Assert(Status == STATUS_SUCCESS);
-    return Status;
-}
-
-NTSTATUS vboxWddmGhDisplaySetInfo(PVBOXMP_DEVEXT pDevExt, const PVBOXWDDM_ALLOC_DATA pAllocData, const POINT * pVScreenPos)
-{
-    NTSTATUS Status = vboxWddmGhDisplaySetMode(pDevExt, pAllocData);
-    Assert(Status == STATUS_SUCCESS);
-    if (Status == STATUS_SUCCESS)
+    NTSTATUS Status = STATUS_SUCCESS;
+    bool fEnabled = !!pAllocData->SurfDesc.width;
+    uint16_t fu16Flags = fEnabled ? VBVA_SCREEN_F_ACTIVE : VBVA_SCREEN_F_DISABLED;
+    if (fEnabled)
     {
-        Status = vboxWddmGhDisplayPostInfoView(pDevExt, pAllocData);
-        Assert(Status == STATUS_SUCCESS);
-        if (Status == STATUS_SUCCESS)
+#ifdef VBOX_WITH_CROGL
+        if ((u8CurCyncState & VBOXWDDM_HGSYNC_F_CHANGED_LOCATION_ONLY) == VBOXWDDM_HGSYNC_F_CHANGED_LOCATION_ONLY
+                && pAllocData->hostID)
         {
-            Status = vboxWddmGhDisplayPostInfoScreen(pDevExt, pAllocData, pVScreenPos);
-            Assert(Status == STATUS_SUCCESS);
+            Status = vboxVdmaTexPresentSetAlloc(pDevExt, pAllocData);
             if (!NT_SUCCESS(Status))
-                WARN(("vboxWddmGhDisplayPostInfoScreen failed"));
+                WARN(("vboxVdmaTexPresentSetAlloc failed, Status 0x%x", Status));
+            return Status;
+        }
+#endif
+
+        if (pAllocData->SurfDesc.VidPnSourceId == 0)
+            Status = vboxWddmGhDisplaySetMode(pDevExt, pAllocData);
+    }
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = vboxWddmGhDisplayPostResizeLegacy(pDevExt, pAllocData, pVScreenPos,
+                fu16Flags);
+        if (NT_SUCCESS(Status))
+        {
+#ifdef VBOX_WITH_CROGL
+            if (fEnabled && pDevExt->f3DEnabled)
+            {
+                Status = vboxVdmaTexPresentSetAlloc(pDevExt, pAllocData);
+                if (NT_SUCCESS(Status))
+                    return STATUS_SUCCESS;
+                else
+                    WARN(("vboxVdmaTexPresentSetAlloc failed, Status 0x%x", Status));
+            }
+#else
+            return STATUS_SUCCESS;
+#endif
         }
         else
-            WARN(("vboxWddmGhDisplayPostInfoView failed"));
+            WARN(("vboxWddmGhDisplayPostResize failed, Status 0x%x", Status));
     }
     else
-        WARN(("vboxWddmGhDisplaySetMode failed"));
+        WARN(("vboxWddmGhDisplaySetMode failed, Status 0x%x", Status));
 
     return Status;
 }
 
-bool vboxWddmGhDisplayCheckSetInfoFromSource(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SOURCE pSource)
+NTSTATUS vboxWddmGhDisplaySetInfoNew(PVBOXMP_DEVEXT pDevExt, const VBOXWDDM_ALLOC_DATA *pAllocData, const uint32_t *pTargetMap, const POINT * pVScreenPos, uint8_t u8CurCyncState)
 {
-    Assert(VBOXVIDEOOFFSET_VOID != pSource->AllocData.Addr.offVram);
+    NTSTATUS Status = STATUS_SUCCESS;
+    bool fEnabled = !!pAllocData->SurfDesc.width;
+    uint16_t fu16Flags = fEnabled ? VBVA_SCREEN_F_ACTIVE : VBVA_SCREEN_F_DISABLED;
+    if (fEnabled)
+    {
+#ifdef VBOX_WITH_CROGL
+        if ((u8CurCyncState & VBOXWDDM_HGSYNC_F_CHANGED_LOCATION_ONLY) == VBOXWDDM_HGSYNC_F_CHANGED_LOCATION_ONLY
+                && pAllocData->hostID)
+        {
+            Status = vboxVdmaTexPresentSetAlloc(pDevExt, pAllocData);
+            if (!NT_SUCCESS(Status))
+                WARN(("vboxVdmaTexPresentSetAlloc failed, Status 0x%x", Status));
+            return Status;
+        }
+#endif
 
-    if (pSource->bGhSynced)
+        if (ASMBitTest(pTargetMap, 0))
+            Status = vboxWddmGhDisplaySetMode(pDevExt, pAllocData);
+    }
+
+    if (NT_SUCCESS(Status))
+    {
+        Status = vboxWddmGhDisplayPostResizeNew(pDevExt, pAllocData, pTargetMap, pVScreenPos, fu16Flags);
+        if (NT_SUCCESS(Status))
+        {
+#ifdef VBOX_WITH_CROGL
+            if (fEnabled && pDevExt->f3DEnabled)
+            {
+                Status = vboxVdmaTexPresentSetAlloc(pDevExt, pAllocData);
+                if (NT_SUCCESS(Status))
+                    return STATUS_SUCCESS;
+                else
+                    WARN(("vboxVdmaTexPresentSetAlloc failed, Status 0x%x", Status));
+            }
+#else
+            return STATUS_SUCCESS;
+#endif
+        }
+        else
+            WARN(("vboxWddmGhDisplayPostResizeNew failed, Status 0x%x", Status));
+    }
+    else
+        WARN(("vboxWddmGhDisplaySetMode failed, Status 0x%x", Status));
+
+    return Status;
+}
+
+bool vboxWddmGhDisplayCheckSetInfoFromSourceNew(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SOURCE pSource, bool fReportTargets)
+{
+    if (pSource->u8SyncState == VBOXWDDM_HGSYNC_F_SYNCED_ALL)
+    {
+        if (!pSource->fTargetsReported && fReportTargets)
+            pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_TOPOLOGY;
+        else
+            return false;
+    }
+
+    if (!pSource->AllocData.Addr.SegmentId && pSource->AllocData.SurfDesc.width)
         return false;
 
-    PVBOXWDDM_ALLOCATION pFbAlloc = VBOXWDDM_FB_ALLOCATION(pDevExt, pSource);
-
-#ifdef VBOX_WDDM_WIN8
-    Assert(!g_VBoxDisplayOnly == !!pFbAlloc);
-#else
-    Assert(pFbAlloc);
-#endif
-#ifndef VBOXWDDM_RENDER_FROM_SHADOW
-    Assert(!pFbAlloc || pFbAlloc->AllocData.Addr.offVram == pSource->AllocData.Addr.offVram);
-#endif
-    Assert(!pFbAlloc || pFbAlloc->AllocData.Addr.SegmentId == pSource->AllocData.Addr.SegmentId);
-
-    NTSTATUS Status = vboxWddmGhDisplaySetInfo(pDevExt, pFbAlloc ? &pFbAlloc->AllocData : &pSource->AllocData, &pSource->VScreenPos);
-    if (NT_SUCCESS(Status))
-        pSource->bGhSynced = TRUE;
+    VBOXCMDVBVA_SCREENMAP_DECL(uint32_t, aTargetMap);
+    uint32_t *pTargetMap;
+    if (fReportTargets)
+        pTargetMap = pSource->aTargetMap;
     else
-        WARN(("vboxWddmGhDisplaySetInfo failed, Status (0x%x)", Status));
+    {
+        memset(aTargetMap, 0, sizeof (aTargetMap));
+        pTargetMap = aTargetMap;
+    }
+
+    NTSTATUS Status = vboxWddmGhDisplaySetInfoNew(pDevExt, &pSource->AllocData, pTargetMap, &pSource->VScreenPos, pSource->u8SyncState);
+    if (NT_SUCCESS(Status))
+    {
+        if (fReportTargets && (pSource->u8SyncState & VBOXWDDM_HGSYNC_F_CHANGED_LOCATION_ONLY) != VBOXWDDM_HGSYNC_F_CHANGED_LOCATION_ONLY)
+        {
+            VBOXWDDM_TARGET_ITER Iter;
+            VBoxVidPnStTIterInit(pSource, pDevExt->aTargets, VBoxCommonFromDeviceExt(pDevExt)->cDisplays, &Iter);
+
+            for (PVBOXWDDM_TARGET pTarget = VBoxVidPnStTIterNext(&Iter);
+                    pTarget;
+                    pTarget = VBoxVidPnStTIterNext(&Iter))
+            {
+                pTarget->u8SyncState = VBOXWDDM_HGSYNC_F_SYNCED_ALL;
+            }
+        }
+
+        pSource->u8SyncState = VBOXWDDM_HGSYNC_F_SYNCED_ALL;
+        pSource->fTargetsReported = !!fReportTargets;
+        return true;
+    }
+
+    WARN(("vboxWddmGhDisplaySetInfoNew failed, Status (0x%x)", Status));
+    return false;
+}
+
+bool vboxWddmGhDisplayCheckSetInfoFromSourceLegacy(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SOURCE pSource, bool fReportTargets)
+{
+    if (!fReportTargets)
+        return false;
+
+    if (pSource->u8SyncState == VBOXWDDM_HGSYNC_F_SYNCED_ALL)
+        return false;
+
+    if (!pSource->AllocData.Addr.SegmentId)
+        return false;
+
+    VBOXWDDM_TARGET_ITER Iter;
+    VBoxVidPnStTIterInit(pSource, pDevExt->aTargets, VBoxCommonFromDeviceExt(pDevExt)->cDisplays, &Iter);
+    uint8_t u8SyncState = VBOXWDDM_HGSYNC_F_SYNCED_ALL;
+    VBOXWDDM_ALLOC_DATA AllocData = pSource->AllocData;
+
+    for (PVBOXWDDM_TARGET pTarget = VBoxVidPnStTIterNext(&Iter);
+            pTarget;
+            pTarget = VBoxVidPnStTIterNext(&Iter))
+    {
+        AllocData.SurfDesc.VidPnSourceId = pTarget->u32Id;
+        NTSTATUS Status = vboxWddmGhDisplaySetInfoLegacy(pDevExt, &AllocData, &pSource->VScreenPos, pSource->u8SyncState | pTarget->u8SyncState);
+        if (NT_SUCCESS(Status))
+            pTarget->u8SyncState = VBOXWDDM_HGSYNC_F_SYNCED_ALL;
+        else
+        {
+            WARN(("vboxWddmGhDisplaySetInfoLegacy failed, Status (0x%x)", Status));
+            u8SyncState = 0;
+        }
+    }
+
+    pSource->u8SyncState |= u8SyncState;
 
     return true;
 }
 
-static VOID vboxWddmModeRenderFromShadowDisableOnSubmitCommand(PVBOXMP_DEVEXT pDevExt, BOOLEAN fDisable)
+bool vboxWddmGhDisplayCheckSetInfoFromSourceEx(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SOURCE pSource, bool fReportTargets)
 {
+    if (pDevExt->fCmdVbvaEnabled)
+        return vboxWddmGhDisplayCheckSetInfoFromSourceNew(pDevExt, pSource, fReportTargets);
+    return vboxWddmGhDisplayCheckSetInfoFromSourceLegacy(pDevExt, pSource, fReportTargets);
+}
+
+bool vboxWddmGhDisplayCheckSetInfoFromSource(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SOURCE pSource)
+{
+    bool fReportTargets = !pDevExt->fDisableTargetUpdate;
+    return vboxWddmGhDisplayCheckSetInfoFromSourceEx(pDevExt, pSource, fReportTargets);
+}
+
+bool vboxWddmGhDisplayCheckSetInfoForDisabledTargetsNew(PVBOXMP_DEVEXT pDevExt)
+{
+    VBOXCMDVBVA_SCREENMAP_DECL(uint32_t, aTargetMap);
+
+    memset(aTargetMap, 0, sizeof (aTargetMap));
+
+    bool fFound = false;
     for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
     {
-        PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[i];
-        PVBOXWDDM_ALLOCATION pFromAllocation;
-        PVBOXWDDM_ALLOCATION pToAllocation;
-        if (fDisable)
+        VBOXWDDM_TARGET *pTarget = &pDevExt->aTargets[i];
+        Assert(pTarget->u32Id == i);
+        if (pTarget->VidPnSourceId != D3DDDI_ID_UNINITIALIZED)
         {
-            pFromAllocation = pSource->pShadowAllocation;
-            pToAllocation = pSource->pPrimaryAllocation;
-        }
-        else
-        {
-            pToAllocation = pSource->pShadowAllocation;
-            pFromAllocation = pSource->pPrimaryAllocation;
+            Assert(pTarget->VidPnSourceId < (D3DDDI_VIDEO_PRESENT_SOURCE_ID)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+            continue;
         }
 
-        Assert(pToAllocation->AllocData.Addr.offVram != VBOXVIDEOOFFSET_VOID);
-        Assert(pFromAllocation->AllocData.Addr.offVram != VBOXVIDEOOFFSET_VOID);
-        if (pToAllocation->AllocData.Addr.offVram != VBOXVIDEOOFFSET_VOID
-                && pFromAllocation->AllocData.Addr.offVram != VBOXVIDEOOFFSET_VOID)
-        {
-            RECT Rect;
-            Rect.left = 0;
-            Rect.top = 0;
-            Rect.right = pToAllocation->AllocData.SurfDesc.width;
-            Rect.bottom = pToAllocation->AllocData.SurfDesc.height;
-            vboxVdmaGgDmaBltPerform(pDevExt, &pFromAllocation->AllocData, &Rect,
-                    &pToAllocation->AllocData, &Rect);
-        }
+        if (pTarget->u8SyncState != VBOXWDDM_HGSYNC_F_SYNCED_ALL)
+            fFound = true;
 
-        /* ensure we issue resize command on next update */
-        pSource->bGhSynced = FALSE;
-    }
-}
-
-static BOOLEAN vboxWddmModeRenderFromShadowCheckOnSubmitCommand(PVBOXMP_DEVEXT pDevExt, BOOLEAN *pbSwitched)
-{
-    BOOLEAN fDisabled, fNeedSwitch;
-    uint32_t cCount = ASMAtomicUoReadU32(&pDevExt->cRenderFromShadowDisabledContexts);
-
-    fDisabled = !!cCount;
-    fNeedSwitch = (!fDisabled != !pDevExt->fRenderToShadowDisabled);
-
-    if (fNeedSwitch)
-    {
-        vboxWddmModeRenderFromShadowDisableOnSubmitCommand(pDevExt, fDisabled);
-        pDevExt->fRenderToShadowDisabled = fDisabled;
+        ASMBitSet(aTargetMap, i);
     }
 
-    if (pbSwitched)
-        *pbSwitched = fNeedSwitch;
+    if (!fFound)
+        return false;
 
-    return fDisabled;
-}
-
-
-static VOID vboxWddmModeRenderFromShadowDisableRegister(PVBOXMP_DEVEXT pDevExt, VBOXWDDM_CONTEXT *pContext)
-{
-    if (pContext->fRenderFromShadowDisabled)
-        return;
-    ASMAtomicIncU32(&pDevExt->cRenderFromShadowDisabledContexts);
-    pContext->fRenderFromShadowDisabled = TRUE;
-}
-
-static VOID vboxWddmModeRenderFromShadowDisableUnregister(PVBOXMP_DEVEXT pDevExt, VBOXWDDM_CONTEXT *pContext)
-{
-    if (!pContext->fRenderFromShadowDisabled)
-        return;
-
-    uint32_t cCount = ASMAtomicDecU32(&pDevExt->cRenderFromShadowDisabledContexts);
-    Assert(cCount < UINT32_MAX);
-    pContext->fRenderFromShadowDisabled = FALSE;
-}
-
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
-bool vboxWddmCheckUpdateFramebufferAddress(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_SOURCE pSource)
-{
-    if (pSource->pPrimaryAllocation->enmType == VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC)
+    POINT VScreenPos = {0};
+    VBOXWDDM_ALLOC_DATA AllocData;
+    VBoxVidPnAllocDataInit(&AllocData, D3DDDI_ID_UNINITIALIZED);
+    NTSTATUS Status = vboxWddmGhDisplaySetInfoNew(pDevExt, &AllocData, aTargetMap, &VScreenPos, 0);
+    if (!NT_SUCCESS(Status))
     {
-        Assert(pSource->bGhSynced == FALSE);
+        WARN(("vboxWddmGhDisplaySetInfoNew failed %#x", Status));
         return false;
     }
 
-    return vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
+    for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+    {
+        VBOXWDDM_TARGET *pTarget = &pDevExt->aTargets[i];
+        if (pTarget->VidPnSourceId != D3DDDI_ID_UNINITIALIZED)
+        {
+            Assert(pTarget->VidPnSourceId < (D3DDDI_VIDEO_PRESENT_SOURCE_ID)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+            continue;
+        }
+
+        pTarget->u8SyncState = VBOXWDDM_HGSYNC_F_SYNCED_ALL;
+    }
+
+    return true;
 }
-#endif
+
+bool vboxWddmGhDisplayCheckSetInfoForDisabledTargetsLegacy(PVBOXMP_DEVEXT pDevExt)
+{
+    POINT VScreenPos = {0};
+    bool fFound = false;
+    VBOXWDDM_ALLOC_DATA AllocData;
+    VBoxVidPnAllocDataInit(&AllocData, D3DDDI_ID_UNINITIALIZED);
+
+    for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+    {
+        VBOXWDDM_TARGET *pTarget = &pDevExt->aTargets[i];
+        Assert(pTarget->u32Id == i);
+        if (pTarget->VidPnSourceId != D3DDDI_ID_UNINITIALIZED)
+        {
+            Assert(pTarget->VidPnSourceId < (D3DDDI_VIDEO_PRESENT_SOURCE_ID)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+            continue;
+        }
+
+        if (pTarget->u8SyncState == VBOXWDDM_HGSYNC_F_SYNCED_ALL)
+            continue;
+
+        fFound = true;
+        AllocData.SurfDesc.VidPnSourceId = i;
+        NTSTATUS Status = vboxWddmGhDisplaySetInfoLegacy(pDevExt, &AllocData, &VScreenPos, 0);
+        if (NT_SUCCESS(Status))
+            pTarget->u8SyncState = VBOXWDDM_HGSYNC_F_SYNCED_ALL;
+        else
+            WARN(("vboxWddmGhDisplaySetInfoLegacy failed, Status (0x%x)", Status));
+    }
+
+    return fFound;
+}
+
+void vboxWddmGhDisplayCheckSetInfoForDisabledTargets(PVBOXMP_DEVEXT pDevExt)
+{
+    if (pDevExt->fCmdVbvaEnabled)
+        vboxWddmGhDisplayCheckSetInfoForDisabledTargetsNew(pDevExt);
+    else
+        vboxWddmGhDisplayCheckSetInfoForDisabledTargetsLegacy(pDevExt);
+}
+
+void vboxWddmGhDisplayCheckSetInfoForDisabledTargetsCheck(PVBOXMP_DEVEXT pDevExt)
+{
+    bool fReportTargets = !pDevExt->fDisableTargetUpdate;
+
+    if (fReportTargets)
+        vboxWddmGhDisplayCheckSetInfoForDisabledTargets(pDevExt);
+}
+
+void vboxWddmGhDisplayCheckSetInfoEx(PVBOXMP_DEVEXT pDevExt, bool fReportTargets)
+{
+    for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+    {
+        VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[i];
+        vboxWddmGhDisplayCheckSetInfoFromSourceEx(pDevExt, pSource, fReportTargets);
+    }
+
+    if (fReportTargets)
+        vboxWddmGhDisplayCheckSetInfoForDisabledTargets(pDevExt);
+}
+
+void vboxWddmGhDisplayCheckSetInfo(PVBOXMP_DEVEXT pDevExt)
+{
+    bool fReportTargets = !pDevExt->fDisableTargetUpdate;
+    vboxWddmGhDisplayCheckSetInfoEx(pDevExt, fReportTargets);
+}
 
 PVBOXSHGSMI vboxWddmHgsmiGetHeapFromCmdOffset(PVBOXMP_DEVEXT pDevExt, HGSMIOFFSET offCmd)
 {
@@ -439,331 +681,6 @@ VBOXWDDM_HGSMICMD_TYPE vboxWddmHgsmiGetCmdTypeFromOffset(PVBOXMP_DEVEXT pDevExt,
     if (HGSMIAreaContainsOffset(&VBoxCommonFromDeviceExt(pDevExt)->guestCtx.heapCtx.Heap.area, offCmd))
         return VBOXWDDM_HGSMICMD_TYPE_CTL;
     return VBOXWDDM_HGSMICMD_TYPE_UNDEFINED;
-}
-
-static NTSTATUS vboxWddmChildStatusReportPerform(PVBOXMP_DEVEXT pDevExt, PVBOXVDMA_CHILD_STATUS pChildStatus, D3DDDI_VIDEO_PRESENT_TARGET_ID iChild)
-{
-    DXGK_CHILD_STATUS DdiChildStatus;
-    if (pChildStatus->fFlags & VBOXVDMA_CHILD_STATUS_F_DISCONNECTED)
-    {
-        /* report disconnected */
-        memset(&DdiChildStatus, 0, sizeof (DdiChildStatus));
-        DdiChildStatus.Type = StatusConnection;
-        if (iChild != D3DDDI_ID_UNINITIALIZED)
-        {
-            Assert(iChild < UINT32_MAX/2);
-            Assert(iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
-            DdiChildStatus.ChildUid = iChild;
-        }
-        else
-        {
-            Assert(pChildStatus->iChild < UINT32_MAX/2);
-            Assert(pChildStatus->iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
-            DdiChildStatus.ChildUid = pChildStatus->iChild;
-        }
-        LOG(("Reporting DISCONNECT to child %d", DdiChildStatus.ChildUid));
-        DdiChildStatus.HotPlug.Connected = FALSE;
-        NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbIndicateChildStatus(pDevExt->u.primary.DxgkInterface.DeviceHandle, &DdiChildStatus);
-        if (!NT_SUCCESS(Status))
-        {
-            WARN(("DxgkCbIndicateChildStatus failed with Status (0x%x)", Status));
-            return Status;
-        }
-    }
-
-    if (pChildStatus->fFlags & VBOXVDMA_CHILD_STATUS_F_CONNECTED)
-    {
-        /* report disconnected */
-        memset(&DdiChildStatus, 0, sizeof (DdiChildStatus));
-        DdiChildStatus.Type = StatusConnection;
-        if (iChild != D3DDDI_ID_UNINITIALIZED)
-        {
-            Assert(iChild < UINT32_MAX/2);
-            Assert(iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
-            DdiChildStatus.ChildUid = iChild;
-        }
-        else
-        {
-            Assert(pChildStatus->iChild < UINT32_MAX/2);
-            Assert(pChildStatus->iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
-            DdiChildStatus.ChildUid = pChildStatus->iChild;
-        }
-        LOG(("Reporting CONNECT to child %d", DdiChildStatus.ChildUid));
-        DdiChildStatus.HotPlug.Connected = TRUE;
-        NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbIndicateChildStatus(pDevExt->u.primary.DxgkInterface.DeviceHandle, &DdiChildStatus);
-        if (!NT_SUCCESS(Status))
-        {
-            WARN(("DxgkCbIndicateChildStatus failed with Status (0x%x)", Status));
-            return Status;
-        }
-    }
-
-    if (pChildStatus->fFlags & VBOXVDMA_CHILD_STATUS_F_ROTATED)
-    {
-        /* report disconnected */
-        memset(&DdiChildStatus, 0, sizeof (DdiChildStatus));
-        DdiChildStatus.Type = StatusRotation;
-        if (iChild != D3DDDI_ID_UNINITIALIZED)
-        {
-            Assert(iChild < UINT32_MAX/2);
-            Assert(iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
-            DdiChildStatus.ChildUid = iChild;
-        }
-        else
-        {
-            Assert(pChildStatus->iChild < UINT32_MAX/2);
-            Assert(pChildStatus->iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
-            DdiChildStatus.ChildUid = pChildStatus->iChild;
-        }
-        LOG(("Reporting ROTATED to child %d", DdiChildStatus.ChildUid));
-        DdiChildStatus.Rotation.Angle = pChildStatus->u8RotationAngle;
-        NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbIndicateChildStatus(pDevExt->u.primary.DxgkInterface.DeviceHandle, &DdiChildStatus);
-        if (!NT_SUCCESS(Status))
-        {
-            WARN(("DxgkCbIndicateChildStatus failed with Status (0x%x)", Status));
-            return Status;
-        }
-    }
-
-    return STATUS_SUCCESS;
-}
-
-static NTSTATUS vboxWddmChildStatusDoReportReconnected(PVBOXMP_DEVEXT pDevExt, VBOXVDMACMD_CHILD_STATUS_IRQ *pBody)
-{
-    NTSTATUS Status = STATUS_SUCCESS;
-
-    for (UINT i = 0; i < pBody->cInfos; ++i)
-    {
-        PVBOXVDMA_CHILD_STATUS pInfo = &pBody->aInfos[i];
-        if (pBody->fFlags & VBOXVDMACMD_CHILD_STATUS_IRQ_F_APPLY_TO_ALL)
-        {
-            for (D3DDDI_VIDEO_PRESENT_TARGET_ID iChild = 0; iChild < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++iChild)
-            {
-                Status = vboxWddmChildStatusReportPerform(pDevExt, pInfo, iChild);
-                if (!NT_SUCCESS(Status))
-                {
-                    WARN(("vboxWddmChildStatusReportPerform failed with Status (0x%x)", Status));
-                    break;
-                }
-            }
-        }
-        else
-        {
-            Status = vboxWddmChildStatusReportPerform(pDevExt, pInfo, D3DDDI_ID_UNINITIALIZED);
-            if (!NT_SUCCESS(Status))
-            {
-                WARN(("vboxWddmChildStatusReportPerform failed with Status (0x%x)", Status));
-                break;
-            }
-        }
-    }
-
-    return Status;
-}
-
-typedef struct VBOXWDDMCHILDSTATUSCB
-{
-    PVBOXVDMACBUF_DR pDr;
-    PKEVENT pEvent;
-} VBOXWDDMCHILDSTATUSCB, *PVBOXWDDMCHILDSTATUSCB;
-
-static DECLCALLBACK(VOID) vboxWddmChildStatusReportCompletion(PVBOXMP_DEVEXT pDevExt, PVBOXVDMADDI_CMD pCmd, PVOID pvContext)
-{
-    /* we should be called from our DPC routine */
-    Assert(KeGetCurrentIrql() == DISPATCH_LEVEL);
-
-    PVBOXWDDMCHILDSTATUSCB pCtx = (PVBOXWDDMCHILDSTATUSCB)pvContext;
-    PVBOXVDMACBUF_DR pDr = pCtx->pDr;
-    PVBOXVDMACMD pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
-    VBOXVDMACMD_CHILD_STATUS_IRQ *pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHILD_STATUS_IRQ);
-
-    vboxWddmChildStatusDoReportReconnected(pDevExt, pBody);
-
-    vboxVdmaCBufDrFree(&pDevExt->u.primary.Vdma, pDr);
-
-    if (pCtx->pEvent)
-    {
-        KeSetEvent(pCtx->pEvent, 0, FALSE);
-    }
-}
-
-static NTSTATUS vboxWddmChildStatusReportReconnected(PVBOXMP_DEVEXT pDevExt, D3DDDI_VIDEO_PRESENT_TARGET_ID idTarget)
-{
-#ifdef VBOX_WDDM_MONITOR_REPLUG_IRQ
-    NTSTATUS Status = STATUS_UNSUCCESSFUL;
-    UINT cbCmd = VBOXVDMACMD_SIZE_FROMBODYSIZE(sizeof (VBOXVDMACMD_CHILD_STATUS_IRQ));
-
-    PVBOXVDMACBUF_DR pDr = vboxVdmaCBufDrCreate(&pDevExt->u.primary.Vdma, cbCmd);
-    if (pDr)
-    {
-        // vboxVdmaCBufDrCreate zero initializes the pDr
-        /* the command data follows the descriptor */
-        pDr->fFlags = VBOXVDMACBUF_FLAG_BUF_FOLLOWS_DR;
-        pDr->cbBuf = cbCmd;
-        pDr->rc = VERR_NOT_IMPLEMENTED;
-
-        PVBOXVDMACMD pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
-        pHdr->enmType = VBOXVDMACMD_TYPE_CHILD_STATUS_IRQ;
-        pHdr->u32CmdSpecific = 0;
-        PVBOXVDMACMD_CHILD_STATUS_IRQ pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHILD_STATUS_IRQ);
-        pBody->cInfos = 1;
-        if (idTarget == D3DDDI_ID_ALL)
-        {
-            pBody->fFlags |= VBOXVDMACMD_CHILD_STATUS_IRQ_F_APPLY_TO_ALL;
-        }
-        pBody->aInfos[0].iChild = idTarget;
-        pBody->aInfos[0].fFlags = VBOXVDMA_CHILD_STATUS_F_DISCONNECTED | VBOXVDMA_CHILD_STATUS_F_CONNECTED;
-        /* we're going to KeWaitForSingleObject */
-        Assert(KeGetCurrentIrql() < DISPATCH_LEVEL);
-
-        PVBOXVDMADDI_CMD pDdiCmd = VBOXVDMADDI_CMD_FROM_BUF_DR(pDr);
-        VBOXWDDMCHILDSTATUSCB Ctx;
-        KEVENT Event;
-        KeInitializeEvent(&Event, NotificationEvent, FALSE);
-        Ctx.pDr = pDr;
-        Ctx.pEvent = &Event;
-        vboxVdmaDdiCmdInit(pDdiCmd, 0, 0, vboxWddmChildStatusReportCompletion, &Ctx);
-        /* mark command as submitted & invisible for the dx runtime since dx did not originate it */
-        vboxVdmaDdiCmdSubmittedNotDx(pDdiCmd);
-        int rc = vboxVdmaCBufDrSubmit(pDevExt, &pDevExt->u.primary.Vdma, pDr);
-        Assert(rc == VINF_SUCCESS);
-        if (RT_SUCCESS(rc))
-        {
-            Status = KeWaitForSingleObject(&Event, Executive, KernelMode, FALSE, NULL);
-            Assert(Status == STATUS_SUCCESS);
-            return STATUS_SUCCESS;
-        }
-
-        Status = STATUS_UNSUCCESSFUL;
-
-        vboxVdmaCBufDrFree(&pDevExt->u.primary.Vdma, pDr);
-    }
-    else
-    {
-        Assert(0);
-        /* @todo: try flushing.. */
-        LOGREL(("vboxVdmaCBufDrCreate returned NULL"));
-        Status = STATUS_INSUFFICIENT_RESOURCES;
-    }
-
-    return Status;
-#else
-    VBOXVDMACMD_CHILD_STATUS_IRQ Body = {0};
-    Body.cInfos = 1;
-    if (idTarget == D3DDDI_ID_ALL)
-    {
-        Body.fFlags |= VBOXVDMACMD_CHILD_STATUS_IRQ_F_APPLY_TO_ALL;
-    }
-    Body.aInfos[0].iChild = idTarget;
-    Body.aInfos[0].fFlags = VBOXVDMA_CHILD_STATUS_F_DISCONNECTED | VBOXVDMA_CHILD_STATUS_F_CONNECTED;
-    Assert(KeGetCurrentIrql() <= DISPATCH_LEVEL);
-    return vboxWddmChildStatusDoReportReconnected(pDevExt, &Body);
-#endif
-}
-
-static NTSTATUS vboxWddmChildStatusCheckByMask(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_VIDEOMODES_INFO paInfos, uint8_t *pMask)
-{
-    NTSTATUS Status = STATUS_SUCCESS;
-    bool bChanged[VBOX_VIDEO_MAX_SCREENS] = {0};
-    int i;
-
-    LOG(("checking child status.."));
-
-    for (i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        if (pMask && !ASMBitTest(pMask, i))
-            continue;
-
-        LOG(("requested to change child status for display %d", i));
-
-        /* @todo: check that we actually need the current source->target */
-        PVBOXWDDM_VIDEOMODES_INFO pInfo = &paInfos[i];
-        VIDEO_MODE_INFORMATION *pModeInfo = &pInfo->aModes[pInfo->iPreferredMode];
-        BOOLEAN fMatch = FALSE;
-        Status = vboxVidPnMatchMonitorModes(pDevExt, i, pInfo->aResolutions, pInfo->cResolutions, &fMatch);
-        if (!NT_SUCCESS(Status))
-        {
-            WARN(("vboxVidPnMatchMonitorModes failed Status(0x%x)", Status));
-            /* ignore the failures here, although we probably should not?? */
-            break;
-        }
-
-        bChanged[i] = !fMatch;
-    }
-
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("updating monitor modes failed, Status(0x%x)", Status));
-        return Status;
-    }
-
-    for (i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        if (bChanged[i])
-        {
-            LOG(("modes changed for display %d", i));
-
-            NTSTATUS tmpStatus = vboxWddmChildStatusReportReconnected(pDevExt, i);
-            if (!NT_SUCCESS(tmpStatus))
-            {
-                WARN(("vboxWddmChildStatusReportReconnected failed Status(0x%x)", Status));
-                /* ignore the failures here, although we probably should not?? */
-                break;
-            }
-        }
-    }
-
-    /* wait for the reconnected monitor data to be picked up */
-    CONST DXGK_MONITOR_INTERFACE *pMonitorInterface;
-    Status = pDevExt->u.primary.DxgkInterface.DxgkCbQueryMonitorInterface(pDevExt->u.primary.DxgkInterface.DeviceHandle, DXGK_MONITOR_INTERFACE_VERSION_V1, &pMonitorInterface);
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("DxgkCbQueryMonitorInterface failed, Status()0x%x", Status));
-        return Status;
-    }
-
-    for (i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        D3DKMDT_HMONITORSOURCEMODESET hMonitorSMS;
-        CONST DXGK_MONITORSOURCEMODESET_INTERFACE *pMonitorSMSIf;
-        if (!bChanged[i])
-            continue;
-
-        while (1)
-        {
-            Status = pMonitorInterface->pfnAcquireMonitorSourceModeSet(pDevExt->u.primary.DxgkInterface.DeviceHandle,
-                                                i,
-                                                &hMonitorSMS,
-                                                &pMonitorSMSIf);
-            if (NT_SUCCESS(Status))
-            {
-                NTSTATUS tmpStatus = pMonitorInterface->pfnReleaseMonitorSourceModeSet(pDevExt->u.primary.DxgkInterface.DeviceHandle, hMonitorSMS);
-                if (!NT_SUCCESS(tmpStatus))
-                {
-                    WARN(("pfnReleaseMonitorSourceModeSet failed tmpStatus(0x%x)", tmpStatus));
-                }
-                break;
-            }
-
-            if (Status != STATUS_GRAPHICS_MONITOR_NOT_CONNECTED)
-            {
-                WARN(("DxgkCbQueryMonitorInterface failed, Status()0x%x", Status));
-                break;
-            }
-
-            Assert(KeGetCurrentIrql() < DISPATCH_LEVEL);
-
-            LARGE_INTEGER Interval;
-            Interval.QuadPart = -(int64_t) 2 /* ms */ * 10000;
-            NTSTATUS tmpStatus = KeDelayExecutionThread(KernelMode, FALSE, &Interval);
-            if (!NT_SUCCESS(tmpStatus))
-            {
-                WARN(("KeDelayExecutionThread failed tmpStatus(0x%x)", tmpStatus));
-            }
-        }
-    }
-
-    return STATUS_SUCCESS;
 }
 
 typedef struct VBOXWDDM_HWRESOURCES
@@ -855,17 +772,13 @@ static void vboxWddmDevExtZeroinit(PVBOXMP_DEVEXT pDevExt, CONST PDEVICE_OBJECT 
     pDevExt->pPDO = pPDO;
     PWCHAR pName = (PWCHAR)(((uint8_t*)pDevExt) + VBOXWDDM_ROUNDBOUND(sizeof(VBOXMP_DEVEXT), 8));
     RtlInitUnicodeString(&pDevExt->RegKeyName, pName);
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
-    for (int i = 0; i < RT_ELEMENTS(pDevExt->aSources); ++i)
-    {
-        PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[i];
-        pSource->AllocData.SurfDesc.VidPnSourceId = i;
-        pSource->AllocData.Addr.offVram = VBOXVIDEOOFFSET_VOID;
-    }
-#endif
+
+    VBoxVidPnSourcesInit(pDevExt->aSources, RT_ELEMENTS(pDevExt->aSources), 0);
+
+    VBoxVidPnTargetsInit(pDevExt->aTargets, RT_ELEMENTS(pDevExt->aTargets), 0);
 }
 
-static void vboxWddmSetupDisplays(PVBOXMP_DEVEXT pDevExt)
+static void vboxWddmSetupDisplaysLegacy(PVBOXMP_DEVEXT pDevExt)
 {
     /* For WDDM, we simply store the number of monitors as we will deal with
      * VidPN stuff later */
@@ -976,6 +889,76 @@ static void vboxWddmSetupDisplays(PVBOXMP_DEVEXT pDevExt)
             VBoxCommonFromDeviceExt(pDevExt)->bHGSMI = FALSE;
     }
 }
+#ifdef VBOX_WITH_CROGL
+static NTSTATUS vboxWddmSetupDisplaysNew(PVBOXMP_DEVEXT pDevExt)
+{
+    if (!VBoxCommonFromDeviceExt(pDevExt)->bHGSMI)
+        return STATUS_UNSUCCESSFUL;
+
+    ULONG cbAvailable = VBoxCommonFromDeviceExt(pDevExt)->cbVRAM
+                            - VBoxCommonFromDeviceExt(pDevExt)->cbMiniportHeap
+                            - VBVA_ADAPTER_INFORMATION_SIZE;
+
+    ULONG cbCmdVbva = cbAvailable / 2;
+    ULONG cbCmdVbvaApprox = VBOXCMDVBVA_BUFFERSIZE(4096);
+    if (cbCmdVbvaApprox > cbCmdVbva)
+    {
+        WARN(("too few VRAM memory %d, cmdVbva %d, while approximately needed %d, trying to adjust", cbAvailable, cbCmdVbva, cbCmdVbvaApprox));
+        cbCmdVbva = cbCmdVbvaApprox;
+    }
+
+    cbCmdVbva = VBOXWDDM_ROUNDBOUND(cbCmdVbva, 0x1000);
+    if (cbCmdVbva > cbAvailable - 0x1000)
+    {
+        WARN(("too few VRAM memory fatal, %d, requested for CmdVbva %d", cbAvailable, cbCmdVbva));
+        return STATUS_UNSUCCESSFUL;
+    }
+
+
+    ULONG offCmdVbva = cbAvailable - cbCmdVbva;
+
+    int rc = VBoxCmdVbvaCreate(pDevExt, &pDevExt->CmdVbva, offCmdVbva, cbCmdVbva);
+    if (RT_SUCCESS(rc))
+    {
+        rc = VBoxCmdVbvaEnable(pDevExt, &pDevExt->CmdVbva);
+        if (RT_SUCCESS(rc))
+        {
+            rc = VBoxMPCmnMapAdapterMemory(VBoxCommonFromDeviceExt(pDevExt), (void**)&pDevExt->pvVisibleVram,
+                                           0, vboxWddmVramCpuVisibleSize(pDevExt));
+            if (RT_SUCCESS(rc))
+                return STATUS_SUCCESS;
+            else
+                WARN(("VBoxMPCmnMapAdapterMemory failed, rc %d", rc));
+
+            VBoxCmdVbvaDisable(pDevExt, &pDevExt->CmdVbva);
+        }
+        else
+            WARN(("VBoxCmdVbvaEnable failed, rc %d", rc));
+
+        VBoxCmdVbvaDestroy(pDevExt, &pDevExt->CmdVbva);
+    }
+    else
+        WARN(("VBoxCmdVbvaCreate failed, rc %d", rc));
+
+    return STATUS_UNSUCCESSFUL;
+}
+#endif
+static NTSTATUS vboxWddmSetupDisplays(PVBOXMP_DEVEXT pDevExt)
+{
+#ifdef VBOX_WITH_CROGL
+    if (pDevExt->fCmdVbvaEnabled)
+    {
+        NTSTATUS Status = vboxWddmSetupDisplaysNew(pDevExt);
+        if (!NT_SUCCESS(Status))
+            VBoxCommonFromDeviceExt(pDevExt)->bHGSMI = FALSE;
+        return Status;
+    }
+#endif
+
+    vboxWddmSetupDisplaysLegacy(pDevExt);
+    return VBoxCommonFromDeviceExt(pDevExt)->bHGSMI ? STATUS_SUCCESS : STATUS_UNSUCCESSFUL;
+        return STATUS_UNSUCCESSFUL;
+}
 
 static int vboxWddmFreeDisplays(PVBOXMP_DEVEXT pDevExt)
 {
@@ -985,33 +968,50 @@ static int vboxWddmFreeDisplays(PVBOXMP_DEVEXT pDevExt)
     if (pDevExt->pvVisibleVram)
         VBoxMPCmnUnmapAdapterMemory(VBoxCommonFromDeviceExt(pDevExt), (void**)&pDevExt->pvVisibleVram);
 
-    for (int i = VBoxCommonFromDeviceExt(pDevExt)->cDisplays-1; i >= 0; --i)
+    if (pDevExt->fCmdVbvaEnabled)
     {
-        rc = vboxVbvaDisable(pDevExt, &pDevExt->aSources[i].Vbva);
+        rc = VBoxCmdVbvaDisable(pDevExt, &pDevExt->CmdVbva);
+        if (RT_SUCCESS(rc))
+        {
+            rc = VBoxCmdVbvaDestroy(pDevExt, &pDevExt->CmdVbva);
+            if (RT_FAILURE(rc))
+                WARN(("VBoxCmdVbvaDestroy failed %d", rc));
+        }
+        else
+            WARN(("VBoxCmdVbvaDestroy failed %d", rc));
+
+    }
+    else
+    {
+        for (int i = VBoxCommonFromDeviceExt(pDevExt)->cDisplays-1; i >= 0; --i)
+        {
+            rc = vboxVbvaDisable(pDevExt, &pDevExt->aSources[i].Vbva);
+            AssertRC(rc);
+            if (RT_SUCCESS(rc))
+            {
+                rc = vboxVbvaDestroy(pDevExt, &pDevExt->aSources[i].Vbva);
+                AssertRC(rc);
+                if (RT_FAILURE(rc))
+                {
+                    /* @todo: */
+                }
+            }
+        }
+
+        vboxVideoAMgrDestroy(pDevExt, &pDevExt->AllocMgr);
+
+        rc = vboxVdmaDisable(pDevExt, &pDevExt->u.primary.Vdma);
         AssertRC(rc);
         if (RT_SUCCESS(rc))
         {
-            rc = vboxVbvaDestroy(pDevExt, &pDevExt->aSources[i].Vbva);
+#ifdef VBOX_VDMA_WITH_WATCHDOG
+            vboxWddmWdTerm(pDevExt);
+#endif
+            rc = vboxVdmaDestroy(pDevExt, &pDevExt->u.primary.Vdma);
             AssertRC(rc);
-            if (RT_FAILURE(rc))
-            {
-                /* @todo: */
-            }
         }
     }
 
-    vboxVideoAMgrDestroy(pDevExt, &pDevExt->AllocMgr);
-
-    rc = vboxVdmaDisable(pDevExt, &pDevExt->u.primary.Vdma);
-    AssertRC(rc);
-    if (RT_SUCCESS(rc))
-    {
-#ifdef VBOX_VDMA_WITH_WATCHDOG
-        vboxWddmWdTerm(pDevExt);
-#endif
-        rc = vboxVdmaDestroy(pDevExt, &pDevExt->u.primary.Vdma);
-        AssertRC(rc);
-    }
     return rc;
 }
 
@@ -1104,6 +1104,27 @@ NTSTATUS DxgkDdiStartDevice(
             Status = vboxWddmPickResources(pDevExt, &DeviceInfo, &HwRc);
             if (Status == STATUS_SUCCESS)
             {
+#ifdef VBOX_WITH_CROGL
+                pDevExt->f3DEnabled = VBoxMpCrCtlConIs3DSupported();
+
+                if (pDevExt->f3DEnabled)
+                {
+                    pDevExt->fTexPresentEnabled = !!(VBoxMpCrGetHostCaps() & CR_VBOX_CAP_TEX_PRESENT);
+                    pDevExt->fCmdVbvaEnabled = !!(VBoxMpCrGetHostCaps() & CR_VBOX_CAP_CMDVBVA);
+# if 0
+                    pDevExt->fComplexTopologiesEnabled = pDevExt->fCmdVbvaEnabled;
+# else
+                    pDevExt->fComplexTopologiesEnabled = FALSE;
+# endif
+                }
+                else
+                {
+                    pDevExt->fTexPresentEnabled = FALSE;
+                    pDevExt->fCmdVbvaEnabled = FALSE;
+                    pDevExt->fComplexTopologiesEnabled = FALSE;
+                }
+#endif
+
                 /* Guest supports only HGSMI, the old VBVA via VMMDev is not supported.
                  * The host will however support both old and new interface to keep compatibility
                  * with old guest additions.
@@ -1126,17 +1147,17 @@ NTSTATUS DxgkDdiStartDevice(
 
                     vboxVdmaDdiNodesInit(pDevExt);
                     vboxVideoCmInit(&pDevExt->CmMgr);
+                    vboxVideoCmInit(&pDevExt->SeamlessCtxMgr);
                     InitializeListHead(&pDevExt->SwapchainList3D);
                     pDevExt->cContexts3D = 0;
                     pDevExt->cContexts2D = 0;
+                    pDevExt->cContextsDispIfResize = 0;
                     pDevExt->cUnlockedVBVADisabled = 0;
+                    pDevExt->fDisableTargetUpdate = 0;
                     VBOXWDDM_CTXLOCK_INIT(pDevExt);
                     KeInitializeSpinLock(&pDevExt->SynchLock);
 
-                    VBoxMPCmnInitCustomVideoModes(pDevExt);
-                    VBoxWddmInvalidateAllVideoModesInfos(pDevExt);
-
-                    pDevExt->fAnyX = VBoxVideoAnyWidthAllowed();
+                    VBoxCommonFromDeviceExt(pDevExt)->fAnyX = VBoxVideoAnyWidthAllowed();
 #if 0
                     vboxShRcTreeInit(pDevExt);
 #endif
@@ -1146,7 +1167,7 @@ NTSTATUS DxgkDdiStartDevice(
 #endif
                     VBoxWddmSlInit(pDevExt);
 
-#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
+#ifdef VBOX_WITH_CROGL
                     VBoxMpCrShgsmiTransportCreate(&pDevExt->CrHgsmiTransport, pDevExt);
 #endif
 
@@ -1154,8 +1175,68 @@ NTSTATUS DxgkDdiStartDevice(
                     {
                         PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[i];
                         KeInitializeSpinLock(&pSource->AllocationLock);
+#ifdef VBOX_WITH_CROGL
+                        VBoxVrListInit(&pSource->VrList);
+#endif
                     }
 
+                    DWORD dwVal = VBOXWDDM_CFG_DRV_DEFAULT;
+                    HANDLE hKey = NULL;
+                    WCHAR aNameBuf[100];
+
+                    Status = IoOpenDeviceRegistryKey(pDevExt->pPDO, PLUGPLAY_REGKEY_DRIVER, GENERIC_READ, &hKey);
+                    if (!NT_SUCCESS(Status))
+                    {
+                        WARN(("IoOpenDeviceRegistryKey failed, Status = 0x%x", Status));
+                        hKey = NULL;
+                    }
+
+
+                    if (hKey)
+                    {
+                        Status = vboxWddmRegQueryValueDword(hKey, VBOXWDDM_REG_DRV_FLAGS_NAME, &dwVal);
+                        if (!NT_SUCCESS(Status))
+                        {
+                            LOG(("vboxWddmRegQueryValueDword failed, Status = 0x%x", Status));
+                            dwVal = VBOXWDDM_CFG_DRV_DEFAULT;
+                        }
+                    }
+
+                    pDevExt->dwDrvCfgFlags = dwVal;
+
+                    for (UINT i = 0; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+                    {
+                        PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
+                        if (i == 0 || (pDevExt->dwDrvCfgFlags & VBOXWDDM_CFG_DRV_SECONDARY_TARGETS_CONNECTED) || !hKey)
+                        {
+                            pTarget->fConnected = true;
+                            pTarget->fConfigured = true;
+                        }
+                        else if (hKey)
+                        {
+                            swprintf(aNameBuf, L"%s%d", VBOXWDDM_REG_DRV_DISPFLAGS_PREFIX, i);
+                            Status = vboxWddmRegQueryValueDword(hKey, aNameBuf, &dwVal);
+                            if (NT_SUCCESS(Status))
+                            {
+                                pTarget->fConnected = !!(dwVal & VBOXWDDM_CFG_DRVTARGET_CONNECTED);
+                                pTarget->fConfigured = true;
+                            }
+                            else
+                            {
+                                WARN(("vboxWddmRegQueryValueDword failed, Status = 0x%x", Status));
+                                pTarget->fConnected = false;
+                                pTarget->fConfigured = false;
+                            }
+                        }
+                    }
+
+                    if (hKey)
+                    {
+                        NTSTATUS tmpStatus = ZwClose(hKey);
+                        Assert(tmpStatus == STATUS_SUCCESS);
+                    }
+
+                    Status = STATUS_SUCCESS;
 #ifdef VBOX_WDDM_WIN8
                     DXGK_DISPLAY_INFORMATION DisplayInfo;
                     Status = pDevExt->u.primary.DxgkInterface.DxgkCbAcquirePostDisplayOwnership(pDevExt->u.primary.DxgkInterface.DeviceHandle,
@@ -1194,6 +1275,8 @@ NTSTATUS DxgkDdiStartDevice(
                         WARN(("DxgkCbAcquirePostDisplayOwnership failed, Status 0x%x", Status));
                     }
 #endif
+
+                    VBoxWddmVModesInit(pDevExt);
                 }
                 else
                 {
@@ -1239,13 +1322,18 @@ NTSTATUS DxgkDdiStopDevice(
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)MiniportDeviceContext;
     NTSTATUS Status = STATUS_SUCCESS;
 
-#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
+#ifdef VBOX_WITH_CROGL
+    if (pDevExt->u32CrConDefaultClientID)
+        VBoxMpCrCtlConDisconnect(pDevExt, &pDevExt->CrCtlCon, pDevExt->u32CrConDefaultClientID);
+
     VBoxMpCrShgsmiTransportTerm(&pDevExt->CrHgsmiTransport);
 #endif
 
     VBoxWddmSlTerm(pDevExt);
 
     vboxVideoCmTerm(&pDevExt->CmMgr);
+
+    vboxVideoCmTerm(&pDevExt->SeamlessCtxMgr);
 
     /* do everything we did on DxgkDdiStartDevice in the reverse order */
 #ifdef VBOX_WITH_VIDEOHWACCEL
@@ -1263,6 +1351,7 @@ NTSTATUS DxgkDdiStopDevice(
     {
         vboxWddmVGuidFree(pDevExt);
 
+        VBoxWddmVModesCleanup();
         /* revert back to the state we were right after the DxgkDdiAddDevice */
         vboxWddmDevExtZeroinit(pDevExt, pDevExt->pPDO);
     }
@@ -1364,7 +1453,148 @@ NTSTATUS DxgkDdiDispatchIoRequest(
     return STATUS_SUCCESS;
 }
 
-BOOLEAN DxgkDdiInterruptRoutine(
+#ifdef VBOX_WITH_CROGL
+BOOLEAN DxgkDdiInterruptRoutineNew(
+    IN CONST PVOID MiniportDeviceContext,
+    IN ULONG MessageNumber
+    )
+{
+//    LOGF(("ENTER, context(0x%p), msg(0x%x)", MiniportDeviceContext, MessageNumber));
+
+    vboxVDbgBreakFv();
+
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)MiniportDeviceContext;
+    BOOLEAN bOur = FALSE;
+    bool bNeedDpc = FALSE;
+    if (!VBoxCommonFromDeviceExt(pDevExt)->hostCtx.pfHostFlags) /* If HGSMI is enabled at all. */
+    {
+        WARN(("ISR called with hgsmi disabled!"));
+        return FALSE;
+    }
+
+    VBOXVTLIST CtlList;
+    vboxVtListInit(&CtlList);
+#ifdef VBOX_WITH_VIDEOHWACCEL
+    VBOXVTLIST VhwaCmdList;
+    vboxVtListInit(&VhwaCmdList);
+#endif
+
+    uint32_t flags = VBoxCommonFromDeviceExt(pDevExt)->hostCtx.pfHostFlags->u32HostFlags;
+    bOur = (flags & HGSMIHOSTFLAGS_IRQ);
+
+    if (bOur)
+        VBoxHGSMIClearIrq(&VBoxCommonFromDeviceExt(pDevExt)->hostCtx);
+
+    bNeedDpc |= VBoxCmdVbvaCheckCompletedIrq(pDevExt, &pDevExt->CmdVbva);
+
+    do {
+        /* re-read flags right here to avoid host-guest racing,
+         * i.e. the situation:
+         * 1. guest reads flags ant it is HGSMIHOSTFLAGS_IRQ, i.e. HGSMIHOSTFLAGS_GCOMMAND_COMPLETED no set
+         * 2. host completes guest command, sets the HGSMIHOSTFLAGS_GCOMMAND_COMPLETED and raises IRQ
+         * 3. guest clleans IRQ and exits  */
+        flags = VBoxCommonFromDeviceExt(pDevExt)->hostCtx.pfHostFlags->u32HostFlags;
+
+        if (flags & HGSMIHOSTFLAGS_GCOMMAND_COMPLETED)
+        {
+            /* read the command offset */
+            HGSMIOFFSET offCmd = VBoxVideoCmnPortReadUlong(VBoxCommonFromDeviceExt(pDevExt)->guestCtx.port);
+            if (offCmd == HGSMIOFFSET_VOID)
+            {
+                WARN(("void command offset!"));
+                continue;
+            }
+
+            uint16_t chInfo;
+            uint8_t *pvCmd = HGSMIBufferDataAndChInfoFromOffset (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx.heapCtx.Heap.area, offCmd, &chInfo);
+            if (!pvCmd)
+            {
+                WARN(("zero cmd"));
+                continue;
+            }
+
+            switch (chInfo)
+            {
+                case VBVA_CMDVBVA_CTL:
+                {
+                    int rc = VBoxSHGSMICommandProcessCompletion (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx.heapCtx, (VBOXSHGSMIHEADER*)pvCmd, TRUE /*bool bIrq*/ , &CtlList);
+                    AssertRC(rc);
+                    break;
+                }
+#ifdef VBOX_WITH_VIDEOHWACCEL
+                case VBVA_VHWA_CMD:
+                {
+                    vboxVhwaPutList(&VhwaCmdList, (VBOXVHWACMD*)pvCmd);
+                    break;
+                }
+#endif /* # ifdef VBOX_WITH_VIDEOHWACCEL */
+                default:
+                    AssertBreakpoint();
+            }
+        }
+        else if (flags & HGSMIHOSTFLAGS_COMMANDS_PENDING)
+        {
+            AssertBreakpoint();
+            /* @todo: FIXME: implement !!! */
+        }
+        else
+            break;
+    } while (1);
+
+    if (!vboxVtListIsEmpty(&CtlList))
+    {
+        vboxVtListCat(&pDevExt->CtlList, &CtlList);
+        bNeedDpc = TRUE;
+        ASMAtomicWriteU32(&pDevExt->fCompletingCommands, 1);
+    }
+
+    if (!vboxVtListIsEmpty(&VhwaCmdList))
+    {
+        vboxVtListCat(&pDevExt->VhwaCmdList, &VhwaCmdList);
+        bNeedDpc = TRUE;
+        ASMAtomicWriteU32(&pDevExt->fCompletingCommands, 1);
+    }
+
+    bNeedDpc |= !vboxVdmaDdiCmdIsCompletedListEmptyIsr(pDevExt);
+
+    if (bOur)
+    {
+#ifdef VBOX_VDMA_WITH_WATCHDOG
+        if (flags & HGSMIHOSTFLAGS_WATCHDOG)
+        {
+            Assert(0);
+        }
+#endif
+        if (flags & HGSMIHOSTFLAGS_VSYNC)
+        {
+            Assert(0);
+            DXGKARGCB_NOTIFY_INTERRUPT_DATA notify;
+            for (UINT i = 0; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+            {
+                PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
+                if (pTarget->fConnected)
+                {
+                    memset(&notify, 0, sizeof(DXGKARGCB_NOTIFY_INTERRUPT_DATA));
+                    notify.InterruptType = DXGK_INTERRUPT_CRTC_VSYNC;
+                    notify.CrtcVsync.VidPnTargetId = i;
+                    pDevExt->u.primary.DxgkInterface.DxgkCbNotifyInterrupt(pDevExt->u.primary.DxgkInterface.DeviceHandle, &notify);
+                    bNeedDpc = TRUE;
+                }
+            }
+        }
+    }
+
+    if (pDevExt->bNotifyDxDpc)
+        bNeedDpc = TRUE;
+
+    if (bNeedDpc)
+        pDevExt->u.primary.DxgkInterface.DxgkCbQueueDpc(pDevExt->u.primary.DxgkInterface.DeviceHandle);
+
+    return bOur;
+}
+#endif
+
+static BOOLEAN DxgkDdiInterruptRoutineLegacy(
     IN CONST PVOID MiniportDeviceContext,
     IN ULONG MessageNumber
     )
@@ -1394,6 +1624,10 @@ BOOLEAN DxgkDdiInterruptRoutine(
 
         uint32_t flags = VBoxCommonFromDeviceExt(pDevExt)->hostCtx.pfHostFlags->u32HostFlags;
         bOur = (flags & HGSMIHOSTFLAGS_IRQ);
+
+        if (bOur)
+            VBoxHGSMIClearIrq(&VBoxCommonFromDeviceExt(pDevExt)->hostCtx);
+
         do
         {
             if (flags & HGSMIHOSTFLAGS_GCOMMAND_COMPLETED)
@@ -1504,18 +1738,14 @@ BOOLEAN DxgkDdiInterruptRoutine(
                 DXGKARGCB_NOTIFY_INTERRUPT_DATA notify;
                 for (UINT i = 0; i < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
                 {
-                    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[i];
-                    PVBOXWDDM_ALLOCATION pPrimary = pSource->pPrimaryAllocation;
-                    if (pPrimary && pPrimary->AllocData.Addr.offVram != VBOXVIDEOOFFSET_VOID)
+                    PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
+                    if (pTarget->fConnected)
                     {
                         memset(&notify, 0, sizeof(DXGKARGCB_NOTIFY_INTERRUPT_DATA));
                         notify.InterruptType = DXGK_INTERRUPT_CRTC_VSYNC;
-                        /* @todo: !!!this is not correct in case we want source[i]->target[i!=j] mapping */
                         notify.CrtcVsync.VidPnTargetId = i;
-                        notify.CrtcVsync.PhysicalAddress.QuadPart = pPrimary->AllocData.Addr.offVram;
                         pDevExt->u.primary.DxgkInterface.DxgkCbNotifyInterrupt(pDevExt->u.primary.DxgkInterface.DeviceHandle, &notify);
-
-                        pDevExt->bNotifyDxDpc = TRUE;
+                        bNeedDpc = TRUE;
                     }
                 }
             }
@@ -1525,7 +1755,6 @@ BOOLEAN DxgkDdiInterruptRoutine(
                 bNeedDpc = TRUE;
             }
 
-            VBoxHGSMIClearIrq(&VBoxCommonFromDeviceExt(pDevExt)->hostCtx);
 #if 0 //def DEBUG_misha
             /* this is not entirely correct since host may concurrently complete some commands and raise a new IRQ while we are here,
              * still this allows to check that the host flags are correctly cleared after the ISR */
@@ -1569,22 +1798,78 @@ typedef struct VBOXWDDM_GETDPCDATA_CONTEXT
 BOOLEAN vboxWddmGetDPCDataCallback(PVOID Context)
 {
     PVBOXWDDM_GETDPCDATA_CONTEXT pdc = (PVBOXWDDM_GETDPCDATA_CONTEXT)Context;
-
-    vboxVtListDetach2List(&pdc->pDevExt->CtlList, &pdc->data.CtlList);
+    PVBOXMP_DEVEXT pDevExt = pdc->pDevExt;
+    vboxVtListDetach2List(&pDevExt->CtlList, &pdc->data.CtlList);
 #ifdef VBOX_WITH_VDMA
-    vboxVtListDetach2List(&pdc->pDevExt->DmaCmdList, &pdc->data.DmaCmdList);
+    vboxVtListDetach2List(&pDevExt->DmaCmdList, &pdc->data.DmaCmdList);
 #endif
 #ifdef VBOX_WITH_VIDEOHWACCEL
-    vboxVtListDetach2List(&pdc->pDevExt->VhwaCmdList, &pdc->data.VhwaCmdList);
+    vboxVtListDetach2List(&pDevExt->VhwaCmdList, &pdc->data.VhwaCmdList);
 #endif
-    vboxVdmaDdiCmdGetCompletedListIsr(pdc->pDevExt, &pdc->data.CompletedDdiCmdQueue);
+#ifdef VBOX_WITH_CROGL
+    if (!pDevExt->fCmdVbvaEnabled)
+#endif
+    {
+        vboxVdmaDdiCmdGetCompletedListIsr(pDevExt, &pdc->data.CompletedDdiCmdQueue);
+    }
 
-    pdc->data.bNotifyDpc = pdc->pDevExt->bNotifyDxDpc;
-    pdc->pDevExt->bNotifyDxDpc = FALSE;
+    pdc->data.bNotifyDpc = pDevExt->bNotifyDxDpc;
+    pDevExt->bNotifyDxDpc = FALSE;
+
+    ASMAtomicWriteU32(&pDevExt->fCompletingCommands, 0);
+
     return TRUE;
 }
 
-VOID DxgkDdiDpcRoutine(
+#ifdef VBOX_WITH_CROGL
+static VOID DxgkDdiDpcRoutineNew(
+    IN CONST PVOID  MiniportDeviceContext
+    )
+{
+//    LOGF(("ENTER, context(0x%p)", MiniportDeviceContext));
+
+    vboxVDbgBreakFv();
+
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)MiniportDeviceContext;
+
+    pDevExt->u.primary.DxgkInterface.DxgkCbNotifyDpc(pDevExt->u.primary.DxgkInterface.DeviceHandle);
+
+    if (ASMAtomicReadU32(&pDevExt->fCompletingCommands))
+    {
+        VBOXWDDM_GETDPCDATA_CONTEXT context = {0};
+        BOOLEAN bRet;
+
+        context.pDevExt = pDevExt;
+
+        /* get DPC data at IRQL */
+        NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbSynchronizeExecution(
+                pDevExt->u.primary.DxgkInterface.DeviceHandle,
+                vboxWddmGetDPCDataCallback,
+                &context,
+                0, /* IN ULONG MessageNumber */
+                &bRet);
+        Assert(Status == STATUS_SUCCESS);
+
+    //    if (context.data.bNotifyDpc)
+        pDevExt->u.primary.DxgkInterface.DxgkCbNotifyDpc(pDevExt->u.primary.DxgkInterface.DeviceHandle);
+
+        if (!vboxVtListIsEmpty(&context.data.CtlList))
+        {
+            int rc = VBoxSHGSMICommandPostprocessCompletion (&VBoxCommonFromDeviceExt(pDevExt)->guestCtx.heapCtx, &context.data.CtlList);
+            AssertRC(rc);
+        }
+#ifdef VBOX_WITH_VIDEOHWACCEL
+        if (!vboxVtListIsEmpty(&context.data.VhwaCmdList))
+        {
+            vboxVhwaCompletionListProcess(pDevExt, &context.data.VhwaCmdList);
+        }
+#endif
+    }
+//    LOGF(("LEAVE, context(0x%p)", MiniportDeviceContext));
+}
+#endif
+
+static VOID DxgkDdiDpcRoutineLegacy(
     IN CONST PVOID  MiniportDeviceContext
     )
 {
@@ -1654,7 +1939,7 @@ NTSTATUS DxgkDdiQueryChildRelations(
     {
         ChildRelations[i].ChildDeviceType = TypeVideoOutput;
         ChildRelations[i].ChildCapabilities.Type.VideoOutput.InterfaceTechnology = D3DKMDT_VOT_HD15; /* VGA */
-        ChildRelations[i].ChildCapabilities.Type.VideoOutput.MonitorOrientationAwareness = D3DKMDT_MOA_INTERRUPTIBLE; /* ?? D3DKMDT_MOA_NONE*/
+        ChildRelations[i].ChildCapabilities.Type.VideoOutput.MonitorOrientationAwareness = D3DKMDT_MOA_NONE; //D3DKMDT_MOA_INTERRUPTIBLE; /* ?? D3DKMDT_MOA_NONE*/
         ChildRelations[i].ChildCapabilities.Type.VideoOutput.SupportsSdtvModes = FALSE;
         ChildRelations[i].ChildCapabilities.HpdAwareness = HpdAwarenessInterruptible; /* ?? HpdAwarenessAlwaysConnected; */
         ChildRelations[i].AcpiUid =  0; /* */
@@ -1677,20 +1962,33 @@ NTSTATUS DxgkDdiQueryChildStatus(
 
     LOGF(("ENTER, context(0x%x)", MiniportDeviceContext));
 
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)MiniportDeviceContext;
+
+    if (ChildStatus->ChildUid >= (uint32_t)VBoxCommonFromDeviceExt(pDevExt)->cDisplays)
+    {
+        WARN(("Invalid child id %d", ChildStatus->ChildUid));
+        return STATUS_INVALID_PARAMETER;
+    }
+
     NTSTATUS Status = STATUS_SUCCESS;
     switch (ChildStatus->Type)
     {
         case StatusConnection:
-            ChildStatus->HotPlug.Connected = TRUE;
+        {
             LOGF(("StatusConnection"));
+            VBOXWDDM_TARGET *pTarget = &pDevExt->aTargets[ChildStatus->ChildUid];
+            BOOLEAN Connected = !!pTarget->fConnected;
+            if (!Connected)
+                LOGREL(("Tgt[%d] DISCONNECTED!!", ChildStatus->ChildUid));
+            ChildStatus->HotPlug.Connected = !!pTarget->fConnected;
             break;
+        }
         case StatusRotation:
-            ChildStatus->Rotation.Angle = 0;
             LOGF(("StatusRotation"));
+            ChildStatus->Rotation.Angle = 0;
             break;
         default:
-            LOGREL(("ERROR: status type: %d", ChildStatus->Type));
-            AssertBreakpoint();
+            WARN(("ERROR: status type: %d", ChildStatus->Type));
             Status = STATUS_INVALID_PARAMETER;
             break;
     }
@@ -1780,7 +2078,9 @@ VOID DxgkDdiUnload(
 
     VbglTerminate();
 
-    VBoxWddmVrTerm();
+#ifdef VBOX_WITH_CROGL
+    VBoxVrTerm();
+#endif
 
     PRTLOGGER pLogger = RTLogRelSetDefaultInstance(NULL);
     if (pLogger)
@@ -1846,8 +2146,13 @@ NTSTATUS APIENTRY DxgkDdiQueryAdapterInfo(
 #ifdef VBOX_WDDM_WIN8
             memset(pCaps, 0, sizeof (*pCaps));
 #endif
-
-            pCaps->HighestAcceptableAddress.QuadPart = ~((uintptr_t)0);
+            pCaps->HighestAcceptableAddress.LowPart = ~0UL;
+#ifdef RT_ARCH_AMD64
+            /* driver talks to host in terms of page numbers when reffering to RAM
+             * we use uint32_t field to pass page index to host, so max would be (~0UL) << PAGE_OFFSET,
+             * which seems quite enough */
+            pCaps->HighestAcceptableAddress.HighPart = PAGE_OFFSET_MASK;
+#endif
             pCaps->MaxPointerWidth  = VBOXWDDM_C_POINTER_MAX_WIDTH;
             pCaps->MaxPointerHeight = VBOXWDDM_C_POINTER_MAX_HEIGHT;
             pCaps->PointerCaps.Value = 3; /* Monochrome , Color*/ /* MaskedColor == Value | 4, disable for now */
@@ -1906,11 +2211,7 @@ NTSTATUS APIENTRY DxgkDdiQueryAdapterInfo(
             /* no need for DXGK_QUERYSEGMENTIN as it contains AGP aperture info, which (AGP aperture) we do not support
              * DXGK_QUERYSEGMENTIN *pQsIn = (DXGK_QUERYSEGMENTIN*)pQueryAdapterInfo->pInputData; */
             DXGK_QUERYSEGMENTOUT *pQsOut = (DXGK_QUERYSEGMENTOUT*)pQueryAdapterInfo->pOutputData;
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
 # define VBOXWDDM_SEGMENTS_COUNT 2
-#else
-# define VBOXWDDM_SEGMENTS_COUNT 1
-#endif
             if (!pQsOut->pSegmentDescriptor)
             {
                 /* we are requested to provide the number of segments we support */
@@ -1918,8 +2219,7 @@ NTSTATUS APIENTRY DxgkDdiQueryAdapterInfo(
             }
             else if (pQsOut->NbSegment != VBOXWDDM_SEGMENTS_COUNT)
             {
-                AssertBreakpoint();
-                LOGREL(("NbSegment (%d) != 1", pQsOut->NbSegment));
+                WARN(("NbSegment (%d) != 1", pQsOut->NbSegment));
                 Status = STATUS_INVALID_PARAMETER;
             }
             else
@@ -1936,7 +2236,7 @@ NTSTATUS APIENTRY DxgkDdiQueryAdapterInfo(
                 pDr->CommitLimit = pDr->Size;
                 pDr->Flags.Value = 0;
                 pDr->Flags.CpuVisible = 1;
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
+
                 ++pDr;
                 /* create cpu-invisible segment of the same size */
                 pDr->BaseAddress.QuadPart = 0;
@@ -1948,11 +2248,10 @@ NTSTATUS APIENTRY DxgkDdiQueryAdapterInfo(
                 pDr->pBankRangeTable = 0;
                 pDr->CommitLimit = pDr->Size;
                 pDr->Flags.Value = 0;
-#endif
 
                 pQsOut->PagingBufferSegmentId = 0;
-                pQsOut->PagingBufferSize = 1024;
-                pQsOut->PagingBufferPrivateDataSize = 0; /* @todo: do we need a private buffer ? */
+                pQsOut->PagingBufferSize = PAGE_SIZE;
+                pQsOut->PagingBufferPrivateDataSize = PAGE_SIZE;
             }
             }
 #ifdef VBOX_WDDM_WIN8
@@ -1970,12 +2269,14 @@ NTSTATUS APIENTRY DxgkDdiQueryAdapterInfo(
             if (!g_VBoxDisplayOnly)
 #endif
             {
-                Assert (pQueryAdapterInfo->OutputDataSize >= sizeof (VBOXWDDM_QI));
-                if (pQueryAdapterInfo->OutputDataSize >= sizeof (VBOXWDDM_QI))
+                if (pQueryAdapterInfo->OutputDataSize == sizeof (VBOXWDDM_QI))
                 {
                     VBOXWDDM_QI * pQi = (VBOXWDDM_QI*)pQueryAdapterInfo->pOutputData;
                     memset (pQi, 0, sizeof (VBOXWDDM_QI));
                     pQi->u32Version = VBOXVIDEOIF_VERSION;
+#ifdef VBOX_WITH_CROGL
+                    pQi->u32VBox3DCaps = VBoxMpCrGetHostCaps();
+#endif
                     pQi->cInfos = VBoxCommonFromDeviceExt(pDevExt)->cDisplays;
 #ifdef VBOX_WITH_VIDEOHWACCEL
                     for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
@@ -1986,7 +2287,7 @@ NTSTATUS APIENTRY DxgkDdiQueryAdapterInfo(
                 }
                 else
                 {
-                    LOGREL(("buffer too small"));
+                    WARN(("incorrect buffer size %d, expected %d", pQueryAdapterInfo->OutputDataSize, sizeof (VBOXWDDM_QI)));
                     Status = STATUS_BUFFER_TOO_SMALL;
                 }
             }
@@ -2030,6 +2331,11 @@ NTSTATUS APIENTRY DxgkDdiCreateDevice(
     vboxVDbgBreakFv();
 
     PVBOXWDDM_DEVICE pDevice = (PVBOXWDDM_DEVICE)vboxWddmMemAllocZero(sizeof (VBOXWDDM_DEVICE));
+    if (!pDevice)
+    {
+        WARN(("vboxWddmMemAllocZero failed for WDDM device structure"));
+        return STATUS_NO_MEMORY;
+    }
     pCreateDevice->hDevice = pDevice;
     if (pCreateDevice->Flags.SystemDevice)
         pDevice->enmType = VBOXWDDM_DEVICE_TYPE_SYSTEM;
@@ -2109,22 +2415,10 @@ VOID vboxWddmAllocationCleanupAssignment(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOC
             if (pAllocation->bAssigned)
             {
                 /* @todo: do we need to notify host? */
-                vboxWddmAssignPrimary(pDevExt, &pDevExt->aSources[pAllocation->AllocData.SurfDesc.VidPnSourceId], NULL, pAllocation->AllocData.SurfDesc.VidPnSourceId);
+                vboxWddmAssignPrimary(&pDevExt->aSources[pAllocation->AllocData.SurfDesc.VidPnSourceId], NULL, pAllocation->AllocData.SurfDesc.VidPnSourceId);
             }
             break;
         }
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
-        case VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE:
-        {
-            if (pAllocation->bAssigned)
-            {
-                Assert(pAllocation->AllocData.SurfDesc.VidPnSourceId != D3DDDI_ID_UNINITIALIZED);
-                /* @todo: do we need to notify host? */
-                vboxWddmAssignShadow(pDevExt, &pDevExt->aSources[pAllocation->AllocData.SurfDesc.VidPnSourceId], NULL, pAllocation->AllocData.SurfDesc.VidPnSourceId);
-            }
-            break;
-        }
-#endif
         default:
             break;
     }
@@ -2150,20 +2444,19 @@ VOID vboxWddmAllocationCleanup(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_ALLOCATION pAll
         }
         case VBOXWDDM_ALLOC_TYPE_UMD_HGSMI_BUFFER:
         {
-            if (pAllocation->pSynchEvent)
-                ObDereferenceObject(pAllocation->pSynchEvent);
             break;
         }
         default:
             break;
     }
-
+#ifdef VBOX_WITH_CROGL
     PVBOXWDDM_SWAPCHAIN pSwapchain = vboxWddmSwapchainRetainByAlloc(pDevExt, pAllocation);
     if (pSwapchain)
     {
         vboxWddmSwapchainAllocRemove(pDevExt, pSwapchain, pAllocation);
         vboxWddmSwapchainRelease(pSwapchain);
     }
+#endif
 }
 
 VOID vboxWddmAllocationDestroy(PVBOXWDDM_ALLOCATION pAllocation)
@@ -2201,12 +2494,6 @@ PVBOXWDDM_ALLOCATION vboxWddmAllocationCreateFromResource(PVBOXWDDM_RESOURCE pRe
     return pAllocation;
 }
 
-VOID vboxWddmAllocationWaitDereference(PVBOXWDDM_ALLOCATION pAllocation)
-{
-    vboxWddmCounterU32Wait(&pAllocation->cRefs, 1);
-}
-
-
 NTSTATUS vboxWddmAllocationCreate(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_RESOURCE pResource, uint32_t iIndex, DXGK_ALLOCATIONINFO* pAllocationInfo)
 {
     PAGED_CODE();
@@ -2239,7 +2526,6 @@ NTSTATUS vboxWddmAllocationCreate(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_RESOURCE pRe
             pAllocation->enmType = pAllocInfo->enmType;
             pAllocation->AllocData.Addr.SegmentId = 0;
             pAllocation->AllocData.Addr.offVram = VBOXVIDEOOFFSET_VOID;
-            pAllocation->cRefs = 1;
             pAllocation->bVisible = FALSE;
             pAllocation->bAssigned = FALSE;
             KeInitializeSpinLock(&pAllocation->OpenLock);
@@ -2254,19 +2540,13 @@ NTSTATUS vboxWddmAllocationCreate(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_RESOURCE pRe
                 {
                     pAllocation->fRcFlags = pAllocInfo->fFlags;
                     pAllocation->AllocData.SurfDesc = pAllocInfo->SurfDesc;
+                    pAllocation->AllocData.hostID = pAllocInfo->hostID;
 
                     pAllocationInfo->Size = pAllocInfo->SurfDesc.cbSize;
 
                     switch (pAllocInfo->enmType)
                     {
                         case VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE:
-#if 0 //defined(VBOXWDDM_RENDER_FROM_SHADOW)
-                            pAllocationInfo->SupportedReadSegmentSet = 2;
-                            pAllocationInfo->SupportedWriteSegmentSet = 2;
-#endif
-#ifndef VBOXWDDM_RENDER_FROM_SHADOW
-                            pAllocationInfo->Flags.CpuVisible = 1;
-#endif
                             break;
                         case VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC:
 #ifdef VBOX_WITH_VIDEOHWACCEL
@@ -2295,11 +2575,13 @@ NTSTATUS vboxWddmAllocationCreate(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_RESOURCE pRe
                                 Assert(pAllocation->AllocData.SurfDesc.bpp);
                                 Assert(pAllocation->AllocData.SurfDesc.pitch);
                                 Assert(pAllocation->AllocData.SurfDesc.cbSize);
-                                if (!pAllocInfo->fFlags.SharedResource)
-                                {
-                                    pAllocationInfo->Flags.CpuVisible = 1;
-                                }
-                                else
+
+//                                if (!pAllocInfo->fFlags.SharedResource && !pAllocInfo->hostID)
+//                                    pAllocationInfo->Flags.CpuVisible = 1;
+
+                                Assert(!pAllocationInfo->Flags.CpuVisible);
+
+                                if (pAllocInfo->fFlags.SharedResource)
                                 {
                                     pAllocation->hSharedHandle = (HANDLE)pAllocInfo->hSharedHandle;
 #if 0
@@ -2308,6 +2590,12 @@ NTSTATUS vboxWddmAllocationCreate(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_RESOURCE pRe
                                         vboxShRcTreePut(pDevExt, pAllocation);
                                     }
 #endif
+                                }
+
+//                                if (pAllocInfo->hostID)
+                                {
+                                    pAllocationInfo->SupportedReadSegmentSet = 2;
+                                    pAllocationInfo->SupportedWriteSegmentSet = 2;
                                 }
                             }
                             break;
@@ -2344,13 +2632,6 @@ NTSTATUS vboxWddmAllocationCreate(PVBOXMP_DEVEXT pDevExt, PVBOXWDDM_RESOURCE pRe
                     pAllocationInfo->Flags.CpuVisible = 1;
 //                    pAllocationInfo->Flags.SynchronousPaging = 1;
                     pAllocationInfo->AllocationPriority = D3DDDI_ALLOCATIONPRIORITY_MAXIMUM;
-                    if (pAllocInfo->hSynch)
-                    {
-                        Status = ObReferenceObjectByHandle((HANDLE)pAllocInfo->hSynch, EVENT_MODIFY_STATE, *ExEventObjectType, UserMode,
-                                (PVOID*)&pAllocation->pSynchEvent,
-                                NULL);
-                        Assert(Status == STATUS_SUCCESS);
-                    }
                     break;
                 }
 
@@ -2444,8 +2725,9 @@ NTSTATUS APIENTRY DxgkDdiCreateAllocation(
             /* note: i-th allocation is expected to be cleared in a fail handling code above */
             for (UINT j = 0; j < i; ++j)
             {
-                vboxWddmAllocationCleanup(pDevExt, (PVBOXWDDM_ALLOCATION)pCreateAllocation->pAllocationInfo[j].hAllocation);
-                vboxWddmAllocationRelease((PVBOXWDDM_ALLOCATION)pCreateAllocation->pAllocationInfo[j].hAllocation);
+                PVBOXWDDM_ALLOCATION pAllocation = (PVBOXWDDM_ALLOCATION)pCreateAllocation->pAllocationInfo[j].hAllocation;
+                vboxWddmAllocationCleanup(pDevExt, pAllocation);
+                vboxWddmAllocationDestroy(pAllocation);
             }
         }
     }
@@ -2488,9 +2770,10 @@ DxgkDdiDestroyAllocation(
         Assert(pAlloc->pResource == pRc);
         vboxWddmAllocationCleanupAssignment(pDevExt, pAlloc);
         /* wait for all current allocation-related ops are completed */
-        vboxWddmAllocationWaitDereference(pAlloc);
         vboxWddmAllocationCleanup(pDevExt, pAlloc);
-        vboxWddmAllocationRelease(pAlloc);
+        if (pAlloc->hSharedHandle && pAlloc->AllocData.hostID)
+            VBoxVdmaChromiumParameteriCRSubmit(pDevExt, GL_PIN_TEXTURE_CLEAR_CR, pAlloc->AllocData.hostID);
+        vboxWddmAllocationDestroy(pAlloc);
     }
 
     if (pRc)
@@ -2690,9 +2973,60 @@ DxgkDdiReleaseSwizzlingRange(
     return STATUS_SUCCESS;
 }
 
-NTSTATUS
+#ifdef VBOX_WITH_CROGL
+static NTSTATUS
 APIENTRY
-DxgkDdiPatch(
+DxgkDdiPatchNew(
+    CONST HANDLE  hAdapter,
+    CONST DXGKARG_PATCH*  pPatch)
+{
+    /* DxgkDdiPatch should be made pageable. */
+    PAGED_CODE();
+
+    LOGF(("ENTER, context(0x%x)", hAdapter));
+
+    vboxVDbgBreakFv();
+
+    uint8_t * pPrivateBuf = (uint8_t*)((uint8_t*)pPatch->pDmaBufferPrivateData + pPatch->DmaBufferPrivateDataSubmissionStartOffset);
+    UINT cbPatchBuff = pPatch->DmaBufferPrivateDataSubmissionEndOffset - pPatch->DmaBufferPrivateDataSubmissionStartOffset;
+
+    for (UINT i = pPatch->PatchLocationListSubmissionStart; i < pPatch->PatchLocationListSubmissionLength; ++i)
+    {
+        const D3DDDI_PATCHLOCATIONLIST* pPatchList = &pPatch->pPatchLocationList[i];
+        Assert(pPatchList->AllocationIndex < pPatch->AllocationListSize);
+        const DXGK_ALLOCATIONLIST *pAllocationList = &pPatch->pAllocationList[pPatchList->AllocationIndex];
+        if (!pAllocationList->SegmentId)
+        {
+            WARN(("no segment id specified"));
+            continue;
+        }
+
+        if (pPatchList->PatchOffset == ~0UL)
+        {
+            /* this is a dummy patch request, ignore */
+            continue;
+        }
+
+        if (pPatchList->PatchOffset >= cbPatchBuff)
+        {
+            WARN(("pPatchList->PatchOffset(%d) >= cbPatchBuff(%d)", pPatchList->PatchOffset, cbPatchBuff));
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        VBOXCMDVBVAOFFSET *poffVram = (VBOXCMDVBVAOFFSET*)(pPrivateBuf + pPatchList->PatchOffset);
+        Assert(pAllocationList->SegmentId);
+        Assert(!pAllocationList->PhysicalAddress.HighPart);
+        Assert(!(pAllocationList->PhysicalAddress.QuadPart & 0xfffUL)); /* <- just a check to ensure allocation offset does not go here */
+        *poffVram = pAllocationList->PhysicalAddress.LowPart + pPatchList->AllocationOffset;
+    }
+
+    return STATUS_SUCCESS;
+}
+#endif
+
+static NTSTATUS
+APIENTRY
+DxgkDdiPatchLegacy(
     CONST HANDLE  hAdapter,
     CONST DXGKARG_PATCH*  pPatch)
 {
@@ -2715,27 +3049,6 @@ DxgkDdiPatch(
         VBOXWDDM_DMA_PRIVATEDATA_BASEHDR *pPrivateDataBase = (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR*)((uint8_t*)pPatch->pDmaBufferPrivateData + pPatch->DmaBufferPrivateDataSubmissionStartOffset);
         switch (pPrivateDataBase->enmCmd)
         {
-            case VBOXVDMACMD_TYPE_DMA_PRESENT_SHADOW2PRIMARY:
-            {
-                PVBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY pS2P = (PVBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY)pPrivateDataBase;
-                Assert(pPatch->PatchLocationListSubmissionLength == 2);
-                const D3DDDI_PATCHLOCATIONLIST* pPatchList = &pPatch->pPatchLocationList[pPatch->PatchLocationListSubmissionStart];
-                Assert(pPatchList->AllocationIndex == DXGK_PRESENT_SOURCE_INDEX);
-                Assert(pPatchList->PatchOffset == 0);
-                const DXGK_ALLOCATIONLIST *pSrcAllocationList = &pPatch->pAllocationList[pPatchList->AllocationIndex];
-                Assert(pSrcAllocationList->SegmentId);
-                pS2P->Shadow2Primary.ShadowAlloc.segmentIdAlloc = pSrcAllocationList->SegmentId;
-                pS2P->Shadow2Primary.ShadowAlloc.offAlloc = (VBOXVIDEOOFFSET)pSrcAllocationList->PhysicalAddress.QuadPart;
-//
-//                pPatchList = &pPatch->pPatchLocationList[pPatch->PatchLocationListSubmissionStart + 1];
-//                Assert(pPatchList->AllocationIndex == DXGK_PRESENT_DESTINATION_INDEX);
-//                Assert(pPatchList->PatchOffset == 4);
-//                const DXGK_ALLOCATIONLIST *pDstAllocationList = &pPatch->pAllocationList[pPatchList->AllocationIndex];
-//                Assert(pDstAllocationList->SegmentId);
-//                pPrivateData->DstAllocInfo.segmentIdAlloc = pDstAllocationList->SegmentId;
-//                pPrivateData->DstAllocInfo.offAlloc = (VBOXVIDEOOFFSET)pDstAllocationList->PhysicalAddress.QuadPart;
-                break;
-            }
             case VBOXVDMACMD_TYPE_DMA_PRESENT_BLT:
             {
                 PVBOXWDDM_DMA_PRIVATEDATA_BLT pBlt = (PVBOXWDDM_DMA_PRIVATEDATA_BLT)pPrivateDataBase;
@@ -2832,7 +3145,7 @@ DxgkDdiPatch(
     else if (pPatch->DmaBufferPrivateDataSubmissionEndOffset == pPatch->DmaBufferPrivateDataSubmissionStartOffset)
     {
         /* this is a NOP, just return success */
-        WARN(("null data size, treating as NOP"));
+//        LOG(("null data size, treating as NOP"));
         return STATUS_SUCCESS;
     }
     else
@@ -2858,7 +3171,12 @@ typedef struct VBOXWDDM_CALL_ISR
 static BOOLEAN vboxWddmCallIsrCb(PVOID Context)
 {
     PVBOXWDDM_CALL_ISR pdc = (PVBOXWDDM_CALL_ISR)Context;
-    return DxgkDdiInterruptRoutine(pdc->pDevExt, pdc->MessageNumber);
+    PVBOXMP_DEVEXT pDevExt = pdc->pDevExt;
+#ifdef VBOX_WITH_CROGL
+    if (pDevExt->fCmdVbvaEnabled)
+        return DxgkDdiInterruptRoutineNew(pDevExt, pdc->MessageNumber);
+#endif
+    return DxgkDdiInterruptRoutineLegacy(pDevExt, pdc->MessageNumber);
 }
 
 NTSTATUS vboxWddmCallIsr(PVBOXMP_DEVEXT pDevExt)
@@ -2877,54 +3195,6 @@ NTSTATUS vboxWddmCallIsr(PVBOXMP_DEVEXT pDevExt)
     return Status;
 }
 
-static NTSTATUS vboxWddmSubmitCmd(PVBOXMP_DEVEXT pDevExt, VBOXVDMAPIPE_CMD_DMACMD *pCmd)
-{
-    NTSTATUS Status = vboxVdmaGgCmdDmaNotifySubmitted(pDevExt, pCmd);
-    Assert(Status == STATUS_SUCCESS);
-    if (Status == STATUS_SUCCESS)
-    {
-        NTSTATUS submStatus = vboxVdmaGgCmdSubmit(pDevExt, &pCmd->Hdr);
-        Assert(submStatus == STATUS_SUCCESS);
-        if (submStatus != STATUS_SUCCESS)
-        {
-            vboxVdmaGgCmdDmaNotifyCompleted(pDevExt, pCmd, DXGK_INTERRUPT_DMA_FAULTED);
-        }
-    }
-    else
-    {
-        vboxVdmaGgCmdRelease(pDevExt, &pCmd->Hdr);
-    }
-    return Status;
-}
-
-static NTSTATUS vboxWddmSubmitBltCmd(PVBOXMP_DEVEXT pDevExt, VBOXWDDM_CONTEXT *pContext, UINT u32FenceId, PVBOXWDDM_DMA_PRIVATEDATA_BLT pBlt, VBOXVDMAPIPE_FLAGS_DMACMD fBltFlags)
-{
-    NTSTATUS Status = STATUS_SUCCESS;
-    PVBOXVDMAPIPE_CMD_DMACMD_BLT pBltCmd = (PVBOXVDMAPIPE_CMD_DMACMD_BLT)vboxVdmaGgCmdCreate(pDevExt, VBOXVDMAPIPE_CMD_TYPE_DMACMD, RT_OFFSETOF(VBOXVDMAPIPE_CMD_DMACMD_BLT, Blt.DstRects.UpdateRects.aRects[pBlt->Blt.DstRects.UpdateRects.cRects]));
-    Assert(pBltCmd);
-    if (pBltCmd)
-    {
-        VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[pBlt->Blt.DstAlloc.srcId];
-        vboxVdmaGgCmdDmaNotifyInit(&pBltCmd->Hdr, pContext->NodeOrdinal, u32FenceId, vboxVdmaGgDdiCmdRelease, pBltCmd);
-        pBltCmd->Hdr.fFlags = fBltFlags;
-        pBltCmd->Hdr.pContext = pContext;
-        pBltCmd->Hdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_BLT;
-        memcpy(&pBltCmd->Blt, &pBlt->Blt, RT_OFFSETOF(VBOXVDMA_BLT, DstRects.UpdateRects.aRects[pBlt->Blt.DstRects.UpdateRects.cRects]));
-        Status = vboxWddmSubmitCmd(pDevExt, &pBltCmd->Hdr);
-        if (Status != STATUS_SUCCESS)
-        {
-            WARN(("vboxWddmSubmitCmd failed, Status 0x%x", Status));
-            Status = STATUS_SUCCESS;
-        }
-        vboxVdmaGgCmdRelease(pDevExt, &pBltCmd->Hdr.Hdr);
-    }
-    else
-    {
-        Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, u32FenceId, DXGK_INTERRUPT_DMA_FAULTED);
-    }
-    return Status;
-}
-
 #ifdef VBOX_WITH_CRHGSMI
 DECLCALLBACK(VOID) vboxWddmDmaCompleteChromiumCmd(PVBOXMP_DEVEXT pDevExt, PVBOXVDMADDI_CMD pCmd, PVOID pvContext)
 {
@@ -2932,25 +3202,189 @@ DECLCALLBACK(VOID) vboxWddmDmaCompleteChromiumCmd(PVBOXMP_DEVEXT pDevExt, PVBOXV
     PVBOXVDMACMD pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
     VBOXVDMACMD_CHROMIUM_CMD *pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHROMIUM_CMD);
     UINT cBufs = pBody->cBuffers;
-    for (UINT i = 0; i < cBufs; ++i)
-    {
-        VBOXVDMACMD_CHROMIUM_BUFFER *pBufCmd = &pBody->aBuffers[i];
-        if (!pBufCmd->u32GuestData)
-        {
-            /* signal completion */
-            PVBOXWDDM_ALLOCATION pAlloc = (PVBOXWDDM_ALLOCATION)pBufCmd->u64GuestData;
-            if (pAlloc->pSynchEvent)
-                KeSetEvent(pAlloc->pSynchEvent, 3, FALSE);
-        }
-    }
-
     vboxVdmaCBufDrFree(&pDevExt->u.primary.Vdma, pDr);
 }
 #endif
 
-NTSTATUS
+#ifdef VBOX_WITH_CROGL
+static NTSTATUS
 APIENTRY
-DxgkDdiSubmitCommand(
+DxgkDdiSubmitCommandNew(
+    CONST HANDLE  hAdapter,
+    CONST DXGKARG_SUBMITCOMMAND*  pSubmitCommand)
+{
+    /* DxgkDdiSubmitCommand runs at dispatch, should not be pageable. */
+
+//    LOGF(("ENTER, context(0x%x)", hAdapter));
+
+    vboxVDbgBreakFv();
+
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
+#ifdef DEBUG
+    PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pSubmitCommand->hContext;
+    Assert(pContext);
+    Assert(pContext->pDevice);
+    Assert(pContext->pDevice->pAdapter == pDevExt);
+    Assert(!pSubmitCommand->DmaBufferSegmentId);
+#endif
+
+    uint32_t cbCmd = pSubmitCommand->DmaBufferPrivateDataSubmissionEndOffset - pSubmitCommand->DmaBufferPrivateDataSubmissionStartOffset;
+    uint32_t cbDma = pSubmitCommand->DmaBufferSubmissionEndOffset - pSubmitCommand->DmaBufferSubmissionStartOffset;
+    VBOXCMDVBVA_HDR *pHdr;
+    VBOXCMDVBVA_HDR NopCmd;
+    uint32_t cbCurCmd, cbCurDma;
+    if (cbCmd < sizeof (VBOXCMDVBVA_HDR))
+    {
+        if (cbCmd || cbDma)
+        {
+            WARN(("invalid command data"));
+            return STATUS_INVALID_PARAMETER;
+        }
+        Assert(!cbDma);
+        NopCmd.u8OpCode = VBOXCMDVBVA_OPTYPE_NOPCMD;
+        NopCmd.u8Flags = 0;
+        NopCmd.u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+        NopCmd.u2.complexCmdEl.u16CbCmdHost = sizeof (VBOXCMDVBVA_HDR);
+        NopCmd.u2.complexCmdEl.u16CbCmdGuest = 0;
+        cbCmd = sizeof (VBOXCMDVBVA_HDR);
+        pHdr = &NopCmd;
+        cbCurCmd = sizeof (VBOXCMDVBVA_HDR);
+        cbCurDma = 0;
+    }
+    else
+    {
+        pHdr = (VBOXCMDVBVA_HDR*)(((uint8_t*)pSubmitCommand->pDmaBufferPrivateData) + pSubmitCommand->DmaBufferPrivateDataSubmissionStartOffset);
+        cbCurCmd = pHdr->u2.complexCmdEl.u16CbCmdHost;
+        cbCurDma = pHdr->u2.complexCmdEl.u16CbCmdGuest;
+    }
+
+
+    VBOXCMDVBVA_HDR *pDstHdr, *pCurDstCmd;
+    if (cbCmd != cbCurCmd || cbCurDma != cbDma)
+    {
+        if (cbCmd < cbCurCmd || cbDma < cbCurDma)
+        {
+            WARN(("incorrect buffer size"));
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        pDstHdr = VBoxCmdVbvaSubmitLock(pDevExt, &pDevExt->CmdVbva, cbCmd + sizeof (VBOXCMDVBVA_HDR));
+        if (!pDstHdr)
+        {
+            WARN(("VBoxCmdVbvaSubmitLock failed"));
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        pDstHdr->u8OpCode = VBOXCMDVBVA_OPTYPE_COMPLEXCMD;
+        pDstHdr->u8Flags = 0;
+        pDstHdr->u.u8PrimaryID = 0;
+
+        pCurDstCmd = pDstHdr + 1;
+    }
+    else
+    {
+        pDstHdr = VBoxCmdVbvaSubmitLock(pDevExt, &pDevExt->CmdVbva, cbCmd);
+        if (!pDstHdr)
+        {
+            WARN(("VBoxCmdVbvaSubmitLock failed"));
+            return STATUS_UNSUCCESSFUL;
+        }
+        pCurDstCmd = pDstHdr;
+    }
+
+    PHYSICAL_ADDRESS phAddr;
+    phAddr.QuadPart = pSubmitCommand->DmaBufferPhysicalAddress.QuadPart + pSubmitCommand->DmaBufferSubmissionStartOffset;
+    NTSTATUS Status = STATUS_SUCCESS;
+    for (;;)
+    {
+        switch (pHdr->u8OpCode)
+        {
+            case VBOXCMDVBVA_OPTYPE_SYSMEMCMD:
+            {
+                VBOXCMDVBVA_SYSMEMCMD *pSysMem = (VBOXCMDVBVA_SYSMEMCMD*)pHdr;
+                if (pSubmitCommand->DmaBufferPhysicalAddress.QuadPart & PAGE_OFFSET_MASK)
+                {
+                    WARN(("command should be page aligned for now"));
+                    return STATUS_INVALID_PARAMETER;
+                }
+                pSysMem->phCmd = (VBOXCMDVBVAPHADDR)(pSubmitCommand->DmaBufferPhysicalAddress.QuadPart + pSubmitCommand->DmaBufferSubmissionStartOffset);
+#ifdef DEBUG
+                {
+                    uint32_t cbRealDmaCmd = (pSysMem->Hdr.u8Flags | (pSysMem->Hdr.u.u8PrimaryID << 8));
+                    Assert(cbRealDmaCmd >= cbDma);
+                    if (cbDma < cbRealDmaCmd)
+                        WARN(("parrtial sysmem transfer"));
+                }
+#endif
+                break;
+            }
+            default:
+                break;
+        }
+
+        memcpy(pCurDstCmd, pHdr, cbCurCmd);
+        pCurDstCmd->u2.complexCmdEl.u16CbCmdGuest = 0;
+
+        phAddr.QuadPart += cbCurDma;
+        pHdr = (VBOXCMDVBVA_HDR*)(((uint8_t*)pHdr) + cbCurCmd);
+        pCurDstCmd = (VBOXCMDVBVA_HDR*)(((uint8_t*)pCurDstCmd) + cbCurCmd);
+        cbCmd -= cbCurCmd;
+        cbDma -= cbCurDma;
+        if (!cbCmd)
+        {
+            if (cbDma)
+            {
+                WARN(("invalid param"));
+                Status = STATUS_INVALID_PARAMETER;
+            }
+            break;
+        }
+
+        if (cbCmd < sizeof (VBOXCMDVBVA_HDR))
+        {
+            WARN(("invalid param"));
+            Status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+
+        cbCurCmd = pHdr->u2.complexCmdEl.u16CbCmdHost;
+        cbCurDma = pHdr->u2.complexCmdEl.u16CbCmdGuest;
+
+        if (cbCmd < cbCurCmd)
+        {
+            WARN(("invalid param"));
+            Status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+
+        if (cbDma < cbCurDma)
+        {
+            WARN(("invalid param"));
+            Status = STATUS_INVALID_PARAMETER;
+            break;
+        }
+    }
+
+    uint32_t u32FenceId = pSubmitCommand->SubmissionFenceId;
+
+    if (!NT_SUCCESS(Status))
+    {
+        /* nop the entire command on failure */
+        pDstHdr->u8OpCode = VBOXCMDVBVA_OPTYPE_NOPCMD;
+        pDstHdr->u8Flags = 0;
+        pDstHdr->u.i8Result = 0;
+        u32FenceId = 0;
+    }
+
+    VBoxCmdVbvaSubmitUnlock(pDevExt, &pDevExt->CmdVbva, pDstHdr, u32FenceId);
+
+    return Status;
+}
+#endif
+
+static NTSTATUS
+APIENTRY
+DxgkDdiSubmitCommandLegacy(
     CONST HANDLE  hAdapter,
     CONST DXGKARG_SUBMITCOMMAND*  pSubmitCommand)
 {
@@ -2980,7 +3414,6 @@ DxgkDdiSubmitCommand(
     }
     else if (pSubmitCommand->DmaBufferPrivateDataSubmissionEndOffset == pSubmitCommand->DmaBufferPrivateDataSubmissionStartOffset)
     {
-        WARN(("null data size, treating as NOP"));
         enmCmd = VBOXVDMACMD_TYPE_DMA_NOP;
     }
     else
@@ -2992,292 +3425,72 @@ DxgkDdiSubmitCommand(
         return STATUS_INVALID_PARAMETER;
     }
 
-    if (pContext->enmType == VBOXWDDM_CONTEXT_TYPE_CUSTOM_2D)
-        vboxWddmModeRenderFromShadowDisableRegister(pDevExt, pContext);
-
-    BOOLEAN fRenderFromSharedDisabled = pDevExt->fRenderToShadowDisabled;
-
     switch (enmCmd)
     {
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
-        case VBOXVDMACMD_TYPE_DMA_PRESENT_SHADOW2PRIMARY:
-        {
-            PVBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY pS2P = (PVBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY)pPrivateDataBase;
-            VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[pS2P->Shadow2Primary.VidPnSourceId];
-            PVBOXWDDM_ALLOCATION pSrcAlloc = pS2P->Shadow2Primary.ShadowAlloc.pAlloc;
-            vboxWddmAddrSetVram(&pSrcAlloc->AllocData.Addr, pS2P->Shadow2Primary.ShadowAlloc.segmentIdAlloc, pS2P->Shadow2Primary.ShadowAlloc.offAlloc);
-            vboxWddmAssignShadow(pDevExt, pSource, pSrcAlloc, pS2P->Shadow2Primary.VidPnSourceId);
-            fRenderFromSharedDisabled = vboxWddmModeRenderFromShadowCheckOnSubmitCommand(pDevExt, NULL);
-            vboxWddmCheckUpdateFramebufferAddress(pDevExt, pSource);
-            if (pSrcAlloc->bVisible)
-            {
-                uint32_t cUnlockedVBVADisabled = ASMAtomicReadU32(&pDevExt->cUnlockedVBVADisabled);
-                if (!cUnlockedVBVADisabled)
-                    VBOXVBVA_OP(ReportDirtyRect, pDevExt, pSource, &pS2P->Shadow2Primary.SrcRect);
-                else
-                {
-                    Assert(KeGetCurrentIrql() == DISPATCH_LEVEL);
-                    VBOXVBVA_OP_WITHLOCK_ATDPC(ReportDirtyRect, pDevExt, pSource, &pS2P->Shadow2Primary.SrcRect);
-                }
-            }
-
-            Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, DXGK_INTERRUPT_DMA_COMPLETED);
-            break;
-        }
-#endif
         case VBOXVDMACMD_TYPE_DMA_PRESENT_BLT:
         {
             VBOXWDDM_DMA_PRIVATEDATA_PRESENTHDR *pPrivateData = (VBOXWDDM_DMA_PRIVATEDATA_PRESENTHDR*)pPrivateDataBase;
             PVBOXWDDM_DMA_PRIVATEDATA_BLT pBlt = (PVBOXWDDM_DMA_PRIVATEDATA_BLT)pPrivateData;
             PVBOXWDDM_ALLOCATION pDstAlloc = pBlt->Blt.DstAlloc.pAlloc;
             PVBOXWDDM_ALLOCATION pSrcAlloc = pBlt->Blt.SrcAlloc.pAlloc;
+            BOOLEAN fSrcChanged;
+            BOOLEAN fDstChanged;
 
-            vboxWddmAddrSetVram(&pDstAlloc->AllocData.Addr, pBlt->Blt.DstAlloc.segmentIdAlloc, pBlt->Blt.DstAlloc.offAlloc);
-            vboxWddmAddrSetVram(&pSrcAlloc->AllocData.Addr, pBlt->Blt.SrcAlloc.segmentIdAlloc, pBlt->Blt.SrcAlloc.offAlloc);
+            fDstChanged = vboxWddmAddrSetVram(&pDstAlloc->AllocData.Addr, pBlt->Blt.DstAlloc.segmentIdAlloc, pBlt->Blt.DstAlloc.offAlloc);
+            fSrcChanged = vboxWddmAddrSetVram(&pSrcAlloc->AllocData.Addr, pBlt->Blt.SrcAlloc.segmentIdAlloc, pBlt->Blt.SrcAlloc.offAlloc);
 
-            uint32_t cContexts3D = ASMAtomicReadU32(&pDevExt->cContexts3D);
-
-            VBOXVDMAPIPE_FLAGS_DMACMD fBltFlags;
-            fBltFlags.Value = 0;
-
-            if (pDstAlloc->bAssigned &&
-                    (pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE
-                        || pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE)
-                    )
+            if (VBOXWDDM_IS_FB_ALLOCATION(pDevExt, pDstAlloc))
             {
                 VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[pDstAlloc->AllocData.SurfDesc.VidPnSourceId];
+
                 Assert(pDstAlloc->AllocData.SurfDesc.VidPnSourceId < VBOX_VIDEO_MAX_SCREENS);
-
-                if (pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE)
-                    vboxWddmAssignShadow(pDevExt, pSource, pSrcAlloc, pDstAlloc->AllocData.SurfDesc.VidPnSourceId);
-                fRenderFromSharedDisabled = vboxWddmModeRenderFromShadowCheckOnSubmitCommand(pDevExt, NULL);
-                if(pContext->enmType != VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D
-                        || pDstAlloc->enmType !=VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC)
-                    vboxWddmCheckUpdateFramebufferAddress(pDevExt, pSource);
-            }
-            else if (pSrcAlloc->bAssigned &&
-                    (pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE
-                        || pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE)
-                    )
-            {
-                VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[pDstAlloc->AllocData.SurfDesc.VidPnSourceId];
-                Assert(pDstAlloc->AllocData.SurfDesc.VidPnSourceId < VBOX_VIDEO_MAX_SCREENS);
-
-                if (pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE)
-                    vboxWddmAssignShadow(pDevExt, pSource, pDstAlloc, pSrcAlloc->AllocData.SurfDesc.VidPnSourceId);
-                fRenderFromSharedDisabled = vboxWddmModeRenderFromShadowCheckOnSubmitCommand(pDevExt, NULL);
-                if(pContext->enmType != VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D
-                        || pSrcAlloc->enmType !=VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC)
-                    vboxWddmCheckUpdateFramebufferAddress(pDevExt, pSource);
-            }
-
-            if (pContext->enmType != VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D && fRenderFromSharedDisabled)
-                fBltFlags.fRealOp = 1;
-
-            switch (pDstAlloc->enmType)
-            {
-                case VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE:
-                case VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC:
+#if 0
+                if (VBOXWDDM_IS_FB_ALLOCATION(pDevExt, pDstAlloc) && pDstAlloc->AllocData.hostID)
                 {
-                    if (pDstAlloc->bAssigned)
+                    if (pSource->AllocData.hostID != pDstAlloc->AllocData.hostID)
                     {
-//                        Assert(pSource->pPrimaryAllocation == pDstAlloc);
-
-                        switch (pSrcAlloc->enmType)
-                        {
-                            case VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE:
-                            {
-                                fBltFlags.fVisibleRegions = !!cContexts3D;
-                                Assert(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_SYSTEM);
-                                VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[pDstAlloc->AllocData.SurfDesc.VidPnSourceId];
-                                Assert(pDstAlloc->AllocData.SurfDesc.VidPnSourceId < VBOX_VIDEO_MAX_SCREENS);
-
-                                if (!fRenderFromSharedDisabled && pSource->bVisible)
-                                {
-                                    RECT rect;
-                                    if (pBlt->Blt.DstRects.UpdateRects.cRects)
-                                    {
-                                        rect = pBlt->Blt.DstRects.UpdateRects.aRects[0];
-                                        for (UINT i = 1; i < pBlt->Blt.DstRects.UpdateRects.cRects; ++i)
-                                        {
-                                            vboxWddmRectUnited(&rect, &rect, &pBlt->Blt.DstRects.UpdateRects.aRects[i]);
-                                        }
-                                    }
-                                    else
-                                        rect = pBlt->Blt.DstRects.ContextRect;
-
-                                    uint32_t cUnlockedVBVADisabled = ASMAtomicReadU32(&pDevExt->cUnlockedVBVADisabled);
-                                    if (!cUnlockedVBVADisabled)
-                                    {
-                                        VBOXVBVA_OP(ReportDirtyRect, pDevExt, pSource, &rect);
-                                    }
-                                    else
-                                    {
-                                        VBOXVBVA_OP_WITHLOCK_ATDPC(ReportDirtyRect, pDevExt, pSource, &rect);
-                                    }
-                                }
-
-                                break;
-                            }
-                            case VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC:
-                            {
-                                if(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D)
-                                {
-                                    Assert(pSrcAlloc->fRcFlags.RenderTarget);
-                                    if (pSrcAlloc->fRcFlags.RenderTarget)
-                                        fBltFlags.fVisibleRegions = 1;
-                                }
-                                break;
-                            }
-                            default:
-                            {
-                                AssertBreakpoint();
-                                break;
-                            }
-                        }
+                        pSource->AllocData.hostID = pDstAlloc->AllocData.hostID;
+                        fDstChanged = TRUE;
                     }
 
-                    break;
+                    if (fDstChanged)
+                        pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_LOCATION;
                 }
-                case VBOXWDDM_ALLOC_TYPE_STD_STAGINGSURFACE:
-                {
-//                    Assert(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D);
-                    Assert(pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC);
-                    Assert(pSrcAlloc->fRcFlags.RenderTarget);
-                    Assert(vboxWddmRectIsEqual(&pBlt->Blt.SrcRect, &pBlt->Blt.DstRects.ContextRect));
-                    Assert(pBlt->Blt.DstRects.UpdateRects.cRects == 1);
-                    Assert(vboxWddmRectIsEqual(&pBlt->Blt.SrcRect, pBlt->Blt.DstRects.UpdateRects.aRects));
-                    break;
-                }
-                case VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE:
-                {
-                    Assert(pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE);
-                    Assert(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_SYSTEM);
-                    break;
-                }
-                default:
-                    AssertBreakpoint();
-                    break;
-            }
-
-            if (fBltFlags.Value)
-            {
-                Status = vboxWddmSubmitBltCmd(pDevExt, pContext, pSubmitCommand->SubmissionFenceId, pBlt, fBltFlags);
-            }
-            else
-            {
-                Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, DXGK_INTERRUPT_DMA_COMPLETED);
-            }
-            break;
-        }
-        case VBOXVDMACMD_TYPE_CHROMIUM_CMD:
-        {
-#ifdef VBOX_WITH_CRHGSMI
-            VBOXWDDM_DMA_PRIVATEDATA_CHROMIUM_CMD *pChromiumCmd = (VBOXWDDM_DMA_PRIVATEDATA_CHROMIUM_CMD*)pPrivateDataBase;
-            UINT cbCmd = VBOXVDMACMD_SIZE_FROMBODYSIZE(RT_OFFSETOF(VBOXVDMACMD_CHROMIUM_CMD, aBuffers[pChromiumCmd->Base.u32CmdReserved]));
-
-            PVBOXVDMACBUF_DR pDr = vboxVdmaCBufDrCreate (&pDevExt->u.primary.Vdma, cbCmd);
-            if (!pDr)
-            {
-                /* @todo: try flushing.. */
-                LOGREL(("vboxVdmaCBufDrCreate returned NULL"));
-                return STATUS_INSUFFICIENT_RESOURCES;
-            }
-            // vboxVdmaCBufDrCreate zero initializes the pDr
-            pDr->fFlags = VBOXVDMACBUF_FLAG_BUF_FOLLOWS_DR;
-            pDr->cbBuf = cbCmd;
-            pDr->rc = VERR_NOT_IMPLEMENTED;
-
-            PVBOXVDMACMD pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
-            pHdr->enmType = VBOXVDMACMD_TYPE_CHROMIUM_CMD;
-            pHdr->u32CmdSpecific = 0;
-            VBOXVDMACMD_CHROMIUM_CMD *pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHROMIUM_CMD);
-            pBody->cBuffers = pChromiumCmd->Base.u32CmdReserved;
-            for (UINT i = 0; i < pChromiumCmd->Base.u32CmdReserved; ++i)
-            {
-                VBOXVDMACMD_CHROMIUM_BUFFER *pBufCmd = &pBody->aBuffers[i];
-                VBOXWDDM_UHGSMI_BUFFER_SUBMIT_INFO *pBufInfo = &pChromiumCmd->aBufInfos[i];
-
-                pBufCmd->offBuffer = pBufInfo->Alloc.offAlloc;
-                pBufCmd->cbBuffer = pBufInfo->cbData;
-                pBufCmd->u32GuestData = pBufInfo->bDoNotSignalCompletion;
-                pBufCmd->u64GuestData = (uint64_t)pBufInfo->Alloc.pAlloc;
-            }
-
-            PVBOXVDMADDI_CMD pDdiCmd = VBOXVDMADDI_CMD_FROM_BUF_DR(pDr);
-            vboxVdmaDdiCmdInit(pDdiCmd, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, vboxWddmDmaCompleteChromiumCmd, pDr);
-            NTSTATUS Status = vboxVdmaDdiCmdSubmitted(pDevExt, pDdiCmd);
-            Assert(Status == STATUS_SUCCESS);
-            if (Status == STATUS_SUCCESS)
-            {
-                int rc = vboxVdmaCBufDrSubmit(pDevExt, &pDevExt->u.primary.Vdma, pDr);
-                Assert(rc == VINF_SUCCESS);
-            }
-            else
-            {
-                vboxVdmaCBufDrFree(&pDevExt->u.primary.Vdma, pDr);
-            }
-#else
-            Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, DXGK_INTERRUPT_DMA_COMPLETED);
-            Assert(Status == STATUS_SUCCESS);
 #endif
+            }
+
+            Status = vboxVdmaProcessBltCmd(pDevExt, pContext, pBlt);
+            if (!NT_SUCCESS(Status))
+                WARN(("vboxVdmaProcessBltCmd failed, Status 0x%x", Status));
+
+            Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId,
+                    NT_SUCCESS(Status) ? DXGK_INTERRUPT_DMA_COMPLETED : DXGK_INTERRUPT_DMA_FAULTED);
             break;
         }
         case VBOXVDMACMD_TYPE_DMA_PRESENT_FLIP:
         {
             VBOXWDDM_DMA_PRIVATEDATA_FLIP *pFlip = (VBOXWDDM_DMA_PRIVATEDATA_FLIP*)pPrivateDataBase;
-            vboxWddmAddrSetVram(&pFlip->Flip.Alloc.pAlloc->AllocData.Addr, pFlip->Flip.Alloc.segmentIdAlloc, pFlip->Flip.Alloc.offAlloc);
-            PVBOXVDMAPIPE_CMD_DMACMD_FLIP pFlipCmd = (PVBOXVDMAPIPE_CMD_DMACMD_FLIP)vboxVdmaGgCmdCreate(pDevExt,
-                    VBOXVDMAPIPE_CMD_TYPE_DMACMD, sizeof (VBOXVDMAPIPE_CMD_DMACMD_FLIP));
-            Assert(pFlipCmd);
-            if (pFlipCmd)
-            {
-                VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[pFlip->Flip.Alloc.srcId];
-                vboxVdmaGgCmdDmaNotifyInit(&pFlipCmd->Hdr, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, vboxVdmaGgDdiCmdRelease, pFlipCmd);
-                pFlipCmd->Hdr.fFlags.Value = 0;
-                pFlipCmd->Hdr.fFlags.fVisibleRegions = 1;
-                pFlipCmd->Hdr.pContext = pContext;
-                pFlipCmd->Hdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_FLIP;
-                memcpy(&pFlipCmd->Flip, &pFlip->Flip, sizeof (pFlipCmd->Flip));
-                Status = vboxWddmSubmitCmd(pDevExt, &pFlipCmd->Hdr);
-                if (Status != STATUS_SUCCESS)
-                    WARN(("vboxWddmSubmitCmd failed, Status 0x%x", Status));
-                vboxVdmaGgCmdRelease(pDevExt, &pFlipCmd->Hdr.Hdr);
-            }
-            else
-            {
-                Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, DXGK_INTERRUPT_DMA_FAULTED);
-                Assert(Status == STATUS_SUCCESS);
-            }
+            PVBOXWDDM_ALLOCATION pAlloc = pFlip->Flip.Alloc.pAlloc;
+            VBOXWDDM_SOURCE *pSource = &pDevExt->aSources[pAlloc->AllocData.SurfDesc.VidPnSourceId];
+            vboxWddmAddrSetVram(&pAlloc->AllocData.Addr, pFlip->Flip.Alloc.segmentIdAlloc, pFlip->Flip.Alloc.offAlloc);
+            vboxWddmAssignPrimary(pSource, pAlloc, pAlloc->AllocData.SurfDesc.VidPnSourceId);
+            vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
+
+            Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId,
+                    NT_SUCCESS(Status) ? DXGK_INTERRUPT_DMA_COMPLETED : DXGK_INTERRUPT_DMA_FAULTED);
             break;
         }
         case VBOXVDMACMD_TYPE_DMA_PRESENT_CLRFILL:
         {
             PVBOXWDDM_DMA_PRIVATEDATA_CLRFILL pCF = (PVBOXWDDM_DMA_PRIVATEDATA_CLRFILL)pPrivateDataBase;
             vboxWddmAddrSetVram(&pCF->ClrFill.Alloc.pAlloc->AllocData.Addr, pCF->ClrFill.Alloc.segmentIdAlloc, pCF->ClrFill.Alloc.offAlloc);
-            PVBOXVDMAPIPE_CMD_DMACMD_CLRFILL pCFCmd = (PVBOXVDMAPIPE_CMD_DMACMD_CLRFILL)vboxVdmaGgCmdCreate(pDevExt,
-                    VBOXVDMAPIPE_CMD_TYPE_DMACMD, RT_OFFSETOF(VBOXVDMAPIPE_CMD_DMACMD_CLRFILL, ClrFill.Rects.aRects[pCF->ClrFill.Rects.cRects]));
-            Assert(pCFCmd);
-            if (pCFCmd)
-            {
-                vboxVdmaGgCmdDmaNotifyInit(&pCFCmd->Hdr, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, vboxVdmaGgDdiCmdRelease, pCFCmd);
-                pCFCmd->Hdr.fFlags.Value = 0;
-                pCFCmd->Hdr.fFlags.fRealOp = 1;
-                pCFCmd->Hdr.pContext = pContext;
-                pCFCmd->Hdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_CLRFILL;
-                memcpy(&pCFCmd->ClrFill, &pCF->ClrFill, RT_OFFSETOF(VBOXVDMA_CLRFILL, Rects.aRects[pCF->ClrFill.Rects.cRects]));
-                Status = vboxWddmSubmitCmd(pDevExt, &pCFCmd->Hdr);
-                if (Status != STATUS_SUCCESS)
-                    WARN(("vboxWddmSubmitCmd failed, Status 0x%x", Status));
-                vboxVdmaGgCmdRelease(pDevExt, &pCFCmd->Hdr.Hdr);
 
-            }
-            else
-            {
-                Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId, DXGK_INTERRUPT_DMA_FAULTED);
-                Assert(Status == STATUS_SUCCESS);
-            }
+            Status = vboxVdmaProcessClrFillCmd(pDevExt, pContext, pCF);
+            if (!NT_SUCCESS(Status))
+                WARN(("vboxVdmaProcessClrFillCmd failed, Status 0x%x", Status));
 
+            Status = vboxVdmaDdiCmdFenceComplete(pDevExt, pContext->NodeOrdinal, pSubmitCommand->SubmissionFenceId,
+                    NT_SUCCESS(Status) ? DXGK_INTERRUPT_DMA_COMPLETED : DXGK_INTERRUPT_DMA_FAULTED);
             break;
         }
         case VBOXVDMACMD_TYPE_DMA_NOP:
@@ -3319,9 +3532,30 @@ DxgkDdiSubmitCommand(
     return Status;
 }
 
-NTSTATUS
+#ifdef VBOX_WITH_CROGL
+static NTSTATUS
 APIENTRY
-DxgkDdiPreemptCommand(
+DxgkDdiPreemptCommandNew(
+    CONST HANDLE  hAdapter,
+    CONST DXGKARG_PREEMPTCOMMAND*  pPreemptCommand)
+{
+    LOGF(("ENTER, hAdapter(0x%x)", hAdapter));
+
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
+
+    vboxVDbgBreakF();
+
+    VBoxCmdVbvaPreempt(pDevExt, &pDevExt->CmdVbva, pPreemptCommand->PreemptionFenceId);
+
+    LOGF(("LEAVE, hAdapter(0x%x)", hAdapter));
+
+    return STATUS_SUCCESS;
+}
+#endif
+
+static NTSTATUS
+APIENTRY
+DxgkDdiPreemptCommandLegacy(
     CONST HANDLE  hAdapter,
     CONST DXGKARG_PREEMPTCOMMAND*  pPreemptCommand)
 {
@@ -3335,103 +3569,243 @@ DxgkDdiPreemptCommand(
     return STATUS_SUCCESS;
 }
 
-#if 0
-static uint32_t vboxWddmSysMemElBuild(PVBOXVDMACMD_SYSMEMEL pEl, PMDL pMdl, uint32_t iPfn, uint32_t cPages, uint32_t cbBuffer, uint32_t *pcPagesRemaining)
-{
-    uint32_t cbInitialBuffer = cbBuffer;
-    if (cbBuf >= sizeof (*pEl))
-    {
-        PFN_NUMBER cur = MmGetMdlPfnArray(pMdl)[iPfn];
-        uint32_t cbEl = sizeof (*pEl);
-        uint32_t cBufs = 1;
-        pEl->phBuf[0] = (cur << 12);
-        --cPages;
-        cbBuffer -= sizeof (*pEl);
-        bool bArrayMode = false;
-        while (cPages)
-        {
-            PFN_NUMBER next = MmGetMdlPfnArray(pMdl)[iPfn+cBufs];
-            if (!bArrayMode)
-            {
-                if (next == cur+1)
-                {
-                    cur = next;
-                    ++cBufs;
-                    --cPages;
-                }
-                else if (cBufs > 1)
-                {
-                    break;
-                }
-                else
-                {
-                    bArrayMode = true;
-                }
-            }
-
-            /* array mode */
-            if (cbBuffer < sizeof (pEl->phBuf[0]))
-            {
-                break;
-            }
-
-            pEl->phBuf[cBufs] = (next << 12);
-            cbBuffer -= sizeof (pEl->phBuf[0]);
-            ++cBufs;
-            --cPages;
-        }
-
-        pEl->cPages = cPages;
-        if (bArrayMode)
-            pEl->fFlags = VBOXVDMACMD_SYSMEMEL_F_PAGELIST;
-        else
-            pEl->fFlags = 0;
-    }
-    else
-    {
-        Assert(0);
-    }
-
-    *pcPagesRemaining = cPages;
-    return cbInitialBuffer - cbBuffer;
-}
-
-static uint32_t vboxWddmBpbTransferVRamSysBuildEls(PVBOXVDMACMD_DMA_BPB_TRANSFER_VRAMSYS pCmd, PMDL pMdl, uint32_t iPfn, uint32_t cPages, uint32_t cbBuffer, uint32_t *pcPagesRemaining)
-{
-    uint32_t cInitPages = cPages;
-    uint32_t cbBufferUsed = vboxWddmSysMemElBuild(&pCmd->FirstEl, pMdl, iPfn, cPages, cbBuffer, &cPages);
-    if (cbBufferUsed)
-    {
-        uint32_t cEls = 1;
-        PVBOXVDMACMD_SYSMEMEL pEl = &pCmd->FirstEl;
-        while (cPages)
-        {
-            PVBOXVDMACMD_SYSMEMEL pEl = VBOXVDMACMD_SYSMEMEL_NEXT(pEl);
-            cbBufferUsed = vboxWddmSysMemElBuild(pEl, pMdl, iPfn + cInitPages - cPages, cPages, cbBuffer - cbBufferUsed, &cPages);
-            if (cbBufferUsed)
-            {
-                ++cEls;
-            }
-            else
-                break;
-        }
-    }
-    else
-    {
-        Assert(0);
-    }
-
-    pCmd->cTransferPages = (cInitPages - cPages);
-    *pcPagesRemaining = cPages;
-    return cbBufferUsed;
-}
-#endif
+#ifdef VBOX_WITH_CROGL
 /*
  * DxgkDdiBuildPagingBuffer
  */
-NTSTATUS
+static NTSTATUS
 APIENTRY
-DxgkDdiBuildPagingBuffer(
+DxgkDdiBuildPagingBufferNew(
+    CONST HANDLE  hAdapter,
+    DXGKARG_BUILDPAGINGBUFFER*  pBuildPagingBuffer)
+{
+    /* DxgkDdiBuildPagingBuffer should be made pageable. */
+    PAGED_CODE();
+
+    vboxVDbgBreakFv();
+
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
+    uint32_t cbBuffer = 0, cbPrivateData = 0;
+
+    LOGF(("ENTER, context(0x%x)", hAdapter));
+
+    if (pBuildPagingBuffer->DmaBufferPrivateDataSize < sizeof (VBOXCMDVBVA_HDR))
+    {
+        WARN(("private data too small"));
+        return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+    }
+
+    VBOXCMDVBVA_HDR *pHdr = (VBOXCMDVBVA_HDR*)pBuildPagingBuffer->pDmaBufferPrivateData;
+
+    switch (pBuildPagingBuffer->Operation)
+    {
+        case DXGK_OPERATION_TRANSFER:
+        {
+#if 0
+            if (!pBuildPagingBuffer->Transfer.Flags.AllocationIsIdle)
+            {
+                WARN(("allocation is not idle"));
+                return STATUS_GRAPHICS_ALLOCATION_BUSY;
+            }
+#endif
+
+            if (pBuildPagingBuffer->DmaBufferPrivateDataSize < sizeof (VBOXCMDVBVA_SYSMEMCMD))
+            {
+                WARN(("private data too small"));
+                return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+            }
+
+            Assert(!pBuildPagingBuffer->Transfer.MdlOffset);
+
+            if ((!pBuildPagingBuffer->Transfer.Source.SegmentId) == (!pBuildPagingBuffer->Transfer.Destination.SegmentId))
+            {
+                WARN(("we only support RAM <-> VRAM moves, Src Seg(%d), Dst Seg(%d)", pBuildPagingBuffer->Transfer.Source.SegmentId, pBuildPagingBuffer->Transfer.Destination.SegmentId));
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            PVBOXWDDM_ALLOCATION pAlloc = (PVBOXWDDM_ALLOCATION)pBuildPagingBuffer->Transfer.hAllocation;
+            if (!pAlloc)
+            {
+                WARN(("allocation is null"));
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (pAlloc->AllocData.hostID)
+            {
+                cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+                cbPrivateData = sizeof (*pHdr);
+
+                pHdr->u8OpCode = VBOXCMDVBVA_OPTYPE_NOPCMD;
+                pHdr->u8Flags = 0;
+                pHdr->u.u8PrimaryID = 0;
+                pHdr->u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+                break;
+            }
+
+            if (pBuildPagingBuffer->DmaSize < sizeof (VBOXCMDVBVA_PAGING_TRANSFER))
+            {
+                WARN(("pBuildPagingBuffer->DmaSize(%d) < sizeof VBOXCMDVBVA_PAGING_TRANSFER (%d)", pBuildPagingBuffer->DmaSize , sizeof (VBOXCMDVBVA_PAGING_TRANSFER)));
+                /* @todo: can this actually happen? what status to return? */
+                return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+            }
+
+            VBOXCMDVBVA_PAGING_TRANSFER *pPaging = (VBOXCMDVBVA_PAGING_TRANSFER*)pBuildPagingBuffer->pDmaBuffer;
+            pPaging->Hdr.u8OpCode = VBOXCMDVBVA_OPTYPE_PAGING_TRANSFER;
+            /* sanity */
+            pPaging->Hdr.u8Flags = 0;
+            pPaging->Hdr.u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+
+            PMDL pMdl;
+            uint32_t offVRAM;
+            BOOLEAN fIn;
+            UINT SegmentId;
+
+            if (pBuildPagingBuffer->Transfer.Source.SegmentId)
+            {
+                SegmentId = pBuildPagingBuffer->Transfer.Source.SegmentId;
+                Assert(!pBuildPagingBuffer->Transfer.Destination.SegmentId);
+                Assert(!pBuildPagingBuffer->Transfer.Source.SegmentAddress.HighPart);
+                offVRAM = pBuildPagingBuffer->Transfer.Source.SegmentAddress.LowPart;
+                pMdl = pBuildPagingBuffer->Transfer.Destination.pMdl;
+                fIn = FALSE;
+            }
+            else
+            {
+                SegmentId = pBuildPagingBuffer->Transfer.Destination.SegmentId;
+                Assert(pBuildPagingBuffer->Transfer.Destination.SegmentId);
+                Assert(!pBuildPagingBuffer->Transfer.Source.SegmentId);
+                Assert(!pBuildPagingBuffer->Transfer.Destination.SegmentAddress.HighPart);
+                offVRAM = pBuildPagingBuffer->Transfer.Destination.SegmentAddress.LowPart;
+                pMdl = pBuildPagingBuffer->Transfer.Source.pMdl;
+                fIn = TRUE;
+            }
+
+            if (SegmentId != 1)
+            {
+                WARN(("SegmentId"));
+                cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+                break;
+            }
+
+            Assert(!(pBuildPagingBuffer->Transfer.TransferSize & PAGE_OFFSET_MASK));
+            Assert(!(offVRAM & PAGE_OFFSET_MASK));
+            uint32_t cPages = (uint32_t)(pBuildPagingBuffer->Transfer.TransferSize >> PAGE_SHIFT);
+            Assert(cPages > pBuildPagingBuffer->MultipassOffset);
+            cPages -= pBuildPagingBuffer->MultipassOffset;
+            uint32_t iFirstPage = pBuildPagingBuffer->MultipassOffset;
+            uint32_t cPagesWritten;
+            offVRAM += pBuildPagingBuffer->Transfer.TransferOffset + (pBuildPagingBuffer->MultipassOffset << PAGE_SHIFT);
+
+            pPaging->Data.Alloc.u.offVRAM = offVRAM;
+            if (fIn)
+                pPaging->Hdr.u8Flags |= VBOXCMDVBVA_OPF_PAGING_TRANSFER_IN;
+            cbBuffer = VBoxCVDdiPTransferVRamSysBuildEls(pPaging, pMdl, iFirstPage, cPages, pBuildPagingBuffer->DmaSize, &cPagesWritten);
+            if (cPagesWritten != cPages)
+                pBuildPagingBuffer->MultipassOffset += cPagesWritten;
+            else
+                pBuildPagingBuffer->MultipassOffset = 0;
+
+            VBOXCMDVBVA_SYSMEMCMD *pSysMemCmd = (VBOXCMDVBVA_SYSMEMCMD*)pBuildPagingBuffer->pDmaBufferPrivateData;
+
+            cbPrivateData = sizeof (*pSysMemCmd);
+
+            pSysMemCmd->Hdr.u8OpCode = VBOXCMDVBVA_OPTYPE_SYSMEMCMD;
+            pSysMemCmd->Hdr.u8Flags = cbBuffer & 0xff;
+            pSysMemCmd->Hdr.u.u8PrimaryID = (cbBuffer >> 8) & 0xff;
+            pSysMemCmd->Hdr.u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+            pSysMemCmd->phCmd = 0;
+
+            break;
+        }
+        case DXGK_OPERATION_FILL:
+        {
+            Assert(pBuildPagingBuffer->Fill.FillPattern == 0);
+            PVBOXWDDM_ALLOCATION pAlloc = (PVBOXWDDM_ALLOCATION)pBuildPagingBuffer->Fill.hAllocation;
+            if (!pAlloc)
+            {
+                WARN(("allocation is null"));
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            if (pAlloc->AllocData.hostID || pBuildPagingBuffer->Fill.Destination.SegmentId != 1)
+            {
+                if (!pAlloc->AllocData.hostID)
+                {
+                    WARN(("unexpected segment id"));
+                }
+
+                cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+                cbPrivateData = sizeof (*pHdr);
+
+                pHdr->u8OpCode = VBOXCMDVBVA_OPTYPE_NOPCMD;
+                pHdr->u8Flags = 0;
+                pHdr->u.u8PrimaryID = 0;
+                pHdr->u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+                break;
+            }
+
+            if (pBuildPagingBuffer->DmaBufferPrivateDataSize < sizeof (VBOXCMDVBVA_PAGING_FILL))
+            {
+                WARN(("private data too small"));
+                return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+            }
+
+            VBOXCMDVBVA_PAGING_FILL *pFill = (VBOXCMDVBVA_PAGING_FILL*)pBuildPagingBuffer->pDmaBufferPrivateData;
+            pFill->Hdr.u8OpCode = VBOXCMDVBVA_OPTYPE_PAGING_FILL;
+            pFill->Hdr.u8Flags = 0;
+            pFill->Hdr.u.u8PrimaryID = 0;
+            pFill->Hdr.u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+            pFill->u32CbFill = (uint32_t)pBuildPagingBuffer->Fill.FillSize;
+            pFill->u32Pattern = pBuildPagingBuffer->Fill.FillPattern;
+            Assert(!pBuildPagingBuffer->Fill.Destination.SegmentAddress.HighPart);
+            pFill->offVRAM = pBuildPagingBuffer->Fill.Destination.SegmentAddress.LowPart;
+
+            cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+            cbPrivateData = sizeof (*pFill);
+
+            break;
+        }
+        case DXGK_OPERATION_DISCARD_CONTENT:
+        {
+            PVBOXWDDM_ALLOCATION pAlloc = (PVBOXWDDM_ALLOCATION)pBuildPagingBuffer->DiscardContent.hAllocation;
+            if (!pAlloc)
+            {
+                WARN(("allocation is null"));
+                return STATUS_INVALID_PARAMETER;
+            }
+//            WARN(("Do we need to do anything here?"));
+            break;
+        }
+        default:
+        {
+            WARN(("unsupported op (%d)", pBuildPagingBuffer->Operation));
+            break;
+        }
+    }
+
+    Assert(cbPrivateData >= sizeof (VBOXCMDVBVA_HDR) || pBuildPagingBuffer->Operation == DXGK_OPERATION_DISCARD_CONTENT);
+    Assert(pBuildPagingBuffer->Operation == DXGK_OPERATION_DISCARD_CONTENT || cbBuffer);
+    Assert(cbBuffer <= pBuildPagingBuffer->DmaSize);
+    Assert(cbBuffer == 0 || cbBuffer >= sizeof (VBOXCMDVBVA_PAGING_TRANSFER) || cbBuffer == VBOXWDDM_DUMMY_DMABUFFER_SIZE);
+    AssertCompile(VBOXWDDM_DUMMY_DMABUFFER_SIZE < 8);
+
+    pHdr->u2.complexCmdEl.u16CbCmdHost = cbPrivateData;
+    pHdr->u2.complexCmdEl.u16CbCmdGuest = cbBuffer;
+
+    pBuildPagingBuffer->pDmaBuffer = ((uint8_t*)pBuildPagingBuffer->pDmaBuffer) + cbBuffer;
+    pBuildPagingBuffer->pDmaBufferPrivateData = ((uint8_t*)pBuildPagingBuffer->pDmaBufferPrivateData) + cbPrivateData;
+
+    LOGF(("LEAVE, context(0x%x)", hAdapter));
+
+    if (pBuildPagingBuffer->MultipassOffset)
+        return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+    return STATUS_SUCCESS;
+}
+#endif
+
+static NTSTATUS
+APIENTRY
+DxgkDdiBuildPagingBufferLegacy(
     CONST HANDLE  hAdapter,
     DXGKARG_BUILDPAGINGBUFFER*  pBuildPagingBuffer)
 {
@@ -3445,11 +3819,14 @@ DxgkDdiBuildPagingBuffer(
 
     LOGF(("ENTER, context(0x%x)", hAdapter));
 
+    uint32_t cbCmdDma = 0;
+
     /* @todo: */
     switch (pBuildPagingBuffer->Operation)
     {
         case DXGK_OPERATION_TRANSFER:
         {
+            cbCmdDma = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
 #ifdef VBOX_WITH_VDMA
 #if 0
             if ((!pBuildPagingBuffer->Transfer.Source.SegmentId) != (!pBuildPagingBuffer->Transfer.Destination.SegmentId))
@@ -3466,7 +3843,7 @@ DxgkDdiBuildPagingBuffer(
                 if (pBuildPagingBuffer->Transfer.Source.SegmentId)
                 {
                     uint64_t off = pBuildPagingBuffer->Transfer.Source.SegmentAddress.QuadPart;
-                    off += pBuildPagingBuffer->Transfer.TransferOffset + (pBuildPagingBuffer->MultipassOffset << 12);
+                    off += pBuildPagingBuffer->Transfer.TransferOffset + (pBuildPagingBuffer->MultipassOffset << PAGE_SHIFT);
                     pBody->offVramBuf = off;
                     pMdl = pBuildPagingBuffer->Transfer.Source.pMdl;
                     pBody->fFlags = 0;//VBOXVDMACMD_DMA_BPB_TRANSFER_VRAMSYS_SYS2VRAM
@@ -3474,7 +3851,7 @@ DxgkDdiBuildPagingBuffer(
                 else
                 {
                     uint64_t off = pBuildPagingBuffer->Transfer.Destination.SegmentAddress.QuadPart;
-                    off += pBuildPagingBuffer->Transfer.TransferOffset + (pBuildPagingBuffer->MultipassOffset << 12);
+                    off += pBuildPagingBuffer->Transfer.TransferOffset + (pBuildPagingBuffer->MultipassOffset << PAGE_SHIFT);
                     pBody->offVramBuf = off;
                     pMdl = pBuildPagingBuffer->Transfer.Destination.pMdl;
                     pBody->fFlags = VBOXVDMACMD_DMA_BPB_TRANSFER_VRAMSYS_SYS2VRAM;
@@ -3530,7 +3907,7 @@ DxgkDdiBuildPagingBuffer(
                     else
                     {
                         UINT index = pBuildPagingBuffer->Transfer.MdlOffset + (UINT)(cbTransfered>>12);
-                        pBody->Src.phBuf = MmGetMdlPfnArray(pBuildPagingBuffer->Transfer.Source.pMdl)[index] << 12;
+                        pBody->Src.phBuf = MmGetMdlPfnArray(pBuildPagingBuffer->Transfer.Source.pMdl)[index] << PAGE_SHIFT;
                         PFN_NUMBER num = MmGetMdlPfnArray(pBuildPagingBuffer->Transfer.Source.pMdl)[index];
                         cSrcPages = 1;
                         for (UINT i = 1; i < ((cbTransferSize - cbTransfered + 0xfff) >> 12); ++i)
@@ -3554,7 +3931,7 @@ DxgkDdiBuildPagingBuffer(
                     else
                     {
                         UINT index = pBuildPagingBuffer->Transfer.MdlOffset + (UINT)(cbTransfered>>12);
-                        pBody->Dst.phBuf = MmGetMdlPfnArray(pBuildPagingBuffer->Transfer.Destination.pMdl)[index] << 12;
+                        pBody->Dst.phBuf = MmGetMdlPfnArray(pBuildPagingBuffer->Transfer.Destination.pMdl)[index] << PAGE_SHIFT;
                         PFN_NUMBER num = MmGetMdlPfnArray(pBuildPagingBuffer->Transfer.Destination.pMdl)[index];
                         cDstPages = 1;
                         for (UINT i = 1; i < ((cbTransferSize - cbTransfered + 0xfff) >> 12); ++i)
@@ -3569,8 +3946,8 @@ DxgkDdiBuildPagingBuffer(
                     }
 
                     SIZE_T cbCurTransfer;
-                    cbCurTransfer = RT_MIN(cbTransferSize - cbTransfered, cSrcPages << 12);
-                    cbCurTransfer = RT_MIN(cbCurTransfer, cDstPages << 12);
+                    cbCurTransfer = RT_MIN(cbTransferSize - cbTransfered, (SIZE_T)cSrcPages << PAGE_SHIFT);
+                    cbCurTransfer = RT_MIN(cbCurTransfer, (SIZE_T)cDstPages << PAGE_SHIFT);
 
                     pBody->cbTransferSize = (UINT)cbCurTransfer;
                     Assert(!(cbCurTransfer & 0xfff));
@@ -3600,6 +3977,7 @@ DxgkDdiBuildPagingBuffer(
         }
         case DXGK_OPERATION_FILL:
         {
+            cbCmdDma = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
             Assert(pBuildPagingBuffer->Fill.FillPattern == 0);
             PVBOXWDDM_ALLOCATION pAlloc = (PVBOXWDDM_ALLOCATION)pBuildPagingBuffer->Fill.hAllocation;
 //            pBuildPagingBuffer->pDmaBuffer = (uint8_t*)pBuildPagingBuffer->pDmaBuffer + VBOXVDMACMD_SIZE(VBOXVDMACMD_DMA_BPB_FILL);
@@ -3612,10 +3990,14 @@ DxgkDdiBuildPagingBuffer(
         }
         default:
         {
-            LOGREL(("unsupported op (%d)", pBuildPagingBuffer->Operation));
-            AssertBreakpoint();
+            WARN(("unsupported op (%d)", pBuildPagingBuffer->Operation));
             break;
         }
+    }
+
+    if (cbCmdDma)
+    {
+        pBuildPagingBuffer->pDmaBuffer = ((uint8_t*)pBuildPagingBuffer->pDmaBuffer) + cbCmdDma;
     }
 
     LOGF(("LEAVE, context(0x%x)", hAdapter));
@@ -3946,6 +4328,12 @@ DxgkDdiEscape(
 #ifdef VBOX_WITH_CRHGSMI
             case VBOXESC_UHGSMI_SUBMIT:
             {
+                if (pDevExt->fCmdVbvaEnabled)
+                {
+                    WARN(("VBOXESC_UHGSMI_SUBMIT not supported for CmdVbva mode"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
                 /* submit VBOXUHGSMI command */
                 PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
                 PVBOXDISPIFESCAPE_UHGSMI_SUBMIT pSubmit = (PVBOXDISPIFESCAPE_UHGSMI_SUBMIT)pEscapeHdr;
@@ -3962,10 +4350,17 @@ DxgkDdiEscape(
 
                 break;
             }
-#endif
+
             case VBOXESC_UHGSMI_ALLOCATE:
             {
                 /* allocate VBOXUHGSMI buffer */
+                if (pDevExt->fCmdVbvaEnabled)
+                {
+                    WARN(("VBOXESC_UHGSMI_ALLOCATE not supported for CmdVbva mode"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
                 PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
                 PVBOXDISPIFESCAPE_UHGSMI_ALLOCATE pAlocate = (PVBOXDISPIFESCAPE_UHGSMI_ALLOCATE)pEscapeHdr;
                 Assert(pEscape->PrivateDriverDataSize == sizeof (VBOXDISPIFESCAPE_UHGSMI_ALLOCATE));
@@ -3982,6 +4377,12 @@ DxgkDdiEscape(
 
             case VBOXESC_UHGSMI_DEALLOCATE:
             {
+                if (pDevExt->fCmdVbvaEnabled)
+                {
+                    WARN(("VBOXESC_UHGSMI_DEALLOCATE not supported for CmdVbva mode"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
                 /* deallocate VBOXUHGSMI buffer */
                 PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
                 PVBOXDISPIFESCAPE_UHGSMI_DEALLOCATE pDealocate = (PVBOXDISPIFESCAPE_UHGSMI_DEALLOCATE)pEscapeHdr;
@@ -3997,25 +4398,15 @@ DxgkDdiEscape(
                 break;
             }
 
-            case VBOXESC_GETVBOXVIDEOCMCMD:
-            {
-                /* get the list of r0->r3 commands (d3d window visible regions reporting )*/
-                PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
-                PVBOXDISPIFESCAPE_GETVBOXVIDEOCMCMD pRegions = (PVBOXDISPIFESCAPE_GETVBOXVIDEOCMCMD)pEscapeHdr;
-                Assert(pEscape->PrivateDriverDataSize >= sizeof (VBOXDISPIFESCAPE_GETVBOXVIDEOCMCMD));
-                if (pEscape->PrivateDriverDataSize >= sizeof (VBOXDISPIFESCAPE_GETVBOXVIDEOCMCMD))
-                {
-                    Status = vboxVideoCmEscape(&pContext->CmContext, pRegions, pEscape->PrivateDriverDataSize);
-                    Assert(Status == STATUS_SUCCESS);
-                }
-                else
-                    Status = STATUS_BUFFER_TOO_SMALL;
-
-                break;
-            }
-
             case VBOXESC_CRHGSMICTLCON_CALL:
             {
+                if (pDevExt->fCmdVbvaEnabled)
+                {
+                    WARN(("VBOXESC_CRHGSMICTLCON_CALL not supported for CmdVbva mode"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
                 PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
                 PVBOXDISPIFESCAPE_CRHGSMICTLCON_CALL pCall = (PVBOXDISPIFESCAPE_CRHGSMICTLCON_CALL)pEscapeHdr;
                 if (pEscape->PrivateDriverDataSize >= sizeof (*pCall))
@@ -4041,6 +4432,11 @@ DxgkDdiEscape(
             case VBOXESC_CRHGSMICTLCON_GETCLIENTID:
             {
                 PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
+                if (!pContext)
+                {
+                    WARN(("context not specified"));
+                    return STATUS_INVALID_PARAMETER;
+                }
                 if (pEscape->PrivateDriverDataSize == sizeof (*pEscapeHdr))
                 {
                     pEscapeHdr->u32CmdSpecific = pContext->u32CrConClientID;
@@ -4055,8 +4451,41 @@ DxgkDdiEscape(
                 break;
             }
 
+            case VBOXESC_CRHGSMICTLCON_GETHOSTCAPS:
+            {
+                if (pEscape->PrivateDriverDataSize == sizeof (*pEscapeHdr))
+                {
+                    pEscapeHdr->u32CmdSpecific = VBoxMpCrGetHostCaps();
+                    Status = STATUS_SUCCESS;
+                }
+                else
+                {
+                    WARN(("unexpected buffer size!"));
+                    Status = STATUS_INVALID_PARAMETER;
+                }
+
+                break;
+            }
+#endif
+
             case VBOXESC_SETVISIBLEREGION:
             {
+                PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
+#ifdef VBOX_DISPIF_WITH_OPCONTEXT
+                if (!pContext)
+                {
+                    WARN(("VBOXESC_SETVISIBLEREGION no context supplied!"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                if (pContext->enmType != VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_SEAMLESS)
+                {
+                    WARN(("VBOXESC_SETVISIBLEREGION invalid context supplied %d!", pContext->enmType));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+#endif
                 /* visible regions for seamless */
                 LPRGNDATA lpRgnData = VBOXDISPIFESCAPE_DATA(pEscapeHdr, RGNDATA);
                 uint32_t cbData = VBOXDISPIFESCAPE_DATA_SIZE(pEscape->PrivateDriverDataSize);
@@ -4095,22 +4524,23 @@ DxgkDdiEscape(
 
                         rc = VbglGRPerform (&req->header);
                         AssertRC(rc);
-                        if (!RT_SUCCESS(rc))
+                        if (RT_SUCCESS(rc))
+                            Status = STATUS_SUCCESS;
+                        else
                         {
-                            LOGREL(("VbglGRPerform failed rc (%d)", rc));
+                            WARN(("VbglGRPerform failed rc (%d)", rc));
                             Status = STATUS_UNSUCCESSFUL;
                         }
                     }
                     else
                     {
-                        LOGREL(("VbglGRAlloc failed rc (%d)", rc));
+                        WARN(("VbglGRAlloc failed rc (%d)", rc));
                         Status = STATUS_UNSUCCESSFUL;
                     }
                 }
                 else
                 {
-                    LOGREL(("VBOXESC_SETVISIBLEREGION: incorrect buffer size (%d), reported count (%d)", cbRects, lpRgnData->rdh.nCount));
-                    AssertBreakpoint();
+                    WARN(("VBOXESC_SETVISIBLEREGION: incorrect buffer size (%d), reported count (%d)", cbRects, lpRgnData->rdh.nCount));
                     Status = STATUS_INVALID_PARAMETER;
                 }
                 break;
@@ -4119,38 +4549,41 @@ DxgkDdiEscape(
                 /* @todo: implement */
                 Status = STATUS_SUCCESS;
                 break;
-            case VBOXESC_SCREENLAYOUT:
+#ifdef VBOX_WITH_CROGL
+            case VBOXESC_SETCTXHOSTID:
             {
-                /* set screen layout (unused currently) */
-                if (pEscape->PrivateDriverDataSize < sizeof (VBOXDISPIFESCAPE_SCREENLAYOUT))
+                /* set swapchain information */
+                PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
+                if (!pContext)
                 {
-                    WARN(("VBOXESC_SCREENLAYOUT: incorrect buffer size (%d) < sizeof (VBOXDISPIFESCAPE_SCREENLAYOUT) (%d)",
-                            pEscape->PrivateDriverDataSize, sizeof (VBOXDISPIFESCAPE_SCREENLAYOUT)));
+                    WARN(("VBOXESC_SETCTXHOSTID: no context specified"));
                     Status = STATUS_INVALID_PARAMETER;
                     break;
                 }
 
-                PVBOXDISPIFESCAPE_SCREENLAYOUT pLo = (PVBOXDISPIFESCAPE_SCREENLAYOUT)pEscapeHdr;
-                if (pLo->ScreenLayout.cScreens > (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays)
+                if (pEscape->PrivateDriverDataSize != sizeof (VBOXDISPIFESCAPE))
                 {
-                    WARN(("VBOXESC_SCREENLAYOUT: number of screens too big (%d), should be <= (%d)",
-                            pLo->ScreenLayout.cScreens, VBoxCommonFromDeviceExt(pDevExt)->cDisplays));
+                    WARN(("VBOXESC_SETCTXHOSTID: invalid data size %d", pEscape->PrivateDriverDataSize));
                     Status = STATUS_INVALID_PARAMETER;
                     break;
                 }
 
-                for (UINT i = 0; i < pLo->ScreenLayout.cScreens; ++i)
+                int32_t hostID = (int32_t)pEscapeHdr->u32CmdSpecific;
+                if (hostID <= 0)
                 {
-                    PVBOXSCREENLAYOUT_ELEMENT pEl = &pLo->ScreenLayout.aScreens[i];
-                    Assert(pEl->VidPnSourceId < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
-                    if (pEl->VidPnSourceId < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays)
-                    {
-                        PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[pEl->VidPnSourceId];
-                        NTSTATUS tmpStatus = vboxWddmGhDisplayUpdateScreenPos(pDevExt, pSource, &pEl->pos);
-                        Assert(tmpStatus == STATUS_SUCCESS);
-                    }
+                    WARN(("VBOXESC_SETCTXHOSTID: invalid hostID %d", hostID));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
                 }
 
+                if (pContext->hostID)
+                {
+                    WARN(("VBOXESC_SETCTXHOSTID: context already has hostID specified"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                pContext->hostID = hostID;
                 Status = STATUS_SUCCESS;
                 break;
             }
@@ -4162,72 +4595,161 @@ DxgkDdiEscape(
                 Assert(Status == STATUS_SUCCESS);
                 break;
             }
-            case VBOXESC_REINITVIDEOMODES:
+#endif
+            case VBOXESC_CONFIGURETARGETS:
             {
-                if (pEscape->Flags.HardwareAccess)
-                {
-                    WARN(("VBOXESC_REINITVIDEOMODES called with HardwareAccess flag set, failing"));
-                    Status = STATUS_INVALID_PARAMETER;
-                    break;
-                }
-                WARN(("VBOXESC_REINITVIDEOMODESBYMASK should be called instead"));
-                PVBOXWDDM_VIDEOMODES_INFO pInfos = VBoxWddmUpdateAllVideoModesInfos(pDevExt);
-                Status = vboxWddmChildStatusCheckByMask(pDevExt, pInfos, NULL);
-                if (!NT_SUCCESS(Status))
-                {
-                    WARN(("vboxWddmChildStatusCheckByMask failed, Status 0x%x", Status));
-                }
-                break;
-            }
-            case VBOXESC_REINITVIDEOMODESBYMASK:
-            {
-                BOOLEAN fCheckDisplayRecconect = (pEscapeHdr->u32CmdSpecific & VBOXWDDM_REINITVIDEOMODESBYMASK_F_RECONNECT_DISPLAYS_ON_CHANGE);
-                if (fCheckDisplayRecconect && pEscape->Flags.HardwareAccess)
-                {
-                    WARN(("VBOXESC_REINITVIDEOMODESBYMASK called with HardwareAccess flag set, failing"));
-                    Status = STATUS_INVALID_PARAMETER;
-                    break;
-                }
-                if (pEscape->PrivateDriverDataSize != sizeof (VBOXDISPIFESCAPE_REINITVIDEOMODESBYMASK))
-                {
-                    WARN(("invalid private driver size %d", pEscape->PrivateDriverDataSize));
-                    Status = STATUS_INVALID_PARAMETER;
-                    break;
-                }
-                LOG(("=> VBOXESC_REINITVIDEOMODESBYMASK"));
-                PVBOXDISPIFESCAPE_REINITVIDEOMODESBYMASK pData = (PVBOXDISPIFESCAPE_REINITVIDEOMODESBYMASK)pEscapeHdr;
-                PVBOXWDDM_VIDEOMODES_INFO pInfos = VBoxWddmUpdateVideoModesInfoByMask(pDevExt, pData->ScreenMask);
-                if (fCheckDisplayRecconect)
-                {
-                    Status = vboxWddmChildStatusCheckByMask(pDevExt, pInfos, pData->ScreenMask);
-                    if (!NT_SUCCESS(Status))
-                    {
-                        WARN(("vboxWddmChildStatusCheckByMask failed, Status 0x%x", Status));
-                    }
-                }
-                LOG(("<= VBOXESC_REINITVIDEOMODESBYMASK"));
-                break;
-            }
-            case VBOXESC_ADJUSTVIDEOMODES:
-            {
+                LOG(("=> VBOXESC_CONFIGURETARGETS"));
+
                 if (!pEscape->Flags.HardwareAccess)
                 {
-                    WARN(("VBOXESC_ADJUSTVIDEOMODES called without HardwareAccess flag set, failing"));
+                    WARN(("VBOXESC_CONFIGURETARGETS called without HardwareAccess flag set, failing"));
                     Status = STATUS_INVALID_PARAMETER;
                     break;
                 }
 
-                uint32_t cModes = pEscapeHdr->u32CmdSpecific;
-                if (cModes > VBOXWDDM_TRAILARRAY_MAXELEMENTSU32(VBOXDISPIFESCAPE_ADJUSTVIDEOMODES, aScreenInfos)
-                        || pEscape->PrivateDriverDataSize != RT_OFFSETOF(VBOXDISPIFESCAPE_ADJUSTVIDEOMODES, aScreenInfos[cModes]))
+#ifdef VBOX_DISPIF_WITH_OPCONTEXT
+                /* win8.1 does not allow context-based escapes for display-only mode */
+                PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
+                if (!pContext)
                 {
-                    WARN(("invalid modes count passed"));
+                    WARN(("VBOXESC_CONFIGURETARGETS no context supplied!"));
                     Status = STATUS_INVALID_PARAMETER;
                     break;
                 }
 
-                PVBOXDISPIFESCAPE_ADJUSTVIDEOMODES pPodesInfo = (PVBOXDISPIFESCAPE_ADJUSTVIDEOMODES)pEscapeHdr;
-                VBoxWddmAdjustModes(pDevExt, cModes, pPodesInfo->aScreenInfos);
+                if (pContext->enmType != VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_RESIZE)
+                {
+                    WARN(("VBOXESC_CONFIGURETARGETS invalid context supplied %d!", pContext->enmType));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+#endif
+
+                if (pEscape->PrivateDriverDataSize != sizeof (*pEscapeHdr))
+                {
+                    WARN(("VBOXESC_CONFIGURETARGETS invalid private driver size %d", pEscape->PrivateDriverDataSize));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                if (pEscapeHdr->u32CmdSpecific)
+                {
+                    WARN(("VBOXESC_CONFIGURETARGETS invalid command %d", pEscapeHdr->u32CmdSpecific));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                HANDLE hKey = NULL;
+                WCHAR aNameBuf[100];
+                uint32_t cAdjusted = 0;
+
+                for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+                {
+                    VBOXWDDM_TARGET *pTarget = &pDevExt->aTargets[i];
+                    if (pTarget->fConfigured)
+                        continue;
+
+                    pTarget->fConfigured = true;
+
+                    if (!pTarget->fConnected)
+                    {
+                        Status = VBoxWddmChildStatusConnect(pDevExt, (uint32_t)i, TRUE);
+                        if (NT_SUCCESS(Status))
+                            ++cAdjusted;
+                        else
+                            WARN(("VBOXESC_CONFIGURETARGETS vboxWddmChildStatusConnectSecondaries failed Status 0x%x\n", Status));
+                    }
+
+                    if (!hKey)
+                    {
+                        Status = IoOpenDeviceRegistryKey(pDevExt->pPDO, PLUGPLAY_REGKEY_DRIVER, GENERIC_WRITE, &hKey);
+                        if (!NT_SUCCESS(Status))
+                        {
+                            WARN(("VBOXESC_CONFIGURETARGETS IoOpenDeviceRegistryKey failed, Status = 0x%x", Status));
+                            hKey = NULL;
+                            continue;
+                        }
+                    }
+
+                    Assert(hKey);
+
+                    swprintf(aNameBuf, L"%s%d", VBOXWDDM_REG_DRV_DISPFLAGS_PREFIX, i);
+                    Status = vboxWddmRegSetValueDword(hKey, aNameBuf, VBOXWDDM_CFG_DRVTARGET_CONNECTED);
+                    if (!NT_SUCCESS(Status))
+                        WARN(("VBOXESC_CONFIGURETARGETS vboxWddmRegSetValueDword (%d) failed Status 0x%x\n", aNameBuf, Status));
+
+                }
+
+                if (hKey)
+                {
+                    NTSTATUS tmpStatus = ZwClose(hKey);
+                    Assert(tmpStatus == STATUS_SUCCESS);
+                }
+
+                pEscapeHdr->u32CmdSpecific = cAdjusted;
+
+                Status = STATUS_SUCCESS;
+
+                LOG(("<= VBOXESC_CONFIGURETARGETS"));
+                break;
+            }
+            case VBOXESC_SETALLOCHOSTID:
+            {
+                PVBOXWDDM_DEVICE pDevice = (PVBOXWDDM_DEVICE)pEscape->hDevice;
+                if (!pDevice)
+                {
+                    WARN(("VBOXESC_SETALLOCHOSTID called without no device specified, failing"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                if (pEscape->PrivateDriverDataSize != sizeof (VBOXDISPIFESCAPE_SETALLOCHOSTID))
+                {
+                    WARN(("invalid buffer size for VBOXDISPIFESCAPE_SHRC_REF, was(%d), but expected (%d)",
+                            pEscape->PrivateDriverDataSize, sizeof (VBOXDISPIFESCAPE_SHRC_REF)));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                if (!pEscape->Flags.HardwareAccess)
+                {
+                    WARN(("VBOXESC_SETALLOCHOSTID not HardwareAccess"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                PVBOXDISPIFESCAPE_SETALLOCHOSTID pSetHostID = (PVBOXDISPIFESCAPE_SETALLOCHOSTID)pEscapeHdr;
+                PVBOXWDDM_ALLOCATION pAlloc = vboxWddmGetAllocationFromHandle(pDevExt, (D3DKMT_HANDLE)pSetHostID->hAlloc);
+                if (!pAlloc)
+                {
+                    WARN(("failed to get allocation from handle"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                if (pAlloc->enmType != VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE)
+                {
+                    WARN(("setHostID: invalid allocation type: %d", pAlloc->enmType));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                pSetHostID->rc = VBoxWddmOaSetHostID(pDevice, pAlloc, pSetHostID->hostID, &pSetHostID->EscapeHdr.u32CmdSpecific);
+
+                if (pAlloc->bAssigned)
+                {
+                    PVBOXMP_DEVEXT pDevExt = pDevice->pAdapter;
+                    Assert(pAlloc->AllocData.SurfDesc.VidPnSourceId < (D3DDDI_VIDEO_PRESENT_SOURCE_ID)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+                    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[pAlloc->AllocData.SurfDesc.VidPnSourceId];
+                    if (pSource->AllocData.hostID != pAlloc->AllocData.hostID)
+                    {
+                        pSource->AllocData.hostID = pAlloc->AllocData.hostID;
+                        pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_LOCATION;
+
+                        vboxWddmGhDisplayCheckSetInfo(pDevExt);
+                    }
+                }
+
                 Status = STATUS_SUCCESS;
                 break;
             }
@@ -4235,6 +4757,13 @@ DxgkDdiEscape(
             case VBOXESC_SHRC_RELEASE:
             {
                 PVBOXWDDM_DEVICE pDevice = (PVBOXWDDM_DEVICE)pEscape->hDevice;
+                if (!pDevice)
+                {
+                    WARN(("VBOXESC_SHRC_ADDREF|VBOXESC_SHRC_RELEASE called without no device specified, failing"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
                 /* query whether the allocation represanted by the given [wine-generated] shared resource handle still exists */
                 if (pEscape->PrivateDriverDataSize != sizeof (VBOXDISPIFESCAPE_SHRC_REF))
                 {
@@ -4300,8 +4829,54 @@ DxgkDdiEscape(
                 }
 
                 PVBOXDISPIFESCAPE_ISANYX pIsAnyX = (PVBOXDISPIFESCAPE_ISANYX)pEscapeHdr;
-                pIsAnyX->u32IsAnyX = pDevExt->fAnyX;
+                pIsAnyX->u32IsAnyX = VBoxCommonFromDeviceExt(pDevExt)->fAnyX;
                 Status = STATUS_SUCCESS;
+                break;
+            }
+            case VBOXESC_UPDATEMODES:
+            {
+                LOG(("=> VBOXESC_UPDATEMODES"));
+
+                if (!pEscape->Flags.HardwareAccess)
+                {
+                    WARN(("VBOXESC_UPDATEMODES called without HardwareAccess flag set, failing"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+#ifdef VBOX_DISPIF_WITH_OPCONTEXT
+                /* win8.1 does not allow context-based escapes for display-only mode */
+                PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)pEscape->hContext;
+                if (!pContext)
+                {
+                    WARN(("VBOXESC_UPDATEMODES no context supplied!"));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                if (pContext->enmType != VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_RESIZE)
+                {
+                    WARN(("VBOXESC_UPDATEMODES invalid context supplied %d!", pContext->enmType));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+#endif
+
+                if (pEscape->PrivateDriverDataSize != sizeof (VBOXDISPIFESCAPE_UPDATEMODES))
+                {
+                    WARN(("VBOXESC_UPDATEMODES invalid private driver size %d", pEscape->PrivateDriverDataSize));
+                    Status = STATUS_INVALID_PARAMETER;
+                    break;
+                }
+
+                VBOXDISPIFESCAPE_UPDATEMODES *pData = (VBOXDISPIFESCAPE_UPDATEMODES*)pEscapeHdr;
+                Status = VBoxVidPnUpdateModes(pDevExt, pData->u32TargetId, &pData->Size);
+                if (!NT_SUCCESS(Status))
+                {
+                    WARN(("VBoxVidPnUpdateModes failed Status(%#x)\n", Status));
+                    return Status;
+                }
+
                 break;
             }
             case VBOXESC_DBGPRINT:
@@ -4331,15 +4906,13 @@ DxgkDdiEscape(
                 break;
             }
             default:
-                Assert(0);
-                LOGREL(("unsupported escape code (0x%x)", pEscapeHdr->escapeCode));
+                WARN(("unsupported escape code (0x%x)", pEscapeHdr->escapeCode));
                 break;
         }
     }
     else
     {
-        LOGREL(("pEscape->PrivateDriverDataSize(%d) < (%d)", pEscape->PrivateDriverDataSize, sizeof (VBOXDISPIFESCAPE)));
-        AssertBreakpoint();
+        WARN(("pEscape->PrivateDriverDataSize(%d) < (%d)", pEscape->PrivateDriverDataSize, sizeof (VBOXDISPIFESCAPE)));
         Status = STATUS_BUFFER_TOO_SMALL;
     }
 
@@ -4374,14 +4947,66 @@ typedef struct VBOXWDDM_QUERYCURFENCE_CB
 static BOOLEAN vboxWddmQueryCurrentFenceCb(PVOID Context)
 {
     PVBOXWDDM_QUERYCURFENCE_CB pdc = (PVBOXWDDM_QUERYCURFENCE_CB)Context;
-    BOOL bRc = DxgkDdiInterruptRoutine(pdc->pDevExt, pdc->MessageNumber);
-    pdc->uLastCompletedCmdFenceId = pdc->pDevExt->u.primary.Vdma.uLastCompletedPagingBufferCmdFenceId;
+    PVBOXMP_DEVEXT pDevExt = pdc->pDevExt;
+    BOOL bRc = DxgkDdiInterruptRoutineLegacy(pDevExt, pdc->MessageNumber);
+    pdc->uLastCompletedCmdFenceId = pDevExt->u.primary.Vdma.uLastCompletedPagingBufferCmdFenceId;
     return bRc;
 }
 
-NTSTATUS
+#ifdef VBOX_WITH_CROGL
+static NTSTATUS
 APIENTRY
-DxgkDdiQueryCurrentFence(
+DxgkDdiQueryCurrentFenceNew(
+    CONST HANDLE  hAdapter,
+    DXGKARG_QUERYCURRENTFENCE*  pCurrentFence)
+{
+    LOGF(("ENTER, hAdapter(0x%x)", hAdapter));
+
+    vboxVDbgBreakF();
+
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
+
+    WARN(("=>DxgkDdiQueryCurrentFenceNew"));
+
+    uint32_t u32FenceSubmitted = 0;
+    uint32_t u32FenceCompleted = 0;
+    uint32_t u32FenceProcessed = 0;
+
+    LARGE_INTEGER DelayInterval;
+    DelayInterval.QuadPart = -10LL * 1000LL * 1000LL;
+
+    for (;;)
+    {
+        u32FenceCompleted = VBoxCmdVbvaCheckCompleted(pDevExt, &pDevExt->CmdVbva, false, &u32FenceSubmitted, &u32FenceProcessed);
+        if (!u32FenceCompleted)
+        {
+            WARN(("VBoxCmdVbvaCheckCompleted failed"));
+            return STATUS_UNSUCCESSFUL;
+        }
+
+        if (u32FenceSubmitted == u32FenceProcessed)
+            break;
+
+        WARN(("uncompleted fences, u32FenceSubmitted(%d), u32FenceCompleted(%d) u32FenceProcessed(%d)", u32FenceSubmitted, u32FenceCompleted, u32FenceProcessed));
+
+        NTSTATUS Status = KeDelayExecutionThread(KernelMode, FALSE, &DelayInterval);
+        if (Status != STATUS_SUCCESS)
+            WARN(("KeDelayExecutionThread failed %#x", Status));
+    }
+
+    pCurrentFence->CurrentFence = u32FenceCompleted;
+
+    WARN(("<=DxgkDdiQueryCurrentFenceNew"));
+
+    LOGF(("LEAVE, hAdapter(0x%x)", hAdapter));
+
+    return STATUS_SUCCESS;
+}
+#endif
+
+static NTSTATUS
+APIENTRY
+DxgkDdiQueryCurrentFenceLegacy(
     CONST HANDLE  hAdapter,
     DXGKARG_QUERYCURRENTFENCE*  pCurrentFence)
 {
@@ -4424,56 +5049,17 @@ DxgkDdiIsSupportedVidPn(
 
     vboxVDbgBreakFv();
 
-    NTSTATUS Status = STATUS_SUCCESS;
-    BOOLEAN bSupported = TRUE;
-
-    PVBOXMP_DEVEXT pContext = (PVBOXMP_DEVEXT)hAdapter;
-    const DXGK_VIDPN_INTERFACE* pVidPnInterface = NULL;
-    Status = pContext->u.primary.DxgkInterface.DxgkCbQueryVidPnInterface(pIsSupportedVidPnArg->hDesiredVidPn, DXGK_VIDPN_INTERFACE_VERSION_V1, &pVidPnInterface);
+    PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
+    NTSTATUS Status = VBoxVidPnIsSupported(pDevExt, pIsSupportedVidPnArg->hDesiredVidPn, &pIsSupportedVidPnArg->IsVidPnSupported);
     if (!NT_SUCCESS(Status))
     {
-        WARN(("DxgkCbQueryVidPnInterface failed Status()0x%x\n", Status));
+        WARN(("VBoxVidPnIsSupported failed Status(%#x)\n", Status));
         return Status;
     }
-
-#ifdef VBOXWDDM_DEBUG_VIDPN
-    vboxVidPnDumpVidPn("\n>>>>IS SUPPORTED VidPN : >>>>", pContext, pIsSupportedVidPnArg->hDesiredVidPn, pVidPnInterface, "<<<<<<<<<<<<<<<<<<<<");
-#endif
-
-    D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology;
-    const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface;
-    Status = pVidPnInterface->pfnGetTopology(pIsSupportedVidPnArg->hDesiredVidPn, &hVidPnTopology, &pVidPnTopologyInterface);
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("pfnGetTopology failed Status()0x%x\n", Status));
-        return Status;
-    }
-
-    VBOXVIDPNPATHITEM aItems[VBOX_VIDEO_MAX_SCREENS];
-    BOOLEAN fDisabledFound = FALSE;
-    Status = vboxVidPnCheckTopology(hVidPnTopology, pVidPnTopologyInterface, TRUE /* fBreakOnDisabled */, RT_ELEMENTS(aItems), aItems, &fDisabledFound);
-    Assert(Status == STATUS_SUCCESS);
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("vboxVidPnCheckTopology failed Status()0x%x\n", Status));
-        return Status;
-    }
-
-    if (fDisabledFound)
-    {
-        LOG(("found unsupported path"));
-        bSupported = FALSE;
-    }
-
-    pIsSupportedVidPnArg->IsVidPnSupported = bSupported;
-
-#ifdef VBOXWDDM_DEBUG_VIDPN
-    LOGREL(("The Given VidPn is %ssupported\n", pIsSupportedVidPnArg->IsVidPnSupported ? "" : "!!NOT!! "));
-#endif
 
     LOGF(("LEAVE, status(0x%x), context(0x%x)", Status, hAdapter));
 
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -4491,115 +5077,26 @@ DxgkDdiRecommendFunctionalVidPn(
     vboxVDbgBreakFv();
 
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
-    NTSTATUS Status;
-    PVBOXWDDM_RECOMMENDVIDPN pVidPnInfo = pRecommendFunctionalVidPnArg->PrivateDriverDataSize >= sizeof (VBOXWDDM_RECOMMENDVIDPN) ?
-            (PVBOXWDDM_RECOMMENDVIDPN)pRecommendFunctionalVidPnArg->pPrivateDriverData : NULL;
-    PVBOXWDDM_VIDEOMODES_INFO pInfos = VBoxWddmUpdateAllVideoModesInfos(pDevExt);
-    int i;
 
-    for (i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+    if (pRecommendFunctionalVidPnArg->PrivateDriverDataSize != sizeof (VBOXWDDM_RECOMMENDVIDPN))
     {
-        /* @todo: check that we actually need the current source->target */
-        PVBOXWDDM_VIDEOMODES_INFO pInfo = &pInfos[i];
-        VIDEO_MODE_INFORMATION *pModeInfo = &pInfo->aModes[pInfo->iPreferredMode];
-#if 0
-        D3DKMDT_2DREGION Resolution;
-        Resolution.cx = pModeInfo->VisScreenWidth;
-        Resolution.cy = pModeInfo->VisScreenHeight;
-        Status = vboxVidPnCheckAddMonitorModes(pDevExt, i, D3DKMDT_MCO_DRIVER, &Resolution, 1, 0);
-#else
-        Status = vboxVidPnCheckAddMonitorModes(pDevExt, i, D3DKMDT_MCO_DRIVER, pInfo->aResolutions, pInfo->cResolutions, pInfo->iPreferredResolution);
-#endif
-        if (Status != STATUS_SUCCESS)
-        {
-            WARN(("vboxVidPnCheckAddMonitorModes failed Status(0x%x)", Status));
-            break;
-        }
+        WARN(("invalid size"));
+        return STATUS_INVALID_PARAMETER;
     }
 
-    const DXGK_VIDPN_INTERFACE* pVidPnInterface = NULL;
-    Status = pDevExt->u.primary.DxgkInterface.DxgkCbQueryVidPnInterface(pRecommendFunctionalVidPnArg->hRecommendedFunctionalVidPn, DXGK_VIDPN_INTERFACE_VERSION_V1, &pVidPnInterface);
+    VBOXWDDM_RECOMMENDVIDPN *pData = (VBOXWDDM_RECOMMENDVIDPN*)pRecommendFunctionalVidPnArg->pPrivateDriverData;
+    Assert(pData);
+
+    NTSTATUS Status = VBoxVidPnRecommendFunctional(pDevExt, pRecommendFunctionalVidPnArg->hRecommendedFunctionalVidPn, pData);
     if (!NT_SUCCESS(Status))
     {
-        WARN(("DxgkCbQueryVidPnInterface failed Status(0x%x)", Status));
+        WARN(("VBoxVidPnRecommendFunctional failed %#x", Status));
         return Status;
     }
 
-    for (i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        Status = vboxVidPnPathAdd(pRecommendFunctionalVidPnArg->hRecommendedFunctionalVidPn, pVidPnInterface, i, i);
-        if (!NT_SUCCESS(Status))
-        {
-            WARN(("vboxVidPnPathAdd failed Status(0x%x)", Status));
-            return Status;
-        }
-    }
-
-    VIDEO_MODE_INFORMATION *pResModes = NULL;
-    uint32_t cResModes = 0;
-
-    for (i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        D3DKMDT_2DREGION Resolution;
-        PVBOXWDDM_VIDEOMODES_INFO pInfo = &pInfos[i];
-        VIDEO_MODE_INFORMATION *pModeInfo = &pInfo->aModes[pInfo->iPreferredMode];
-        Resolution.cx = pModeInfo->VisScreenWidth;
-        Resolution.cy = pModeInfo->VisScreenHeight;
-        int32_t iPreferableResMode;
-        uint32_t cActualResModes;
-
-        Status = VBoxWddmGetModesForResolution(pInfo->aModes, pInfo->cModes, pInfo->iPreferredMode, &Resolution,
-                pResModes, cResModes, &cActualResModes, &iPreferableResMode);
-        Assert(Status == STATUS_SUCCESS || Status == STATUS_BUFFER_TOO_SMALL);
-        if (Status == STATUS_BUFFER_TOO_SMALL)
-        {
-            Assert(cResModes < cActualResModes);
-            if (pResModes)
-            {
-                vboxWddmMemFree(pResModes);
-            }
-            pResModes = (VIDEO_MODE_INFORMATION*)vboxWddmMemAllocZero(sizeof (*pResModes) * cActualResModes);
-            Assert(pResModes);
-            if (!pResModes)
-            {
-                Status = STATUS_NO_MEMORY;
-                break;
-            }
-            cResModes = cActualResModes;
-            Status = VBoxWddmGetModesForResolution(pInfo->aModes, pInfo->cModes, pInfo->iPreferredMode, &Resolution,
-                                pResModes, cResModes, &cActualResModes, &iPreferableResMode);
-            Assert(Status == STATUS_SUCCESS);
-            if (Status != STATUS_SUCCESS)
-                break;
-        }
-        else if (Status != STATUS_SUCCESS)
-            break;
-
-        Assert(iPreferableResMode >= 0);
-        Assert(cActualResModes);
-
-        Status = vboxVidPnCreatePopulateVidPnPathFromLegacy(pDevExt, pRecommendFunctionalVidPnArg->hRecommendedFunctionalVidPn, pVidPnInterface,
-                        pResModes, cActualResModes, iPreferableResMode,
-                        &Resolution, 1 /* cResolutions */,
-                        i, i); /* srcId, tgtId */
-        Assert(Status == STATUS_SUCCESS);
-        if (Status != STATUS_SUCCESS)
-        {
-            LOGREL(("vboxVidPnCreatePopulateVidPnFromLegacy failed Status(0x%x)", Status));
-            break;
-        }
-    }
-
-    if(pResModes)
-        vboxWddmMemFree(pResModes);
-
-#ifdef VBOXWDDM_DEBUG_VIDPN
-        vboxVidPnDumpVidPn("\n>>>>Recommended VidPN: >>>>", pDevExt, pRecommendFunctionalVidPnArg->hRecommendedFunctionalVidPn, pVidPnInterface, "<<<<<<<<<<<<<<<<<<<<\n");
-#endif
-
     LOGF(("LEAVE, status(0x%x), context(0x%x)", Status, hAdapter));
 
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -4617,68 +5114,17 @@ DxgkDdiEnumVidPnCofuncModality(
     vboxVDbgBreakFv();
 
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
-    const DXGK_VIDPN_INTERFACE* pVidPnInterface = NULL;
-    NTSTATUS Status = pDevExt->u.primary.DxgkInterface.DxgkCbQueryVidPnInterface(pEnumCofuncModalityArg->hConstrainingVidPn, DXGK_VIDPN_INTERFACE_VERSION_V1, &pVidPnInterface);
+
+    NTSTATUS Status = VBoxVidPnCofuncModality(pDevExt, pEnumCofuncModalityArg->hConstrainingVidPn, pEnumCofuncModalityArg->EnumPivotType, &pEnumCofuncModalityArg->EnumPivot);
     if (!NT_SUCCESS(Status))
     {
-        WARN(("DxgkCbQueryVidPnInterface failed Status()0x%x\n", Status));
+        WARN(("VBoxVidPnCofuncModality failed Status(%#x)\n", Status));
         return Status;
     }
-#ifdef VBOXWDDM_DEBUG_VIDPN
-    vboxVidPnDumpCofuncModalityArg(">>>>MODALITY Args: ", pEnumCofuncModalityArg, "\n");
-    vboxVidPnDumpVidPn(">>>>MODALITY VidPN (IN) : >>>>\n", pDevExt, pEnumCofuncModalityArg->hConstrainingVidPn, pVidPnInterface, "<<<<<<<<<<<<<<<<<<<<\n");
-#endif
-
-    D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology;
-    const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface;
-    Status = pVidPnInterface->pfnGetTopology(pEnumCofuncModalityArg->hConstrainingVidPn, &hVidPnTopology, &pVidPnTopologyInterface);
-    Assert(Status == STATUS_SUCCESS);
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("pfnGetTopology failed Status()0x%x\n", Status));
-        return Status;
-    }
-
-    VBOXVIDPNPATHITEM aItems[VBOX_VIDEO_MAX_SCREENS];
-    Status = vboxVidPnCheckTopology(hVidPnTopology, pVidPnTopologyInterface, FALSE /* fBreakOnDisabled */, RT_ELEMENTS(aItems), aItems, NULL /* *pfDisabledFound */);
-    Assert(Status == STATUS_SUCCESS);
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("vboxVidPnCheckTopology failed Status()0x%x\n", Status));
-        return Status;
-    }
-
-    VBOXVIDPNCOFUNCMODALITY CbContext = {0};
-    CbContext.pDevExt = pDevExt;
-    CbContext.pVidPnInterface = pVidPnInterface;
-    CbContext.pEnumCofuncModalityArg = pEnumCofuncModalityArg;
-    CbContext.pInfos = VBoxWddmGetAllVideoModesInfos(pDevExt);
-    CbContext.cPathInfos = RT_ELEMENTS(aItems);
-    CbContext.apPathInfos = aItems;
-
-    Status = vboxVidPnEnumPaths(hVidPnTopology, pVidPnTopologyInterface,
-                    vboxVidPnCofuncModalityPathEnum, &CbContext);
-    Assert(Status == STATUS_SUCCESS);
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("vboxVidPnEnumPaths failed Status()0x%x\n", Status));
-        return Status;
-    }
-
-    Status = CbContext.Status;
-    if (!NT_SUCCESS(Status))
-    {
-        WARN(("vboxVidPnCofuncModalityPathEnum failed Status()0x%x\n", Status));
-        return Status;
-    }
-
-#ifdef VBOXWDDM_DEBUG_VIDPN
-        vboxVidPnDumpVidPn("\n>>>>MODALITY VidPN (OUT) : >>>>\n", pDevExt, pEnumCofuncModalityArg->hConstrainingVidPn, pVidPnInterface, "<<<<<<<<<<<<<<<<<<<<\n\n");
-#endif
 
     LOGF(("LEAVE, status(0x%x), context(0x%x)", Status, hAdapter));
 
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -4695,21 +5141,17 @@ DxgkDdiSetVidPnSourceAddress(
 
     LOGF(("ENTER, context(0x%x)", hAdapter));
 
-    NTSTATUS Status = STATUS_SUCCESS;
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
-    Assert((UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays > pSetVidPnSourceAddress->VidPnSourceId);
-
-    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[pSetVidPnSourceAddress->VidPnSourceId];
-    Status= vboxWddmDisplaySettingsQueryPos(pDevExt, pSetVidPnSourceAddress->VidPnSourceId, &pSource->VScreenPos);
-    Assert(Status == STATUS_SUCCESS);
-    Status = STATUS_SUCCESS;
-
     if ((UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays <= pSetVidPnSourceAddress->VidPnSourceId)
     {
         WARN(("invalid VidPnSourceId (%d), for displays(%d)", pSetVidPnSourceAddress->VidPnSourceId, VBoxCommonFromDeviceExt(pDevExt)->cDisplays));
         return STATUS_INVALID_PARAMETER;
     }
 
+    vboxWddmDisplaySettingsCheckPos(pDevExt, pSetVidPnSourceAddress->VidPnSourceId);
+
+    NTSTATUS Status = STATUS_SUCCESS;
+    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[pSetVidPnSourceAddress->VidPnSourceId];
     PVBOXWDDM_ALLOCATION pAllocation;
     Assert(pSetVidPnSourceAddress->hAllocation);
     Assert(pSetVidPnSourceAddress->hAllocation || pSource->pPrimaryAllocation);
@@ -4718,7 +5160,7 @@ DxgkDdiSetVidPnSourceAddress(
     if (pSetVidPnSourceAddress->hAllocation)
     {
         pAllocation = (PVBOXWDDM_ALLOCATION)pSetVidPnSourceAddress->hAllocation;
-        vboxWddmAssignPrimary(pDevExt, pSource, pAllocation, pSetVidPnSourceAddress->VidPnSourceId);
+        vboxWddmAssignPrimary(pSource, pAllocation, pSetVidPnSourceAddress->VidPnSourceId);
     }
     else
         pAllocation = pSource->pPrimaryAllocation;
@@ -4746,29 +5188,9 @@ DxgkDdiSetVidPnSourceAddress(
                                                     pSetVidPnSourceAddress->PrimaryAddress.QuadPart);
     }
 
-    pSource->bGhSynced = FALSE; /* force guest->host notification */
+    pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_LOCATION;
 
-    if (pSource->bVisible
-#if defined(VBOXWDDM_RENDER_FROM_SHADOW)
-            && (
-# if defined(VBOX_WDDM_WIN8)
-            g_VBoxDisplayOnly
-                    ||
-# endif
-                    pDevExt->fRenderToShadowDisabled
-                    /* only update for UMD_RC_GENERIC when resolution changes to inform host about it
-                     * otherwise keep host using the same VRAM, containing a valid data before the switch (i.e. SHADOW) */
-                    || (pAllocation
-                            && pAllocation->enmType == VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC
-                            && (pAllocation->AllocData.SurfDesc.width != pSource->AllocData.SurfDesc.width
-                                    || pAllocation->AllocData.SurfDesc.height != pSource->AllocData.SurfDesc.height)
-                            )
-                    )
-#endif
-            )
-    {
-        vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
-    }
+    vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
 
     LOGF(("LEAVE, status(0x%x), context(0x%x)", Status, hAdapter));
 
@@ -4789,14 +5211,7 @@ DxgkDdiSetVidPnSourceVisibility(
 
     LOGF(("ENTER, context(0x%x)", hAdapter));
 
-    NTSTATUS Status = STATUS_SUCCESS;
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
-    Assert((UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays > pSetVidPnSourceVisibility->VidPnSourceId);
-
-    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[pSetVidPnSourceVisibility->VidPnSourceId];
-    Status= vboxWddmDisplaySettingsQueryPos(pDevExt, pSetVidPnSourceVisibility->VidPnSourceId, &pSource->VScreenPos);
-    Assert(Status == STATUS_SUCCESS);
-    Status = STATUS_SUCCESS;
 
     if ((UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays <= pSetVidPnSourceVisibility->VidPnSourceId)
     {
@@ -4804,51 +5219,31 @@ DxgkDdiSetVidPnSourceVisibility(
         return STATUS_INVALID_PARAMETER;
     }
 
+    vboxWddmDisplaySettingsCheckPos(pDevExt, pSetVidPnSourceVisibility->VidPnSourceId);
+
+    NTSTATUS Status = STATUS_SUCCESS;
+    PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[pSetVidPnSourceVisibility->VidPnSourceId];
     PVBOXWDDM_ALLOCATION pAllocation = pSource->pPrimaryAllocation;
     if (pAllocation)
+    {
+        Assert(pAllocation->bVisible == pSource->bVisible);
         pAllocation->bVisible = pSetVidPnSourceVisibility->Visible;
+    }
 
     if (pSource->bVisible != pSetVidPnSourceVisibility->Visible)
     {
         pSource->bVisible = pSetVidPnSourceVisibility->Visible;
-        if (pSource->bVisible
-#if defined(VBOXWDDM_RENDER_FROM_SHADOW)
-                && (
-# if defined(VBOX_WDDM_WIN8)
-                g_VBoxDisplayOnly
-                        ||
-# endif
-                        pDevExt->fRenderToShadowDisabled
-                        /* only update for UMD_RC_GENERIC when resolution changes to inform host about it
-                         * otherwise keep host using the same VRAM, containing a valid data before the switch (i.e. SHADOW) */
-                        || (pAllocation
-                                && pAllocation->enmType == VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC
-                                && (pAllocation->AllocData.SurfDesc.width != pSource->AllocData.SurfDesc.width
-                                        || pAllocation->AllocData.SurfDesc.height != pSource->AllocData.SurfDesc.height)
-                                )
-                        )
-#endif
-                )
-        {
-            vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
-        }
+//        pSource->u8SyncState &= ~VBOXWDDM_HGSYNC_F_SYNCED_VISIBILITY;
+//        if (pDevExt->fCmdVbvaEnabled || pSource->bVisible)
+//        {
+//            vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
+//        }
     }
 
     LOGF(("LEAVE, status(0x%x), context(0x%x)", Status, hAdapter));
 
     return Status;
 }
-
-static DECLCALLBACK(BOOLEAN) vboxWddmVidPnCleanupTargetsForSrcEnum(PVBOXMP_DEVEXT pDevExt, D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology, const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface,
-        CONST D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId, SIZE_T cTgtPaths, PVOID pContext)
-{
-    AssertRelease(VidPnTargetId < RT_ELEMENTS(pDevExt->aTargets));
-    PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[VidPnTargetId];
-    /* see comments in DxgkDdiCommitVidPn */
-    pTarget->HeightVisible = 0;
-    return TRUE;
-}
-
 
 NTSTATUS
 APIENTRY
@@ -4860,23 +5255,31 @@ DxgkDdiCommitVidPn(
     LOGF(("ENTER, context(0x%x)", hAdapter));
 
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
-    uint32_t au32OldHeightVisible[VBOX_VIDEO_MAX_SCREENS];
     NTSTATUS Status;
 
     vboxVDbgBreakFv();
 
-    /* we first store the current visible height for each target (monitor)
-     * and then we will zero up it for targets either for the given source
-     * (in case pCommitVidPnArg->AffectedVidPnSourceId != D3DDDI_ID_ALL)
-     * or all targets otherwize.
-     * In the end we will match the old and new visible height for all targets to see if
-     * some of them become inactivated and hide them accordingly,
-     * or we will restore the old height values on failure */
-    for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
+    VBOXWDDM_SOURCE *paSources = (VBOXWDDM_SOURCE*)RTMemAlloc(sizeof (VBOXWDDM_SOURCE) * VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+    if (!paSources)
     {
-        PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
-        au32OldHeightVisible[i] = pTarget->HeightVisible;
+        WARN(("RTMemAlloc failed"));
+        return STATUS_NO_MEMORY;
     }
+
+    VBOXWDDM_TARGET *paTargets = (VBOXWDDM_TARGET*)RTMemAlloc(sizeof (VBOXWDDM_TARGET) * VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+    if (!paTargets)
+    {
+        WARN(("RTMemAlloc failed"));
+        RTMemFree(paSources);
+        return STATUS_NO_MEMORY;
+    }
+
+    VBoxVidPnSourcesInit(paSources, VBoxCommonFromDeviceExt(pDevExt)->cDisplays, VBOXWDDM_HGSYNC_F_SYNCED_ALL);
+
+    VBoxVidPnTargetsInit(paTargets, VBoxCommonFromDeviceExt(pDevExt)->cDisplays, VBOXWDDM_HGSYNC_F_SYNCED_ALL);
+
+    VBoxVidPnSourcesCopy(paSources, pDevExt->aSources, VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+    VBoxVidPnTargetsCopy(paTargets, pDevExt->aTargets, VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
 
     do {
         const DXGK_VIDPN_INTERFACE* pVidPnInterface = NULL;
@@ -4893,136 +5296,42 @@ DxgkDdiCommitVidPn(
 
         if (pCommitVidPnArg->AffectedVidPnSourceId != D3DDDI_ID_ALL)
         {
-            /* there is not VidPn on driver start, check that */
-            if (pDevExt->u.primary.hCommittedVidPn)
-            {
-                D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology;
-                CONST DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface;
-                const DXGK_VIDPN_INTERFACE* pOldVidPnInterface = NULL;
-                Status = pDevExt->u.primary.DxgkInterface.DxgkCbQueryVidPnInterface(pDevExt->u.primary.hCommittedVidPn, DXGK_VIDPN_INTERFACE_VERSION_V1, &pOldVidPnInterface);
-                if (!NT_SUCCESS(Status))
-                {
-                    WARN(("DxgkCbQueryVidPnInterface for current VidPn failed Status 0x%x", Status));
-                    break;
-                }
-
-                Status = pOldVidPnInterface->pfnGetTopology(pDevExt->u.primary.hCommittedVidPn, &hVidPnTopology, &pVidPnTopologyInterface);
-                if (!NT_SUCCESS(Status))
-                {
-                    WARN(("pfnGetTopology for current VidPn failed Status 0x%x", Status));
-                    break;
-                }
-
-                /* this will zero up visible height for all targets of the fiven source, see above comment */
-                Status = vboxVidPnEnumTargetsForSource(pDevExt, hVidPnTopology, pVidPnTopologyInterface,
-                                pCommitVidPnArg->AffectedVidPnSourceId,
-                                vboxWddmVidPnCleanupTargetsForSrcEnum, NULL);
-                if (Status == STATUS_GRAPHICS_SOURCE_NOT_IN_TOPOLOGY)
-                    Status = STATUS_SUCCESS;
-
-                if (!NT_SUCCESS(Status))
-                {
-                    WARN(("vboxVidPnEnumTargetsForSource for current VidPn failed Status 0x%x", Status));
-                    break;
-                }
-            }
-
-            Status = vboxVidPnCommitSourceModeForSrcId(
+            Status = VBoxVidPnCommitSourceModeForSrcId(
                     pDevExt,
                     pCommitVidPnArg->hFunctionalVidPn, pVidPnInterface,
-                    pCommitVidPnArg->AffectedVidPnSourceId, (PVBOXWDDM_ALLOCATION)pCommitVidPnArg->hPrimaryAllocation);
+                    (PVBOXWDDM_ALLOCATION)pCommitVidPnArg->hPrimaryAllocation,
+                    pCommitVidPnArg->AffectedVidPnSourceId, paSources, paTargets);
             if (!NT_SUCCESS(Status))
             {
-                WARN(("vboxVidPnCommitSourceModeForSrcId for current VidPn failed Status 0x%x", Status));
+                WARN(("VBoxVidPnCommitSourceModeForSrcId for current VidPn failed Status 0x%x", Status));
                 break;
             }
         }
         else
         {
-            for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-            {
-                PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
-                /* see above comment */
-                pTarget->HeightVisible = 0;
-            }
-
-            /* clear all current primaries */
-            for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-            {
-                vboxWddmAssignPrimary(pDevExt, &pDevExt->aSources[i], NULL, i);
-            }
-
-            D3DKMDT_HVIDPNTOPOLOGY hVidPnTopology;
-            const DXGK_VIDPNTOPOLOGY_INTERFACE* pVidPnTopologyInterface;
-            Status = pVidPnInterface->pfnGetTopology(pCommitVidPnArg->hFunctionalVidPn, &hVidPnTopology, &pVidPnTopologyInterface);
+            Status = VBoxVidPnCommitAll(pDevExt, pCommitVidPnArg->hFunctionalVidPn, pVidPnInterface,
+                    (PVBOXWDDM_ALLOCATION)pCommitVidPnArg->hPrimaryAllocation,
+                    paSources, paTargets);
             if (!NT_SUCCESS(Status))
             {
-                WARN(("pfnGetTopology failed Status 0x%x", Status));
-                break;
-            }
-
-            VBOXVIDPNCOMMIT CbContext = {0};
-            CbContext.pDevExt = pDevExt;
-            CbContext.pVidPnInterface = pVidPnInterface;
-            CbContext.pCommitVidPnArg = pCommitVidPnArg;
-            Status = vboxVidPnEnumPaths(hVidPnTopology, pVidPnTopologyInterface,
-                        vboxVidPnCommitPathEnum, &CbContext);
-            if (!NT_SUCCESS(Status))
-            {
-                WARN(("vboxVidPnEnumPaths failed Status 0x%x", Status));
-                break;
-            }
-
-            Status = CbContext.Status;
-            if (!NT_SUCCESS(Status))
-            {
-                WARN(("vboxVidPnCommitPathEnum failed Status 0x%x", Status));
+                WARN(("VBoxVidPnCommitAll for current VidPn failed Status 0x%x", Status));
                 break;
             }
         }
 
         Assert(NT_SUCCESS(Status));
         pDevExt->u.primary.hCommittedVidPn = pCommitVidPnArg->hFunctionalVidPn;
+        VBoxVidPnSourcesCopy(pDevExt->aSources, paSources, VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+        VBoxVidPnTargetsCopy(pDevExt->aTargets, paTargets, VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
 
-        for (int i = 1; /* <- never try to hide a primary monitor */
-                i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-        {
-            PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
-            if (!pTarget->HeightVisible && !!au32OldHeightVisible[i])
-            {
-                /* the target was previously visible */
-                vboxWddmGhDisplayHideScreen(pDevExt, i);
-            }
-        }
-
-#ifdef VBOX_WDDM_WIN8
-        if (g_VBoxDisplayOnly)
-        {
-            for (int i = 0; /* <- never try to hide a primary monitor */
-                    i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-            {
-                PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[i];
-                if (pSource->bVisible && !pSource->bGhSynced)
-                {
-                    vboxWddmGhDisplayCheckSetInfoFromSource(pDevExt, pSource);
-                }
-            }
-        }
-#endif
-        LOGF(("LEAVE, SUCCESS status(0x%x), context(0x%x)", Status, hAdapter));
-
-        return Status;
+        vboxWddmGhDisplayCheckSetInfo(pDevExt);
     } while (0);
 
-    AssertRelease(!NT_SUCCESS(Status));
-    /* failure branch restore original visible height values, see comments above */
-    for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
-    {
-        PVBOXWDDM_TARGET pTarget = &pDevExt->aTargets[i];
-        pTarget->HeightVisible = au32OldHeightVisible[i];
-    }
+    RTMemFree(paSources);
+    RTMemFree(paTargets);
 
-    LOGF(("LEAVE, !!FAILURE!! status(0x%x), context(0x%x)", Status, hAdapter));
+    LOGF(("LEAVE, status(0x%x), context(0x%x)", Status, hAdapter));
+
     return Status;
 }
 
@@ -5054,45 +5363,18 @@ DxgkDdiRecommendMonitorModes(
     vboxVDbgBreakFv();
 
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
-    NTSTATUS Status;
-    PVBOXWDDM_VIDEOMODES_INFO pInfo = VBoxWddmGetVideoModesInfo(pDevExt, pRecommendMonitorModesArg->VideoPresentTargetId);
-    PVIDEO_MODE_INFORMATION pPreferredMode = &pInfo->aModes[pInfo->iPreferredMode];
 
-
-    for (uint32_t i = 0; i < pInfo->cResolutions; i++)
+    NTSTATUS Status = VBoxVidPnRecommendMonitorModes(pDevExt, pRecommendMonitorModesArg->VideoPresentTargetId,
+            pRecommendMonitorModesArg->hMonitorSourceModeSet, pRecommendMonitorModesArg->pMonitorSourceModeSetInterface);
+    if (!NT_SUCCESS(Status))
     {
-        D3DKMDT_MONITOR_SOURCE_MODE * pNewMonitorSourceModeInfo;
-        Status = pRecommendMonitorModesArg->pMonitorSourceModeSetInterface->pfnCreateNewModeInfo(
-                    pRecommendMonitorModesArg->hMonitorSourceModeSet, &pNewMonitorSourceModeInfo);
-        Assert(Status == STATUS_SUCCESS);
-        if (Status == STATUS_SUCCESS)
-        {
-            Status = vboxVidPnPopulateMonitorSourceModeInfoFromLegacy(pDevExt,
-                    pNewMonitorSourceModeInfo,
-                    &pInfo->aResolutions[i],
-                    D3DKMDT_MCO_DRIVER,
-                    pPreferredMode->VisScreenWidth == pInfo->aResolutions[i].cx
-                    && pPreferredMode->VisScreenHeight == pInfo->aResolutions[i].cy);
-            Assert(Status == STATUS_SUCCESS);
-            if (Status == STATUS_SUCCESS)
-            {
-                Status = pRecommendMonitorModesArg->pMonitorSourceModeSetInterface->pfnAddMode(
-                        pRecommendMonitorModesArg->hMonitorSourceModeSet, pNewMonitorSourceModeInfo);
-                Assert(Status == STATUS_SUCCESS);
-                if (Status == STATUS_SUCCESS)
-                    continue;
-            }
-
-            /* error has occurred, release & break */
-            pRecommendMonitorModesArg->pMonitorSourceModeSetInterface->pfnReleaseModeInfo(
-                    pRecommendMonitorModesArg->hMonitorSourceModeSet, pNewMonitorSourceModeInfo);
-            break;
-        }
+        WARN(("VBoxVidPnRecommendMonitorModes failed %#x", Status));
+        return Status;
     }
 
     LOGF(("LEAVE, hAdapter(0x%x)", hAdapter));
 
-    return Status;
+    return STATUS_SUCCESS;
 }
 
 NTSTATUS
@@ -5122,7 +5404,7 @@ DxgkDdiGetScanLine(
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
 
 #ifdef DEBUG_misha
-    RT_BREAKPOINT();
+//    RT_BREAKPOINT();
 #endif
 
     NTSTATUS Status = VBoxWddmSlGetScanLine(pDevExt, pGetScanLine);
@@ -5263,15 +5545,17 @@ DxgkDdiOpenAllocation(
     PVBOXWDDM_RCINFO pRcInfo = NULL;
     if (pOpenAllocation->PrivateDriverSize)
     {
-        Assert(pOpenAllocation->PrivateDriverSize == sizeof (VBOXWDDM_RCINFO));
         Assert(pOpenAllocation->pPrivateDriverData);
-        if (pOpenAllocation->PrivateDriverSize >= sizeof (VBOXWDDM_RCINFO))
+        if (pOpenAllocation->PrivateDriverSize == sizeof (VBOXWDDM_RCINFO))
         {
             pRcInfo = (PVBOXWDDM_RCINFO)pOpenAllocation->pPrivateDriverData;
             Assert(pRcInfo->cAllocInfos == pOpenAllocation->NumAllocations);
         }
         else
+        {
+            WARN(("Invalid PrivateDriverSize %d", pOpenAllocation->PrivateDriverSize));
             Status = STATUS_INVALID_PARAMETER;
+        }
     }
 
     if (Status == STATUS_SUCCESS)
@@ -5407,114 +5691,290 @@ DxgkDdiCloseAllocation(
     return STATUS_SUCCESS;
 }
 
-NTSTATUS
+#ifdef VBOX_WITH_CROGL
+static NTSTATUS
 APIENTRY
-DxgkDdiRender(
+DxgkDdiRenderNew(
     CONST HANDLE  hContext,
     DXGKARG_RENDER  *pRender)
 {
 //    LOGF(("ENTER, hContext(0x%x)", hContext));
+    vboxVDbgBreakF();
 
-    Assert(pRender->DmaBufferPrivateDataSize >= sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR));
-    if (pRender->DmaBufferPrivateDataSize < sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR))
+    if (pRender->DmaBufferPrivateDataSize < sizeof (VBOXCMDVBVA_HDR))
     {
-        LOGREL(("Present->DmaBufferPrivateDataSize(%d) < sizeof VBOXWDDM_DMA_PRIVATEDATA_BASEHDR (%d)",
-                pRender->DmaBufferPrivateDataSize , sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR)));
+        WARN(("pRender->DmaBufferPrivateDataSize(%d) < sizeof VBOXCMDVBVA_HDR (%d)",
+                pRender->DmaBufferPrivateDataSize , sizeof (VBOXCMDVBVA_HDR)));
         /* @todo: can this actually happen? what status to return? */
         return STATUS_INVALID_PARAMETER;
     }
     if (pRender->CommandLength < sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR))
     {
-        Assert(0);
-        LOGREL(("Present->DmaBufferPrivateDataSize(%d) < sizeof VBOXWDDM_DMA_PRIVATEDATA_BASEHDR (%d)",
+        WARN(("Present->DmaBufferPrivateDataSize(%d) < sizeof VBOXWDDM_DMA_PRIVATEDATA_BASEHDR (%d)",
                 pRender->DmaBufferPrivateDataSize , sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR)));
-        /* @todo: can this actually happen? what status to return? */
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (pRender->PatchLocationListOutSize < pRender->AllocationListSize)
+    {
+        WARN(("pRender->PatchLocationListOutSize(%d) < pRender->AllocationListSize(%d)",
+                pRender->PatchLocationListOutSize, pRender->AllocationListSize));
         return STATUS_INVALID_PARAMETER;
     }
 
-    PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR pInputHdr = (PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR)pRender->pCommand;
     NTSTATUS Status = STATUS_SUCCESS;
-    switch (pInputHdr->enmCmd)
+
+    __try
     {
-        case VBOXVDMACMD_TYPE_CHROMIUM_CMD:
+        PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR pInputHdr = (PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR)pRender->pCommand;
+        NTSTATUS Status = STATUS_SUCCESS;
+
+        uint32_t cbBuffer = 0;
+        uint32_t cbPrivateData = 0;
+        uint32_t cbCmd = 0;
+        VBOXCMDVBVA_HDR* pCmd = (VBOXCMDVBVA_HDR*)pRender->pDmaBufferPrivateData;
+
+        switch (pInputHdr->enmCmd)
         {
-            if (pRender->CommandLength != RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD, aBufInfos[pInputHdr->u32CmdReserved]))
+            case VBOXVDMACMD_TYPE_CHROMIUM_CMD:
             {
-                Assert(0);
-                return STATUS_INVALID_PARAMETER;
+                if (pRender->AllocationListSize >= (UINT32_MAX - RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD, aBufInfos))/ RT_SIZEOFMEMB(VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD, aBufInfos[0]))
+                {
+                    WARN(("Invalid AllocationListSize %d", pRender->AllocationListSize));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (pRender->CommandLength != RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD, aBufInfos[pRender->AllocationListSize]))
+                {
+                    WARN(("pRender->CommandLength (%d) != RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD, aBufInfos[pRender->AllocationListSize](%d)",
+                            pRender->CommandLength, RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD, aBufInfos[pRender->AllocationListSize])));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (pRender->AllocationListSize >= (UINT32_MAX - RT_OFFSETOF(VBOXCMDVBVA_CRCMD, Cmd.aBuffers))/ RT_SIZEOFMEMB(VBOXCMDVBVA_CRCMD, Cmd.aBuffers[0]))
+                {
+                    WARN(("Invalid AllocationListSize %d", pRender->AllocationListSize));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+                cbPrivateData = RT_OFFSETOF(VBOXCMDVBVA_CRCMD, Cmd.aBuffers[pRender->AllocationListSize]);
+
+                if (pRender->DmaBufferPrivateDataSize < cbPrivateData)
+                {
+                    WARN(("pRender->DmaBufferPrivateDataSize too small %d, requested %d", pRender->DmaBufferPrivateDataSize, cbPrivateData));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (pRender->DmaSize < cbBuffer)
+                {
+                    WARN(("dma buffer %d too small", pRender->DmaSize));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+    //            Assert(pRender->PatchLocationListOutSize == pRender->AllocationListSize);
+
+                if (pRender->PatchLocationListOutSize < pRender->AllocationListSize)
+                {
+                    WARN(("pRender->PatchLocationListOutSize too small %d, requested %d", pRender->PatchLocationListOutSize, pRender->AllocationListSize));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                PVBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD pUmCmd = (PVBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD)pInputHdr;
+                VBOXCMDVBVA_CRCMD* pChromiumCmd = (VBOXCMDVBVA_CRCMD*)pRender->pDmaBufferPrivateData;
+
+                PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)hContext;
+                PVBOXWDDM_DEVICE pDevice = pContext->pDevice;
+                PVBOXMP_DEVEXT pDevExt = pDevice->pAdapter;
+
+                pChromiumCmd->Hdr.u8OpCode = VBOXCMDVBVA_OPTYPE_CRCMD;
+                pChromiumCmd->Hdr.u8Flags = 0;
+                pChromiumCmd->Cmd.cBuffers = pRender->AllocationListSize;
+
+                DXGK_ALLOCATIONLIST *pAllocationList = pRender->pAllocationList;
+                VBOXCMDVBVA_CRCMD_BUFFER *pSubmInfo = pChromiumCmd->Cmd.aBuffers;
+                PVBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO pSubmUmInfo = pUmCmd->aBufInfos;
+
+                for (UINT i = 0; i < pRender->AllocationListSize; ++i, ++pRender->pPatchLocationListOut, ++pAllocationList, ++pSubmInfo, ++pSubmUmInfo)
+                {
+                    VBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO SubmUmInfo = *pSubmUmInfo;
+                    D3DDDI_PATCHLOCATIONLIST* pPLL = pRender->pPatchLocationListOut;
+                    PVBOXWDDM_ALLOCATION pAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pAllocationList);
+                    if (SubmUmInfo.offData >= pAlloc->AllocData.SurfDesc.cbSize
+                            || SubmUmInfo.cbData > pAlloc->AllocData.SurfDesc.cbSize
+                            || SubmUmInfo.offData + SubmUmInfo.cbData > pAlloc->AllocData.SurfDesc.cbSize)
+                    {
+                        WARN(("invalid data"));
+                        return STATUS_INVALID_PARAMETER;
+                    }
+
+                    memset(pPLL, 0, sizeof (*pPLL));
+
+                    if (pAllocationList->SegmentId)
+                        pSubmInfo->offBuffer = pAllocationList->PhysicalAddress.LowPart + SubmUmInfo.offData;
+
+                    pSubmInfo->cbBuffer = SubmUmInfo.cbData;
+
+                    pPLL->AllocationIndex = i;
+                    pPLL->PatchOffset = RT_OFFSETOF(VBOXCMDVBVA_CRCMD, Cmd.aBuffers[i].offBuffer);
+                    pPLL->AllocationOffset = SubmUmInfo.offData;
+                }
+
+                cbCmd = cbPrivateData;
+
+                break;
             }
-            PVBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD pUmCmd = (PVBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD)pInputHdr;
-            PVBOXWDDM_DMA_PRIVATEDATA_CHROMIUM_CMD pChromiumCmd = (PVBOXWDDM_DMA_PRIVATEDATA_CHROMIUM_CMD)pRender->pDmaBufferPrivateData;
-            const uint32_t cbDma = RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_CHROMIUM_CMD, aBufInfos[pInputHdr->u32CmdReserved]);
-            if (pRender->DmaBufferPrivateDataSize < cbDma)
+            case VBOXVDMACMD_TYPE_DMA_NOP:
             {
-                Assert(0);
-                return STATUS_INVALID_PARAMETER;
+                cbPrivateData = sizeof (VBOXCMDVBVA_HDR);
+                cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+
+                if (pRender->DmaBufferPrivateDataSize < cbPrivateData)
+                {
+                    WARN(("pRender->DmaBufferPrivateDataSize too small %d, requested %d", pRender->DmaBufferPrivateDataSize, cbPrivateData));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                if (pRender->DmaSize < cbBuffer)
+                {
+                    WARN(("dma buffer %d too small", pRender->DmaSize));
+                    return STATUS_INVALID_PARAMETER;
+                }
+
+                pCmd->u8OpCode = VBOXCMDVBVA_OPTYPE_NOPCMD;
+                pCmd->u8Flags = 0;
+
+                for (UINT i = 0; i < pRender->AllocationListSize; ++i, ++pRender->pPatchLocationListOut)
+                {
+                    D3DDDI_PATCHLOCATIONLIST* pPLL = pRender->pPatchLocationListOut;
+                    memset(pPLL, 0, sizeof (*pPLL));
+                    pPLL->AllocationIndex = i;
+                    pPLL->PatchOffset = ~0UL;
+                    pPLL->AllocationOffset = 0;
+                }
+
+                cbCmd = cbPrivateData;
+
+                break;
             }
-            if (pRender->DmaSize < cbDma)
-            {
-                Assert(0);
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            if (pRender->PatchLocationListOutSize < pInputHdr->u32CmdReserved)
-            {
-                Assert(0);
-                return STATUS_INVALID_PARAMETER;
-            }
-
-            PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)hContext;
-            PVBOXWDDM_DEVICE pDevice = pContext->pDevice;
-            PVBOXMP_DEVEXT pDevExt = pDevice->pAdapter;
-
-            pChromiumCmd->Base.enmCmd = VBOXVDMACMD_TYPE_CHROMIUM_CMD;
-            pChromiumCmd->Base.u32CmdReserved = pInputHdr->u32CmdReserved;
-            pRender->pDmaBufferPrivateData = (uint8_t*)pRender->pDmaBufferPrivateData + cbDma;
-            pRender->pDmaBuffer = ((uint8_t*)pRender->pDmaBuffer) + cbDma;
-            D3DDDI_PATCHLOCATIONLIST* pPLL = pRender->pPatchLocationListOut;
-            memset(pPLL, 0, sizeof (*pPLL) * pChromiumCmd->Base.u32CmdReserved);
-            pRender->pPatchLocationListOut += pInputHdr->u32CmdReserved;
-            PVBOXWDDM_UHGSMI_BUFFER_SUBMIT_INFO pSubmInfo = pChromiumCmd->aBufInfos;
-            PVBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO pSubmUmInfo = pUmCmd->aBufInfos;
-            DXGK_ALLOCATIONLIST *pAllocationList = pRender->pAllocationList;
-            for (UINT i = 0; i < pChromiumCmd->Base.u32CmdReserved; ++i)
-            {
-                PVBOXWDDM_ALLOCATION pAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pAllocationList);
-                vboxWddmPopulateDmaAllocInfoWithOffset(&pSubmInfo->Alloc, pAlloc, pAllocationList, pSubmUmInfo->offData);
-
-                pSubmInfo->cbData = pSubmUmInfo->cbData;
-                pSubmInfo->bDoNotSignalCompletion = pSubmUmInfo->bDoNotSignalCompletion;
-
-                pPLL->AllocationIndex = i;
-                pPLL->PatchOffset = RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_CHROMIUM_CMD, aBufInfos[i].Alloc);
-                pPLL->AllocationOffset = pSubmUmInfo->offData;
-
-                ++pPLL;
-                ++pSubmInfo;
-                ++pSubmUmInfo;
-                ++pAllocationList;
-            }
-
-            break;
+            default:
+             {
+                 WARN(("unsupported render command %d", pInputHdr->enmCmd));
+                 return STATUS_INVALID_PARAMETER;
+             }
         }
-        case VBOXVDMACMD_TYPE_DMA_NOP:
-        {
-            PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR pPrivateData = (PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR)pRender->pDmaBufferPrivateData;
-            pPrivateData->enmCmd = VBOXVDMACMD_TYPE_DMA_NOP;
 
-            pRender->pDmaBufferPrivateData = (uint8_t*)pRender->pDmaBufferPrivateData + sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR);
-            pRender->pDmaBuffer = ((uint8_t*)pRender->pDmaBuffer) + pRender->CommandLength;
-            Assert(pRender->DmaSize >= pRender->CommandLength);
-            Assert(pRender->PatchLocationListOutSize >= pRender->PatchLocationListInSize);
-            UINT cbPLL = pRender->PatchLocationListInSize * sizeof (pRender->pPatchLocationListOut[0]);
-            memcpy(pRender->pPatchLocationListOut, pRender->pPatchLocationListIn, cbPLL);
-            pRender->pPatchLocationListOut += pRender->PatchLocationListInSize;
-            break;
-        }
-        default:
-            return STATUS_INVALID_PARAMETER;
+        Assert(cbPrivateData >= sizeof (VBOXCMDVBVA_HDR));
+        pRender->pDmaBufferPrivateData = ((uint8_t*)pRender->pDmaBufferPrivateData) + cbPrivateData;
+        pRender->pDmaBuffer = ((uint8_t*)pRender->pDmaBuffer) + cbBuffer;
+
+        pCmd->u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+        pCmd->u2.complexCmdEl.u16CbCmdHost = cbPrivateData;
+        pCmd->u2.complexCmdEl.u16CbCmdGuest = cbBuffer;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        Status = STATUS_INVALID_PARAMETER;
+        WARN(("invalid parameter"));
+    }
+//    LOGF(("LEAVE, hContext(0x%x)", hContext));
+
+    return Status;
+}
+#endif
+
+static void vboxWddmPatchLocationInit(D3DDDI_PATCHLOCATIONLIST *pPatchLocationListOut, UINT idx, UINT offPatch)
+{
+    memset(pPatchLocationListOut, 0, sizeof (*pPatchLocationListOut));
+    pPatchLocationListOut->AllocationIndex = idx;
+    pPatchLocationListOut->PatchOffset = offPatch;
+}
+
+static NTSTATUS
+APIENTRY
+DxgkDdiRenderLegacy(
+    CONST HANDLE  hContext,
+    DXGKARG_RENDER  *pRender)
+{
+//    LOGF(("ENTER, hContext(0x%x)", hContext));
+
+    if (pRender->DmaBufferPrivateDataSize < sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR))
+    {
+        WARN(("Present->DmaBufferPrivateDataSize(%d) < sizeof VBOXWDDM_DMA_PRIVATEDATA_BASEHDR (%d)",
+                pRender->DmaBufferPrivateDataSize , sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR)));
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (pRender->CommandLength < sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR))
+    {
+        WARN(("Present->DmaBufferPrivateDataSize(%d) < sizeof VBOXWDDM_DMA_PRIVATEDATA_BASEHDR (%d)",
+                pRender->DmaBufferPrivateDataSize , sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR)));
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (pRender->DmaSize < pRender->CommandLength)
+    {
+        WARN(("pRender->DmaSize(%d) < pRender->CommandLength(%d)",
+                pRender->DmaSize, pRender->CommandLength));
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (pRender->PatchLocationListOutSize < pRender->PatchLocationListInSize)
+    {
+        WARN(("pRender->PatchLocationListOutSize(%d) < pRender->PatchLocationListInSize(%d)",
+                pRender->PatchLocationListOutSize, pRender->PatchLocationListInSize));
+        return STATUS_INVALID_PARAMETER;
+    }
+    if (pRender->AllocationListSize != pRender->PatchLocationListInSize)
+    {
+        WARN(("pRender->AllocationListSize(%d) != pRender->PatchLocationListInSize(%d)",
+                pRender->AllocationListSize, pRender->PatchLocationListInSize));
+        return STATUS_INVALID_PARAMETER;
     }
 
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    __try
+    {
+        PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR pInputHdr = (PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR)pRender->pCommand;
+        switch (pInputHdr->enmCmd)
+        {
+            case VBOXVDMACMD_TYPE_DMA_NOP:
+            {
+                PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR pPrivateData = (PVBOXWDDM_DMA_PRIVATEDATA_BASEHDR)pRender->pDmaBufferPrivateData;
+                pPrivateData->enmCmd = VBOXVDMACMD_TYPE_DMA_NOP;
+                pRender->pDmaBufferPrivateData = (uint8_t*)pRender->pDmaBufferPrivateData + sizeof (VBOXWDDM_DMA_PRIVATEDATA_BASEHDR);
+                pRender->pDmaBuffer = ((uint8_t*)pRender->pDmaBuffer) + pRender->CommandLength;
+                for (UINT i = 0; i < pRender->PatchLocationListInSize; ++i)
+                {
+                    UINT offPatch = i * 4;
+                    if (offPatch + 4 > pRender->CommandLength)
+                    {
+                        WARN(("wrong offPatch"));
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    if (offPatch != pRender->pPatchLocationListIn[i].PatchOffset)
+                    {
+                        WARN(("wrong PatchOffset"));
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    if (i != pRender->pPatchLocationListIn[i].AllocationIndex)
+                    {
+                        WARN(("wrong AllocationIndex"));
+                        return STATUS_INVALID_PARAMETER;
+                    }
+                    vboxWddmPatchLocationInit(&pRender->pPatchLocationListOut[i], i, offPatch);
+                }
+                break;
+            }
+            default:
+            {
+                WARN(("unsupported command %d", pInputHdr->enmCmd));
+                return STATUS_INVALID_PARAMETER;
+            }
+        }
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        Status = STATUS_INVALID_PARAMETER;
+        WARN(("invalid parameter"));
+    }
 //    LOGF(("LEAVE, hContext(0x%x)", hContext));
 
     return Status;
@@ -5556,12 +6016,411 @@ DECLINLINE(BOOLEAN) vboxWddmPixFormatConversionSupported(D3DDDIFORMAT From, D3DD
     return From == To;
 }
 
+#ifdef VBOX_WITH_CROGL
+
+DECLINLINE(void) VBoxCVDdiFillAllocDescHostID(VBOXCMDVBVA_ALLOCDESC *pDesc, const VBOXWDDM_ALLOCATION *pAlloc)
+{
+    pDesc->Info.u.id = pAlloc->AllocData.hostID;
+    /* we do not care about wdth and height, zero them up though */
+    pDesc->u16Width = 0;
+    pDesc->u16Height = 0;
+}
+
+DECLINLINE(void) VBoxCVDdiFillAllocInfoOffVRAM(VBOXCMDVBVA_ALLOCINFO *pInfo, const DXGK_ALLOCATIONLIST *pList)
+{
+    Assert(!pList->PhysicalAddress.HighPart);
+    pInfo->u.offVRAM = pList->PhysicalAddress.LowPart;
+}
+
+DECLINLINE(void) VBoxCVDdiFillAllocDescOffVRAM(VBOXCMDVBVA_ALLOCDESC *pDesc, const VBOXWDDM_ALLOCATION *pAlloc, const DXGK_ALLOCATIONLIST *pList)
+{
+    VBoxCVDdiFillAllocInfoOffVRAM(&pDesc->Info, pList);
+    pDesc->u16Width = (uint16_t)pAlloc->AllocData.SurfDesc.width;
+    pDesc->u16Height = (uint16_t)pAlloc->AllocData.SurfDesc.height;
+}
+
+static NTSTATUS vboxWddmCmCmdBltIdNotIdFill(VBOXCMDVBVA_BLT_HDR *pBltHdr, const VBOXWDDM_ALLOCATION *pIdAlloc, const VBOXWDDM_ALLOCATION *pAlloc, const DXGK_ALLOCATIONLIST *pList,
+                            BOOLEAN fToId, uint32_t *poffPatch, uint32_t *poffRects)
+{
+    uint8_t fFlags;
+    Assert(pIdAlloc->AllocData.hostID);
+    Assert(!pAlloc->AllocData.hostID);
+
+    D3DDDIFORMAT enmFormat = vboxWddmFmtNoAlphaFormat(pAlloc->AllocData.SurfDesc.format);
+    if (enmFormat != D3DDDIFMT_X8R8G8B8)
+    {
+        WARN(("unsupported format"));
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (pIdAlloc->AllocData.SurfDesc.width == pAlloc->AllocData.SurfDesc.width
+            && pIdAlloc->AllocData.SurfDesc.height == pAlloc->AllocData.SurfDesc.height)
+    {
+        fFlags = VBOXCMDVBVA_OPF_BLT_TYPE_OFFPRIMSZFMT_OR_ID | VBOXCMDVBVA_OPF_OPERAND2_ISID;
+        VBOXCMDVBVA_BLT_OFFPRIMSZFMT_OR_ID *pBlt = (VBOXCMDVBVA_BLT_OFFPRIMSZFMT_OR_ID*)pBltHdr;
+        VBoxCVDdiFillAllocInfoOffVRAM(&pBlt->alloc, pList);
+        pBlt->id = pIdAlloc->AllocData.hostID;
+        *poffPatch = RT_OFFSETOF(VBOXCMDVBVA_BLT_OFFPRIMSZFMT_OR_ID, alloc.u.offVRAM);
+        *poffRects = RT_OFFSETOF(VBOXCMDVBVA_BLT_OFFPRIMSZFMT_OR_ID, aRects);
+    }
+    else
+    {
+        fFlags = VBOXCMDVBVA_OPF_BLT_TYPE_SAMEDIM_A8R8G8B8 | VBOXCMDVBVA_OPF_OPERAND2_ISID;
+        VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8 *pBlt = (VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8*)pBltHdr;
+        VBoxCVDdiFillAllocDescOffVRAM(&pBlt->alloc1, pAlloc, pList);
+        pBlt->info2.u.id = pIdAlloc->AllocData.hostID;
+        *poffPatch = RT_OFFSETOF(VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8, alloc1.Info.u.offVRAM);
+        *poffRects = RT_OFFSETOF(VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8, aRects);
+    }
+
+    if (fToId)
+        fFlags |= VBOXCMDVBVA_OPF_BLT_DIR_IN_2;
+
+    pBltHdr->Hdr.u8Flags |= fFlags;
+    return STATUS_SUCCESS;
+}
+
+static NTSTATUS vboxWddmCmCmdBltNotIdNotIdFill(VBOXCMDVBVA_BLT_HDR *pBltHdr, const VBOXWDDM_ALLOCATION *pSrcAlloc, const DXGK_ALLOCATIONLIST *pSrcList,
+        const VBOXWDDM_ALLOCATION *pDstAlloc, const DXGK_ALLOCATIONLIST *pDstList,
+                            uint32_t *poffSrcPatch, uint32_t *poffDstPatch, uint32_t *poffRects)
+{
+    if (pDstAlloc->AllocData.SurfDesc.width == pSrcAlloc->AllocData.SurfDesc.width
+            && pDstAlloc->AllocData.SurfDesc.height == pSrcAlloc->AllocData.SurfDesc.height)
+    {
+        pBltHdr->Hdr.u8Flags |= VBOXCMDVBVA_OPF_BLT_TYPE_SAMEDIM_A8R8G8B8;
+        VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8 *pBlt = (VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8*)pBltHdr;
+        VBoxCVDdiFillAllocDescOffVRAM(&pBlt->alloc1, pDstAlloc, pDstList);
+        VBoxCVDdiFillAllocInfoOffVRAM(&pBlt->info2, pSrcList);
+        *poffDstPatch = RT_OFFSETOF(VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8, alloc1.Info.u.offVRAM);
+        *poffSrcPatch = RT_OFFSETOF(VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8, info2.u.offVRAM);
+        *poffRects = RT_OFFSETOF(VBOXCMDVBVA_BLT_SAMEDIM_A8R8G8B8, aRects);
+    }
+    else
+    {
+        pBltHdr->Hdr.u8Flags |= VBOXCMDVBVA_OPF_BLT_TYPE_GENERIC_A8R8G8B8;
+        VBOXCMDVBVA_BLT_GENERIC_A8R8G8B8 *pBlt = (VBOXCMDVBVA_BLT_GENERIC_A8R8G8B8*)pBltHdr;
+        VBoxCVDdiFillAllocDescOffVRAM(&pBlt->alloc1, pDstAlloc, pDstList);
+        VBoxCVDdiFillAllocDescOffVRAM(&pBlt->alloc2, pSrcAlloc, pSrcList);
+        *poffDstPatch = RT_OFFSETOF(VBOXCMDVBVA_BLT_GENERIC_A8R8G8B8, alloc1.Info.u.offVRAM);
+        *poffSrcPatch = RT_OFFSETOF(VBOXCMDVBVA_BLT_GENERIC_A8R8G8B8, alloc2.Info.u.offVRAM);
+        *poffRects = RT_OFFSETOF(VBOXCMDVBVA_BLT_GENERIC_A8R8G8B8, aRects);
+    }
+    return STATUS_SUCCESS;
+}
 /**
  * DxgkDdiPresent
  */
-NTSTATUS
+static NTSTATUS
 APIENTRY
-DxgkDdiPresent(
+DxgkDdiPresentNew(
+    CONST HANDLE  hContext,
+    DXGKARG_PRESENT  *pPresent)
+{
+    PAGED_CODE();
+
+//    LOGF(("ENTER, hContext(0x%x)", hContext));
+
+    vboxVDbgBreakFv();
+
+    PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)hContext;
+    PVBOXWDDM_DEVICE pDevice = pContext->pDevice;
+    PVBOXMP_DEVEXT pDevExt = pDevice->pAdapter;
+    uint32_t cbBuffer = 0;
+    uint32_t cbPrivateData = 0;
+
+    if (pPresent->DmaBufferPrivateDataSize < sizeof (VBOXCMDVBVA_HDR))
+    {
+        WARN(("Present->DmaBufferPrivateDataSize(%d) < sizeof VBOXCMDVBVA_HDR (%d)", pPresent->DmaBufferPrivateDataSize , sizeof (VBOXCMDVBVA_HDR)));
+        /* @todo: can this actually happen? what status to return? */
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    VBOXCMDVBVA_HDR* pHdr = (VBOXCMDVBVA_HDR*)pPresent->pDmaBufferPrivateData;
+
+    UINT u32SrcPatch = ~0UL;
+    UINT u32DstPatch = ~0UL;
+    BOOLEAN fPatchSrc = false;
+    BOOLEAN fPatchDst = false;
+    VBOXCMDVBVA_RECT *paRects = NULL;
+
+    if (pPresent->DmaSize < VBOXWDDM_DUMMY_DMABUFFER_SIZE)
+    {
+        WARN(("Present->DmaSize(%d) < VBOXWDDM_DUMMY_DMABUFFER_SIZE (%d)", pPresent->DmaSize , VBOXWDDM_DUMMY_DMABUFFER_SIZE));
+        /* @todo: can this actually happen? what status to return? */
+        return STATUS_INVALID_PARAMETER;
+    }
+
+    if (pPresent->Flags.Blt)
+    {
+        Assert(pPresent->Flags.Value == 1); /* only Blt is set, we do not support anything else for now */
+        DXGK_ALLOCATIONLIST *pSrc =  &pPresent->pAllocationList[DXGK_PRESENT_SOURCE_INDEX];
+        DXGK_ALLOCATIONLIST *pDst =  &pPresent->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX];
+        PVBOXWDDM_ALLOCATION pSrcAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pSrc);
+        if (!pSrcAlloc)
+        {
+            /* this should not happen actually */
+            WARN(("failed to get Src Allocation info for hDeviceSpecificAllocation(0x%x)",pSrc->hDeviceSpecificAllocation));
+            return STATUS_INVALID_HANDLE;
+        }
+
+        PVBOXWDDM_ALLOCATION pDstAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pDst);
+        if (!pDstAlloc)
+        {
+            /* this should not happen actually */
+            WARN(("failed to get Dst Allocation info for hDeviceSpecificAllocation(0x%x)",pDst->hDeviceSpecificAllocation));
+            return STATUS_INVALID_HANDLE;
+        }
+
+        fPatchSrc = TRUE;
+        fPatchDst = TRUE;
+
+        BOOLEAN fDstPrimary = (!pDstAlloc->AllocData.hostID
+                && pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE
+                && pDstAlloc->bAssigned);
+        BOOLEAN fSrcPrimary = (!pSrcAlloc->AllocData.hostID
+                && pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE
+                && pSrcAlloc->bAssigned);
+
+        pHdr->u8OpCode = VBOXCMDVBVA_OPTYPE_BLT;
+        pHdr->u8Flags = 0;
+
+        VBOXCMDVBVA_BLT_HDR *pBltHdr = (VBOXCMDVBVA_BLT_HDR*)pHdr;
+        pBltHdr->Pos.x = (int16_t)(pPresent->DstRect.left - pPresent->SrcRect.left);
+        pBltHdr->Pos.y = (int16_t)(pPresent->DstRect.top - pPresent->SrcRect.top);
+
+        if (pPresent->DmaBufferPrivateDataSize < VBOXCMDVBVA_SIZEOF_BLTSTRUCT_MAX)
+        {
+            WARN(("Present->DmaBufferPrivateDataSize(%d) < (%d)", pPresent->DmaBufferPrivateDataSize , VBOXCMDVBVA_SIZEOF_BLTSTRUCT_MAX));
+            /* @todo: can this actually happen? what status to return? */
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        if (pSrcAlloc->AllocData.hostID)
+        {
+            if (pDstAlloc->AllocData.hostID)
+            {
+                VBOXCMDVBVA_BLT_OFFPRIMSZFMT_OR_ID *pBlt = (VBOXCMDVBVA_BLT_OFFPRIMSZFMT_OR_ID*)pBltHdr;
+                pHdr->u8Flags |= VBOXCMDVBVA_OPF_BLT_TYPE_OFFPRIMSZFMT_OR_ID | VBOXCMDVBVA_OPF_OPERAND1_ISID | VBOXCMDVBVA_OPF_OPERAND2_ISID;
+                pBlt->id = pDstAlloc->AllocData.hostID;
+                pBlt->alloc.u.id = pSrcAlloc->AllocData.hostID;
+                cbPrivateData = RT_OFFSETOF(VBOXCMDVBVA_BLT_OFFPRIMSZFMT_OR_ID, aRects);
+            }
+            else
+            {
+                NTSTATUS Status = vboxWddmCmCmdBltIdNotIdFill(pBltHdr, pSrcAlloc, pDstAlloc, pDst, FALSE, &u32DstPatch, &cbPrivateData);
+                if (!NT_SUCCESS(Status))
+                {
+                    WARN(("vboxWddmCmCmdBltIdNotIdFill failed, %#x", Status));
+                    return Status;
+                }
+            }
+        }
+        else
+        {
+            if (pDstAlloc->AllocData.hostID)
+            {
+                NTSTATUS Status = vboxWddmCmCmdBltIdNotIdFill(pBltHdr, pDstAlloc, pSrcAlloc, pSrc, TRUE, &u32SrcPatch, &cbPrivateData);
+                if (!NT_SUCCESS(Status))
+                {
+                    WARN(("vboxWddmCmCmdBltIdNotIdFill failed, %#x", Status));
+                    return Status;
+                }
+            }
+            else
+            {
+                vboxWddmCmCmdBltNotIdNotIdFill(pBltHdr, pSrcAlloc, pSrc, pDstAlloc, pDst, &u32SrcPatch, &u32DstPatch, &cbPrivateData);
+            }
+        }
+
+        if (fDstPrimary)
+            pBltHdr->Hdr.u.u8PrimaryID = (uint8_t)pDstAlloc->AllocData.SurfDesc.VidPnSourceId;
+        else if (fSrcPrimary)
+        {
+            pBltHdr->Hdr.u8Flags |= VBOXCMDVBVA_OPF_PRIMARY_HINT_SRC;
+            pBltHdr->Hdr.u.u8PrimaryID = (uint8_t)pSrcAlloc->AllocData.SurfDesc.VidPnSourceId;
+        }
+        else
+            pBltHdr->Hdr.u.u8PrimaryID = 0xff;
+
+        paRects = (VBOXCMDVBVA_RECT*)(((uint8_t*)pPresent->pDmaBufferPrivateData) + cbPrivateData);
+        cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+    }
+    else if (pPresent->Flags.Flip)
+    {
+        if (pPresent->DmaBufferPrivateDataSize < sizeof (VBOXCMDVBVA_FLIP))
+        {
+            WARN(("Present->DmaBufferPrivateDataSize(%d) < sizeof VBOXCMDVBVA_FLIP (%d)", pPresent->DmaBufferPrivateDataSize , sizeof (VBOXCMDVBVA_FLIP)));
+            /* @todo: can this actually happen? what status to return? */
+            return STATUS_INVALID_PARAMETER;
+        }
+
+        fPatchSrc = TRUE;
+
+        Assert(pPresent->Flags.Value == 4); /* only Blt is set, we do not support anything else for now */
+        Assert(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D);
+        DXGK_ALLOCATIONLIST *pSrc =  &pPresent->pAllocationList[DXGK_PRESENT_SOURCE_INDEX];
+        PVBOXWDDM_ALLOCATION pSrcAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pSrc);
+
+        if (!pSrcAlloc)
+        {
+            /* this should not happen actually */
+            WARN(("failed to get pSrc Allocation info for hDeviceSpecificAllocation(0x%x)",pSrc->hDeviceSpecificAllocation));
+            return STATUS_INVALID_HANDLE;
+        }
+
+        Assert(pDevExt->cContexts3D);
+        pHdr->u8OpCode = VBOXCMDVBVA_OPTYPE_FLIP;
+        Assert((UINT)pSrcAlloc->AllocData.SurfDesc.VidPnSourceId < (UINT)VBoxCommonFromDeviceExt(pDevExt)->cDisplays);
+        pHdr->u.u8PrimaryID = pSrcAlloc->AllocData.SurfDesc.VidPnSourceId;
+        VBOXCMDVBVA_FLIP *pFlip = (VBOXCMDVBVA_FLIP*)pHdr;
+
+        if (pSrcAlloc->AllocData.hostID)
+        {
+            pHdr->u8Flags = VBOXCMDVBVA_OPF_OPERAND1_ISID;
+            pFlip->src.u.id = pSrcAlloc->AllocData.hostID;
+        }
+        else
+        {
+            WARN(("VBoxCVDdiFillAllocInfo reported no host id for flip!"));
+            pHdr->u8Flags = 0;
+            VBoxCVDdiFillAllocInfoOffVRAM(&pFlip->src, pSrc);
+            u32SrcPatch = RT_OFFSETOF(VBOXCMDVBVA_FLIP, src.u.offVRAM);
+        }
+
+        cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+        cbPrivateData = sizeof (*pFlip);
+    }
+    else if (pPresent->Flags.ColorFill)
+    {
+#ifdef DEBUG_misha
+        WARN(("test color fill!"));
+#endif
+
+        fPatchDst = TRUE;
+
+        Assert(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_CUSTOM_2D);
+        Assert(pPresent->Flags.Value == 2); /* only ColorFill is set, we do not support anything else for now */
+        DXGK_ALLOCATIONLIST *pDst =  &pPresent->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX];
+        PVBOXWDDM_ALLOCATION pDstAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pDst);
+        if (!pDstAlloc)
+        {
+            /* this should not happen actually */
+            WARN(("failed to get pDst Allocation info for hDeviceSpecificAllocation(0x%x)",pDst->hDeviceSpecificAllocation));
+            return STATUS_INVALID_HANDLE;
+        }
+
+        if (pDstAlloc->AllocData.hostID)
+        {
+            WARN(("color fill present for texid not supported"));
+            pHdr->u8OpCode = VBOXCMDVBVA_OPTYPE_NOPCMD;
+            pHdr->u8Flags = 0;
+            pHdr->u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+            cbPrivateData = sizeof (VBOXCMDVBVA_HDR);
+            cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+        }
+        else
+        {
+            BOOLEAN fDstPrimary = (!pDstAlloc->AllocData.hostID
+                    && pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE
+                    && pDstAlloc->bAssigned);
+
+            if (pPresent->DmaBufferPrivateDataSize < VBOXCMDVBVA_SIZEOF_CLRFILLSTRUCT_MAX)
+            {
+                WARN(("Present->DmaBufferPrivateDataSize(%d) < VBOXCMDVBVA_SIZEOF_CLRFILLSTRUCT_MAX (%d)", pPresent->DmaBufferPrivateDataSize , VBOXCMDVBVA_SIZEOF_CLRFILLSTRUCT_MAX));
+                /* @todo: can this actually happen? what status to return? */
+                return STATUS_INVALID_PARAMETER;
+            }
+
+            VBOXCMDVBVA_CLRFILL_HDR *pClrFillHdr = (VBOXCMDVBVA_CLRFILL_HDR*)pHdr;
+
+            pClrFillHdr->Hdr.u8OpCode = VBOXCMDVBVA_OPTYPE_CLRFILL;
+            pClrFillHdr->u32Color = pPresent->Color;
+
+            pHdr->u8Flags = VBOXCMDVBVA_OPF_CLRFILL_TYPE_GENERIC_A8R8G8B8;
+            pHdr->u.u8PrimaryID = 0;
+
+            VBOXCMDVBVA_CLRFILL_GENERIC_A8R8G8B8 *pCFill = (VBOXCMDVBVA_CLRFILL_GENERIC_A8R8G8B8*)pHdr;
+            VBoxCVDdiFillAllocInfoOffVRAM(&pCFill->dst.Info, pDst);
+            pCFill->dst.u16Width = (uint16_t)pDstAlloc->AllocData.SurfDesc.width;
+            pCFill->dst.u16Height = (uint16_t)pDstAlloc->AllocData.SurfDesc.height;
+            u32DstPatch = RT_OFFSETOF(VBOXCMDVBVA_CLRFILL_GENERIC_A8R8G8B8, dst.Info.u.offVRAM);
+            paRects = pCFill->aRects;
+            cbPrivateData = RT_OFFSETOF(VBOXCMDVBVA_CLRFILL_GENERIC_A8R8G8B8, aRects);
+
+            if (fDstPrimary)
+                pCFill->Hdr.Hdr.u.u8PrimaryID = (uint8_t)pDstAlloc->AllocData.SurfDesc.VidPnSourceId;
+            else
+                pCFill->Hdr.Hdr.u.u8PrimaryID = 0xff;
+
+            cbBuffer = VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+        }
+    }
+    else
+    {
+        WARN(("cmd NOT IMPLEMENTED!! Flags(0x%x)", pPresent->Flags.Value));
+        return STATUS_NOT_SUPPORTED;
+    }
+
+    if (paRects)
+    {
+        uint32_t cbMaxRects = pPresent->DmaBufferPrivateDataSize - cbPrivateData;
+        UINT iStartRect = pPresent->MultipassOffset;
+        UINT cMaxRects = cbMaxRects / sizeof (VBOXCMDVBVA_RECT);
+        Assert(pPresent->SubRectCnt > iStartRect);
+        UINT cRects = pPresent->SubRectCnt - iStartRect;
+        if (cRects > cMaxRects)
+        {
+            pPresent->MultipassOffset += cMaxRects;
+            cRects = cMaxRects;
+        }
+        else
+            pPresent->MultipassOffset = 0;
+
+        Assert(cRects);
+        const RECT *paDstSubRects = &pPresent->pDstSubRects[iStartRect];
+        VBoxCVDdiPackRects(paRects, paDstSubRects, cRects);
+        cbPrivateData += (cRects * sizeof (VBOXCMDVBVA_RECT));
+    }
+
+    if (fPatchSrc)
+    {
+        memset(pPresent->pPatchLocationListOut, 0, sizeof (D3DDDI_PATCHLOCATIONLIST));
+        pPresent->pPatchLocationListOut->PatchOffset = u32SrcPatch;
+        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
+        ++pPresent->pPatchLocationListOut;
+    }
+
+    if (fPatchDst)
+    {
+        memset(pPresent->pPatchLocationListOut, 0, sizeof (D3DDDI_PATCHLOCATIONLIST));
+        pPresent->pPatchLocationListOut->PatchOffset = u32DstPatch;
+        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
+        ++pPresent->pPatchLocationListOut;
+    }
+
+    pHdr->u8State = VBOXCMDVBVA_STATE_SUBMITTED;
+
+    pHdr->u2.complexCmdEl.u16CbCmdHost = cbPrivateData;
+    pHdr->u2.complexCmdEl.u16CbCmdGuest = cbBuffer;
+
+    Assert(cbBuffer);
+    Assert(cbPrivateData);
+    Assert(cbPrivateData >= sizeof (VBOXCMDVBVA_HDR));
+    pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + cbBuffer;
+    pPresent->pDmaBufferPrivateData = ((uint8_t*)pPresent->pDmaBufferPrivateData) + cbPrivateData;
+
+    if (pPresent->MultipassOffset)
+        return STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
+    return STATUS_SUCCESS;
+}
+#endif
+
+/**
+ * DxgkDdiPresent
+ */
+static NTSTATUS
+APIENTRY
+DxgkDdiPresentLegacy(
     CONST HANDLE  hContext,
     DXGKARG_PRESENT  *pPresent)
 {
@@ -5586,9 +6445,7 @@ DxgkDdiPresent(
 
     PVBOXWDDM_DMA_PRIVATEDATA_PRESENTHDR pPrivateData = (PVBOXWDDM_DMA_PRIVATEDATA_PRESENTHDR)pPresent->pDmaBufferPrivateData;
     pPrivateData->BaseHdr.fFlags.Value = 0;
-    uint32_t cContexts3D = ASMAtomicReadU32(&pDevExt->cContexts3D);
     uint32_t cContexts2D = ASMAtomicReadU32(&pDevExt->cContexts2D);
-#define VBOXWDDM_DUMMY_DMABUFFER_SIZE sizeof(RECT)
 
     if (pPresent->Flags.Blt)
     {
@@ -5596,316 +6453,71 @@ DxgkDdiPresent(
         DXGK_ALLOCATIONLIST *pSrc =  &pPresent->pAllocationList[DXGK_PRESENT_SOURCE_INDEX];
         DXGK_ALLOCATIONLIST *pDst =  &pPresent->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX];
         PVBOXWDDM_ALLOCATION pSrcAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pSrc);
-        Assert(pSrcAlloc);
-        if (pSrcAlloc)
-        {
-            PVBOXWDDM_ALLOCATION pDstAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pDst);
-            Assert(pDstAlloc);
-            if (pDstAlloc)
-            {
-                do
-                {
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
-#if 0
-                    Assert (pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE);
-                    Assert (pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE);
-#else
-                    if (pContext->enmType == VBOXWDDM_CONTEXT_TYPE_SYSTEM)
-                    {
-                        Assert ((pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE
-                                && pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE)
-                                || (pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE
-                                        && pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE));
-                    }
-#endif
-                    /* issue VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE ONLY in case there are no 3D contexts currently
-                     * otherwise we would need info about all rects being updated on primary for visible rect reporting */
-                    if (!cContexts3D && !cContexts2D)
-                    {
-                        if (pDstAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE
-                                && pSrcAlloc->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHADOWSURFACE)
-                        {
-                            Assert(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_SYSTEM);
-                            Assert(pDstAlloc->bAssigned);
-                            if (pDstAlloc->bAssigned)
-                            {
-#ifdef VBOX_WITH_VIDEOHWACCEL
-//                                if (vboxVhwaHlpOverlayListIsEmpty(pDevExt, pDstAlloc->AllocData.SurfDesc.VidPnSourceId))
-#endif
-                                {
-                                    Assert(pPresent->DmaBufferPrivateDataSize >= sizeof (VBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY));
-                                    if (pPresent->DmaBufferPrivateDataSize >= sizeof (VBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY))
-                                    {
-                                        Assert(pPresent->SrcRect.left == pPresent->DstRect.left);
-                                        Assert(pPresent->SrcRect.right == pPresent->DstRect.right);
-                                        Assert(pPresent->SrcRect.top == pPresent->DstRect.top);
-                                        Assert(pPresent->SrcRect.bottom == pPresent->DstRect.bottom);
-                                        RECT rect;
-                                        if (pPresent->SubRectCnt)
-                                        {
-                                            rect = pPresent->pDstSubRects[0];
-                                            for (UINT i = 1; i < pPresent->SubRectCnt; ++i)
-                                            {
-                                                vboxWddmRectUnited(&rect, &rect, &pPresent->pDstSubRects[i]);
-                                            }
-                                        }
-                                        else
-                                            rect = pPresent->SrcRect;
-
-
-                                        pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + sizeof (VBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY);
-                                        pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + VBOXWDDM_DUMMY_DMABUFFER_SIZE;
-                                        Assert(pPresent->DmaSize >= VBOXWDDM_DUMMY_DMABUFFER_SIZE);
-                                        memset(pPresent->pPatchLocationListOut, 0, 2*sizeof (D3DDDI_PATCHLOCATIONLIST));
-                                        pPresent->pPatchLocationListOut->PatchOffset = 0;
-                                        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
-                                        ++pPresent->pPatchLocationListOut;
-                                        pPresent->pPatchLocationListOut->PatchOffset = 4;
-                                        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
-                                        ++pPresent->pPatchLocationListOut;
-
-                                        pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_SHADOW2PRIMARY;
-                                        PVBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY pS2P = (PVBOXWDDM_DMA_PRIVATEDATA_SHADOW2PRIMARY)pPrivateData;
-                                        /* we do not know the shadow address yet, perform dummy DMA cycle */
-                                        vboxWddmPopulateDmaAllocInfo(&pS2P->Shadow2Primary.ShadowAlloc, pSrcAlloc, pSrc);
-//                                        vboxWddmPopulateDmaAllocInfo(&pPrivateData->DstAllocInfo, pDstAlloc, pDst);
-                                        pS2P->Shadow2Primary.SrcRect = rect;
-                                        pS2P->Shadow2Primary.VidPnSourceId = pDstAlloc->AllocData.SurfDesc.VidPnSourceId;
-                                        break;
-                                    }
-                                    else
-                                    {
-                                        Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    /* we're here because this is NOT a shadow->primary update
-                     * or because there are d3d contexts and we need to report visible rects
-                     * or because we have overlays active and we need a special handling for primary */
-#endif
-                    UINT cbCmd = pPresent->DmaBufferPrivateDataSize;
-                    pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_BLT;
-
-                    PVBOXWDDM_DMA_PRIVATEDATA_BLT pBlt = (PVBOXWDDM_DMA_PRIVATEDATA_BLT)pPrivateData;
-
-                    vboxWddmPopulateDmaAllocInfo(&pBlt->Blt.SrcAlloc, pSrcAlloc, pSrc);
-                    vboxWddmPopulateDmaAllocInfo(&pBlt->Blt.DstAlloc, pDstAlloc, pDst);
-
-                    ASSERT_WARN(!pSrcAlloc->fRcFlags.SharedResource, ("Shared Allocatoin used in Present!"));
-
-                    pBlt->Blt.SrcRect = pPresent->SrcRect;
-                    pBlt->Blt.DstRects.ContextRect = pPresent->DstRect;
-                    pBlt->Blt.DstRects.UpdateRects.cRects = 0;
-                    UINT cbHead = RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_BLT, Blt.DstRects.UpdateRects.aRects[0]);
-                    Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
-                    UINT cbRects = (pPresent->SubRectCnt - pPresent->MultipassOffset) * sizeof (RECT);
-                    pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + cbHead + cbRects;
-                    pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + VBOXWDDM_DUMMY_DMABUFFER_SIZE;
-                    Assert(pPresent->DmaSize >= VBOXWDDM_DUMMY_DMABUFFER_SIZE);
-                    cbCmd -= cbHead;
-                    Assert(cbCmd < UINT32_MAX/2);
-                    Assert(cbCmd > sizeof (RECT));
-                    if (cbCmd >= cbRects)
-                    {
-                        cbCmd -= cbRects;
-                        memcpy(&pBlt->Blt.DstRects.UpdateRects.aRects[pPresent->MultipassOffset], pPresent->pDstSubRects, cbRects);
-                        pBlt->Blt.DstRects.UpdateRects.cRects += cbRects/sizeof (RECT);
-                    }
-                    else
-                    {
-                        UINT cbFitingRects = (cbCmd/sizeof (RECT)) * sizeof (RECT);
-                        Assert(cbFitingRects);
-                        memcpy(&pBlt->Blt.DstRects.UpdateRects.aRects[pPresent->MultipassOffset], pPresent->pDstSubRects, cbFitingRects);
-                        cbCmd -= cbFitingRects;
-                        pPresent->MultipassOffset += cbFitingRects/sizeof (RECT);
-                        pBlt->Blt.DstRects.UpdateRects.cRects += cbFitingRects/sizeof (RECT);
-                        Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
-                        Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
-                    }
-
-                    memset(pPresent->pPatchLocationListOut, 0, 2*sizeof (D3DDDI_PATCHLOCATIONLIST));
-                    pPresent->pPatchLocationListOut->PatchOffset = 0;
-                    pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
-                    ++pPresent->pPatchLocationListOut;
-                    pPresent->pPatchLocationListOut->PatchOffset = 4;
-                    pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
-                    ++pPresent->pPatchLocationListOut;
-
-                    break;
-#ifdef VBOX_WITH_VDMA
-                    cbCmd = pPresent->DmaSize;
-
-                    Assert(pPresent->SubRectCnt);
-                    UINT cmdSize = VBOXVDMACMD_DMA_PRESENT_BLT_SIZE(pPresent->SubRectCnt - pPresent->MultipassOffset);
-                    PVBOXVDMACMD pCmd = (PVBOXVDMACMD)pPresent->pDmaBuffer;
-                    pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + cmdSize;
-                    Assert(cbCmd >= VBOXVDMACMD_DMA_PRESENT_BLT_MINSIZE());
-                    if (cbCmd >= VBOXVDMACMD_DMA_PRESENT_BLT_MINSIZE())
-                    {
-                        if (vboxWddmPixFormatConversionSupported(pSrcAlloc->AllocData.SurfDesc.format, pDstAlloc->AllocData.SurfDesc.format))
-                        {
-                            memset(pPresent->pPatchLocationListOut, 0, 2*sizeof (D3DDDI_PATCHLOCATIONLIST));
-            //                        pPresent->pPatchLocationListOut->PatchOffset = 0;
-            //                        ++pPresent->pPatchLocationListOut;
-                            pPresent->pPatchLocationListOut->PatchOffset = VBOXVDMACMD_BODY_FIELD_OFFSET(UINT, VBOXVDMACMD_DMA_PRESENT_BLT, offSrc);
-                            pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
-                            ++pPresent->pPatchLocationListOut;
-                            pPresent->pPatchLocationListOut->PatchOffset = VBOXVDMACMD_BODY_FIELD_OFFSET(UINT, VBOXVDMACMD_DMA_PRESENT_BLT, offDst);
-                            pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
-                            ++pPresent->pPatchLocationListOut;
-
-                            pCmd->enmType = VBOXVDMACMD_TYPE_DMA_PRESENT_BLT;
-                            pCmd->u32CmdSpecific = 0;
-                            PVBOXVDMACMD_DMA_PRESENT_BLT pTransfer = VBOXVDMACMD_BODY(pCmd, VBOXVDMACMD_DMA_PRESENT_BLT);
-                            pTransfer->offSrc = (VBOXVIDEOOFFSET)pSrc->PhysicalAddress.QuadPart;
-                            pTransfer->offDst = (VBOXVIDEOOFFSET)pDst->PhysicalAddress.QuadPart;
-                            vboxWddmSurfDescFromAllocation(pSrcAlloc, &pTransfer->srcDesc);
-                            vboxWddmSurfDescFromAllocation(pDstAlloc, &pTransfer->dstDesc);
-                            vboxWddmRectlFromRect(&pPresent->SrcRect, &pTransfer->srcRectl);
-                            vboxWddmRectlFromRect(&pPresent->DstRect, &pTransfer->dstRectl);
-                            UINT i = 0;
-                            cbCmd -= VBOXVDMACMD_BODY_FIELD_OFFSET(UINT, VBOXVDMACMD_DMA_PRESENT_BLT, aDstSubRects);
-                            Assert(cbCmd >= sizeof (VBOXVDMA_RECTL));
-                            Assert(cbCmd < pPresent->DmaSize);
-                            for (; i < pPresent->SubRectCnt; ++i)
-                            {
-                                if (cbCmd < sizeof (VBOXVDMA_RECTL))
-                                {
-                                    Assert(i);
-                                    pPresent->MultipassOffset += i;
-                                    Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
-                                    break;
-                                }
-                                vboxWddmRectlFromRect(&pPresent->pDstSubRects[i + pPresent->MultipassOffset], &pTransfer->aDstSubRects[i]);
-                                cbCmd -= sizeof (VBOXVDMA_RECTL);
-                            }
-                            Assert(i);
-                            pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_BLT;
-                            pTransfer->cDstSubRects = i;
-                            pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + sizeof(VBOXWDDM_DMA_PRIVATEDATA_PRESENTHDR);
-                        }
-                        else
-                        {
-                            AssertBreakpoint();
-                            LOGREL(("unsupported format conversion from(%d) to (%d)",pSrcAlloc->AllocData.SurfDesc.format, pDstAlloc->AllocData.SurfDesc.format));
-                            Status = STATUS_GRAPHICS_CANNOTCOLORCONVERT;
-                        }
-                    }
-                    else
-                    {
-                        /* this should not happen actually */
-                        LOGREL(("cbCmd too small!! (%d)", cbCmd));
-                        Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
-                    }
-#endif
-                } while(0);
-            }
-            else
-            {
-                /* this should not happen actually */
-                LOGREL(("failed to get Dst Allocation info for hDeviceSpecificAllocation(0x%x)",pDst->hDeviceSpecificAllocation));
-                Status = STATUS_INVALID_HANDLE;
-            }
-        }
-        else
+        if (!pSrcAlloc)
         {
             /* this should not happen actually */
-            LOGREL(("failed to get Src Allocation info for hDeviceSpecificAllocation(0x%x)",pSrc->hDeviceSpecificAllocation));
+            WARN(("failed to get Src Allocation info for hDeviceSpecificAllocation(0x%x)",pSrc->hDeviceSpecificAllocation));
             Status = STATUS_INVALID_HANDLE;
+            goto done;
         }
-#if 0
-        UINT cbCmd = pPresent->DmaSize;
 
-        Assert(pPresent->SubRectCnt);
-        UINT cmdSize = VBOXVDMACMD_DMA_PRESENT_BLT_SIZE(pPresent->SubRectCnt - pPresent->MultipassOffset);
-        PVBOXVDMACMD pCmd = (PVBOXVDMACMD)pPresent->pDmaBuffer;
-        pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + cmdSize;
-        Assert(cbCmd >= VBOXVDMACMD_DMA_PRESENT_BLT_MINSIZE());
-        if (cbCmd >= VBOXVDMACMD_DMA_PRESENT_BLT_MINSIZE())
+        PVBOXWDDM_ALLOCATION pDstAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pDst);
+        if (!pDstAlloc)
         {
-            DXGK_ALLOCATIONLIST *pSrc =  &pPresent->pAllocationList[DXGK_PRESENT_SOURCE_INDEX];
-            DXGK_ALLOCATIONLIST *pDst =  &pPresent->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX];
-            PVBOXWDDM_ALLOCATION pSrcAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pSrc);
-            Assert(pSrcAlloc);
-            if (pSrcAlloc)
-            {
-                PVBOXWDDM_ALLOCATION pDstAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pDst);
-                Assert(pDstAlloc);
-                if (pDstAlloc)
-                {
-                    if (vboxWddmPixFormatConversionSupported(pSrcAlloc->AllocData.SurfDesc.format, pDstAlloc->AllocData.SurfDesc.format))
-                    {
-                        memset(pPresent->pPatchLocationListOut, 0, 2*sizeof (D3DDDI_PATCHLOCATIONLIST));
-//                        pPresent->pPatchLocationListOut->PatchOffset = 0;
-//                        ++pPresent->pPatchLocationListOut;
-                        pPresent->pPatchLocationListOut->PatchOffset = VBOXVDMACMD_BODY_FIELD_OFFSET(UINT, VBOXVDMACMD_DMA_PRESENT_BLT, offSrc);
-                        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
-                        ++pPresent->pPatchLocationListOut;
-                        pPresent->pPatchLocationListOut->PatchOffset = VBOXVDMACMD_BODY_FIELD_OFFSET(UINT, VBOXVDMACMD_DMA_PRESENT_BLT, offDst);
-                        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
-                        ++pPresent->pPatchLocationListOut;
+            /* this should not happen actually */
+            WARN(("failed to get Dst Allocation info for hDeviceSpecificAllocation(0x%x)",pDst->hDeviceSpecificAllocation));
+            Status = STATUS_INVALID_HANDLE;
+            goto done;
+        }
 
-                        pCmd->enmType = VBOXVDMACMD_TYPE_DMA_PRESENT_BLT;
-                        pCmd->u32CmdSpecific = 0;
-                        PVBOXVDMACMD_DMA_PRESENT_BLT pTransfer = VBOXVDMACMD_BODY(pCmd, VBOXVDMACMD_DMA_PRESENT_BLT);
-                        pTransfer->offSrc = (VBOXVIDEOOFFSET)pSrc->PhysicalAddress.QuadPart;
-                        pTransfer->offDst = (VBOXVIDEOOFFSET)pDst->PhysicalAddress.QuadPart;
-                        vboxWddmSurfDescFromAllocation(pSrcAlloc, &pTransfer->srcDesc);
-                        vboxWddmSurfDescFromAllocation(pDstAlloc, &pTransfer->dstDesc);
-                        vboxWddmRectlFromRect(&pPresent->SrcRect, &pTransfer->srcRectl);
-                        vboxWddmRectlFromRect(&pPresent->DstRect, &pTransfer->dstRectl);
-                        UINT i = 0;
-                        cbCmd -= VBOXVDMACMD_BODY_FIELD_OFFSET(UINT, VBOXVDMACMD_DMA_PRESENT_BLT, aDstSubRects);
-                        Assert(cbCmd >= sizeof (VBOXVDMA_RECTL));
-                        Assert(cbCmd < pPresent->DmaSize);
-                        for (; i < pPresent->SubRectCnt; ++i)
-                        {
-                            if (cbCmd < sizeof (VBOXVDMA_RECTL))
-                            {
-                                Assert(i);
-                                pPresent->MultipassOffset += i;
-                                Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
-                                break;
-                            }
-                            vboxWddmRectlFromRect(&pPresent->pDstSubRects[i + pPresent->MultipassOffset], &pTransfer->aDstSubRects[i]);
-                            cbCmd -= sizeof (VBOXVDMA_RECTL);
-                        }
-                        Assert(i);
-                        pTransfer->cDstSubRects = i;
-                        pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + sizeof(VBOXWDDM_DMA_PRIVATEDATA_HDR);
-                    }
-                    else
-                    {
-                        AssertBreakpoint();
-                        LOGREL(("unsupported format conversion from(%d) to (%d)",pSrcAlloc->AllocData.SurfDesc.format, pDstAlloc->AllocData.SurfDesc.format));
-                        Status = STATUS_GRAPHICS_CANNOTCOLORCONVERT;
-                    }
-                }
-                else
-                {
-                    /* this should not happen actually */
-                    LOGREL(("failed to get Dst Allocation info for hDeviceSpecificAllocation(0x%x)",pDst->hDeviceSpecificAllocation));
-                    Status = STATUS_INVALID_HANDLE;
-                }
-            }
-            else
-            {
-                /* this should not happen actually */
-                LOGREL(("failed to get Src Allocation info for hDeviceSpecificAllocation(0x%x)",pSrc->hDeviceSpecificAllocation));
-                Status = STATUS_INVALID_HANDLE;
-            }
+
+        UINT cbCmd = pPresent->DmaBufferPrivateDataSize;
+        pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_BLT;
+
+        PVBOXWDDM_DMA_PRIVATEDATA_BLT pBlt = (PVBOXWDDM_DMA_PRIVATEDATA_BLT)pPrivateData;
+
+        vboxWddmPopulateDmaAllocInfo(&pBlt->Blt.SrcAlloc, pSrcAlloc, pSrc);
+        vboxWddmPopulateDmaAllocInfo(&pBlt->Blt.DstAlloc, pDstAlloc, pDst);
+
+        ASSERT_WARN(!pSrcAlloc->fRcFlags.SharedResource, ("Shared Allocatoin used in Present!"));
+
+        pBlt->Blt.SrcRect = pPresent->SrcRect;
+        pBlt->Blt.DstRects.ContextRect = pPresent->DstRect;
+        pBlt->Blt.DstRects.UpdateRects.cRects = 0;
+        UINT cbHead = RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_BLT, Blt.DstRects.UpdateRects.aRects[0]);
+        Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
+        UINT cbRects = (pPresent->SubRectCnt - pPresent->MultipassOffset) * sizeof (RECT);
+        pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + cbHead + cbRects;
+        pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+        Assert(pPresent->DmaSize >= VBOXWDDM_DUMMY_DMABUFFER_SIZE);
+        cbCmd -= cbHead;
+        Assert(cbCmd < UINT32_MAX/2);
+        Assert(cbCmd > sizeof (RECT));
+        if (cbCmd >= cbRects)
+        {
+            cbCmd -= cbRects;
+            memcpy(&pBlt->Blt.DstRects.UpdateRects.aRects[pPresent->MultipassOffset], &pPresent->pDstSubRects[pPresent->MultipassOffset], cbRects);
+            pBlt->Blt.DstRects.UpdateRects.cRects += cbRects/sizeof (RECT);
         }
         else
         {
-            /* this should not happen actually */
-            LOGREL(("cbCmd too small!! (%d)", cbCmd));
+            UINT cbFitingRects = (cbCmd/sizeof (RECT)) * sizeof (RECT);
+            Assert(cbFitingRects);
+            memcpy(&pBlt->Blt.DstRects.UpdateRects.aRects[pPresent->MultipassOffset], &pPresent->pDstSubRects[pPresent->MultipassOffset], cbFitingRects);
+            cbCmd -= cbFitingRects;
+            pPresent->MultipassOffset += cbFitingRects/sizeof (RECT);
+            pBlt->Blt.DstRects.UpdateRects.cRects += cbFitingRects/sizeof (RECT);
+            Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
             Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
         }
-#endif
+
+        memset(pPresent->pPatchLocationListOut, 0, 2*sizeof (D3DDDI_PATCHLOCATIONLIST));
+        pPresent->pPatchLocationListOut->PatchOffset = 0;
+        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
+        ++pPresent->pPatchLocationListOut;
+        pPresent->pPatchLocationListOut->PatchOffset = 4;
+        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
+        ++pPresent->pPatchLocationListOut;
     }
     else if (pPresent->Flags.Flip)
     {
@@ -5913,31 +6525,30 @@ DxgkDdiPresent(
         Assert(pContext->enmType == VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D);
         DXGK_ALLOCATIONLIST *pSrc =  &pPresent->pAllocationList[DXGK_PRESENT_SOURCE_INDEX];
         PVBOXWDDM_ALLOCATION pSrcAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pSrc);
-        Assert(pSrcAlloc);
-        if (pSrcAlloc)
-        {
-            Assert(cContexts3D);
-            pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_FLIP;
-            PVBOXWDDM_DMA_PRIVATEDATA_FLIP pFlip = (PVBOXWDDM_DMA_PRIVATEDATA_FLIP)pPrivateData;
 
-            vboxWddmPopulateDmaAllocInfo(&pFlip->Flip.Alloc, pSrcAlloc, pSrc);
-
-            UINT cbCmd = sizeof (VBOXWDDM_DMA_PRIVATEDATA_FLIP);
-            pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + cbCmd;
-            pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + VBOXWDDM_DUMMY_DMABUFFER_SIZE;
-            Assert(pPresent->DmaSize >= VBOXWDDM_DUMMY_DMABUFFER_SIZE);
-
-            memset(pPresent->pPatchLocationListOut, 0, sizeof (D3DDDI_PATCHLOCATIONLIST));
-            pPresent->pPatchLocationListOut->PatchOffset = 0;
-            pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
-            ++pPresent->pPatchLocationListOut;
-        }
-        else
+        if (!pSrcAlloc)
         {
             /* this should not happen actually */
-            LOGREL(("failed to get pSrc Allocation info for hDeviceSpecificAllocation(0x%x)",pSrc->hDeviceSpecificAllocation));
+            WARN(("failed to get pSrc Allocation info for hDeviceSpecificAllocation(0x%x)",pSrc->hDeviceSpecificAllocation));
             Status = STATUS_INVALID_HANDLE;
+            goto done;
         }
+
+        Assert(pDevExt->cContexts3D);
+        pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_FLIP;
+        PVBOXWDDM_DMA_PRIVATEDATA_FLIP pFlip = (PVBOXWDDM_DMA_PRIVATEDATA_FLIP)pPrivateData;
+
+        vboxWddmPopulateDmaAllocInfo(&pFlip->Flip.Alloc, pSrcAlloc, pSrc);
+
+        UINT cbCmd = sizeof (VBOXWDDM_DMA_PRIVATEDATA_FLIP);
+        pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + cbCmd;
+        pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+        Assert(pPresent->DmaSize >= VBOXWDDM_DUMMY_DMABUFFER_SIZE);
+
+        memset(pPresent->pPatchLocationListOut, 0, sizeof (D3DDDI_PATCHLOCATIONLIST));
+        pPresent->pPatchLocationListOut->PatchOffset = 0;
+        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_SOURCE_INDEX;
+        ++pPresent->pPatchLocationListOut;
     }
     else if (pPresent->Flags.ColorFill)
     {
@@ -5945,63 +6556,62 @@ DxgkDdiPresent(
         Assert(pPresent->Flags.Value == 2); /* only ColorFill is set, we do not support anything else for now */
         DXGK_ALLOCATIONLIST *pDst =  &pPresent->pAllocationList[DXGK_PRESENT_DESTINATION_INDEX];
         PVBOXWDDM_ALLOCATION pDstAlloc = vboxWddmGetAllocationFromAllocList(pDevExt, pDst);
-        Assert(pDstAlloc);
-        if (pDstAlloc)
+        if (!pDstAlloc)
         {
-            UINT cbCmd = pPresent->DmaBufferPrivateDataSize;
-            pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_CLRFILL;
-            PVBOXWDDM_DMA_PRIVATEDATA_CLRFILL pCF = (PVBOXWDDM_DMA_PRIVATEDATA_CLRFILL)pPrivateData;
 
-            vboxWddmPopulateDmaAllocInfo(&pCF->ClrFill.Alloc, pDstAlloc, pDst);
+            /* this should not happen actually */
+            WARN(("failed to get pDst Allocation info for hDeviceSpecificAllocation(0x%x)",pDst->hDeviceSpecificAllocation));
+            Status = STATUS_INVALID_HANDLE;
+            goto done;
+        }
 
-            pCF->ClrFill.Color = pPresent->Color;
-            pCF->ClrFill.Rects.cRects = 0;
-            UINT cbHead = RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_CLRFILL, ClrFill.Rects.aRects[0]);
-            Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
-            UINT cbRects = (pPresent->SubRectCnt - pPresent->MultipassOffset) * sizeof (RECT);
-            pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + cbHead + cbRects;
-            pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + VBOXWDDM_DUMMY_DMABUFFER_SIZE;
-            Assert(pPresent->DmaSize >= VBOXWDDM_DUMMY_DMABUFFER_SIZE);
-            cbCmd -= cbHead;
-            Assert(cbCmd < UINT32_MAX/2);
-            Assert(cbCmd > sizeof (RECT));
-            if (cbCmd >= cbRects)
-            {
-                cbCmd -= cbRects;
-                memcpy(&pCF->ClrFill.Rects.aRects[pPresent->MultipassOffset], pPresent->pDstSubRects, cbRects);
-                pCF->ClrFill.Rects.cRects += cbRects/sizeof (RECT);
-            }
-            else
-            {
-                UINT cbFitingRects = (cbCmd/sizeof (RECT)) * sizeof (RECT);
-                Assert(cbFitingRects);
-                memcpy(&pCF->ClrFill.Rects.aRects[pPresent->MultipassOffset], pPresent->pDstSubRects, cbFitingRects);
-                cbCmd -= cbFitingRects;
-                pPresent->MultipassOffset += cbFitingRects/sizeof (RECT);
-                pCF->ClrFill.Rects.cRects += cbFitingRects/sizeof (RECT);
-                Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
-                Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
-            }
+        UINT cbCmd = pPresent->DmaBufferPrivateDataSize;
+        pPrivateData->BaseHdr.enmCmd = VBOXVDMACMD_TYPE_DMA_PRESENT_CLRFILL;
+        PVBOXWDDM_DMA_PRIVATEDATA_CLRFILL pCF = (PVBOXWDDM_DMA_PRIVATEDATA_CLRFILL)pPrivateData;
 
-            memset(pPresent->pPatchLocationListOut, 0, sizeof (D3DDDI_PATCHLOCATIONLIST));
-            pPresent->pPatchLocationListOut->PatchOffset = 0;
-            pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
-            ++pPresent->pPatchLocationListOut;
+        vboxWddmPopulateDmaAllocInfo(&pCF->ClrFill.Alloc, pDstAlloc, pDst);
+
+        pCF->ClrFill.Color = pPresent->Color;
+        pCF->ClrFill.Rects.cRects = 0;
+        UINT cbHead = RT_OFFSETOF(VBOXWDDM_DMA_PRIVATEDATA_CLRFILL, ClrFill.Rects.aRects[0]);
+        Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
+        UINT cbRects = (pPresent->SubRectCnt - pPresent->MultipassOffset) * sizeof (RECT);
+        pPresent->pDmaBufferPrivateData = (uint8_t*)pPresent->pDmaBufferPrivateData + cbHead + cbRects;
+        pPresent->pDmaBuffer = ((uint8_t*)pPresent->pDmaBuffer) + VBOXWDDM_DUMMY_DMABUFFER_SIZE;
+        Assert(pPresent->DmaSize >= VBOXWDDM_DUMMY_DMABUFFER_SIZE);
+        cbCmd -= cbHead;
+        Assert(cbCmd < UINT32_MAX/2);
+        Assert(cbCmd > sizeof (RECT));
+        if (cbCmd >= cbRects)
+        {
+            cbCmd -= cbRects;
+            memcpy(&pCF->ClrFill.Rects.aRects[pPresent->MultipassOffset], pPresent->pDstSubRects, cbRects);
+            pCF->ClrFill.Rects.cRects += cbRects/sizeof (RECT);
         }
         else
         {
-            /* this should not happen actually */
-            LOGREL(("failed to get pDst Allocation info for hDeviceSpecificAllocation(0x%x)",pDst->hDeviceSpecificAllocation));
-            Status = STATUS_INVALID_HANDLE;
+            UINT cbFitingRects = (cbCmd/sizeof (RECT)) * sizeof (RECT);
+            Assert(cbFitingRects);
+            memcpy(&pCF->ClrFill.Rects.aRects[pPresent->MultipassOffset], pPresent->pDstSubRects, cbFitingRects);
+            cbCmd -= cbFitingRects;
+            pPresent->MultipassOffset += cbFitingRects/sizeof (RECT);
+            pCF->ClrFill.Rects.cRects += cbFitingRects/sizeof (RECT);
+            Assert(pPresent->SubRectCnt > pPresent->MultipassOffset);
+            Status = STATUS_GRAPHICS_INSUFFICIENT_DMA_BUFFER;
         }
 
+        memset(pPresent->pPatchLocationListOut, 0, sizeof (D3DDDI_PATCHLOCATIONLIST));
+        pPresent->pPatchLocationListOut->PatchOffset = 0;
+        pPresent->pPatchLocationListOut->AllocationIndex = DXGK_PRESENT_DESTINATION_INDEX;
+        ++pPresent->pPatchLocationListOut;
     }
     else
     {
-        LOGREL(("cmd NOT IMPLEMENTED!! Flags(0x%x)", pPresent->Flags.Value));
-        AssertBreakpoint();
+        WARN(("cmd NOT IMPLEMENTED!! Flags(0x%x)", pPresent->Flags.Value));
+        Status = STATUS_NOT_SUPPORTED;
     }
 
+done:
 //    LOGF(("LEAVE, hContext(0x%x), Status(0x%x)", hContext, Status));
 
     return Status;
@@ -6020,14 +6630,7 @@ DxgkDdiUpdateOverlay(
     Assert(pOverlay);
     int rc = vboxVhwaHlpOverlayUpdate(pOverlay, &pUpdateOverlay->OverlayInfo);
     AssertRC(rc);
-    if (RT_SUCCESS(rc))
-    {
-        RECT DstRect;
-        vboxVhwaHlpOverlayDstRectGet(pOverlay->pDevExt, pOverlay, &DstRect);
-        Status = vboxVdmaHlpUpdatePrimary(pOverlay->pDevExt, pOverlay->VidPnSourceId, &DstRect);
-        Assert(Status == STATUS_SUCCESS);
-    }
-    else
+    if (RT_FAILURE(rc))
         Status = STATUS_UNSUCCESSFUL;
 
     LOGF(("LEAVE, hOverlay(0x%p)", hOverlay));
@@ -6120,10 +6723,19 @@ DxgkDdiCreateContext(
             pContext->enmType = VBOXWDDM_CONTEXT_TYPE_SYSTEM;
             for (int i = 0; i < VBoxCommonFromDeviceExt(pDevExt)->cDisplays; ++i)
             {
-                pDevExt->aSources[i].bGhSynced = FALSE;
-                NTSTATUS tmpStatus= vboxWddmDisplaySettingsQueryPos(pDevExt, i, &pDevExt->aSources[i].VScreenPos);
-                Assert(tmpStatus == STATUS_SUCCESS);
+                vboxWddmDisplaySettingsCheckPos(pDevExt, i);
             }
+
+#ifdef VBOX_WITH_CROGL
+            if (!VBOXWDDM_IS_DISPLAYONLY() && pDevExt->f3DEnabled)
+            {
+                VBoxMpCrPackerInit(&pContext->CrPacker);
+                int rc = VBoxMpCrCtlConConnect(pDevExt, &pDevExt->CrCtlCon, CR_PROTOCOL_VERSION_MAJOR, CR_PROTOCOL_VERSION_MINOR, &pContext->u32CrConClientID);
+                if (!RT_SUCCESS(rc))
+                    WARN(("VBoxMpCrCtlConConnect failed rc (%d), ignoring for system context", rc));
+            }
+#endif
+            Status = STATUS_SUCCESS;
         }
         else
         {
@@ -6135,10 +6747,18 @@ DxgkDdiCreateContext(
                 PVBOXWDDM_CREATECONTEXT_INFO pInfo = (PVBOXWDDM_CREATECONTEXT_INFO)pCreateContext->pPrivateDriverData;
                 switch (pInfo->enmType)
                 {
+#ifdef VBOX_WITH_CROGL
                     case VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D:
                     {
-                        Status = vboxVideoAMgrCtxCreate(&pDevExt->AllocMgr, &pContext->AllocContext);
-                        Assert(Status == STATUS_SUCCESS);
+                        if (!pDevExt->fCmdVbvaEnabled)
+                        {
+                            Status = vboxVideoAMgrCtxCreate(&pDevExt->AllocMgr, &pContext->AllocContext);
+                            if (!NT_SUCCESS(Status))
+                                WARN(("vboxVideoAMgrCtxCreate failed %#x", Status));
+                        }
+                        else
+                            Status = STATUS_SUCCESS;
+
                         if (Status == STATUS_SUCCESS)
                         {
                             Status = vboxWddmSwapchainCtxInit(pDevExt, pContext);
@@ -6150,26 +6770,31 @@ DxgkDdiCreateContext(
                                 Assert(Status == STATUS_SUCCESS);
                                 if (Status == STATUS_SUCCESS)
                                 {
-                                    int rc = VINF_SUCCESS;
                                     if (pInfo->crVersionMajor || pInfo->crVersionMinor)
                                     {
-                                        rc = VBoxMpCrCtlConConnect(&pDevExt->CrCtlCon,
-                                            pInfo->crVersionMajor, pInfo->crVersionMinor,
-                                            &pContext->u32CrConClientID);
-                                        if (RT_SUCCESS(rc))
+                                        if (pDevExt->f3DEnabled)
                                         {
-#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
-                                            VBoxMpCrPackerInit(&pContext->CrPacker);
-#endif
+                                            int rc = VBoxMpCrCtlConConnect(pDevExt, &pDevExt->CrCtlCon,
+                                                pInfo->crVersionMajor, pInfo->crVersionMinor,
+                                                &pContext->u32CrConClientID);
+                                            if (RT_SUCCESS(rc))
+                                            {
+                                                VBoxMpCrPackerInit(&pContext->CrPacker);
+                                            }
+                                            else
+                                            {
+                                                WARN(("VBoxMpCrCtlConConnect failed rc (%d)", rc));
+                                                Status = STATUS_UNSUCCESSFUL;
+                                            }
                                         }
                                         else
                                         {
-                                            WARN(("VBoxMpCrCtlConConnect failed rc (%d)", rc));
+                                            LOG(("3D Not Enabled, failing 3D context creation"));
                                             Status = STATUS_UNSUCCESSFUL;
                                         }
                                     }
 
-                                    if (RT_SUCCESS(rc))
+                                    if (NT_SUCCESS(Status))
                                     {
                                         ASMAtomicIncU32(&pDevExt->cContexts3D);
                                         break;
@@ -6186,24 +6811,38 @@ DxgkDdiCreateContext(
                     case VBOXWDDM_CONTEXT_TYPE_CUSTOM_UHGSMI_GL:
                     {
                         pContext->enmType = pInfo->enmType;
-                        Status = vboxVideoAMgrCtxCreate(&pDevExt->AllocMgr, &pContext->AllocContext);
-                        Assert(Status == STATUS_SUCCESS);
+                        if (!pDevExt->fCmdVbvaEnabled)
+                        {
+                            Status = vboxVideoAMgrCtxCreate(&pDevExt->AllocMgr, &pContext->AllocContext);
+                            if (!NT_SUCCESS(Status))
+                                WARN(("vboxVideoAMgrCtxCreate failed %#x", Status));
+                        }
+                        else
+                            Status = STATUS_SUCCESS;
+
                         if (Status == STATUS_SUCCESS)
                         {
-                            int rc = VINF_SUCCESS;
                             if (pInfo->crVersionMajor || pInfo->crVersionMinor)
                             {
-                                rc = VBoxMpCrCtlConConnect(&pDevExt->CrCtlCon,
-                                    pInfo->crVersionMajor, pInfo->crVersionMinor,
-                                    &pContext->u32CrConClientID);
-                                if (!RT_SUCCESS(rc))
+                                if (pDevExt->f3DEnabled)
                                 {
-                                    WARN(("VBoxMpCrCtlConConnect failed rc (%d)", rc));
+                                    int rc = VBoxMpCrCtlConConnect(pDevExt, &pDevExt->CrCtlCon,
+                                        pInfo->crVersionMajor, pInfo->crVersionMinor,
+                                        &pContext->u32CrConClientID);
+                                    if (!RT_SUCCESS(rc))
+                                    {
+                                        WARN(("VBoxMpCrCtlConConnect failed rc (%d)", rc));
+                                        Status = STATUS_UNSUCCESSFUL;
+                                    }
+                                }
+                                else
+                                {
+                                    LOG(("3D Not Enabled, failing 3D (hgsmi) context creation"));
                                     Status = STATUS_UNSUCCESSFUL;
                                 }
                             }
 
-                            if (RT_SUCCESS(rc))
+                            if (NT_SUCCESS(Status))
                             {
                                 ASMAtomicIncU32(&pDevExt->cContexts3D);
                                 break;
@@ -6212,15 +6851,32 @@ DxgkDdiCreateContext(
                         }
                         break;
                     }
+#endif
                     case VBOXWDDM_CONTEXT_TYPE_CUSTOM_2D:
                     {
                         pContext->enmType = pInfo->enmType;
                         ASMAtomicIncU32(&pDevExt->cContexts2D);
                         break;
                     }
+                    case VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_RESIZE:
+                    {
+                        pContext->enmType = pInfo->enmType;
+                        ASMAtomicIncU32(&pDevExt->cContextsDispIfResize);
+                        break;
+                    }
+                    case VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_SEAMLESS:
+                    {
+                        pContext->enmType = pInfo->enmType;
+                        Status = vboxVideoCmCtxAdd(&pDevice->pAdapter->SeamlessCtxMgr, &pContext->CmContext, (HANDLE)pInfo->hUmEvent, pInfo->u64UmInfo);
+                        if (!NT_SUCCESS(Status))
+                        {
+                            WARN(("vboxVideoCmCtxAdd failed, Status 0x%x", Status));
+                        }
+                        break;
+                    }
                     default:
                     {
-                        Assert(0);
+                        WARN(("unsupported context type %d", pInfo->enmType));
                         Status = STATUS_INVALID_PARAMETER;
                         break;
                     }
@@ -6261,6 +6917,8 @@ DxgkDdiDestroyContext(
     vboxVDbgBreakFv();
     PVBOXWDDM_CONTEXT pContext = (PVBOXWDDM_CONTEXT)hContext;
     PVBOXMP_DEVEXT pDevExt = pContext->pDevice->pAdapter;
+    NTSTATUS Status = STATUS_SUCCESS;
+
     switch(pContext->enmType)
     {
         case VBOXWDDM_CONTEXT_TYPE_CUSTOM_3D:
@@ -6269,10 +6927,6 @@ DxgkDdiDestroyContext(
         {
             uint32_t cContexts = ASMAtomicDecU32(&pDevExt->cContexts3D);
             Assert(cContexts < UINT32_MAX/2);
-            if (pContext->u32CrConClientID)
-            {
-                VBoxMpCrCtlConDisconnect(&pDevExt->CrCtlCon, pContext->u32CrConClientID);
-            }
             break;
         }
         case VBOXWDDM_CONTEXT_TYPE_CUSTOM_2D:
@@ -6281,28 +6935,58 @@ DxgkDdiDestroyContext(
             Assert(cContexts < UINT32_MAX/2);
             break;
         }
+        case VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_RESIZE:
+        {
+            uint32_t cContexts = ASMAtomicDecU32(&pDevExt->cContextsDispIfResize);
+            Assert(cContexts < UINT32_MAX/2);
+            if (!cContexts)
+            {
+                if (pDevExt->fDisableTargetUpdate)
+                {
+                    pDevExt->fDisableTargetUpdate = FALSE;
+                    vboxWddmGhDisplayCheckSetInfoEx(pDevExt, true);
+                }
+            }
+            break;
+        }
+        case VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_SEAMLESS:
+        {
+            Status = vboxVideoCmCtxRemove(&pContext->pDevice->pAdapter->SeamlessCtxMgr, &pContext->CmContext);
+            if (!NT_SUCCESS(Status))
+                WARN(("vboxVideoCmCtxRemove failed, Status 0x%x", Status));
+
+            Assert(pContext->CmContext.pSession == NULL);
+            break;
+        }
         default:
             break;
     }
 
-    vboxWddmModeRenderFromShadowDisableUnregister(pDevExt, pContext);
+#ifdef VBOX_WITH_CROGL
+    if (pContext->u32CrConClientID)
+    {
+        VBoxMpCrCtlConDisconnect(pDevExt, &pDevExt->CrCtlCon, pContext->u32CrConClientID);
+    }
+#endif
 
+#ifdef VBOX_WITH_CROGL
     /* first terminate the swapchain, this will also ensure
      * all currently pending driver->user Cm commands
      * (i.e. visible regions commands) are completed */
     vboxWddmSwapchainCtxTerm(pDevExt, pContext);
+#endif
 
-    NTSTATUS Status = vboxVideoAMgrCtxDestroy(&pContext->AllocContext);
-    Assert(Status == STATUS_SUCCESS);
-    if (Status == STATUS_SUCCESS)
+    Status = vboxVideoAMgrCtxDestroy(&pContext->AllocContext);
+    if (NT_SUCCESS(Status))
     {
         Status = vboxVideoCmCtxRemove(&pContext->pDevice->pAdapter->CmMgr, &pContext->CmContext);
-        Assert(Status == STATUS_SUCCESS);
-        if (Status == STATUS_SUCCESS)
-        {
+        if (NT_SUCCESS(Status))
             vboxWddmMemFree(pContext);
-        }
+        else
+            WARN(("vboxVideoCmCtxRemove failed, Status 0x%x", Status));
     }
+    else
+        WARN(("vboxVideoAMgrCtxDestroy failed, Status 0x%x", Status));
 
     LOGF(("LEAVE, hContext(0x%x)", hContext));
 
@@ -6372,11 +7056,11 @@ static NTSTATUS APIENTRY DxgkDdiPresentDisplayOnly(
       )
 {
     LOGF(("ENTER, hAdapter(0x%x)", hAdapter));
-    vboxVDbgBreakF();
+    vboxVDbgBreakFv();
 
     PVBOXMP_DEVEXT pDevExt = (PVBOXMP_DEVEXT)hAdapter;
     PVBOXWDDM_SOURCE pSource = &pDevExt->aSources[pPresentDisplayOnly->VidPnSourceId];
-    Assert(pSource->AllocData.Addr.SegmentId);
+    Assert(pSource->AllocData.Addr.SegmentId == 1);
     VBOXWDDM_ALLOC_DATA SrcAllocData;
     SrcAllocData.SurfDesc.width = pPresentDisplayOnly->Pitch * pPresentDisplayOnly->BytesPerPixel;
     SrcAllocData.SurfDesc.height = ~0UL;
@@ -6406,6 +7090,8 @@ static NTSTATUS APIENTRY DxgkDdiPresentDisplayOnly(
     SrcAllocData.SurfDesc.cbSize =  ~0UL;
     SrcAllocData.Addr.SegmentId = 0;
     SrcAllocData.Addr.pvMem = pPresentDisplayOnly->pSource;
+    SrcAllocData.hostID = 0;
+    SrcAllocData.pSwapchain = NULL;
 
     RECT UpdateRect;
     BOOLEAN bUpdateRectInited = FALSE;
@@ -6554,8 +7240,8 @@ static NTSTATUS vboxWddmInitDisplayOnlyDriver(IN PDRIVER_OBJECT pDriverObject, I
     DriverInitializationData.DxgkDdiStopDevice = DxgkDdiStopDevice;
     DriverInitializationData.DxgkDdiRemoveDevice = DxgkDdiRemoveDevice;
     DriverInitializationData.DxgkDdiDispatchIoRequest = DxgkDdiDispatchIoRequest;
-    DriverInitializationData.DxgkDdiInterruptRoutine = DxgkDdiInterruptRoutine;
-    DriverInitializationData.DxgkDdiDpcRoutine = DxgkDdiDpcRoutine;
+    DriverInitializationData.DxgkDdiInterruptRoutine = DxgkDdiInterruptRoutineLegacy;
+    DriverInitializationData.DxgkDdiDpcRoutine = DxgkDdiDpcRoutineLegacy;
     DriverInitializationData.DxgkDdiQueryChildRelations = DxgkDdiQueryChildRelations;
     DriverInitializationData.DxgkDdiQueryChildStatus = DxgkDdiQueryChildStatus;
     DriverInitializationData.DxgkDdiQueryDeviceDescriptor = DxgkDdiQueryDeviceDescriptor;
@@ -6601,8 +7287,14 @@ static NTSTATUS vboxWddmInitDisplayOnlyDriver(IN PDRIVER_OBJECT pDriverObject, I
 }
 #endif
 
-static NTSTATUS vboxWddmInitFullGraphicsDriver(IN PDRIVER_OBJECT pDriverObject, IN PUNICODE_STRING pRegistryPath)
+static NTSTATUS vboxWddmInitFullGraphicsDriver(IN PDRIVER_OBJECT pDriverObject, IN PUNICODE_STRING pRegistryPath, BOOLEAN fCmdVbva)
 {
+#ifdef VBOX_WITH_CROGL
+#define VBOXWDDM_CALLBACK_NAME(_base, _fCmdVbva) ((_fCmdVbva) ? _base##New : _base##Legacy)
+#else
+#define VBOXWDDM_CALLBACK_NAME(_base, _fCmdVbva) (_base##Legacy)
+#endif
+
     DRIVER_INITIALIZATION_DATA DriverInitializationData = {'\0'};
 
     // Fill in the DriverInitializationData structure and call DxgkInitialize()
@@ -6613,8 +7305,8 @@ static NTSTATUS vboxWddmInitFullGraphicsDriver(IN PDRIVER_OBJECT pDriverObject, 
     DriverInitializationData.DxgkDdiStopDevice = DxgkDdiStopDevice;
     DriverInitializationData.DxgkDdiRemoveDevice = DxgkDdiRemoveDevice;
     DriverInitializationData.DxgkDdiDispatchIoRequest = DxgkDdiDispatchIoRequest;
-    DriverInitializationData.DxgkDdiInterruptRoutine = DxgkDdiInterruptRoutine;
-    DriverInitializationData.DxgkDdiDpcRoutine = DxgkDdiDpcRoutine;
+    DriverInitializationData.DxgkDdiInterruptRoutine = VBOXWDDM_CALLBACK_NAME(DxgkDdiInterruptRoutine, fCmdVbva);
+    DriverInitializationData.DxgkDdiDpcRoutine = VBOXWDDM_CALLBACK_NAME(DxgkDdiDpcRoutine, fCmdVbva);
     DriverInitializationData.DxgkDdiQueryChildRelations = DxgkDdiQueryChildRelations;
     DriverInitializationData.DxgkDdiQueryChildStatus = DxgkDdiQueryChildStatus;
     DriverInitializationData.DxgkDdiQueryDeviceDescriptor = DxgkDdiQueryDeviceDescriptor;
@@ -6633,10 +7325,10 @@ static NTSTATUS vboxWddmInitFullGraphicsDriver(IN PDRIVER_OBJECT pDriverObject, 
     DriverInitializationData.DxgkDdiGetStandardAllocationDriverData = DxgkDdiGetStandardAllocationDriverData;
     DriverInitializationData.DxgkDdiAcquireSwizzlingRange = DxgkDdiAcquireSwizzlingRange;
     DriverInitializationData.DxgkDdiReleaseSwizzlingRange = DxgkDdiReleaseSwizzlingRange;
-    DriverInitializationData.DxgkDdiPatch = DxgkDdiPatch;
-    DriverInitializationData.DxgkDdiSubmitCommand = DxgkDdiSubmitCommand;
-    DriverInitializationData.DxgkDdiPreemptCommand = DxgkDdiPreemptCommand;
-    DriverInitializationData.DxgkDdiBuildPagingBuffer = DxgkDdiBuildPagingBuffer;
+    DriverInitializationData.DxgkDdiPatch = VBOXWDDM_CALLBACK_NAME(DxgkDdiPatch, fCmdVbva);
+    DriverInitializationData.DxgkDdiSubmitCommand = VBOXWDDM_CALLBACK_NAME(DxgkDdiSubmitCommand, fCmdVbva);
+    DriverInitializationData.DxgkDdiPreemptCommand = VBOXWDDM_CALLBACK_NAME(DxgkDdiPreemptCommand, fCmdVbva);
+    DriverInitializationData.DxgkDdiBuildPagingBuffer = VBOXWDDM_CALLBACK_NAME(DxgkDdiBuildPagingBuffer, fCmdVbva);
     DriverInitializationData.DxgkDdiSetPalette = DxgkDdiSetPalette;
     DriverInitializationData.DxgkDdiSetPointerPosition = DxgkDdiSetPointerPosition;
     DriverInitializationData.DxgkDdiSetPointerShape = DxgkDdiSetPointerShape;
@@ -6644,7 +7336,7 @@ static NTSTATUS vboxWddmInitFullGraphicsDriver(IN PDRIVER_OBJECT pDriverObject, 
     DriverInitializationData.DxgkDdiRestartFromTimeout = DxgkDdiRestartFromTimeout;
     DriverInitializationData.DxgkDdiEscape = DxgkDdiEscape;
     DriverInitializationData.DxgkDdiCollectDbgInfo = DxgkDdiCollectDbgInfo;
-    DriverInitializationData.DxgkDdiQueryCurrentFence = DxgkDdiQueryCurrentFence;
+    DriverInitializationData.DxgkDdiQueryCurrentFence = VBOXWDDM_CALLBACK_NAME(DxgkDdiQueryCurrentFence, fCmdVbva);
     DriverInitializationData.DxgkDdiIsSupportedVidPn = DxgkDdiIsSupportedVidPn;
     DriverInitializationData.DxgkDdiRecommendFunctionalVidPn = DxgkDdiRecommendFunctionalVidPn;
     DriverInitializationData.DxgkDdiEnumVidPnCofuncModality = DxgkDdiEnumVidPnCofuncModality;
@@ -6662,8 +7354,8 @@ static NTSTATUS vboxWddmInitFullGraphicsDriver(IN PDRIVER_OBJECT pDriverObject, 
     DriverInitializationData.DxgkDdiDestroyDevice = DxgkDdiDestroyDevice;
     DriverInitializationData.DxgkDdiOpenAllocation = DxgkDdiOpenAllocation;
     DriverInitializationData.DxgkDdiCloseAllocation = DxgkDdiCloseAllocation;
-    DriverInitializationData.DxgkDdiRender = DxgkDdiRender;
-    DriverInitializationData.DxgkDdiPresent = DxgkDdiPresent;
+    DriverInitializationData.DxgkDdiRender = VBOXWDDM_CALLBACK_NAME(DxgkDdiRender, fCmdVbva);
+    DriverInitializationData.DxgkDdiPresent = VBOXWDDM_CALLBACK_NAME(DxgkDdiPresent, fCmdVbva);
 
     DriverInitializationData.DxgkDdiUpdateOverlay = DxgkDdiUpdateOverlay;
     DriverInitializationData.DxgkDdiFlipOverlay = DxgkDdiFlipOverlay;
@@ -6723,7 +7415,7 @@ DriverEntry(
 
     ULONG major, minor, build;
     BOOLEAN checkedBuild = PsGetVersion(&major, &minor, &build, NULL);
-    BOOLEAN f3DCheckRequired = FALSE;
+    BOOLEAN f3DRequired = FALSE;
 
     LOGREL(("OsVersion( %d, %d, %d )", major, minor, build));
 
@@ -6735,47 +7427,65 @@ DriverEntry(
         if (major > 6)
         {
             WARN(("Unknow win version, newer major release, assuming 3D check is required"));
-            f3DCheckRequired = TRUE;
+            f3DRequired = TRUE;
         }
         else if (major == 6)
         {
-            if (minor > 2)
+            if (minor > 4)
             {
                 WARN(("Unknow win version, newer minor release, assuming 3D check is required"));
-                f3DCheckRequired = TRUE;
+                f3DRequired = TRUE;
             }
-            else if (minor == 2)
+            else if (minor >= 2)
             {
                 LOG(("3D check is required!"));
-                f3DCheckRequired = TRUE;
+                f3DRequired = TRUE;
             }
             else
             {
                 LOG(("3D is NOT required!"));
-                f3DCheckRequired = FALSE;
+                f3DRequired = FALSE;
             }
         }
         else
         {
             WARN(("Unsupported OLDER win version, ignore and assume 3D is NOT required"));
-            f3DCheckRequired = FALSE;
+            f3DRequired = FALSE;
         }
 
         Status = STATUS_SUCCESS;
+#ifdef VBOX_WITH_CROGL
+        VBoxMpCrCtlConInit();
 
-        if (f3DCheckRequired)
+        /* always need to do the check to request host caps */
+        LOG(("Doing the 3D check.."));
+        if (!VBoxMpCrCtlConIs3DSupported())
+#endif
         {
-            LOG(("3D check is required, doing the 3D check.."));
-            if (!VBoxMpCrCtlConIs3DSupported())
-            {
 #ifdef VBOX_WDDM_WIN8
+            Assert(f3DRequired);
+            g_VBoxDisplayOnly = 1;
+
+            /* Black list some builds. */
+            if (major == 6 && minor == 4 && build == 9841)
+            {
+                /* W10 Technical preview crashes with display-only driver. */
+                LOGREL(("3D is NOT supported by the host, fallback to the system video driver."));
+                Status = STATUS_UNSUCCESSFUL;
+            }
+            else
+            {
                 LOGREL(("3D is NOT supported by the host, falling back to display-only mode.."));
-                g_VBoxDisplayOnly = 1;
+            }
 #else
+            if (f3DRequired)
+            {
                 LOGREL(("3D is NOT supported by the host, but is required for the current guest version using this driver.."));
                 Status = STATUS_UNSUCCESSFUL;
-#endif
             }
+            else
+                LOGREL(("3D is NOT supported by the host, but is NOT required for the current guest version using this driver, continuing with Disabled 3D.."));
+#endif
         }
 
 #if 0 //defined(DEBUG_misha) && defined(VBOX_WDDM_WIN8)
@@ -6786,8 +7496,10 @@ DriverEntry(
 
         if (NT_SUCCESS(Status))
         {
-            Status = VBoxWddmVrInit();
-            if (NT_SUCCESS(Status))
+#ifdef VBOX_WITH_CROGL
+            rc = VBoxVrInit();
+            if (RT_SUCCESS(rc))
+#endif
             {
 #ifdef VBOX_WDDM_WIN8
                 if (g_VBoxDisplayOnly)
@@ -6797,16 +7509,28 @@ DriverEntry(
                 else
 #endif
                 {
-                    Status = vboxWddmInitFullGraphicsDriver(DriverObject, RegistryPath);
+                    Status = vboxWddmInitFullGraphicsDriver(DriverObject, RegistryPath,
+#ifdef VBOX_WITH_CROGL
+                            !!(VBoxMpCrGetHostCaps() & CR_VBOX_CAP_CMDVBVA)
+#else
+                            FALSE
+#endif
+                            );
                 }
 
                 if (NT_SUCCESS(Status))
                     return Status;
-
-                VBoxWddmVrTerm();
+#ifdef VBOX_WITH_CROGL
+                VBoxVrTerm();
+#endif
             }
+#ifdef VBOX_WITH_CROGL
             else
-                WARN(("VBoxWddmVrInit failed, Status(0x%x)", Status));
+            {
+                WARN(("VBoxVrInit failed, rc(%d)", rc));
+                Status = STATUS_UNSUCCESSFUL;
+            }
+#endif
         }
         else
             LOGREL(("Aborting the video driver load due to 3D support missing"));

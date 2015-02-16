@@ -6,7 +6,7 @@ REM (both inproc and out-of-process)
 REM
 
 REM
-REM Copyright (C) 2006-2011 Oracle Corporation
+REM Copyright (C) 2006-2013 Oracle Corporation
 REM
 REM This file is part of VirtualBox Open Source Edition (OSE), as
 REM available from http://www.virtualbox.org. This file is free software;
@@ -24,21 +24,21 @@ REM Figure out where the script lives first, so that we can invoke the
 REM correct VBoxSVC and register the right VBoxC.dll.
 REM
 
-REM Determin the current directory.
+REM Determine the current directory.
 set _SCRIPT_CURDIR=%CD%
 for /f "tokens=*" %%d in ('cd') do set _SCRIPT_CURDIR=%%d
 
-REM Determin a correct self - by %0.
+REM Determine a correct self - by %0.
 set _SCRIPT_SELF=%0
 if exist "%_SCRIPT_SELF%" goto found_self
 set _SCRIPT_SELF=%_SCRIPT_SELF%.cmd
 if exist "%_SCRIPT_SELF%" goto found_self
 
-REM Determin a correct self - by current working directory.
+REM Determine a correct self - by current working directory.
 set _SCRIPT_SELF=%_SCRIPT_CURDIR%\comregister.cmd
 if exist "%_SCRIPT_SELF%" goto found_self
 
-REM Determin a correct self - by the PATH
+REM Determine a correct self - by the PATH
 REM This is very verbose because nested for loops didn't work out.
 for /f "tokens=1  delims=;" %%d in ("%PATH%") do set _SCRIPT_SELF=%%d\comregister.cmd
 if exist "%_SCRIPT_SELF%" goto found_self
@@ -94,13 +94,31 @@ cd "%_SCRIPT_CURDIR%"
 REM
 REM Do the registrations.
 REM
-:register
+if "%ProgramW6432%x" == "x" goto register_x86
+goto register_amd64
+
+:register_x86
 @echo on
-%_VBOX_DIR%VBoxSVC.exe /ReregServer
+%_VBOX_DIR%VBoxSVC.exe /UnregServer
 regsvr32 /s /u %_VBOX_DIR%VBoxC.dll
+@if "%1" == "-u" goto end
+%_VBOX_DIR%VBoxSVC.exe /RegServer
 regsvr32 /s    %_VBOX_DIR%VBoxC.dll
+@echo off
+goto end
+
+REM Unregister both first, then register them. The order matters here.
+:register_amd64
+@echo on
+%_VBOX_DIR%VBoxSVC.exe /UnregServer
+%windir%\syswow64\regsvr32 /s /u %_VBOX_DIR%x86\VBoxClient-x86.dll
+%windir%\system32\regsvr32 /s /u %_VBOX_DIR%VBoxC.dll
+@if "%1" == "-u" goto end
+%_VBOX_DIR%VBoxSVC.exe /RegServer
+%windir%\system32\regsvr32 /s    %_VBOX_DIR%VBoxC.dll
+%windir%\syswow64\regsvr32 /s    %_VBOX_DIR%x86\VBoxClient-x86.dll
 @echo off
 
 :end
-endlocal
+@endlocal
 

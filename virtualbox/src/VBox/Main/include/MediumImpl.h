@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2014 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -103,9 +103,8 @@ public:
     STDMETHOD(COMGETTER(Description))(BSTR *aDescription);
     STDMETHOD(COMSETTER(Description))(IN_BSTR aDescription);
     STDMETHOD(COMGETTER(State))(MediumState_T *aState);
-    STDMETHOD(COMGETTER(Variant))(ULONG *aVariant);
+    STDMETHOD(COMGETTER(Variant))(ComSafeArrayOut(MediumVariant_T, aVariant));
     STDMETHOD(COMGETTER(Location))(BSTR *aLocation);
-    STDMETHOD(COMSETTER(Location))(IN_BSTR aLocation);
     STDMETHOD(COMGETTER(Name))(BSTR *aName);
     STDMETHOD(COMGETTER(DeviceType))(DeviceType_T *aDeviceType);
     STDMETHOD(COMGETTER(HostDrive))(BOOL *aHostDrive);
@@ -131,10 +130,8 @@ public:
     STDMETHOD(RefreshState)(MediumState_T *aState);
     STDMETHOD(GetSnapshotIds)(IN_BSTR aMachineId,
                               ComSafeArrayOut(BSTR, aSnapshotIds));
-    STDMETHOD(LockRead)(MediumState_T *aState);
-    STDMETHOD(UnlockRead)(MediumState_T *aState);
-    STDMETHOD(LockWrite)(MediumState_T *aState);
-    STDMETHOD(UnlockWrite)(MediumState_T *aState);
+    STDMETHOD(LockRead)(IToken **aToken);
+    STDMETHOD(LockWrite)(IToken **aToken);
     STDMETHOD(Close)();
     STDMETHOD(GetProperty)(IN_BSTR aName, BSTR *aValue);
     STDMETHOD(SetProperty)(IN_BSTR aName, IN_BSTR aValue);
@@ -144,17 +141,18 @@ public:
     STDMETHOD(SetProperties)(ComSafeArrayIn(IN_BSTR, aNames),
                              ComSafeArrayIn(IN_BSTR, aValues));
     STDMETHOD(CreateBaseStorage)(LONG64 aLogicalSize,
-                                 ULONG aVariant,
+                                 ComSafeArrayIn(MediumVariant_T, aVariant),
                                  IProgress **aProgress);
     STDMETHOD(DeleteStorage)(IProgress **aProgress);
     STDMETHOD(CreateDiffStorage)(IMedium *aTarget,
-                                 ULONG aVariant,
+                                 ComSafeArrayIn(MediumVariant_T, aVariant),
                                  IProgress **aProgress);
     STDMETHOD(MergeTo)(IMedium *aTarget, IProgress **aProgress);
-    STDMETHOD(CloneTo)(IMedium *aTarget, ULONG aVariant,
+    STDMETHOD(CloneTo)(IMedium *aTarget, ComSafeArrayIn(MediumVariant_T, aVariant),
                         IMedium *aParent, IProgress **aProgress);
-    STDMETHOD(CloneToBase)(IMedium *aTarget, ULONG aVariant,
+    STDMETHOD(CloneToBase)(IMedium *aTarget, ComSafeArrayIn(MediumVariant_T, aVariant),
                            IProgress **aProgress);
+    STDMETHOD(SetLocation)(IN_BSTR aLocation, IProgress **aProgress);
     STDMETHOD(Compact)(IProgress **aProgress);
     STDMETHOD(Resize)(LONG64 aLogicalSize, IProgress **aProgress);
     STDMETHOD(Reset)(IProgress **aProgress);
@@ -225,6 +223,8 @@ public:
     Utf8Str getPreferredDiffFormat();
 
     HRESULT close(AutoCaller &autoCaller);
+    HRESULT unlockRead(MediumState_T *aState);
+    HRESULT unlockWrite(MediumState_T *aState);
     HRESULT deleteStorage(ComObjPtr<Progress> *aProgress, bool aWait);
     HRESULT markForDeletion();
     HRESULT unmarkForDeletion();
@@ -240,19 +240,19 @@ public:
                            bool fLockMedia,
                            bool &fMergeForward,
                            ComObjPtr<Medium> &pParentForTarget,
-                           MediaList &aChildrenToReparent,
+                           MediumLockList * &aChildrenToReparent,
                            MediumLockList * &aMediumLockList);
     HRESULT mergeTo(const ComObjPtr<Medium> &pTarget,
                     bool fMergeForward,
                     const ComObjPtr<Medium> &pParentForTarget,
-                    const MediaList &aChildrenToReparent,
+                    MediumLockList *aChildrenToReparent,
                     MediumLockList *aMediumLockList,
                     ComObjPtr<Progress> *aProgress,
                     bool aWait);
-    void cancelMergeTo(const MediaList &aChildrenToReparent,
+    void cancelMergeTo(MediumLockList *aChildrenToReparent,
                        MediumLockList *aMediumLockList);
 
-    HRESULT fixParentUuidOfChildren(const MediaList &childrenToReparent);
+    HRESULT fixParentUuidOfChildren(MediumLockList *pChildrenToReparent);
 
     HRESULT exportFile(const char *aFilename,
                        const ComObjPtr<MediumFormat> &aFormat,
@@ -272,7 +272,7 @@ public:
 
 private:
 
-    HRESULT queryInfo(bool fSetImageId, bool fSetParentId);
+    HRESULT queryInfo(bool fSetImageId, bool fSetParentId, AutoCaller &autoCaller);
 
     HRESULT canClose();
     HRESULT unregisterWithVirtualBox();
@@ -286,6 +286,8 @@ private:
     DeviceType_T convertToDeviceType(VDTYPE enmType);
 
     Utf8Str vdError(int aVRC);
+
+    bool    isPropertyForFilter(const com::Utf8Str &aName);
 
     static DECLCALLBACK(void) vdErrorCall(void *pvUser, int rc, RT_SRC_POS_DECL,
                                           const char *pszFormat, va_list va);

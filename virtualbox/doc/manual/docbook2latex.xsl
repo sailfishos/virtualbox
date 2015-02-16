@@ -100,6 +100,7 @@
             a4paper,
             colorlinks=true,
             linkcolor=blue,
+            urlcolor=darkgreen,
             bookmarksnumbered,
             bookmarksopen=true,
             bookmarksopenlevel=0,
@@ -114,6 +115,7 @@
 \usepackage{fancyvrb}
 \usepackage{alltt}
 \usepackage{color}
+\definecolor{darkgreen}{rgb}{0,0.6,0}
 
 </xsl:text>
   <xsl:if test="$TARGETLANG='de_DE'">\usepackage[ngerman]{babel}&#10;\PrerenderUnicode{ü}</xsl:if>
@@ -237,7 +239,14 @@
 
 {\fontsize{16pt}{20pt}\selectfont\rmfamily%
 \begin{center}
-\docbooktitleedition
+</xsl:text>
+    <xsl:if test="//bookinfo/othercredit">
+      <xsl:text>\docbookbookinfoothercreditcontrib{}: \docbookbookinfoothercreditfirstname{} \docbookbookinfoothercreditsurname
+
+\vspace{8mm}
+</xsl:text>
+    </xsl:if>
+    <xsl:text>\docbooktitleedition
 
 \vspace{2mm}
 
@@ -314,7 +323,7 @@
         <xsl:text>}</xsl:text>
       </xsl:when>
     </xsl:choose>
-    <xsl:variable name="refid" select="(@id) | (../@id)" />
+    <xsl:variable name="refid" select="../@id" />
     <xsl:if test="$refid">
       <xsl:value-of select="concat('&#x0a;\label{', $refid, '}')" />
     </xsl:if>
@@ -365,6 +374,36 @@
     <xsl:choose>
       <xsl:when test="name(..)='copyright'">
         <xsl:text>\newcommand\docbookbookinfocopyrightholder{</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}&#x0a;</xsl:text>
+      </xsl:when>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="firstname">
+    <xsl:choose>
+      <xsl:when test="name(..)='othercredit'">
+        <xsl:text>\newcommand\docbookbookinfoothercreditfirstname{</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}&#x0a;</xsl:text>
+      </xsl:when>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="surname">
+    <xsl:choose>
+      <xsl:when test="name(..)='othercredit'">
+        <xsl:text>\newcommand\docbookbookinfoothercreditsurname{</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}&#x0a;</xsl:text>
+      </xsl:when>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="contrib">
+    <xsl:choose>
+      <xsl:when test="name(..)='othercredit'">
+        <xsl:text>\newcommand\docbookbookinfoothercreditcontrib{</xsl:text>
         <xsl:apply-templates />
         <xsl:text>}&#x0a;</xsl:text>
       </xsl:when>

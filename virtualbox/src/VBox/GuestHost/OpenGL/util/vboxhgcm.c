@@ -184,6 +184,10 @@ typedef struct {
 #else
     int                  iGuestDrv;
 #endif
+#ifdef IN_GUEST
+    uint32_t             u32HostCaps;
+    bool                 fHostCapsInitialized;
+#endif
 #if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
     bool bHgsmiOn;
 #endif
@@ -195,9 +199,6 @@ typedef enum {
     CR_VBOXHGCM_USERALLOCATED,
     CR_VBOXHGCM_MEMORY,
     CR_VBOXHGCM_MEMORY_BIG
-#ifdef RT_OS_WINDOWS
-    ,CR_VBOXHGCM_DDRAW_SURFACE
-#endif
 #if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
     ,CR_VBOXHGCM_UHGSMI_BUFFER
 #endif
@@ -220,9 +221,6 @@ typedef struct CRVBOXHGCMBUFFER {
         PVBOXUHGSMI_BUFFER pBuffer;
 #endif
     };
-#ifdef RT_OS_WINDOWS
-    LPDIRECTDRAWSURFACE  pDDS;
-#endif
 } CRVBOXHGCMBUFFER;
 
 #ifndef RT_OS_WINDOWS
@@ -705,92 +703,6 @@ static void *_crVBoxHGCMAlloc(CRConnection *conn)
                         (void *) g_crvboxhgcm.bufpool,
                         (unsigned int)sizeof(CRVBOXHGCMBUFFER) + conn->buffer_size);
 
-#if defined(IN_GUEST) && defined(RT_OS_WINDOWS)
-        /* Try to start DDRAW on guest side */
-        if (!g_crvboxhgcm.pDirectDraw && 0)
-        {
-            HRESULT hr;
-
-            hr = DirectDrawCreate(NULL, &g_crvboxhgcm.pDirectDraw, NULL);
-            if (hr != DD_OK)
-            {
-                crWarning("Failed to create DirectDraw interface (%x)\n", hr);
-                g_crvboxhgcm.pDirectDraw = NULL;
-            }
-            else
-            {
-                hr = IDirectDraw_SetCooperativeLevel(g_crvboxhgcm.pDirectDraw, NULL, DDSCL_NORMAL);
-                if (hr != DD_OK)
-                {
-                    crWarning("Failed to SetCooperativeLevel (%x)\n", hr);
-                    IDirectDraw_Release(g_crvboxhgcm.pDirectDraw);
-                    g_crvboxhgcm.pDirectDraw = NULL;
-                }
-                crDebug("Created DirectDraw and set CooperativeLevel successfully\n");
-            }
-        }
-
-        /* Try to allocate buffer via DDRAW */
-        if (g_crvboxhgcm.pDirectDraw)
-        {
-            DDSURFACEDESC       ddsd;
-            HRESULT             hr;
-            LPDIRECTDRAWSURFACE lpDDS;
-
-            memset(&ddsd, 0, sizeof(ddsd));
-            ddsd.dwSize  = sizeof(ddsd);
-
-            /* @todo DDSCAPS_VIDEOMEMORY ain't working for some reason
-             * also, it would be better to request dwLinearSize but it fails too
-             * ddsd.dwLinearSize = sizeof(CRVBOXHGCMBUFFER) + conn->buffer_size;
-             */
-
-            ddsd.dwFlags = DDSD_CAPS | DDSD_PIXELFORMAT | DDSD_WIDTH | DDSD_HEIGHT;
-            ddsd.ddsCaps.dwCaps = DDSCAPS_OFFSCREENPLAIN;
-            /* use 1 byte per pixel format */
-            ddsd.ddpfPixelFormat.dwSize = sizeof(ddsd.ddpfPixelFormat);
-            ddsd.ddpfPixelFormat.dwFlags = DDPF_RGB;
-            ddsd.ddpfPixelFormat.dwRGBBitCount = 8;
-            ddsd.ddpfPixelFormat.dwRBitMask = 0xFF;
-            ddsd.ddpfPixelFormat.dwGBitMask = 0;
-            ddsd.ddpfPixelFormat.dwBBitMask = 0;
-            /* request given buffer size, rounded to 1k */
-            ddsd.dwWidth = 1024;
-            ddsd.dwHeight = (sizeof(CRVBOXHGCMBUFFER) + conn->buffer_size + ddsd.dwWidth-1)/ddsd.dwWidth;
-
-            hr = IDirectDraw_CreateSurface(g_crvboxhgcm.pDirectDraw, &ddsd, &lpDDS, NULL);
-            if (hr != DD_OK)
-            {
-                crWarning("Failed to create DirectDraw surface (%x)\n", hr);
-            }
-            else
-            {
-                crDebug("Created DirectDraw surface (%x)\n", lpDDS);
-
-                hr = IDirectDrawSurface_Lock(lpDDS, NULL, &ddsd, DDLOCK_SURFACEMEMORYPTR, NULL);
-                if (hr != DD_OK)
-                {
-                    crWarning("Failed to lock DirectDraw surface (%x)\n", hr);
-                    IDirectDrawSurface_Release(lpDDS);
-                }
-                else
-                {
-                    uint32_t cbLocked;
-                    cbLocked = (ddsd.dwFlags & DDSD_LINEARSIZE) ? ddsd.dwLinearSize : ddsd.lPitch*ddsd.dwHeight;
-
-                    crDebug("Locked %d bytes DirectDraw surface\n", cbLocked);
-
-                    buf = (CRVBOXHGCMBUFFER *) ddsd.lpSurface;
-                    CRASSERT(buf);
-                    buf->magic = CR_VBOXHGCM_BUFFER_MAGIC;
-                    buf->kind  = CR_VBOXHGCM_DDRAW_SURFACE;
-                    buf->allocated = cbLocked;
-                    buf->pDDS = lpDDS;
-                }
-            }
-        }
-#endif
-
         /* We're either on host side, or we failed to allocate DDRAW buffer */
         if (!buf)
         {
@@ -800,9 +712,6 @@ static void *_crVBoxHGCMAlloc(CRConnection *conn)
             buf->magic = CR_VBOXHGCM_BUFFER_MAGIC;
             buf->kind  = CR_VBOXHGCM_MEMORY;
             buf->allocated = conn->buffer_size;
-#ifdef RT_OS_WINDOWS
-            buf->pDDS = NULL;
-#endif
         }
     }
 
@@ -944,18 +853,9 @@ crVBoxHGCMWriteReadExact(CRConnection *conn, const void *buf, unsigned int len, 
     parms.hdr.u32Function = SHCRGL_GUEST_FN_WRITE_READ;
     parms.hdr.cParms      = SHCRGL_CPARMS_WRITE_READ;
 
-    //if (bufferKind != CR_VBOXHGCM_DDRAW_SURFACE)
-    {
-        parms.pBuffer.type                   = VMMDevHGCMParmType_LinAddr_In;
-        parms.pBuffer.u.Pointer.size         = len;
-        parms.pBuffer.u.Pointer.u.linearAddr = (uintptr_t) buf;
-    }
-    /*else ///@todo it fails badly, have to check why. bird: This fails because buf isn't a physical address?
-    {
-        parms.pBuffer.type                 = VMMDevHGCMParmType_PhysAddr;
-        parms.pBuffer.u.Pointer.size       = len;
-        parms.pBuffer.u.Pointer.u.physAddr = (uintptr_t) buf;
-    }*/
+    parms.pBuffer.type                   = VMMDevHGCMParmType_LinAddr_In;
+    parms.pBuffer.u.Pointer.size         = len;
+    parms.pBuffer.u.Pointer.u.linearAddr = (uintptr_t) buf;
 
     CRASSERT(!conn->pBuffer); //make sure there's no data to process
     parms.pWriteback.type                   = VMMDevHGCMParmType_LinAddr_Out;
@@ -1202,9 +1102,6 @@ static void _crVBoxHGCMFree(CRConnection *conn, void *buf)
     switch (hgcm_buffer->kind)
     {
         case CR_VBOXHGCM_MEMORY:
-#ifdef RT_OS_WINDOWS
-        case CR_VBOXHGCM_DDRAW_SURFACE:
-#endif
 #ifdef CHROMIUM_THREADSAFE
             crLockMutex(&g_crvboxhgcm.mutex);
 #endif
@@ -1283,7 +1180,7 @@ static void _crVBoxHGCMReceiveMessage(CRConnection *conn)
     else
     {
         /* we should NEVER have redir_ptr disabled with HGSMI command now */
-        CRASSERT(!conn->CmdData.pCmd);
+        CRASSERT(!conn->CmdData.pvCmd);
         if ( len <= conn->buffer_size )
         {
             /* put in pre-allocated buffer */
@@ -1298,9 +1195,6 @@ static void _crVBoxHGCMReceiveMessage(CRConnection *conn)
             hgcm_buffer->magic     = CR_VBOXHGCM_BUFFER_MAGIC;
             hgcm_buffer->kind      = CR_VBOXHGCM_MEMORY_BIG;
             hgcm_buffer->allocated = sizeof(CRVBOXHGCMBUFFER) + len;
-# ifdef RT_OS_WINDOWS
-            hgcm_buffer->pDDS      = NULL;
-# endif
         }
 
         hgcm_buffer->len = len;
@@ -1372,17 +1266,59 @@ static int crVBoxHGCMSetVersion(CRConnection *conn, unsigned int vMajor, unsigne
 
     rc = crVBoxHGCMCall(conn, &parms, sizeof(parms));
 
-    if (RT_FAILURE(rc) || RT_FAILURE(parms.hdr.result))
+    if (RT_SUCCESS(rc))
     {
-        crWarning("Host doesn't accept our version %d.%d. Make sure you have appropriate additions installed!",
-                  parms.vMajor.u.value32, parms.vMinor.u.value32);
+        rc =  parms.hdr.result;
+        if (RT_SUCCESS(rc))
+        {
+            conn->vMajor = CR_PROTOCOL_VERSION_MAJOR;
+            conn->vMinor = CR_PROTOCOL_VERSION_MINOR;
+
+            return VINF_SUCCESS;
+        }
+        else
+            WARN(("Host doesn't accept our version %d.%d. Make sure you have appropriate additions installed!",
+                  parms.vMajor.u.value32, parms.vMinor.u.value32));
+    }
+    else
+        WARN(("crVBoxHGCMCall failed %d", rc));
+
+    return rc;
+}
+
+static int crVBoxHGCMGetHostCapsLegacy(CRConnection *conn, uint32_t *pu32HostCaps)
+{
+    CRVBOXHGCMGETCAPS caps;
+    int rc;
+
+    caps.hdr.result      = VERR_WRONG_ORDER;
+    caps.hdr.u32ClientID = conn->u32ClientID;
+    caps.hdr.u32Function = SHCRGL_GUEST_FN_GET_CAPS_LEGACY;
+    caps.hdr.cParms      = SHCRGL_CPARMS_GET_CAPS_LEGACY;
+
+    caps.Caps.type       = VMMDevHGCMParmType_32bit;
+    caps.Caps.u.value32  = 0;
+
+    rc = crVBoxHGCMCall(conn, &caps, sizeof(caps));
+
+    if (RT_SUCCESS(rc))
+    {
+        rc =  caps.hdr.result;
+        if (RT_SUCCESS(rc))
+        {
+            *pu32HostCaps = caps.Caps.u.value32;
+            return VINF_SUCCESS;
+        }
+        else
+            WARN(("SHCRGL_GUEST_FN_GET_CAPS failed %d", rc));
         return FALSE;
     }
+    else
+        WARN(("crVBoxHGCMCall failed %d", rc));
 
-    conn->vMajor = CR_PROTOCOL_VERSION_MAJOR;
-    conn->vMinor = CR_PROTOCOL_VERSION_MINOR;
+    *pu32HostCaps = 0;
 
-    return TRUE;
+    return rc;
 }
 
 static int crVBoxHGCMSetPID(CRConnection *conn, unsigned long long pid)
@@ -1489,17 +1425,38 @@ static int crVBoxHGCMDoConnect( CRConnection *conn )
             crDebug("HGCM connect was successful: client id =0x%x\n", conn->u32ClientID);
 
             rc = crVBoxHGCMSetVersion(conn, CR_PROTOCOL_VERSION_MAJOR, CR_PROTOCOL_VERSION_MINOR);
-            if (!rc)
+            if (RT_FAILURE(rc))
             {
-                return rc;
+                WARN(("crVBoxHGCMSetVersion failed %d", rc));
+                return FALSE;
             }
 #ifdef RT_OS_WINDOWS
             rc = crVBoxHGCMSetPID(conn, GetCurrentProcessId());
 #else
             rc = crVBoxHGCMSetPID(conn, crGetPID());
 #endif
+            if (RT_FAILURE(rc))
+            {
+                WARN(("crVBoxHGCMSetPID failed %d", rc));
+                return FALSE;
+            }
+
+            if (!g_crvboxhgcm.fHostCapsInitialized)
+            {
+                rc = crVBoxHGCMGetHostCapsLegacy(conn, &g_crvboxhgcm.u32HostCaps);
+                if (RT_FAILURE(rc))
+                {
+                    WARN(("VBoxCrHgsmiCtlConGetHostCaps failed %d", rc));
+                    g_crvboxhgcm.u32HostCaps = 0;
+                }
+
+                /* host may not support it, ignore any failures */
+                g_crvboxhgcm.fHostCapsInitialized = true;
+                rc = VINF_SUCCESS;
+            }
+
             VBOXCRHGSMIPROFILE_FUNC_EPILOGUE();
-            return rc;
+            return RT_SUCCESS(rc);
         }
         else
         {
@@ -1522,7 +1479,7 @@ static int crVBoxHGCMDoConnect( CRConnection *conn )
     }
 
     VBOXCRHGSMIPROFILE_FUNC_EPILOGUE();
-    return TRUE;
+    return FALSE;
 
 #else /*#ifdef IN_GUEST*/
     crError("crVBoxHGCMDoConnect called on host side!");
@@ -1747,7 +1704,6 @@ static void _crVBoxHGSMIFree(CRConnection *conn, void *buf)
     {
         PVBOXUHGSMI_BUFFER pBuf = _crVBoxHGSMIBufFromHdr(hgcm_buffer);
         PCRVBOXHGSMI_CLIENT pClient = (PCRVBOXHGSMI_CLIENT)pBuf->pvUserData;
-        pBuf->pfnUnlock(pBuf);
         _crVBoxHGSMIBufFree(pClient, pBuf);
     }
     else
@@ -1977,6 +1933,10 @@ _crVBoxHGSMIWriteReadExact(CRConnection *conn, PCRVBOXHGSMI_CLIENT pClient, void
         {
             uint32_t cbWriteback = parms->cbWriteback;
             rc = parms->hdr.result;
+#ifdef DEBUG_misha
+            /* catch it here to test the buffer */
+            Assert(RT_SUCCESS(parms->hdr.result) || parms->hdr.result == VERR_BUFFER_OVERFLOW);
+#endif
             _crVBoxHGSMICmdBufferUnlock(pClient);
 #ifdef DEBUG
             parms = NULL;
@@ -1998,25 +1958,30 @@ _crVBoxHGSMIWriteReadExact(CRConnection *conn, PCRVBOXHGSMI_CLIENT pClient, void
             else if (VERR_BUFFER_OVERFLOW == rc)
             {
                 VBOXUHGSMI_BUFFER_TYPE_FLAGS Flags = {0};
-                PVBOXUHGSMI_BUFFER pOldBuf = pClient->pHGBuffer;
+                PVBOXUHGSMI_BUFFER pNewBuf;
                 CRASSERT(!pClient->pvHGBuffer);
                 CRASSERT(cbWriteback>pClient->pHGBuffer->cbBuffer);
                 crDebug("Reallocating host buffer from %d to %d bytes", conn->cbHostBufferAllocated, cbWriteback);
 
-                rc = pClient->pHgsmi->pfnBufferCreate(pClient->pHgsmi, CRVBOXHGSMI_PAGE_ALIGN(cbWriteback), Flags, &pClient->pHGBuffer);
+                rc = pClient->pHgsmi->pfnBufferCreate(pClient->pHgsmi, CRVBOXHGSMI_PAGE_ALIGN(cbWriteback), Flags, &pNewBuf);
                 if (RT_SUCCESS(rc))
                 {
-                    rc = pOldBuf->pfnDestroy(pOldBuf);
+                    rc = pClient->pHGBuffer->pfnDestroy(pClient->pHGBuffer);
                     CRASSERT(RT_SUCCESS(rc));
+
+                    pClient->pHGBuffer = pNewBuf;
 
                     _crVBoxHGSMIReadExact(conn, pClient/*, cbWriteback*/);
                 }
                 else
                 {
                     crWarning("_crVBoxHGSMIWriteReadExact: pfnBufferCreate(%d) failed!", CRVBOXHGSMI_PAGE_ALIGN(cbWriteback));
-                    crFree(conn->pHostBuffer);
-                    conn->cbHostBufferAllocated = cbWriteback;
-                    conn->pHostBuffer = crAlloc(conn->cbHostBufferAllocated);
+                    if (conn->cbHostBufferAllocated < cbWriteback)
+                    {
+                        crFree(conn->pHostBuffer);
+                        conn->cbHostBufferAllocated = cbWriteback;
+                        conn->pHostBuffer = crAlloc(conn->cbHostBufferAllocated);
+                    }
                     crVBoxHGCMReadExact(conn, NULL, cbWriteback);
                 }
             }
@@ -2301,9 +2266,31 @@ static int crVBoxHGSMIDoConnect( CRConnection *conn )
 
     pClient = _crVBoxHGSMIClientGet(conn);
     if (pClient)
+    {
         rc = VBoxCrHgsmiCtlConGetClientID(pClient->pHgsmi, &conn->u32ClientID);
+        if (RT_FAILURE(rc))
+        {
+            WARN(("VBoxCrHgsmiCtlConGetClientID failed %d", rc));
+        }
+        if (!g_crvboxhgcm.fHostCapsInitialized)
+        {
+            rc = VBoxCrHgsmiCtlConGetHostCaps(pClient->pHgsmi, &g_crvboxhgcm.u32HostCaps);
+            if (RT_SUCCESS(rc))
+            {
+                g_crvboxhgcm.fHostCapsInitialized = true;
+            }
+            else
+            {
+                WARN(("VBoxCrHgsmiCtlConGetHostCaps failed %d", rc));
+                g_crvboxhgcm.u32HostCaps = 0;
+            }
+        }
+    }
     else
+    {
+        WARN(("_crVBoxHGSMIClientGet failed %d", rc));
         rc = VERR_GENERAL_FAILURE;
+    }
 
     VBOXCRHGSMIPROFILE_FUNC_EPILOGUE();
 
@@ -2410,14 +2397,16 @@ void crVBoxHGCMInit(CRNetReceiveFuncList *rfl, CRNetCloseFuncList *cfl, unsigned
     crInitMutex(&g_crvboxhgcm.recvmutex);
 #endif
     g_crvboxhgcm.bufpool = crBufferPoolInit(16);
+
+#ifdef IN_GUEST
+    g_crvboxhgcm.fHostCapsInitialized = false;
+    g_crvboxhgcm.u32HostCaps = 0;
+#endif
 }
 
 /* Callback function used to free buffer pool entries */
 void crVBoxHGCMBufferFree(void *data)
 {
-#ifdef RT_OS_WINDOWS
-    LPDIRECTDRAWSURFACE lpDDS;
-#endif
     CRVBOXHGCMBUFFER *hgcm_buffer = (CRVBOXHGCMBUFFER *) data;
 
     CRASSERT(hgcm_buffer->magic == CR_VBOXHGCM_BUFFER_MAGIC);
@@ -2427,15 +2416,6 @@ void crVBoxHGCMBufferFree(void *data)
         case CR_VBOXHGCM_MEMORY:
             crFree( hgcm_buffer );
             break;
-#ifdef RT_OS_WINDOWS
-        case CR_VBOXHGCM_DDRAW_SURFACE:
-            lpDDS = hgcm_buffer->pDDS;
-            CRASSERT(lpDDS);
-            IDirectDrawSurface_Unlock(lpDDS, NULL);
-            IDirectDrawSurface_Release(lpDDS);
-            crDebug("DDraw surface freed (%x)\n", lpDDS);
-            break;
-#endif
         case CR_VBOXHGCM_MEMORY_BIG:
             crFree( hgcm_buffer );
             break;
@@ -2558,6 +2538,10 @@ void crVBoxHGCMConnection(CRConnection *conn
     CRASSERT(conn->pHostBuffer);
     conn->cbHostBuffer = 0;
 
+#if !defined(IN_GUEST)
+    RTListInit(&conn->PendingMsgList);
+#endif
+
 #ifdef CHROMIUM_THREADSAFE
     crLockMutex(&g_crvboxhgcm.mutex);
 #endif
@@ -2617,6 +2601,14 @@ void _crVBoxHGCMPerformReceiveMessage(CRConnection *conn)
     }
 }
 
+#ifdef IN_GUEST
+uint32_t crVBoxHGCMHostCapsGet()
+{
+    Assert(g_crvboxhgcm.fHostCapsInitialized);
+    return g_crvboxhgcm.u32HostCaps;
+}
+#endif
+
 int crVBoxHGCMRecv(
 #if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
         CRConnection *conn
@@ -2633,7 +2625,6 @@ int crVBoxHGCMRecv(
 
 #ifdef IN_GUEST
 # if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
-    CRASSERT(!g_crvboxhgcm.bHgsmiOn == !conn);
     if (conn && g_crvboxhgcm.bHgsmiOn)
     {
         _crVBoxHGCMPerformPollHost(conn);

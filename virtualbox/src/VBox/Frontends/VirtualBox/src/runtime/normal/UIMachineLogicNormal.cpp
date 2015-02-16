@@ -1,12 +1,10 @@
 /* $Id: UIMachineLogicNormal.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineLogicNormal class implementation
+ * VBox Qt GUI - UIMachineLogicNormal class implementation.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,9 +25,6 @@
 #include "UIActionPoolRuntime.h"
 #include "UIMachineLogicNormal.h"
 #include "UIMachineWindow.h"
-#include "UIDownloaderAdditions.h"
-#include "UIDownloaderUserManual.h"
-#include "UIDownloaderExtensionPack.h"
 #ifdef Q_WS_MAC
 #include "VBoxUtils.h"
 #endif /* Q_WS_MAC */
@@ -45,12 +40,31 @@ bool UIMachineLogicNormal::checkAvailability()
     return true;
 }
 
-void UIMachineLogicNormal::sltPrepareNetworkAdaptersMenu()
+void UIMachineLogicNormal::sltCheckForRequestedVisualStateType()
 {
-    QMenu *menu = qobject_cast<QMenu*>(sender());
-    AssertMsg(menu, ("This slot should be called only on Network Adapters menu show!\n"));
-    menu->clear();
-    menu->addAction(gActionPool->action(UIActionIndexRuntime_Simple_NetworkAdaptersDialog));
+    /* Do not try to change visual-state type if machine was not started yet: */
+    if (!uisession()->isRunning() && !uisession()->isPaused())
+        return;
+
+    /* Check requested visual-state types: */
+    switch (uisession()->requestedVisualState())
+    {
+        /* If 'seamless' visual-state type is requested: */
+        case UIVisualStateType_Seamless:
+        {
+            /* And supported: */
+            if (uisession()->isGuestSupportsSeamless())
+            {
+                LogRel(("UIMachineLogicNormal::sltCheckForRequestedVisualStateType: "
+                        "Going 'seamless' as requested...\n"));
+                uisession()->setRequestedVisualState(UIVisualStateType_Invalid);
+                uisession()->changeVisualState(UIVisualStateType_Seamless);
+            }
+            break;
+        }
+        default:
+            break;
+    }
 }
 
 void UIMachineLogicNormal::sltPrepareSharedFoldersMenu()
@@ -58,7 +72,16 @@ void UIMachineLogicNormal::sltPrepareSharedFoldersMenu()
     QMenu *menu = qobject_cast<QMenu*>(sender());
     AssertMsg(menu, ("This slot should be called only on Shared Folders menu show!\n"));
     menu->clear();
-    menu->addAction(gActionPool->action(UIActionIndexRuntime_Simple_SharedFoldersDialog));
+    menu->addAction(gActionPool->action(UIActionIndexRuntime_Simple_SharedFoldersSettings));
+}
+
+void UIMachineLogicNormal::sltPrepareVideoCaptureMenu()
+{
+    QMenu *pMenu = qobject_cast<QMenu*>(sender());
+    AssertMsg(pMenu, ("This slot should be called only on Video Capture menu show!\n"));
+    pMenu->clear();
+    pMenu->addAction(gActionPool->action(UIActionIndexRuntime_Simple_VideoCaptureSettings));
+    pMenu->addAction(gActionPool->action(UIActionIndexRuntime_Toggle_VideoCapture));
 }
 
 void UIMachineLogicNormal::sltPrepareMouseIntegrationMenu()
@@ -71,21 +94,29 @@ void UIMachineLogicNormal::sltPrepareMouseIntegrationMenu()
 
 void UIMachineLogicNormal::prepareActionConnections()
 {
-    /* Base class connections: */
+    /* Call to base-class: */
     UIMachineLogic::prepareActionConnections();
 
-    /* This class connections: */
-    connect(gActionPool->action(UIActionIndexRuntime_Menu_NetworkAdapters)->menu(), SIGNAL(aboutToShow()),
-            this, SLOT(sltPrepareNetworkAdaptersMenu()));
+    /* "View" actions connections: */
+    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Fullscreen), SIGNAL(triggered(bool)),
+            this, SLOT(sltChangeVisualStateToFullscreen()));
+    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Seamless), SIGNAL(triggered(bool)),
+            this, SLOT(sltChangeVisualStateToSeamless()));
+    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Scale), SIGNAL(triggered(bool)),
+            this, SLOT(sltChangeVisualStateToScale()));
+
+    /* "Device" actions connections: */
     connect(gActionPool->action(UIActionIndexRuntime_Menu_SharedFolders)->menu(), SIGNAL(aboutToShow()),
             this, SLOT(sltPrepareSharedFoldersMenu()));
+    connect(gActionPool->action(UIActionIndexRuntime_Menu_VideoCapture)->menu(), SIGNAL(aboutToShow()),
+            this, SLOT(sltPrepareVideoCaptureMenu()));
     connect(gActionPool->action(UIActionIndexRuntime_Menu_MouseIntegration)->menu(), SIGNAL(aboutToShow()),
             this, SLOT(sltPrepareMouseIntegrationMenu()));
 }
 
 void UIMachineLogicNormal::prepareMachineWindows()
 {
-    /* Do not create window(s) if they created already: */
+    /* Do not create machine-window(s) if they created already: */
     if (isMachineWindowsCreated())
         return;
 
@@ -104,18 +135,35 @@ void UIMachineLogicNormal::prepareMachineWindows()
     for (ulong uScreenId = uMonitorCount; uScreenId > 0; -- uScreenId)
         machineWindows()[uScreenId - 1]->raise();
 
-    /* Remember what machine window(s) created: */
+    /* Mark machine-window(s) created: */
     setMachineWindowsCreated(true);
 }
 
 void UIMachineLogicNormal::cleanupMachineWindows()
 {
-    /* Do not cleanup machine window(s) if not present: */
+    /* Do not destroy machine-window(s) if they destroyed already: */
     if (!isMachineWindowsCreated())
         return;
 
-    /* Cleanup machine window(s): */
+    /* Mark machine-window(s) destroyed: */
+    setMachineWindowsCreated(false);
+
+    /* Cleanup machine-window(s): */
     foreach (UIMachineWindow *pMachineWindow, machineWindows())
         UIMachineWindow::destroy(pMachineWindow);
+}
+
+void UIMachineLogicNormal::cleanupActionConnections()
+{
+    /* "View" actions disconnections: */
+    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Fullscreen), SIGNAL(triggered(bool)),
+               this, SLOT(sltChangeVisualStateToFullscreen()));
+    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Seamless), SIGNAL(triggered(bool)),
+               this, SLOT(sltChangeVisualStateToSeamless()));
+    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Scale), SIGNAL(triggered(bool)),
+               this, SLOT(sltChangeVisualStateToScale()));
+
+    /* Call to base-class: */
+    UIMachineLogic::cleanupActionConnections();
 }
 

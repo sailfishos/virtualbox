@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -75,7 +75,7 @@
 #include "fb.h"
 
 #include "vboxvideo.h"
-#include <iprt/asm-math.h>
+#include <VBox/VBoxGuest.h>
 #include "version-generated.h"
 #include "product-generated.h"
 #include <xf86.h>
@@ -101,6 +101,10 @@
 # include "xf86Crtc.h"
 # include "xf86Modes.h"
 # include <X11/Xatom.h>
+#endif
+
+#ifdef VBOX_DRI
+# include "xf86drm.h"
 #endif
 
 /* Mandatory functions */
@@ -157,12 +161,12 @@ static const struct pci_id_match vbox_device_match[] = {
 static SymTabRec VBOXChipsets[] =
 {
     {VBOX_DEVICEID, "vbox"},
-    {-1,	 NULL}
+    {-1,            NULL}
 };
 
 static PciChipsets VBOXPCIchipsets[] = {
   { VBOX_DEVICEID, VBOX_DEVICEID, RES_SHARED_VGA },
-  { -1,		-1,		    RES_UNDEFINED },
+  { -1,            -1,            RES_UNDEFINED },
 };
 
 /*
@@ -199,7 +203,7 @@ DriverRec VBOXVIDEO = {
 
 /* No options for now */
 static const OptionInfoRec VBOXOptions[] = {
-    { -1,		NULL,		OPTV_NONE,	{0},	FALSE }
+    { -1, NULL, OPTV_NONE, {0}, FALSE }
 };
 
 #ifndef XORG_7X
@@ -223,6 +227,7 @@ static const char *shadowfbSymbols[] = {
 };
 
 static const char *ramdacSymbols[] = {
+    "xf86DestroyCursorInfoRec",
     "xf86InitCursor",
     "xf86CreateCursorInfoRec",
     NULL
@@ -391,7 +396,7 @@ vbox_output_mode_valid (xf86OutputPtr output, DisplayModePtr mode)
     TRACE_LOG("HDisplay=%d, VDisplay=%d\n", mode->HDisplay, mode->VDisplay);
     /* We always like modes specified by the user in the configuration
      * file and modes requested by the host, as doing otherwise is likely to
-	 * annoy people. */
+     * annoy people. */
     if (   !(mode->type & M_T_USERDEF)
         && !(mode->type & M_T_PREFERRED)
         && vbox_device_available(VBOXGetRec(pScrn))
@@ -532,11 +537,8 @@ vbox_output_set_property(xf86OutputPtr output, Atom property,
             return FALSE;
         pVBox->aPreferredSize[cDisplay].cx = w;
         pVBox->aPreferredSize[cDisplay].cy = h;
-        return TRUE;
     }
-    if (property == vboxAtomEDID())
-        return TRUE;
-    return FALSE;
+    return TRUE;
 }
 #endif
 
@@ -576,7 +578,7 @@ static XF86ModuleVersionInfo vboxVersionRec =
     1,                          /* Module major version. Xorg-specific */
     0,                          /* Module minor version. Xorg-specific */
     1,                          /* Module patchlevel. Xorg-specific */
-    ABI_CLASS_VIDEODRV,	        /* This is a video driver */
+    ABI_CLASS_VIDEODRV,         /* This is a video driver */
     ABI_VIDEODRV_VERSION,
     MOD_CLASS_VIDEODRV,
     {0, 0, 0, 0}
@@ -828,10 +830,16 @@ VBOXPreInit(ScrnInfoPtr pScrn, int flags)
     if (!xf86LoadSubModule(pScrn, "vgahw"))
         return FALSE;
 
-#ifdef VBOX_DRI
+#ifdef VBOX_DRI_OLD
     /* Load the dri module. */
     if (!xf86LoadSubModule(pScrn, "dri"))
         return FALSE;
+#else
+# ifdef VBOX_DRI
+    /* Load the dri module. */
+    if (!xf86LoadSubModule(pScrn, "dri2"))
+        return FALSE;
+# endif
 #endif
 
 #ifndef PCIACCESS
@@ -1008,6 +1016,11 @@ static Bool VBOXScreenInit(ScreenPtr pScreen, int argc, char **argv)
 
 #ifdef VBOX_DRI
     pVBox->useDRI = VBOXDRIScreenInit(pScrn, pScreen, pVBox);
+# ifndef VBOX_DRI_OLD  /* DRI2 */
+    if (pVBox->drmFD >= 0)
+        /* Tell the kernel driver, if present, that we are taking over. */
+        drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_DISABLE_HGSMI, NULL);
+# endif
 #endif
 
     if (!fbScreenInit(pScreen, pVBox->base,
@@ -1073,8 +1086,9 @@ static Bool VBOXScreenInit(ScreenPtr pScreen, int argc, char **argv)
         }
     }
 
-    /* Set a sane minimum and maximum mode size */
-    xf86CrtcSetSizeRange(pScrn, 64, 64, 32000, 32000);
+    /* Set a sane minimum and maximum mode size to match what the hardware
+     * supports. */
+    xf86CrtcSetSizeRange(pScrn, 64, 64, 16384, 16384);
 
     /* Now create our initial CRTC/output configuration. */
     if (!xf86InitialConfiguration(pScrn, TRUE)) {
@@ -1130,7 +1144,7 @@ static Bool VBOXScreenInit(ScreenPtr pScreen, int argc, char **argv)
 
     /* colourmap code */
     if (!miCreateDefColormap(pScreen))
-	return (FALSE);
+        return (FALSE);
 
     if(!xf86HandleColormaps(pScreen, 256, 8, vboxLoadPalette, NULL, 0))
         return (FALSE);
@@ -1159,7 +1173,7 @@ static Bool VBOXScreenInit(ScreenPtr pScreen, int argc, char **argv)
         xf86DrvMsg(pScrn->scrnIndex, X_ERROR,
                    "Unable to start the VirtualBox mouse pointer integration with the host system.\n");
 
-#ifdef VBOX_DRI
+#ifdef VBOX_DRI_OLD
     if (pVBox->useDRI)
         pVBox->useDRI = VBOXDRIFinishScreenInit(pScreen);
 #endif
@@ -1172,12 +1186,19 @@ static Bool VBOXEnterVT(ScrnInfoPtr pScrn)
 
     TRACE_ENTRY();
     vboxClearVRAM(pScrn, 0, 0);
-    if (pVBox->fHaveHGSMI)
-        vboxEnableVbva(pScrn);
-#ifdef VBOX_DRI
+#ifdef VBOX_DRI_OLD
     if (pVBox->useDRI)
         DRIUnlock(xf86ScrnToScreen(pScrn));
+#elif defined(VBOX_DRI)  /* DRI2 */
+    if (pVBox->drmFD >= 0)
+    {
+        /* Tell the kernel driver, if present, that we are taking over. */
+        drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_DISABLE_HGSMI, NULL);
+        drmSetMaster(pVBox->drmFD);
+    }
 #endif
+    if (pVBox->fHaveHGSMI)
+        vboxEnableVbva(pScrn);
     /* Re-assert this in case we had a change request while switched out. */
     if (pVBox->FBSize.cx && pVBox->FBSize.cy)
         VBOXAdjustScreenPixmap(pScrn, pVBox->FBSize.cx, pVBox->FBSize.cy);
@@ -1201,12 +1222,20 @@ static void VBOXLeaveVT(ScrnInfoPtr pScrn)
     if (pVBox->fHaveHGSMI)
         vboxDisableVbva(pScrn);
     vboxClearVRAM(pScrn, 0, 0);
-    VBOXRestoreMode(pScrn);
     vboxDisableGraphicsCap(pVBox);
-#ifdef VBOX_DRI
+#ifdef VBOX_DRI_OLD
     if (pVBox->useDRI)
         DRILock(xf86ScrnToScreen(pScrn), 0);
+#elif defined(VBOX_DRI)  /* DRI2 */
+    if (pVBox->drmFD >= 0)
+        drmDropMaster(pVBox->drmFD);
+    /* Tell the kernel driver, if present, that it can use the framebuffer
+     * driver again.  If not, or if that fails, restore the old mode ourselves.
+     */
+    if (   pVBox->drmFD < 0
+        || drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_ENABLE_HGSMI, NULL) < 0)
 #endif
+        VBOXRestoreMode(pScrn);
     TRACE_EXIT();
 }
 
@@ -1214,7 +1243,9 @@ static Bool VBOXCloseScreen(ScreenPtr pScreen)
 {
     ScrnInfoPtr pScrn = xf86ScreenToScrn(pScreen);
     VBOXPtr pVBox = VBOXGetRec(pScrn);
-
+#if defined(VBOX_DRI) && !defined(VBOX_DRI_OLD)  /* DRI2 */
+    BOOL fRestore = TRUE;
+#endif
     if (pScrn->vtSema)
     {
         if (pVBox->fHaveHGSMI)
@@ -1224,15 +1255,23 @@ static Bool VBOXCloseScreen(ScreenPtr pScreen)
         vboxClearVRAM(pScrn, 0, 0);
     }
 #ifdef VBOX_DRI
+# ifndef VBOX_DRI_OLD  /* DRI2 */
+    if (   pVBox->drmFD >= 0
+        /* Tell the kernel driver, if present, that we are going away. */
+        && drmIoctl(pVBox->drmFD, VBOXVIDEO_IOCTL_ENABLE_HGSMI, NULL) >= 0)
+        fRestore = false;
+# endif
     if (pVBox->useDRI)
         VBOXDRICloseScreen(pScreen, pVBox);
     pVBox->useDRI = false;
 #endif
-
-    if (pScrn->vtSema) {
-        VBOXRestoreMode(pScrn);
+#if defined(VBOX_DRI) && !defined(VBOX_DRI_OLD)  /* DRI2 */
+    if (fRestore)
+#endif
+        if (pScrn->vtSema)
+            VBOXRestoreMode(pScrn);
+    if (pScrn->vtSema)
         VBOXUnmapVidMem(pScrn);
-    }
     pScrn->vtSema = FALSE;
 
     /* Do additional bits which are separate for historical reasons */
@@ -1269,7 +1308,7 @@ static Bool VBOXSwitchMode(ScrnInfoPtr pScrn, DisplayModePtr pMode)
         return TRUE;
     }
 #ifdef VBOXVIDEO_13
-    rc = xf86SetSingleMode(pScrn, pMode, 0);
+    rc = xf86SetSingleMode(pScrn, pMode, RR_Rotate_0);
 #else
     VBOXAdjustScreenPixmap(pScrn, pMode->HDisplay, pMode->VDisplay);
     rc = VBOXSetMode(pScrn, 0, pMode->HDisplay, pMode->VDisplay,

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -838,6 +838,22 @@ DECLINLINE(PINTNETMACTABENTRY) intnetR0NetworkFindMacAddrEntry(PINTNETNETWORK pN
 
 
 /**
+ * Checks if the IPv6 address is a good interface address.
+ * @returns true/false.
+ * @param   addr        The address, network endian.
+ */
+DECLINLINE(bool) intnetR0IPv6AddrIsGood(RTNETADDRIPV6 addr)
+{
+    return  !(   (   addr.QWords.qw0 == 0 && addr.QWords.qw1 == 0)                       /* :: */
+              || (  (addr.Words.w0 & RT_H2BE_U16(0xff00)) == RT_H2BE_U16(0xff00)) /* multicast */
+              || (   addr.Words.w0 == 0 && addr.Words.w1 == 0
+                  && addr.Words.w2 == 0 && addr.Words.w3 == 0
+                  && addr.Words.w4 == 0 && addr.Words.w5 == 0
+                  && addr.Words.w6 == 0 && addr.Words.w7 == RT_H2BE_U16(0x0001)));      /* ::1 */
+}
+
+
+/**
  * Checks if the IPv4 address is a broadcast address.
  * @returns true/false.
  * @param   Addr        The address, network endian.
@@ -1070,8 +1086,12 @@ static void intnetR0IfAddrCacheDeleteIt(PINTNETIF pIf, PINTNETADDRCACHE pCache, 
     switch (enmAddrType)
     {
         case kIntNetAddrType_IPv4:
-            Log(("intnetR0IfAddrCacheDeleteIt: hIf=%#x MAC=%.6Rhxs IPv4 added #%d %d.%d.%d.%d %s\n",
-                 pIf->hIf, &pIf->MacAddr, iEntry, pAddr->au8[0], pAddr->au8[1], pAddr->au8[2], pAddr->au8[3], pszMsg));
+            Log(("intnetR0IfAddrCacheDeleteIt: hIf=%#x MAC=%.6Rhxs IPv4 deleted #%d  %RTnaipv4 %s\n",
+                 pIf->hIf, &pIf->MacAddr, iEntry, pAddr->IPv4, pszMsg));
+            break;
+        case kIntNetAddrType_IPv6:
+            Log(("intnetR0IfAddrCacheDeleteIt: hIf=%#x MAC=%.6Rhxs IPv6 deleted #%d %RTnaipv6 %s\n",
+                pIf->hIf, &pIf->MacAddr, iEntry, pAddr->IPv6, pszMsg));
             break;
         default:
             Log(("intnetR0IfAddrCacheDeleteIt: hIf=%RX32 MAC=%.6Rhxs type=%d #%d %.*Rhxs %s\n",
@@ -1247,8 +1267,12 @@ static void intnetR0IfAddrCacheAddIt(PINTNETIF pIf, PINTNETADDRCACHE pCache, PCR
     switch (enmAddrType)
     {
         case kIntNetAddrType_IPv4:
-            Log(("intnetR0IfAddrCacheAddIt: hIf=%#x MAC=%.6Rhxs IPv4 added #%d %d.%d.%d.%d %s\n",
-                 pIf->hIf, &pIf->MacAddr, pCache->cEntries, pAddr->au8[0], pAddr->au8[1], pAddr->au8[2], pAddr->au8[3], pszMsg));
+            Log(("intnetR0IfAddrCacheAddIt: hIf=%#x MAC=%.6Rhxs IPv4 added #%d %RTnaipv4 %s\n",
+                 pIf->hIf, &pIf->MacAddr, pCache->cEntries, pAddr->IPv4, pszMsg));
+            break;
+        case kIntNetAddrType_IPv6:
+            Log(("intnetR0IfAddrCacheAddIt: hIf=%#x MAC=%.6Rhxs IPv6 added #%d %RTnaipv6 %s\n",
+                 pIf->hIf, &pIf->MacAddr, pCache->cEntries, pAddr->IPv6, pszMsg));
             break;
         default:
             Log(("intnetR0IfAddrCacheAddIt: hIf=%#x MAC=%.6Rhxs type=%d added #%d %.*Rhxs %s\n",
@@ -2333,19 +2357,47 @@ static void intnetR0TrunkIfSnoopAddr(PINTNETNETWORK pNetwork, PCINTNETSG pSG, ui
             break;
         }
 
-        case RTNET_ETHERTYPE_IPV6:
-        {
-            /** @todo IPv6: Check for ICMPv6. It looks like type 133 (Router solicitation) might
-             * need to be edited. Check out how NDP works...  */
-            break;
-        }
-
         case RTNET_ETHERTYPE_ARP:
             intnetR0TrunkIfSnoopArp(pNetwork, pSG);
             break;
     }
 }
 #endif /* INTNET_WITH_DHCP_SNOOPING */
+
+/**
+ * Deals with an IPv6 packet.
+ *
+ * This will fish out the source IP address and add it to the cache.
+ * Then it will look for DHCPRELEASE requests (?) and anything else
+ * that we might find useful later.
+ *
+ * @param   pIf             The interface that's sending the frame.
+ * @param   pIpHdr          Pointer to the IPv4 header in the frame.
+ * @param   cbPacket        The size of the packet, or more correctly the
+ *                          size of the frame without the ethernet header.
+ * @param   fGso            Set if this is a GSO frame, clear if regular.
+ */
+static void intnetR0IfSnoopIPv6SourceAddr(PINTNETIF pIf, PCRTNETIPV6 pIpHdr, uint32_t cbPacket, bool fGso)
+{
+    /*
+     * Check the header size first to prevent access invalid data.
+     */
+    if (cbPacket < RTNETIPV6_MIN_LEN)
+        return;
+
+    /*
+     * If the source address is good (not multicast) and
+     * not already in the address cache of the sender, add it.
+     */
+    RTNETADDRU Addr;
+    Addr.IPv6 = pIpHdr->ip6_src;
+
+    if (    intnetR0IPv6AddrIsGood(Addr.IPv6) && (pIpHdr->ip6_hlim == 0xff)
+        &&  intnetR0IfAddrCacheLookupLikely(&pIf->aAddrCache[kIntNetAddrType_IPv6], &Addr, sizeof(Addr.IPv6)) < 0)
+    {
+        intnetR0IfAddrCacheAddIt(pIf, &pIf->aAddrCache[kIntNetAddrType_IPv6], &Addr, "if/ipv6");
+    }
+}
 
 
 /**
@@ -2497,13 +2549,11 @@ static void intnetR0IfSnoopAddr(PINTNETIF pIf, uint8_t const *pbFrame, uint32_t 
         case RTNET_ETHERTYPE_IPV4:
             intnetR0IfSnoopIPv4SourceAddr(pIf, (PCRTNETIPV4)((PCRTNETETHERHDR)pbFrame + 1), cbFrame, fGso);
             break;
-#if 0 /** @todo IntNet: implement IPv6 for wireless MAC sharing. */
+
         case RTNET_ETHERTYPE_IPV6:
-            /** @todo IPv6: Check for ICMPv6. It looks like type 133 (Router solicitation) might
-             * need to be edited. Check out how NDP works...  */
-            intnetR0IfSnoopIPv6SourceAddr(pIf, (PCINTNETIPV6)((PCRTNETETHERHDR)pbFrame + 1), cbFrame, fGso, pfSgFlags);
+            intnetR0IfSnoopIPv6SourceAddr(pIf, (PCRTNETIPV6)((PCRTNETETHERHDR)pbFrame + 1), cbFrame, fGso);
             break;
-#endif
+
 #if 0 /** @todo IntNet: implement IPX for wireless MAC sharing? */
         case RTNET_ETHERTYPE_IPX_1:
         case RTNET_ETHERTYPE_IPX_2:
@@ -2636,6 +2686,10 @@ static int intnetR0TrunkIfSendGsoFallback(PINTNETTRUNKIF pThis, PINTNETIF pIfSen
         INTNETSG    SG;
     } u;
 
+    /** @todo We have to adjust MSS so it does not exceed the value configured for
+     * the host's interface.
+     */
+
     /*
      * Carve out the frame segments with the header and frame in different
      * scatter / gather segments.
@@ -2683,6 +2737,141 @@ DECLINLINE(bool) intnetR0TrunkIfCanHandleGsoFrame(PINTNETTRUNKIF pThis, PINTNETS
         return !!(pThis->fWireGsoCapabilites & fMask);
     Assert(fDst == (INTNETTRUNKDIR_WIRE | INTNETTRUNKDIR_HOST));
     return !!(pThis->fHostGsoCapabilites & pThis->fWireGsoCapabilites & fMask);
+}
+
+
+/**
+ * Calculates the checksum of a full ipv6 frame.
+ *
+ * @returns 16-bit hecksum value.
+ * @param   pIpHdr          The IPv6 header (network endian (big)).
+ * @param   bProtocol       The protocol number.  This can be the same as the
+ *                          ip6_nxt field, but doesn't need to be.
+ * @param   cbPkt           The packet size (host endian of course).  This can
+ *                          be the same as the ip6_plen field, but as with @a
+ *                          bProtocol it won't be when extension headers are
+ *                          present.  For UDP this will be uh_ulen converted to
+ *                          host endian.
+ */
+static uint16_t computeIPv6FullChecksum(PCRTNETIPV6 pIpHdr)
+{
+    uint16_t const *data;
+    int len         = RT_BE2H_U16(pIpHdr->ip6_plen);
+    uint32_t sum    = RTNetIPv6PseudoChecksum(pIpHdr);
+
+    /* add the payload */
+    data = (uint16_t *) (pIpHdr + 1);
+    while(len > 1)
+    {
+        sum += *(data);
+        data++;
+        len -= 2;
+    }
+
+    if(len > 0)
+        sum += *((uint8_t *) data);
+
+    while(sum >> 16)
+        sum = (sum & 0xffff) + (sum >> 16);
+
+    return (uint16_t) ~sum;
+}
+
+
+/**
+ * Rewrite VM MAC address with shared host MAC address inside IPv6
+ * Neighbor Discovery datagrams.
+ */
+static void intnetR0TrunkSharedMacEditIPv6FromIntNet(PINTNETTRUNKIF pThis, PINTNETIF pIfSender,
+						     PRTNETETHERHDR pEthHdr, uint32_t cb)
+{
+    if (RT_UNLIKELY(cb < sizeof(*pEthHdr)))
+        return;
+
+    /* have IPv6 header */
+    PRTNETIPV6 pIPv6 = (PRTNETIPV6)(pEthHdr + 1);
+    cb -= sizeof(*pEthHdr);
+    if (RT_UNLIKELY(cb < sizeof(*pIPv6)))
+        return;
+
+    if (   pIPv6->ip6_nxt  != RTNETIPV6_PROT_ICMPV6
+        || pIPv6->ip6_hlim != 0xff)
+        return;
+
+    PRTNETICMPV6HDR pICMPv6 = (PRTNETICMPV6HDR)(pIPv6 + 1);
+    cb -= sizeof(*pIPv6);
+    if (RT_UNLIKELY(cb < sizeof(*pICMPv6)))
+        return;
+
+    uint32_t hdrlen = 0;
+    uint8_t llaopt = RTNETIPV6_ICMP_ND_SLLA_OPT;
+
+    uint8_t type = pICMPv6->icmp6_type;
+    switch (type)
+    {
+        case RTNETIPV6_ICMP_TYPE_RS:
+	    hdrlen = 8;
+	    break;
+
+        case RTNETIPV6_ICMP_TYPE_RA:
+	    hdrlen = 16;
+	    break;
+
+        case RTNETIPV6_ICMP_TYPE_NS:
+	    hdrlen = 24;
+	    break;
+
+        case RTNETIPV6_ICMP_TYPE_NA:
+	    hdrlen = 24;
+	    llaopt = RTNETIPV6_ICMP_ND_TLLA_OPT;
+	    break;
+
+        default:
+	    return;
+    }
+
+    AssertReturnVoid(hdrlen > 0);
+    if (RT_UNLIKELY(cb < hdrlen))
+        return;
+
+    if (RT_UNLIKELY(pICMPv6->icmp6_code != 0))
+	return;
+
+    PRTNETNDP_LLA_OPT pLLAOpt = NULL;
+    char *pOpt = (char *)pICMPv6 + hdrlen;
+    cb -= hdrlen;
+
+    while (cb >= 8)
+    {
+        uint8_t opt = ((uint8_t *)pOpt)[0];
+        uint32_t optlen = (uint32_t)((uint8_t *)pOpt)[1] * 8;
+        if (RT_UNLIKELY(cb < optlen))
+            return;
+
+        if (opt == llaopt)
+        {
+	    if (RT_UNLIKELY(optlen != 8))
+		return;
+            pLLAOpt = (PRTNETNDP_LLA_OPT)pOpt;
+            break;
+        }
+
+        pOpt += optlen;
+        cb -= optlen;
+    }
+
+    if (pLLAOpt == NULL)
+        return;
+
+    if (memcmp(&pLLAOpt->lla, &pIfSender->MacAddr, sizeof(RTMAC)) != 0)
+        return;
+
+    /* overwrite VM's MAC with host's MAC */
+    pLLAOpt->lla = pThis->MacAddr;
+
+    /* recompute the checksum */
+    pICMPv6->icmp6_cksum = 0;
+    pICMPv6->icmp6_cksum = computeIPv6FullChecksum(pIPv6);
 }
 
 
@@ -2765,15 +2954,16 @@ static void intnetR0TrunkIfSend(PINTNETTRUNKIF pThis, PINTNETNETWORK pNetwork, P
                 pArp->ar_tha = pThis->MacAddr;
             }
         }
-        //else if (pSG->fFlags & INTNETSG_FLAGS_ICMPV6_NDP)
-        //{ /// @todo move the editing into a different function
-        //}
+        else if (pEthHdr->EtherType == RT_H2N_U16_C(RTNET_ETHERTYPE_IPV6))
+        {
+            intnetR0TrunkSharedMacEditIPv6FromIntNet(pThis, pIfSender, pEthHdr, pSG->cbTotal);
+        }
     }
 
     /*
-     * Send the frame, handling the GSO fallback                                                                                           .
-     *                                                                                                                                     .
-     * Note! The trunk implementation will re-check that the trunk is active                                                               .
+     * Send the frame, handling the GSO fallback.
+     *
+     * Note! The trunk implementation will re-check that the trunk is active
      *       before sending, so we don't have to duplicate that effort here.
      */
     STAM_REL_PROFILE_START(&pIfSender->pIntBuf->StatSend2, a);
@@ -2790,6 +2980,158 @@ static void intnetR0TrunkIfSend(PINTNETTRUNKIF pThis, PINTNETNETWORK pNetwork, P
 }
 
 
+/**
+ * Detect broadcasts packaged as unicast and convert them back to broadcast.
+ *
+ * WiFi routers try to use ethernet unicast instead of broadcast or
+ * multicast when possible.  Look inside the packet and fix up
+ * ethernet destination to be proper broadcast or multicast if
+ * necessary.
+ *
+ * @returns true broadcast (pEthHdr & pSG are modified), false if not.
+ * @param   pNetwork        The network the frame is being sent to.
+ * @param   pSG             Pointer to the gather list for the frame.  The
+ *                          ethernet destination address is modified when
+ *                          returning true.
+ * @param   pEthHdr         Pointer to the ethernet header.  The ethernet
+ *                          destination address is modified when returning true.
+ */
+static bool intnetR0NetworkSharedMacDetectAndFixBroadcast(PINTNETNETWORK pNetwork, PINTNETSG pSG, PRTNETETHERHDR pEthHdr)
+{
+    NOREF(pNetwork);
+
+    switch (pEthHdr->EtherType)
+    {
+        case RT_H2N_U16_C(RTNET_ETHERTYPE_ARP):
+        {
+            uint16_t ar_oper;
+            if (!intnetR0SgReadPart(pSG, sizeof(RTNETETHERHDR) + RT_OFFSETOF(RTNETARPHDR, ar_oper),
+                                    sizeof(ar_oper), &ar_oper))
+                return false;
+
+            if (ar_oper == RT_H2N_U16_C(RTNET_ARPOP_REQUEST))
+            {
+                /* change to broadcast */
+                pEthHdr->DstMac.au16[0] = 0xffff;
+                pEthHdr->DstMac.au16[1] = 0xffff;
+                pEthHdr->DstMac.au16[2] = 0xffff;
+            }
+            else
+                return false;
+            break;
+        }
+
+        case RT_H2N_U16_C(RTNET_ETHERTYPE_IPV4):
+        {
+            RTNETADDRIPV4 ip_dst;
+            if (!intnetR0SgReadPart(pSG, sizeof(RTNETETHERHDR) + RT_OFFSETOF(RTNETIPV4, ip_dst),
+                                    sizeof(ip_dst), &ip_dst))
+                return false;
+
+            if (ip_dst.u == 0xffffffff) /* 255.255.255.255? */
+            {
+                /* change to broadcast */
+                pEthHdr->DstMac.au16[0] = 0xffff;
+                pEthHdr->DstMac.au16[1] = 0xffff;
+                pEthHdr->DstMac.au16[2] = 0xffff;
+            }
+            else if ((ip_dst.au8[0] & 0xf0) == 0xe0) /* IPv4 multicast? */
+            {
+                /* change to 01:00:5e:xx:xx:xx multicast ... */
+                pEthHdr->DstMac.au8[0] = 0x01;
+                pEthHdr->DstMac.au8[1] = 0x00;
+                pEthHdr->DstMac.au8[2] = 0x5e;
+                /* ... with lower 23 bits from the multicast IP address */
+                pEthHdr->DstMac.au8[3] = ip_dst.au8[1] & 0x7f;
+                pEthHdr->DstMac.au8[4] = ip_dst.au8[2];
+                pEthHdr->DstMac.au8[5] = ip_dst.au8[3];
+            }
+            else
+                return false;
+            break;
+        }
+
+        case RT_H2N_U16_C(RTNET_ETHERTYPE_IPV6):
+        {
+            RTNETADDRIPV6 ip6_dst;
+            if (!intnetR0SgReadPart(pSG, sizeof(RTNETETHERHDR) + RT_OFFSETOF(RTNETIPV6, ip6_dst),
+                                    sizeof(ip6_dst), &ip6_dst))
+                return false;
+
+            if (ip6_dst.au8[0] == 0xff) /* IPv6 multicast? */
+            {
+                pEthHdr->DstMac.au16[0] = 0x3333;
+                pEthHdr->DstMac.au16[1] = ip6_dst.au16[6];
+                pEthHdr->DstMac.au16[2] = ip6_dst.au16[7];
+            }
+            else
+                return false;
+            break;
+        }
+
+        default:
+            return false;
+    }
+
+
+    /*
+     * Update ethernet destination in the segment.
+     */
+    intnetR0SgWritePart(pSG, RT_OFFSETOF(RTNETETHERHDR, DstMac), sizeof(pEthHdr->DstMac), &pEthHdr->DstMac);
+
+    return true;
+}
+
+
+/**
+ * Snoops a multicast ICMPv6 ND DAD from the wire via the trunk connection.
+ *
+ * @param   pNetwork        The network the frame is being sent to.
+ * @param   pSG             Pointer to the gather list for the frame.
+ * @param   pEthHdr         Pointer to the ethernet header.
+ */
+static void intnetR0NetworkSnoopNAFromWire(PINTNETNETWORK pNetwork, PINTNETSG pSG, PRTNETETHERHDR pEthHdr)
+{
+    /*
+     * Check the minimum size and get a linear copy of the thing to work on,
+     * using the temporary buffer if necessary.
+     */
+    if (RT_UNLIKELY(pSG->cbTotal < sizeof(RTNETETHERHDR) + sizeof(RTNETIPV6) +
+                                            sizeof(RTNETNDP)))
+        return;
+    PRTNETIPV6 pIPv6 = (PRTNETIPV6)((uint8_t *)pSG->aSegs[0].pv + sizeof(RTNETETHERHDR));
+    if (    pSG->cSegsUsed != 1
+        &&  pSG->aSegs[0].cb < sizeof(RTNETETHERHDR) + sizeof(RTNETIPV6) +
+                                                        sizeof(RTNETNDP))
+    {
+        Log6(("fw: Copying IPv6 pkt %u\n", sizeof(RTNETIPV6)));
+        if (!intnetR0SgReadPart(pSG, sizeof(RTNETETHERHDR), sizeof(RTNETIPV6)
+                                               + sizeof(RTNETNDP), pNetwork->pbTmp))
+            return;
+        pSG->fFlags |= INTNETSG_FLAGS_PKT_CP_IN_TMP;
+        pIPv6 = (PRTNETIPV6)pNetwork->pbTmp;
+    }
+
+    PCRTNETNDP pNd  = (PCRTNETNDP) (pIPv6 + 1);
+
+    /*
+     * a multicast NS with :: as source address means a DAD packet.
+     * if it comes from the wire and we have the DAD'd address in our cache,
+     * flush the entry as the address is being acquired by someone else on
+     * the network.
+     */
+    if (    pIPv6->ip6_hlim == 0xff
+        &&  pIPv6->ip6_nxt  == RTNETIPV6_PROT_ICMPV6
+        &&  pNd->Hdr.icmp6_type == RTNETIPV6_ICMP_TYPE_NS
+        &&  pNd->Hdr.icmp6_code == 0
+        &&  pIPv6->ip6_src.QWords.qw0 == 0
+        &&  pIPv6->ip6_src.QWords.qw1 == 0)
+    {
+
+        intnetR0NetworkAddrCacheDelete(pNetwork, (PCRTNETADDRU) &pNd->target_address,
+                                        kIntNetAddrType_IPv6, sizeof(RTNETADDRIPV6), "tif/ip6");
+    }
+}
 /**
  * Edits an ARP packet arriving from the wire via the trunk connection.
  *
@@ -3019,7 +3361,7 @@ DECLINLINE(bool) intnetR0NetworkIsContextOk(PINTNETNETWORK pNetwork, PINTNETIF p
     if ((fTrunkDst & pTrunk->fNoPreemptDsts) == fTrunkDst)
         return true;
 
-    /* ASSUMES: That a preemption test detects HWACCM contexts. (Will work on
+    /* ASSUMES: That a preemption test detects HM contexts. (Will work on
                 non-preemptive systems as well.) */
     if (RTThreadPreemptIsEnabled(NIL_RTTHREAD))
         return true;
@@ -3043,7 +3385,7 @@ DECLINLINE(bool) intnetR0NetworkIsContextOkForBroadcast(PINTNETNETWORK pNetwork,
     if (fSrc)
         return true;
 
-    /* ASSUMES: That a preemption test detects HWACCM contexts. (Will work on
+    /* ASSUMES: That a preemption test detects HM contexts. (Will work on
                 non-preemptive systems as well.) */
     if (RTThreadPreemptIsEnabled(NIL_RTTHREAD))
         return true;
@@ -3095,6 +3437,17 @@ static INTNETSWDECISION intnetR0NetworkSharedMacFixAndSwitchBroadcast(PINTNETNET
      */
     if (!intnetR0NetworkIsContextOkForBroadcast(pNetwork, fSrc))
         return INTNETSWDECISION_BAD_CONTEXT;
+
+    /*
+     * Check for ICMPv6 Neighbor Advertisements coming from the trunk.
+     * If we see an advertisement for an IP in our cache, we can safely remove
+     * it as the IP has probably moved.
+     */
+    if (    (fSrc & INTNETTRUNKDIR_WIRE)
+        &&  RT_BE2H_U16(pEthHdr->EtherType) == RTNET_ETHERTYPE_IPV6
+        &&  pSG->GsoCtx.u8Type == PDMNETWORKGSOTYPE_INVALID)
+        intnetR0NetworkSnoopNAFromWire(pNetwork, pSG, pEthHdr);
+
 
     /*
      * Check for ARP packets from the wire since we'll have to make
@@ -3174,8 +3527,7 @@ static INTNETSWDECISION intnetR0NetworkSharedMacFixAndSwitchUnicast(PINTNETNETWO
             Log6(("intnetshareduni: IPv4 %d.%d.%d.%d\n", Addr.au8[0], Addr.au8[1], Addr.au8[2], Addr.au8[3]));
             break;
 
-#if 0 /** @todo IntNet: implement IPv6 for wireless MAC sharing. */
-        case RTNET_ETHERTYPE_IPV6
+        case RTNET_ETHERTYPE_IPV6:
             if (RT_UNLIKELY(!intnetR0SgReadPart(pSG, sizeof(RTNETETHERHDR) + RT_OFFSETOF(RTNETIPV6, ip6_dst), sizeof(Addr.IPv6), &Addr)))
             {
                 Log(("intnetshareduni: failed to read ip6_dst! cbTotal=%#x\n", pSG->cbTotal));
@@ -3184,7 +3536,6 @@ static INTNETSWDECISION intnetR0NetworkSharedMacFixAndSwitchUnicast(PINTNETNETWO
             enmAddrType = kIntNetAddrType_IPv6;
             cbAddr = sizeof(Addr.IPv6);
             break;
-#endif
 #if 0 /** @todo IntNet: implement IPX for wireless MAC sharing? */
         case RTNET_ETHERTYPE_IPX_1:
         case RTNET_ETHERTYPE_IPX_2:
@@ -3400,7 +3751,12 @@ static INTNETSWDECISION intnetR0NetworkSend(PINTNETNETWORK pNetwork, PINTNETIF p
         if (intnetR0IsMacAddrMulticast(&EthHdr.DstMac))
             enmSwDecision = intnetR0NetworkSharedMacFixAndSwitchBroadcast(pNetwork, fSrc, pIfSender, pSG, &EthHdr, pDstTab);
         else if (fSrc & INTNETTRUNKDIR_WIRE)
-            enmSwDecision = intnetR0NetworkSharedMacFixAndSwitchUnicast(pNetwork, pSG, &EthHdr, pDstTab);
+        {
+            if (intnetR0NetworkSharedMacDetectAndFixBroadcast(pNetwork, pSG, &EthHdr))
+                enmSwDecision = intnetR0NetworkSharedMacFixAndSwitchBroadcast(pNetwork, fSrc, pIfSender, pSG, &EthHdr, pDstTab);
+            else
+                enmSwDecision = intnetR0NetworkSharedMacFixAndSwitchUnicast(pNetwork, pSG, &EthHdr, pDstTab);
+        }
         else
             enmSwDecision = intnetR0NetworkSwitchUnicast(pNetwork, fSrc, pIfSender, &EthHdr.DstMac, pDstTab);
     }
@@ -3482,8 +3838,8 @@ INTNETR0DECL(int) IntNetR0IfSend(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession)
             PINTNETHDR          pHdr;
             while ((pHdr = IntNetRingGetNextFrameToRead(&pIf->pIntBuf->Send)) != NULL)
             {
-                uint16_t const      u16Type = pHdr->u16Type;
-                if (u16Type == INTNETHDR_TYPE_FRAME)
+                uint8_t const      u8Type = pHdr->u8Type;
+                if (u8Type == INTNETHDR_TYPE_FRAME)
                 {
                     /* Send regular frame. */
                     void *pvCurFrame = IntNetHdrGetFramePtr(pHdr, pIf->pIntBuf);
@@ -3492,7 +3848,7 @@ INTNETR0DECL(int) IntNetR0IfSend(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession)
                         intnetR0IfSnoopAddr(pIf, (uint8_t *)pvCurFrame, pHdr->cbFrame, false /*fGso*/, (uint16_t *)&Sg.fFlags);
                     enmSwDecision = intnetR0NetworkSend(pNetwork, pIf,  0 /*fSrc*/, &Sg, pDstTab);
                 }
-                else if (u16Type == INTNETHDR_TYPE_GSO)
+                else if (u8Type == INTNETHDR_TYPE_GSO)
                 {
                     /* Send GSO frame if sane. */
                     PPDMNETWORKGSO  pGso       = IntNetHdrGetGsoContext(pHdr, pIf->pIntBuf);
@@ -3514,7 +3870,7 @@ INTNETR0DECL(int) IntNetR0IfSend(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession)
                 /* Unless it's a padding frame, we're getting babble from the producer. */
                 else
                 {
-                    if (u16Type != INTNETHDR_TYPE_PADDING)
+                    if (u8Type != INTNETHDR_TYPE_PADDING)
                         STAM_REL_COUNTER_INC(&pIf->pIntBuf->cStatBadFrames); /* ignore */
                     enmSwDecision = INTNETSWDECISION_DROP;
                 }
@@ -3617,7 +3973,7 @@ INTNETR0DECL(int)       IntNetR0IfGetBufferPtrs(INTNETIFHANDLE hIf, PSUPDRVSESSI
 
     intnetR0IfRelease(pIf, pSession);
     LogFlow(("IntNetR0IfGetBufferPtrs: returns %Rrc *ppRing3Buf=%p *ppRing0Buf=%p\n",
-             rc, ppRing3Buf ? *ppRing3Buf : NULL, ppRing0Buf ? *ppRing0Buf : NULL));
+             rc, ppRing3Buf ? *ppRing3Buf : NIL_RTR3PTR, ppRing0Buf ? *ppRing0Buf : NIL_RTR0PTR));
     return rc;
 }
 
@@ -4996,6 +5352,13 @@ static int intnetR0NetworkCreateTrunkIf(PINTNETNETWORK pNetwork, PSUPDRVSESSION 
          */
         case kIntNetTrunkType_None:
         case kIntNetTrunkType_WhateverNone:
+#ifdef VBOX_WITH_NAT_SERVICE
+            /*
+             * Well, here we don't want load anything special,
+             * just communicate between processes via internal network.
+             */
+        case kIntNetTrunkType_SrvNat:
+#endif
             return VINF_SUCCESS;
 
         /* Can't happen, but makes GCC happy. */
@@ -5015,9 +5378,11 @@ static int intnetR0NetworkCreateTrunkIf(PINTNETNETWORK pNetwork, PSUPDRVSESSION 
             pszName = "VBoxNetAdp";
 #endif /* VBOXNETADP_DO_NOT_USE_NETFLT */
             break;
+#ifndef VBOX_WITH_NAT_SERVICE
         case kIntNetTrunkType_SrvNat:
             pszName = "VBoxSrvNat";
             break;
+#endif
     }
 
     /*
@@ -5476,9 +5841,12 @@ static int intnetR0OpenNetwork(PINTNET pIntNet, PSUPDRVSESSION pSession, const c
              * about the trunk setup and security.
              */
             int rc;
-            if (    enmTrunkType == kIntNetTrunkType_WhateverNone
-                ||  (   pCur->enmTrunkType == enmTrunkType
-                     && !strcmp(pCur->szTrunk, pszTrunk)))
+            if (   enmTrunkType == kIntNetTrunkType_WhateverNone
+#ifdef VBOX_WITH_NAT_SERVICE
+                || enmTrunkType == kIntNetTrunkType_SrvNat /* @todo: what does it mean */
+#endif
+                || (   pCur->enmTrunkType == enmTrunkType
+                    && !strcmp(pCur->szTrunk, pszTrunk)))
             {
                 rc = intnetR0CheckOpenNetworkFlags(pCur, fFlags);
                 if (RT_SUCCESS(rc))
@@ -5574,6 +5942,9 @@ static int intnetR0CreateNetwork(PINTNET pIntNet, PSUPDRVSESSION pSession, const
                        | INTNET_OPEN_FLAGS_TRUNK_WIRE_ENABLED
                        | INTNET_OPEN_FLAGS_TRUNK_WIRE_CHASTE_MODE;
     if (   enmTrunkType == kIntNetTrunkType_WhateverNone
+#ifdef VBOX_WITH_NAT_SERVICE
+        || enmTrunkType == kIntNetTrunkType_SrvNat /* simialar security */
+#endif
         || enmTrunkType == kIntNetTrunkType_None)
         fDefFlags |= INTNET_OPEN_FLAGS_ACCESS_RESTRICTED;
     else
@@ -5739,6 +6110,9 @@ INTNETR0DECL(int) IntNetR0Open(PSUPDRVSESSION pSession, const char *pszNetwork,
     {
         case kIntNetTrunkType_None:
         case kIntNetTrunkType_WhateverNone:
+#ifdef VBOX_WITH_NAT_SERVICE
+        case kIntNetTrunkType_SrvNat:
+#endif
             if (*pszTrunk)
                 return VERR_INVALID_PARAMETER;
             break;

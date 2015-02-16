@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,7 +20,9 @@
 #define ___VBoxMPTypes_h___
 
 typedef struct _VBOXMP_DEVEXT *PVBOXMP_DEVEXT;
+#ifdef VBOX_WITH_CROGL
 typedef struct VBOXWDDM_SWAPCHAIN *PVBOXWDDM_SWAPCHAIN;
+#endif
 typedef struct VBOXWDDM_CONTEXT *PVBOXWDDM_CONTEXT;
 typedef struct VBOXWDDM_ALLOCATION *PVBOXWDDM_ALLOCATION;
 
@@ -31,6 +33,13 @@ typedef struct VBOXWDDM_ALLOCATION *PVBOXWDDM_ALLOCATION;
 #include "VBoxMPShgsmi.h"
 #include "VBoxMPVbva.h"
 #include "VBoxMPCr.h"
+#include "VBoxMPVModes.h"
+
+#ifdef VBOX_WITH_CROGL
+#include <cr_vreg.h>
+#endif
+
+#include <cr_sortarray.h>
 
 #if 0
 #include <iprt/avl.h>
@@ -100,17 +109,31 @@ typedef struct VBOXWDDM_ALLOC_DATA
 {
     VBOXWDDM_SURFACE_DESC SurfDesc;
     VBOXWDDM_ADDR Addr;
+    uint32_t hostID;
+    uint32_t cHostIDRefs;
+    struct VBOXWDDM_SWAPCHAIN *pSwapchain;
 } VBOXWDDM_ALLOC_DATA, *PVBOXWDDM_ALLOC_DATA;
+
+#define VBOXWDDM_HGSYNC_F_SYNCED_DIMENSIONS 0x01
+#define VBOXWDDM_HGSYNC_F_SYNCED_LOCATION   0x02
+#define VBOXWDDM_HGSYNC_F_SYNCED_VISIBILITY 0x04
+#define VBOXWDDM_HGSYNC_F_SYNCED_TOPOLOGY   0x08
+#define VBOXWDDM_HGSYNC_F_SYNCED_ALL        (VBOXWDDM_HGSYNC_F_SYNCED_DIMENSIONS | VBOXWDDM_HGSYNC_F_SYNCED_LOCATION | VBOXWDDM_HGSYNC_F_SYNCED_VISIBILITY | VBOXWDDM_HGSYNC_F_SYNCED_TOPOLOGY)
+#define VBOXWDDM_HGSYNC_F_CHANGED_LOCATION_ONLY        (VBOXWDDM_HGSYNC_F_SYNCED_ALL & ~VBOXWDDM_HGSYNC_F_SYNCED_LOCATION)
+#define VBOXWDDM_HGSYNC_F_CHANGED_TOPOLOGY_ONLY        (VBOXWDDM_HGSYNC_F_SYNCED_ALL & ~VBOXWDDM_HGSYNC_F_SYNCED_TOPOLOGY)
 
 typedef struct VBOXWDDM_SOURCE
 {
     struct VBOXWDDM_ALLOCATION * pPrimaryAllocation;
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
-    struct VBOXWDDM_ALLOCATION * pShadowAllocation;
-#endif
     VBOXWDDM_ALLOC_DATA AllocData;
+    uint8_t u8SyncState;
+    BOOLEAN fTargetsReported;
     BOOLEAN bVisible;
-    BOOLEAN bGhSynced;
+#ifdef VBOX_WITH_CROGL
+    /* specifies whether the source has 3D overlay data visible */
+    BOOLEAN fHas3DVrs;
+    VBOXVR_LIST VrList;
+#endif
     VBOXVBVAINFO Vbva;
 #ifdef VBOX_WITH_VIDEOHWACCEL
     /* @todo: in our case this seems more like a target property,
@@ -123,13 +146,20 @@ typedef struct VBOXWDDM_SOURCE
     KSPIN_LOCK AllocationLock;
     POINT VScreenPos;
     VBOXWDDM_POINTER_INFO PointerInfo;
+    uint32_t cTargets;
+    VBOXCMDVBVA_SCREENMAP_DECL(uint32_t, aTargetMap);
 } VBOXWDDM_SOURCE, *PVBOXWDDM_SOURCE;
 
 typedef struct VBOXWDDM_TARGET
 {
-    uint32_t ScanLineState;
-    uint32_t HeightVisible;
-    uint32_t HeightTotal;
+    RTRECTSIZE Size;
+    uint32_t u32Id;
+    D3DDDI_VIDEO_PRESENT_SOURCE_ID VidPnSourceId;
+    /* since there coul be multiple state changes on auto-resize,
+     * we pend notifying host to avoid flickering */
+    uint8_t u8SyncState;
+    bool fConnected;
+    bool fConfigured;
 } VBOXWDDM_TARGET, *PVBOXWDDM_TARGET;
 
 /* allocation */
@@ -137,9 +167,7 @@ typedef struct VBOXWDDM_TARGET
 typedef struct VBOXWDDM_ALLOCATION
 {
     LIST_ENTRY SwapchainEntry;
-    struct VBOXWDDM_SWAPCHAIN *pSwapchain;
     VBOXWDDM_ALLOC_TYPE enmType;
-    volatile uint32_t cRefs;
     D3DDDI_RESOURCEFLAGS fRcFlags;
 #ifdef VBOX_WITH_VIDEOHWACCEL
     VBOXVHWA_SURFHANDLE hHostHandle;
@@ -166,7 +194,6 @@ typedef struct VBOXWDDM_ALLOCATION
     AVLPVNODECORE ShRcTreeEntry;
 #endif
     VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType;
-    PKEVENT pSynchEvent;
 } VBOXWDDM_ALLOCATION, *PVBOXWDDM_ALLOCATION;
 
 typedef struct VBOXWDDM_RESOURCE
@@ -211,6 +238,7 @@ typedef enum
 
 #define VBOXWDDM_INVALID_COORD ((LONG)((~0UL) >> 1))
 
+#ifdef VBOX_WITH_CROGL
 typedef struct VBOXWDDM_SWAPCHAIN
 {
     LIST_ENTRY DevExtListEntry;
@@ -220,11 +248,14 @@ typedef struct VBOXWDDM_SWAPCHAIN
     volatile uint32_t cRefs;
     VBOXDISP_UMHANDLE hSwapchainUm;
     VBOXDISP_KMHANDLE hSwapchainKm;
+    int32_t winHostID;
+    BOOLEAN fExposed;
     POINT Pos;
     UINT width;
     UINT height;
-    VBOXWDDMVR_LIST VisibleRegions;
+    VBOXVR_LIST VisibleRegions;
 }VBOXWDDM_SWAPCHAIN, *PVBOXWDDM_SWAPCHAIN;
+#endif
 
 typedef struct VBOXWDDM_CONTEXT
 {
@@ -234,11 +265,12 @@ typedef struct VBOXWDDM_CONTEXT
     UINT  NodeOrdinal;
     UINT  EngineAffinity;
     BOOLEAN fRenderFromShadowDisabled;
+#ifdef VBOX_WITH_CROGL
+    int32_t hostID;
     uint32_t u32CrConClientID;
-#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
     VBOXMP_CRPACKER CrPacker;
-#endif
     VBOXWDDM_HTABLE Swapchains;
+#endif
     VBOXVIDEOCM_CTX CmContext;
     VBOXVIDEOCM_ALLOC_CONTEXT AllocContext;
 } VBOXWDDM_CONTEXT, *PVBOXWDDM_CONTEXT;
@@ -303,17 +335,23 @@ typedef struct VBOXWDDM_OPENALLOCATION
     PVBOXWDDM_DEVICE pDevice;
     uint32_t cShRcRefs;
     uint32_t cOpens;
+    uint32_t cHostIDRefs;
 } VBOXWDDM_OPENALLOCATION, *PVBOXWDDM_OPENALLOCATION;
 
-#define VBOXWDDM_MAX_VIDEOMODES 128
-typedef struct VBOXWDDM_VIDEOMODES_INFO
+#define VBOX_VMODES_MAX_COUNT 128
+
+typedef struct VBOX_VMODES
 {
-    int32_t iPreferredMode;
-    uint32_t cModes;
-    VIDEO_MODE_INFORMATION aModes[VBOXWDDM_MAX_VIDEOMODES];
-    int32_t iPreferredResolution;
-    uint32_t cResolutions;
-    D3DKMDT_2DREGION aResolutions[VBOXWDDM_MAX_VIDEOMODES];
-} VBOXWDDM_VIDEOMODES_INFO, *PVBOXWDDM_VIDEOMODES_INFO;
+    uint32_t cTargets;
+    CR_SORTARRAY aTargets[VBOX_VIDEO_MAX_SCREENS];
+} VBOX_VMODES;
+
+typedef struct VBOXWDDM_VMODES
+{
+    VBOX_VMODES Modes;
+    /* note that we not use array indices to indentify modes, because indices may change due to element removal */
+    uint64_t aTransientResolutions[VBOX_VIDEO_MAX_SCREENS];
+    uint64_t aPendingRemoveCurResolutions[VBOX_VIDEO_MAX_SCREENS];
+} VBOXWDDM_VMODES;
 
 #endif /* #ifndef ___VBoxMPTypes_h___ */

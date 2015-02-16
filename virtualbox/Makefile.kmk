@@ -21,10 +21,23 @@ include $(KBUILD_PATH)/subheader.kmk
 #
 # Sub-makefiles / Sub-directories.
 #
-if defined(VBOX_WITH_DOCS) && (!defined(VBOX_ONLY_BUILD) || defined(VBOX_ONLY_DOCS) || defined(VBOX_ONLY_SDK))
- include $(PATH_SUB_CURRENT)/doc/manual/Makefile.kmk
+ifndef VBOX_ONLY_ROOT_MAKEFILE
+ if defined(VBOX_WITH_DOCS) && (!defined(VBOX_ONLY_BUILD) || defined(VBOX_ONLY_DOCS) || defined(VBOX_ONLY_SDK))
+  include $(PATH_SUB_CURRENT)/doc/manual/Makefile.kmk
+ endif
+ include $(PATH_SUB_CURRENT)/src/Makefile.kmk
 endif
-include $(PATH_SUB_CURRENT)/src/Makefile.kmk
+
+#
+# Below we might need TOOL_ZIP_UNPACK (for the additions/docs/efifw packages
+# from the build server), and it's not really worth the effort of dragging in
+#q this tool only if absolutely needed.
+#
+## @todo Hack to get at TOOL_ZIP_UNPACK; see if this can be integrated somehow...
+include $(KBUILD_PATH)/tools/ZIP.kmk
+ifndef TOOL_ZIP_PACK
+ TOOL_ZIP_PACK = zip
+endif
 
 
 ## @todo split up this file!
@@ -42,7 +55,7 @@ OTHER_CLEAN += \
 	$(wildcard $(PATH_OUT)/version-stamp-*.*.*) \
 	$(VBOX_SVN_REV_KMK).ts \
 	$(VBOX_SVN_REV_KMK) \
-	$(PATH_OUT)/GCCConfig.kmk
+	$(PATH_OUT)/DynamicConfig.kmk
 
 
 if  !defined(VBOX_ONLY_ADDITIONS) \
@@ -76,13 +89,13 @@ InstallExternalLibs_INST = $(INST_BIN)
 
 # The SDL DLLs
 if1of ($(KBUILD_TARGET), win os2)
- ifneq ($(VBOX_WITH_VBOXSDL)$(VBOX_WITH_VBOXBFE),)
+ ifdef VBOX_WITH_VBOXSDL
   include $(KBUILD_PATH)/sdks/LIBSDL.kmk
   InstallExternalLibs_SOURCES += \
-	$(DLL_SDK_LIBSDL_SDL)
+	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(DLL_SDK_LIBSDL_SDL))
   ifdef VBOX_WITH_SECURELABEL
    InstallExternalLibs_SOURCES += \
-	$(DLL_SDK_LIBSDL_SDLTTF)
+	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(DLL_SDK_LIBSDL_SDLTTF))
   endif
   ifeq ($(KBUILD_TARGET),os2)
    InstallExternalLibs_SOURCES += \
@@ -94,19 +107,35 @@ endif
 
 # The compiler runtime DLLs.
 ifeq ($(KBUILD_TARGET).$(VBOX_WITHOUT_COMPILER_REDIST),win.)
-  VBOX_PATH_VCC_REDIST         = $(PATH_TOOL_$(VBOX_VCC_TOOL))/redist/
-  VBOX_PATH_VCC_REDIST_CRT     = $(VBOX_PATH_VCC_REDIST)/$(subst amd64,x64,$(KBUILD_TARGET_ARCH))/Microsoft.VC100.CRT
-  VBOX_PATH_VCC_REDIST_CRT_DBG = $(VBOX_PATH_VCC_REDIST)/Debug_NonRedist/$(subst amd64,x64,$(KBUILD_TARGET_ARCH))/Microsoft.VC100.DebugCRT
+ include $(KBUILD_PATH)/tools/$(VBOX_VCC_TOOL).kmk
+ include $(KBUILD_PATH)/tools/$(VBOX_VCC_TOOL_STEM)X86.kmk
+ VBOX_PATH_VCC_REDIST             = $(PATH_TOOL_$(VBOX_VCC_TOOL))/redist/
+ VBOX_PATH_VCC_REDIST_CRT         = $(VBOX_PATH_VCC_REDIST)/$(subst amd64,x64,$(KBUILD_TARGET_ARCH))/Microsoft.VC100.CRT
+ VBOX_PATH_VCC_REDIST_CRT_DBG     = $(VBOX_PATH_VCC_REDIST)/Debug_NonRedist/$(subst amd64,x64,$(KBUILD_TARGET_ARCH))/Microsoft.VC100.DebugCRT
+ VBOX_PATH_VCC_REDIST_CRT_X86     = $(VBOX_PATH_VCC_REDIST)/x86/Microsoft.VC100.CRT
+ VBOX_PATH_VCC_REDIST_CRT_DBG_X86 = $(VBOX_PATH_VCC_REDIST)/Debug_NonRedist/x86/Microsoft.VC100.DebugCRT
+
+ InstallExternalLibs_SOURCES += \
+ 	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll) \
+ 	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll) \
+ 	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>testcase/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
+ 	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>testcase/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll
+ ifdef VBOX_WITH_32_ON_64_MAIN_API
   InstallExternalLibs_SOURCES += \
-  	$(VBOX_PATH_VCC_REDIST_CRT)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
-  	$(VBOX_PATH_VCC_REDIST_CRT)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
-  	$(VBOX_PATH_VCC_REDIST_CRT)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll=>testcase/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
-  	$(VBOX_PATH_VCC_REDIST_CRT)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll=>testcase/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_X86)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>x86/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_X86)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>x86/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll
+ endif
  ifeq ($(VBOX_VCC_CRT_TYPE),d)
-  	$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
-  	$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
-  	$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll=>testcase/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
-  	$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll=>testcase/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll
+  InstallExternalLibs_SOURCES += \
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll) \
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll) \
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>testcase/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_DBG)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>testcase/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll
+  ifdef VBOX_WITH_32_ON_64_MAIN_API
+  InstallExternalLibs_SOURCES += \
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_DBG_X86)/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>x86/msvcr$(substr $(VBOX_VCC_TOOL_STEM),4).dll \
+  	$(call VBOX_RE_SIGN_DLL_FN,InstallExternalLibs,$(VBOX_PATH_VCC_REDIST_CRT_DBG_X86)/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll)=>x86/msvcp$(substr $(VBOX_VCC_TOOL_STEM),4).dll
+  endif
  endif
 endif
 
@@ -143,8 +172,13 @@ else
    qt4-bin_MODE = 755
    qt4-bin_INST = $(INST_BIN)
    qt4-bin_SOURCES = \
-	$(foreach qtmod,$(VBOX_QT4_MOD_NAMES),$(VBOX_PATH_QT4_LIB)/$(qtmod)4$(SUFF_DLL)) \
- 	$(VBOX_PATH_QT4)/plugins/accessible/qtaccessiblewidgets4$(SUFF_DLL)=>accessible/qtaccessiblewidgets4$(SUFF_DLL)
+   	$(foreach qtmod,$(VBOX_QT4_MOD_NAMES),$(call VBOX_RE_SIGN_DLL_FN,qt4-bin,$(VBOX_PATH_QT4_LIB)/$(qtmod)4$(SUFF_DLL))) \
+   	$(call VBOX_RE_SIGN_DLL_FN,qt4-bin,$(VBOX_PATH_QT4)/plugins/accessible/qtaccessiblewidgets4$(SUFF_DLL))=>accessible/qtaccessiblewidgets4$(SUFF_DLL)
+   ifdef VBOX_WITH_QT_PDBS
+    qt4-bin_SOURCES += \
+    	$(foreach qtmod,$(VBOX_QT4_MOD_NAMES),$(VBOX_PATH_QT4_LIB)/$(qtmod)4.pdb) \
+    	$(VBOX_PATH_QT4)/plugins/accessible/qtaccessiblewidgets4.pdb=>accessible/qtaccessiblewidgets4.pdb
+   endif
   else
    INSTALLS += qt4-bin
    qt4-bin_MODE = 755
@@ -156,12 +190,6 @@ else
  endif # VBOX_WITH_QT4_SUN
 endif
 
-
-# Below we might need TOOL_ZIP_UNPACK (for the additions/docs/efifw packages
-# from the build server), and it's not really worth the effort of dragging in
-# this tool only if absolutely needed.
-## @todo Hack to get at TOOL_ZIP_UNPACK; see if this can be integrated somehow...
-include $(KBUILD_PATH)/tools/ZIP.kmk
 
 #
 # For building the combined package, just get the additions .ISO
@@ -214,7 +242,6 @@ buildserver-additions-affinity-hack:
 endif # VBOX_WITH_ADDITIONS_FROM_BUILD_SERVER
 
 
-#
 #
 # Install documentation files (at the moment the .chm) from the build server.
 #
@@ -272,22 +299,25 @@ endif # VBOX_WITH_DOCS_FROM_BUILD_SERVER
    buildserver-efifw_INST = $(INST_BIN)
    buildserver-efifw_MODE = 0644
    buildserver-efifw_SOURCES = \
-   	$(buildserver-efifw_0_OUTDIR)/FV/VBOX.fd=>VBoxEFI32.fd \
-           $(buildserver-efifw_0_OUTDIR)/FV/VBOX64.fd=>VBoxEFI64.fd
+   	$(buildserver-efifw_0_OUTDIR)/VBoxEFI32.fd \
+   	$(buildserver-efifw_0_OUTDIR)/VBoxEFI64.fd
    buildserver-efifw_CLEANS = \
    	$(buildserver-efifw_0_OUTDIR)/unpacked.ts \
+   	$(buildserver-efifw_0_OUTDIR)/VBoxEFI32.fd \
+   	$(buildserver-efifw_0_OUTDIR)/VBoxEFI64.fd \
    	$(buildserver-efifw_0_OUTDIR)/FV/VBOX.fd \
-           $(buildserver-efifw_0_OUTDIR)/FV/VBOX64.fd \
+   	$(buildserver-efifw_0_OUTDIR)/FV/VBOX64.fd \
    	$(buildserver-efifw_0_OUTDIR)/VBoxEfiFirmware.zip \
    	$(buildserver-efifw_0_OUTDIR)/VBoxEfiFirmware.zip.tmp
-   ## @todo rainy day: cleanup the output directory (zip contains lots more)
 
    $$(buildserver-efifw_0_OUTDIR)/unpacked.ts \
-   +| $$(buildserver-efifw_0_OUTDIR)/FV/VBOX.fd \
-      $$(buildserver-efifw_0_OUTDIR)/FV/VBOX64.fd: \
+   +| $$(buildserver-efifw_0_OUTDIR)/VBoxEFI32.fd \
+      $$(buildserver-efifw_0_OUTDIR)/VBoxEFI64.fd: \
    		$$(buildserver-efifw_0_OUTDIR)/VBoxEfiFirmware.zip
 	$(call MSG_L1,Unpacking EFI firmware)
 	$(QUIET)$(TOOL_ZIP_UNPACK) $(TOOL_ZIP_UNPACKFLAGS) -o $< -d $(buildserver-efifw_0_OUTDIR)
+	$(TEST_EXT) -f "$(buildserver-efifw_0_OUTDIR)/FV/VBOX.fd"   -- $(MV_EXT) -f -- "$(buildserver-efifw_0_OUTDIR)/FV/VBOX.fd"   "$(buildserver-efifw_0_OUTDIR)/VBoxEFI32.fd"
+	$(TEST_EXT) -f "$(buildserver-efifw_0_OUTDIR)/FV/VBOX64.fd" -- $(MV_EXT) -f -- "$(buildserver-efifw_0_OUTDIR)/FV/VBOX64.fd" "$(buildserver-efifw_0_OUTDIR)/VBoxEFI64.fd"
 	$(APPEND) -t $@ "done"
 
    $$(buildserver-efifw_0_OUTDIR)/VBoxEfiFirmware.zip: \
@@ -320,11 +350,36 @@ endif # VBOX_WITH_DOCS_FROM_BUILD_SERVER
  endif # VBOX_WITH_EFI
 
 
+ifdef VBOX_WITH_EXTPACKS_FROM_BUILD_SERVER
+#
+# Get the extension pack from from the build server to facility the automatic
+# testing (everything in one tarball (VBoxAll-*)).
+#
+# Note! Using the plural here as we might be downloading more packages eventually.
+#
+INSTALLS += buildserver-extpacks
+buildserver-extpacks_INST = $(INST_DIST)
+buildserver-extpacks_MODE = 0644
+buildserver-extpacks_SOURCES = \
+	$(buildserver-extpacks_0_OUTDIR)/Oracle_VM_VirtualBox_Extension_Pack.vbox-extpack
+buildserver-extpacks_CLEANS = \
+	$(buildserver-extpacks_0_OUTDIR)/Oracle_VM_VirtualBox_Extension_Pack.vbox-extpack \
+	$(buildserver-extpacks_0_OUTDIR)/Oracle_VM_VirtualBox_Extension_Pack.vbox-extpack.tmp
+
+$$(buildserver-extpacks_0_OUTDIR)/Oracle_VM_VirtualBox_Extension_Pack.vbox-extpack: \
+		$(VBOX_SVN_REV_KMK) $(PATH_DEVTOOLS)/bin/extpacks.sh | $$(dir $$@)
+	$(RM) -f -- "$@.tmp" "$@"
+	$(SHELL) $(PATH_DEVTOOLS)/bin/extpacks.sh --cmd fetch --filename "$@.tmp" --vbox-version "$(VBOX_VERSION_STRING)"
+	$(MV) -f -- "$@.tmp" "$@"
+
+endif
+
+
 #
 # Install staged binaries on platforms where we can't cross
 # compile things.
 #
-ifn1of ($(KBUILD_TARGET), l4 linux win)
+ifn1of ($(KBUILD_TARGET), linux win)
  VBOX_PATH_STAGED ?= .
 
  # Additions.
@@ -456,7 +511,6 @@ VBOX_CORE_DOXYFILE_INPUT_DIRS = \
 	src/VBox/HostDrivers/Support \
 	src/VBox/HostDrivers/Support/darwin \
 	src/VBox/HostDrivers/Support/freebsd \
-	src/VBox/HostDrivers/Support/l4 \
 	src/VBox/HostDrivers/Support/linux \
 	src/VBox/HostDrivers/Support/os2 \
 	src/VBox/HostDrivers/Support/solaris \
@@ -622,15 +676,15 @@ VBOX_CORE_DOXYFILE_INPUT_FIRST =\
 	$(PATH_ROOT)/include/VBox/vmm/tm.h \
 	$(PATH_ROOT)/include/VBox/vmm/csam.h \
 	$(PATH_ROOT)/include/VBox/vmm/ssm.h \
-	$(PATH_ROOT)/include/VBox/vmm/hwaccm.h \
-	$(PATH_ROOT)/include/VBox/vmm/hwacc_svm.h \
-	$(PATH_ROOT)/include/VBox/vmm/hwacc_vmx.h \
+	$(PATH_ROOT)/include/VBox/vmm/hm.h \
+	$(PATH_ROOT)/include/VBox/vmm/hm_svm.h \
+	$(PATH_ROOT)/include/VBox/vmm/hm_vmx.h \
 	\
 	$(PATH_ROOT)/src/VBox/VMM/include/CFGMInternal.h \
 	$(PATH_ROOT)/src/VBox/VMM/include/CPUMInternal.h \
 	$(PATH_ROOT)/src/VBox/VMM/include/DBGFInternal.h \
 	$(PATH_ROOT)/src/VBox/VMM/include/EMInternal.h \
-	$(PATH_ROOT)/src/VBox/VMM/include/HWACCMInternal.h \
+	$(PATH_ROOT)/src/VBox/VMM/include/HMInternal.h \
 	$(PATH_ROOT)/src/VBox/VMM/include/IOMInternal.h \
 	$(PATH_ROOT)/src/VBox/VMM/include/MMInternal.h \
 	$(PATH_ROOT)/src/VBox/VMM/include/PDMInternal.h \
@@ -739,7 +793,6 @@ VBOX_RSYNC_IN_FN = rsync -a -v --delete --delete-excluded --prune-empty-dirs \
 	--exclude=doc/Devices/ \
 	--exclude=doc/tg/ \
 	--exclude=doc/vp/ \
-	--exclude=doc/L4VM/ \
 	--exclude=tinderclient.log \
 	--exclude=tools/FetchDir/ \
 	--exclude=webtools/ \
@@ -756,9 +809,9 @@ VBOX_RSYNC_IN_FN = rsync -a -v --delete --delete-excluded --prune-empty-dirs \
 #
 # VM IP addresses.
 #
-VBOX_BLD_VM_LNX_X86_IP       := 192.168.27.2
+VBOX_BLD_VM_LNX_IP           := 192.168.27.2
+VBOX_BLD_VM_LNX_X86_IP       := 192.168.27.11
 VBOX_BLD_VM_LNX_AMD64_IP     := 192.168.27.12
-VBOX_BLD_VM_LNX_NEW_X86_IP   := 192.168.27.11
 VBOX_BLD_VM_OS2_IP           := 192.168.27.3
 VBOX_BLD_VM_SOLARIS_IP       := 192.168.27.4
 VBOX_BLD_VM_DARWIN_X86_IP    := 192.168.27.5
@@ -777,7 +830,7 @@ if 0
  VBOX_BLD_VM_MSG_BEGIN = $(call MSG_L1,Building $1.)
  VBOX_BLD_VM_MSG_END__ =
 else
- VBOX_BLD_VM_MSG_BEGIN = @echo `date "+%Y-%m-%dT%H:%M:%S"` - Building $1.
+ VBOX_BLD_VM_MSG_BEGIN = @echo `date "+%Y-%m-%dT%H:%M:%S"` - Start building $1.
  VBOX_BLD_VM_MSG_END__ = @echo `date "+%Y-%m-%dT%H:%M:%S"` - Done building $1.
 endif
 
@@ -813,11 +866,12 @@ additions-build: \
 	additions-build-solaris.amd64 \
 	additions-build-solaris.x86 \
 	additions-build-os2.x86 \
-	additions-build-linux.x86.combined
+	additions-build-linux
 
 additions-build-rsync-into-vms: \
 		additions-build-solaris.rsync-into-vm \
-		additions-build-os2.rsync-into-vm
+		additions-build-os2.rsync-into-vm \
+		additions-build-linux.rsync-into-vm
 	$(call MSG_L1,Rsynced the sources + tools into the VMs.)
 .NOTPARALLEL: additions-build-rsync-into-vms
 
@@ -839,7 +893,7 @@ VBOX_ADDITIONS_BUILD_SUBDIRNAME := $(lastword $(subst /, ,$(PATH_ROOT)))
 # When building in parallel on a Windows host, make sure we finish the host
 # bit before kicking off any UNIX guest or we'll run into file sharing issues.
 ifeq ($(KBUILD_TARGET),win)
-VBOX_ADDITIONS_BUILD_WIN_HOST_FIRST = additions-build-win.x86 additions-build-win.amd64
+VBOX_ADDITIONS_BUILD_WIN_HOST_FIRST = #additions-build-win.x86 additions-build-win.amd64
 else
 VBOX_ADDITIONS_BUILD_WIN_HOST_FIRST =
 endif
@@ -850,9 +904,9 @@ ifeq ($(KBUILD_TARGET),win)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.amd64) all $(VBOX_ADD_HOST_BUILD_TWEAK)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.amd64) packing
 else
-	$(call VBOX_BLD_VM_MSG_BEGIN,Windows/amd64 additions)
+	$(call VBOX_BLD_VM_MSG_BEGIN,Windows/amd64 additions build+pack)
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_WIN_AMD64_IP) " echo $@ && cd e:/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh kmk $(VBOX_ADDITIONS_BUILD.amd64) all packing "
-	$(call VBOX_BLD_VM_MSG_END__,Windows/amd64 additions)
+	$(call VBOX_BLD_VM_MSG_END__,Windows/amd64 additions build+pack)
 endif
 
 additions-build-win.x86:
@@ -860,9 +914,9 @@ ifeq ($(KBUILD_TARGET),win)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.x86) all $(VBOX_ADD_HOST_BUILD_TWEAK)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.x86) packing
 else
-	$(call VBOX_BLD_VM_MSG_BEGIN,Windows/x86 additions)
+	$(call VBOX_BLD_VM_MSG_BEGIN,Windows/x86 additions build.pack)
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_WIN_X86_IP) " echo $@ && cd e:/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh kmk $(VBOX_ADDITIONS_BUILD.x86) all packing"
-	$(call VBOX_BLD_VM_MSG_END__,Windows/x86 additions)
+	$(call VBOX_BLD_VM_MSG_END__,Windows/x86 additions build+pack)
 endif
 
 # ASSUMES the 64-bit edition are built first. This also serializes VM access.
@@ -885,18 +939,18 @@ additions-build-solaris.rsync-into-vm:
 		. $(VBOX_BLD_VM_SOLARIS_IP):/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)
 
 additions-build-solaris.build-it: additions-build-solaris.rsync-into-vm
-	$(call VBOX_BLD_VM_MSG_BEGIN,Solaris/amd64 additions)
+	$(call VBOX_BLD_VM_MSG_BEGIN,Solaris/amd64 additions build+pack)
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_SOLARIS_IP) " echo $@/amd64 && cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.amd64) all packing"
-	$(call VBOX_BLD_VM_MSG_END__,Solaris/amd64 additions)
-	$(call VBOX_BLD_VM_MSG_BEGIN,Solaris/x86 additions)
+	$(call VBOX_BLD_VM_MSG_END__,Solaris/amd64 additions build+pack)
+	$(call VBOX_BLD_VM_MSG_BEGIN,Solaris/x86 additions build+pack)
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_SOLARIS_IP) " echo $@/x86   && cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) all packing VBOX_WITH_COMBINED_SOLARIS_GUEST_PACKAGE=1"
-	$(call VBOX_BLD_VM_MSG_END__,Solaris/x86 additions)
+	$(call VBOX_BLD_VM_MSG_END__,Solaris/x86 additions build+pack)
 
 additions-build-solaris.rsync-out-of-vm: additions-build-solaris.build-it
 	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_SOLARIS_IP):/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/solaris.x86 out/
 	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_SOLARIS_IP):/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/solaris.amd64 out/
 
-.NOTPARALLEL: additions-build-solaris.rsync-into-vm # additions-build-solaris.rsync-out-of-vm
+.NOTPARALLEL: additions-build-solaris.rsync-into-vm
 .PHONY:       additions-build-solaris.rsync-into-vm additions-build-solaris.rsync-out-of-vm additions-build-solaris.build-it
 
 additions-build-solaris.amd64: additions-build-solaris.rsync-out-of-vm
@@ -920,14 +974,14 @@ additions-build-os2.rsync-into-vm:
 		. rsync://vbox@$(VBOX_BLD_VM_OS2_IP)/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)
 
 additions-build-os2.build-it: additions-build-os2.rsync-into-vm
-	$(call VBOX_BLD_VM_MSG_BEGIN,OS/2 additions)
+	$(call VBOX_BLD_VM_MSG_BEGIN,OS/2 additions build+pack)
 	$(VBOX_KMK_TIME) rsh -l vbox $(VBOX_BLD_VM_OS2_IP) "cd e:\\tinderbox\\$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && e: && kbuild\\bin\\os2.x86\\kmk_ash tools\\env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) all packing"
-	$(call VBOX_BLD_VM_MSG_END__,OS/2 additions)
+	$(call VBOX_BLD_VM_MSG_END__,OS/2 additions build+pack)
 
 additions-build-os2.rsync-out-of-vm: additions-build-os2.build-it
 	$(VBOX_KMK_TIME) rsync -v -a --delete rsync://vbox@$(VBOX_BLD_VM_OS2_IP)/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/os2.x86 ./out
 
-.NOTPARALLEL: additions-build-os2.rsync-into-vm #additions-build-os2.rsync-out-of-vm
+.NOTPARALLEL: additions-build-os2.rsync-into-vm
 .PHONY:       additions-build-os2.rsync-into-vm additions-build-os2.rsync-out-of-vm additions-build-os2.build-it
 
 additions-build-os2.x86: additions-build-os2.rsync-out-of-vm
@@ -938,48 +992,56 @@ additions-build-os2.x86:
 # Dummy
 endif
 
-additions-build-linux.amd64:   $(VBOX_ADDITIONS_BUILD_WIN_HOST_FIRST)
-ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),linux.amd64)
+ifeq ($(KBUILD_TARGET),linux)
+additions-build-linux.amd64:
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.amd64) all $(VBOX_ADD_HOST_BUILD_TWEAK)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.amd64) packing VBOX_WITHOUT_LINUX_GUEST_PACKAGE=1
-else
- ifdef VBOX_WITH_LIGHTDM_GREETER_PACKING
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 additions/greeter)
-	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_AMD64_IP) "echo $@ && dchroot -c ubuntu-11.10-amd64 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.amd64) PATH_OUT=/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/linux2.amd64/$(KBUILD_TYPE) VBOX_WITH_LIGHTDM_GREETER=1 vbox-greeter\""'
-	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 additions/greeter)
- endif
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 additions)
-	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_LNX_AMD64_IP) " echo $@ && cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.amd64) all packing VBOX_WITHOUT_LINUX_GUEST_PACKAGE=1 VBOX_WITH_LIGHTDM_GREETER_PACKING=$(VBOX_WITH_LIGHTDM_GREETER_PACKING)"
-	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 additions)
-endif
 
-additions-build-linux.x86:   $(VBOX_ADDITIONS_BUILD_WIN_HOST_FIRST)
-ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),linux.x86)
+additions-build-linux.x86:
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.x86) all $(VBOX_ADD_HOST_BUILD_TWEAK)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.x86) packing VBOX_WITHOUT_LINUX_GUEST_PACKAGE=1
-else
- ifdef VBOX_WITH_LIGHTDM_GREETER_PACKING
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 additions/greeter)
-	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_AMD64_IP) "echo $@ && dchroot -c ubuntu-11.10-i386 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && BUILD_PLATFORM_ARCH=x86 tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) PATH_OUT=/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/linux2.x86/$(KBUILD_TYPE) VBOX_WITH_LIGHTDM_GREETER=1 vbox-greeter\""'
-	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 additions/greeter)
- endif
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 additions)
-	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_NEW_X86_IP) "echo $@ && dchroot -c rhel3-i386 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) all packing VBOX_WITHOUT_LINUX_GUEST_PACKAGE=1 VBOX_WITH_LIGHTDM_GREETER_PACKING=$(VBOX_WITH_LIGHTDM_GREETER_PACKING)\""'
-	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 additions)
-endif
 
-# Combined Linux Additions .run package.  This depends on the archives
-# created during packing by the architecture-specific builds.
-additions-build-linux.x86.combined:   $(VBOX_ADDITIONS_BUILD_WIN_HOST_FIRST) additions-build-linux.x86 additions-build-linux.amd64
-ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),linux.x86)
+additions-build-linux: additions-build-linux.x86 additions-build-linux.amd64
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.x86) all $(VBOX_ADD_HOST_BUILD_TWEAK)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_ADDITIONS_BUILD.x86) packing VBOX_WITH_COMBINED_LINUX_GUEST_PACKAGE=1
 else
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 additions)
-	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_NEW_X86_IP) "echo $@ && dchroot -c rhel3-i386 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) all packing VBOX_WITH_COMBINED_LINUX_GUEST_PACKAGE=1\""'
-	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 additions)
-endif
+additions-build-linux.rsync-into-vm:
+	$(VBOX_KMK_TIME) $(call VBOX_RSYNC_IN_FN,linux,*) \
+		'--exclude=src/VBox/Additions/WINNT/**' \
+		'--exclude=src/VBox/Frontends/**' \
+		'--exclude=src/VBox/VMM/**' \
+		. $(VBOX_BLD_VM_LNX_IP):/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)
 
+additions-build-linux.build-it: additions-build-linux.rsync-into-vm
+ ifdef VBOX_WITH_LIGHTDM_GREETER_PACKING
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 additions/greeter)
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_IP) "echo $@ && dchroot -c ubuntu-11.10-amd64 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.amd64) PATH_OUT=/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/linux.amd64/$(KBUILD_TYPE)/greeter VBOX_WITH_LIGHTDM_GREETER=1 vbox-greeter\""'
+	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 additions/greeter)
+ endif
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 additions build+pack)
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_IP) "echo $@ && dchroot -c debian-4.0-amd64 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.amd64) all packing VBOX_WITHOUT_LINUX_GUEST_PACKAGE=1 VBOX_WITH_LIGHTDM_GREETER_PACKING=$(VBOX_WITH_LIGHTDM_GREETER_PACKING)\""'
+	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 additions build+pack)
+ ifdef VBOX_WITH_LIGHTDM_GREETER_PACKING
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 additions/greeter)
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_IP) "echo $@ && linux32 dchroot -c ubuntu-11.10-i386 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && BUILD_PLATFORM_ARCH=x86 tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) PATH_OUT=/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/linux.x86/$(KBUILD_TYPE)/greeter VBOX_WITH_LIGHTDM_GREETER=1 vbox-greeter\""'
+	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 additions/greeter)
+ endif
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 additions build+pack)
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_IP) "echo $@ && linux32 dchroot -c rhel3-i386 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) all packing VBOX_WITHOUT_LINUX_GUEST_PACKAGE=1 VBOX_WITH_LIGHTDM_GREETER_PACKING=$(VBOX_WITH_LIGHTDM_GREETER_PACKING)\""'
+	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 additions build+pack)
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 additions combine)
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_IP) "echo $@ && linux32 dchroot -c rhel3-i386 \"cd /mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_ADDITIONS_BUILD.x86) all packing VBOX_WITH_COMBINED_LINUX_GUEST_PACKAGE=1\""'
+	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 additions combine)
+
+additions-build-linux.rsync-out-of-vm: additions-build-linux.build-it
+	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_LNX_IP):/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/linux.x86 out/
+	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_LNX_IP):/mnt/tinderbox/$(VBOX_ADDITIONS_BUILD_SUBDIRNAME)/out/linux.amd64 out/
+
+.NOTPARALLEL: additions-build-linux.rsync-into-vm
+.PHONY:       additions-build-linux.rsync-into-vm additions-build-linux.rsync-out-of-vm additions-build-linux.build-it
+
+additions-build-linux: additions-build-linux.rsync-out-of-vm
+endif
 
 additions-packing:
 	+ $(KMK) VBOX_ONLY_ADDITIONS=1 \
@@ -1003,6 +1065,7 @@ additions-packing:
 	additions-build-solaris.amd64 \
 	additions-build-solaris.x86 \
 	additions-build-os2.x86 \
+	additions-build-linux \
 	additions-build-linux.amd64 \
 	additions-build-linux.x86 \
 	additions-build-linux.x86.combined \
@@ -1027,7 +1090,6 @@ extpacks-fetch:
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=linux   BUILD_TARGET_ARCH=x86   BUILD_TARGET=linux    VBOX_ONLY_EXTPACKS=1
 #	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=os2     BUILD_TARGET_ARCH=x86   BUILD_TARGET=os2      VBOX_ONLY_EXTPACKS=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=amd64 KBUILD_TARGET=solaris BUILD_TARGET_ARCH=amd64 BUILD_TARGET=solaris  VBOX_ONLY_EXTPACKS=1
-	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=solaris BUILD_TARGET_ARCH=x86   BUILD_TARGET=solaris  VBOX_ONLY_EXTPACKS=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=amd64 KBUILD_TARGET=win     BUILD_TARGET_ARCH=amd64 BUILD_TARGET=win	     VBOX_ONLY_EXTPACKS=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=win     BUILD_TARGET_ARCH=x86   BUILD_TARGET=win	     VBOX_ONLY_EXTPACKS=1
 
@@ -1036,10 +1098,8 @@ extpacks-build: \
 	extpacks-build-win.amd64 \
 	extpacks-build-win.x86 \
 	extpacks-build-solaris.amd64 \
-	extpacks-build-solaris.x86 \
 	extpacks-build-os2.x86 \
-	extpacks-build-linux.amd64 \
-	extpacks-build-linux.x86 \
+	extpacks-build-linux \
 	extpacks-build-darwin.amd64 \
 	extpacks-build-darwin.x86 \
 	extpacks-build-freebsd.amd64 \
@@ -1089,9 +1149,6 @@ ifeq ($(KBUILD_TARGET),solaris)
 extpacks-build-solaris.amd64:
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_EXTPACKS_BUILD.amd64) all $(VBOX_EXTPACKS_HOST_BUILD_TWEAK)
 
-extpacks-build-solaris.x86: extpacks-build-solaris.amd64
-	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_EXTPACKS_BUILD.x86) VBOX_WITH_COMBINED_SOLARIS_GUEST_PACKAGE=1 all $(VBOX_EXTPACKS_HOST_BUILD_TWEAK)
-
 else
 # Serialize 32-bit and 64-bit ASSUMING the same VM builds both.
 extpacks-build-solaris.rsync-into-vm: $(VBOX_EXTPACKS_BUILD_WIN_HOST_FIRST)
@@ -1101,19 +1158,14 @@ extpacks-build-solaris.build-it: extpacks-build-solaris.rsync-into-vm
 	$(call VBOX_BLD_VM_MSG_BEGIN,Solaris/amd64 extension packs)
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_SOLARIS_IP) " echo $@/amd64 && cd /mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_EXTPACKS_BUILD.amd64) all"
 	$(call VBOX_BLD_VM_MSG_END__,Solaris/amd64 extension packs)
-	$(call VBOX_BLD_VM_MSG_BEGIN,Solaris/x86 extension packs)
-	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_SOLARIS_IP) " echo $@/x86   && cd /mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_EXTPACKS_BUILD.x86) all"
-	$(call VBOX_BLD_VM_MSG_END__,Solaris/x86 extension packs)
 
 extpacks-build-solaris.rsync-out-of-vm: extpacks-build-solaris.build-it
-	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_SOLARIS_IP):/mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)/out/solaris.x86 out/
 	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_SOLARIS_IP):/mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)/out/solaris.amd64 out/
 
-.NOTPARALLEL: extpacks-build-solaris.rsync-out-of-vm extpacks-build-solaris.rsync-into-vm
+#.NOTPARALLEL: extpacks-build-solaris.rsync-into-vm
 .PHONY:       extpacks-build-solaris.rsync-out-of-vm extpacks-build-solaris.rsync-into-vm extpacks-build-solaris.build-it
 
 extpacks-build-solaris.amd64: extpacks-build-solaris.rsync-out-of-vm
-extpacks-build-solaris.x86: extpacks-build-solaris.rsync-out-of-vm
 endif
 
 extpacks-build-os2.x86:
@@ -1123,22 +1175,35 @@ extpacks-build-os2.x86:
 #	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_OS2_IP) " cd /mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_EXTPACKS_BUILD.x86) "
 #endif
 
+ifeq ($(KBUILD_TARGET),linux)
 extpacks-build-linux.amd64:   $(VBOX_EXTPACKS_BUILD_WIN_HOST_FIRST)
-ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),linux.amd64)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_EXTPACKS_BUILD.amd64) all $(VBOX_EXTPACKS_HOST_BUILD_TWEAK)
-else
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 extension packs)
-	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_LNX_AMD64_IP) " echo $@ && cd /mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_EXTPACKS_BUILD.amd64) all"
-	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 extension packs)
-endif
 
 extpacks-build-linux.x86:   $(VBOX_EXTPACKS_BUILD_WIN_HOST_FIRST)
-ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),linux.x86)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_EXTPACKS_BUILD.x86) all $(VBOX_EXTPACKS_HOST_BUILD_TWEAK)
+
+extpacks-build-linux: extpacks-build-linux.x86 extpacks-build-linux.amd64
 else
+# Serialize 32-bit and 64-bit ASSUMING the same VM builds both.
+extpacks-build-linux.rsync-into-vm: $(VBOX_EXTPACKS_BUILD_WIN_HOST_FIRST)
+	$(VBOX_KMK_TIME) $(call VBOX_RSYNC_IN_FN,linux,*) . $(VBOX_BLD_VM_LNX_IP):/mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)
+
+extpacks-build-linux.build-it: extpacks-build-linux.rsync-into-vm
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 extension packs)
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_IP) " echo $@ && dchroot -c debian-4.0-amd64 \"cd /mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_EXTPACKS_BUILD.amd64) all\""'
+	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 extension packs)
 	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 extension packs)
-	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_LNX_NEW_X86_IP) " echo $@ && cd /mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_EXTPACKS_BUILD.x86) all"
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_IP) " echo $@ && linux32 dchroot -c debian-4.0-i386 \"cd /mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_EXTPACKS_BUILD.x86) all\""'
 	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 extension packs)
+
+extpacks-build-linux.rsync-out-of-vm: extpacks-build-linux.build-it
+	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_LNX_IP):/mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)/out/linux.x86 out/
+	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_LNX_IP):/mnt/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)/out/linux.amd64 out/
+
+#.NOTPARALLEL: extpacks-build-linux.rsync-into-vm
+.PHONY:       extpacks-build-linux.rsync-out-of-vm extpacks-build-linux.rsync-into-vm extpacks-build-linux.build-it
+
+extpacks-build-linux: extpacks-build-linux.rsync-out-of-vm
 endif
 
 extpacks-build-freebsd.amd64: $(VBOX_EXTPACKS_BUILD_WIN_HOST_FIRST)
@@ -1184,7 +1249,7 @@ endif
 
 extpacks-packing:
 	+ $(KMK) VBOX_ONLY_EXTPACKS=1 \
-		VBOX_WITH_EXTPACK_OS_ARCHS="darwin.amd64 darwin.x86 linux.amd64 linux.x86 solaris.amd64 solaris.x86 win.amd64 win.x86" \
+		VBOX_WITH_EXTPACK_OS_ARCHS="darwin.amd64 darwin.x86 linux.amd64 linux.x86 solaris.amd64 win.amd64 win.x86" \
 		packing
 # +++ freebsd.amd64 freebsd.x86 os2.x86 ^^^
 
@@ -1192,8 +1257,8 @@ extpacks-packing:
 	extpacks-build-win.x86 \
 	extpacks-build-win.amd64 \
 	extpacks-build-solaris.amd64 \
-	extpacks-build-solaris.x86 \
 	extpacks-build-os2.x86 \
+	extpacks-build-linux \
 	extpacks-build-linux.amd64 \
 	extpacks-build-linux.x86 \
 	extpacks-build-freebsd.amd64 \
@@ -1217,7 +1282,7 @@ testsuite-fetch:
 #	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=freebsd BUILD_TARGET_ARCH=x86   BUILD_TARGET=freebsd   VBOX_ONLY_TESTSUITE=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=amd64 KBUILD_TARGET=linux   BUILD_TARGET_ARCH=amd64 BUILD_TARGET=linux     VBOX_ONLY_TESTSUITE=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=linux   BUILD_TARGET_ARCH=x86   BUILD_TARGET=linux     VBOX_ONLY_TESTSUITE=1
-#	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=os2     BUILD_TARGET_ARCH=x86   BUILD_TARGET=os2       VBOX_ONLY_TESTSUITE=1
+	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=os2     BUILD_TARGET_ARCH=x86   BUILD_TARGET=os2       VBOX_ONLY_TESTSUITE=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=amd64 KBUILD_TARGET=solaris BUILD_TARGET_ARCH=amd64 BUILD_TARGET=solaris   VBOX_ONLY_TESTSUITE=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=x86   KBUILD_TARGET=solaris BUILD_TARGET_ARCH=x86   BUILD_TARGET=solaris   VBOX_ONLY_TESTSUITE=1
 	+ $(KMK) -C tools fetch KBUILD_TARGET_ARCH=amd64 KBUILD_TARGET=win     BUILD_TARGET_ARCH=amd64 BUILD_TARGET=win       VBOX_ONLY_TESTSUITE=1
@@ -1225,6 +1290,7 @@ testsuite-fetch:
 
 
 testsuite-build: \
+	testsuite-build-rsync-into-vms \
 	testsuite-build-solaris.amd64 \
 	testsuite-build-solaris.x86 \
 	testsuite-build-win.x86 \
@@ -1236,6 +1302,13 @@ testsuite-build: \
 	testsuite-build-freebsd.x86 \
 	testsuite-build-darwin.amd64 \
 	testsuite-build-darwin.x86
+
+testsuite-build-rsync-into-vms: \
+		testsuite-build-solaris.rsync-into-vm \
+		testsuite-build-os2.rsync-into-vm
+	$(call MSG_L1,Rsynced the sources + tools into the VMs.)
+.NOTPARALLEL: testsuite-build-rsync-into-vms
+
 
 VBOX_TESTSUITE_BUILD.amd64 = VBOX_ONLY_TESTSUITE=1 \
 	KBUILD_TYPE=$(KBUILD_TYPE) BUILD_TYPE=$(KBUILD_TYPE) \
@@ -1301,36 +1374,58 @@ testsuite-build-solaris.rsync-out-of-vm: testsuite-build-solaris.build-it
 	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_SOLARIS_IP):/mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)/out/solaris.x86   out/
 	$(VBOX_KMK_TIME) rsync -a --delete $(VBOX_BLD_VM_SOLARIS_IP):/mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)/out/solaris.amd64 out/
 
-.NOTPARALLEL: testsuite-build-solaris.rsync-out-of-vm testsuite-build-solaris.rsync-into-vm
+.NOTPARALLEL: testsuite-build-solaris.rsync-into-vm
 .PHONY:       testsuite-build-solaris.rsync-out-of-vm testsuite-build-solaris.rsync-into-vm testsuite-build-solaris.build-it
 
 testsuite-build-solaris.amd64: testsuite-build-solaris.rsync-out-of-vm
 testsuite-build-solaris.x86:   testsuite-build-solaris.rsync-out-of-vm
 endif
 
+ifeq ($(KBUILD_TARGET),os2)
 testsuite-build-os2.x86:
-#ifeq ($(KBUILD_TARGET),os2)
-#	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_TESTSUITE_BUILD.x86) all $(VBOX_TESTSUITE_HOST_BUILD_TWEAK)
-#else
-#	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_OS2_IP) " cd /mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.x86) "
-#endif
+	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_TESTSUITE_BUILD.x86) all $(VBOX_TESTSUITE_HOST_BUILD_TWEAK)
+testsuite-build-os2.rsync-into-vm:
+else # !OS/2
+testsuite-build-os2.rsync-into-vm:
+	$(VBOX_KMK_TIME) $(call VBOX_RSYNC_IN_FN,os2,*) \
+		'--exclude=src/VBox/Additions/x11/**' \
+		'--exclude=src/VBox/Additions/WINNT/**' \
+		'--exclude=src/VBox/Frontends/**' \
+		'--exclude=src/VBox/VMM/**' \
+		. rsync://vbox@$(VBOX_BLD_VM_OS2_IP)/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)
+
+testsuite-build-os2.build-it: testsuite-build-os2.rsync-into-vm
+	$(call VBOX_BLD_VM_MSG_BEGIN,OS/2 TestSuite)
+	$(VBOX_KMK_TIME) rsh -l vbox $(VBOX_BLD_VM_OS2_IP) "cd e:\\tinderbox\\$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && e: && kbuild\\bin\\os2.x86\\kmk_ash tools\\env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.x86) all packing"
+	$(call VBOX_BLD_VM_MSG_END__,OS/2 TestSuite)
+
+testsuite-build-os2.rsync-out-of-vm: testsuite-build-os2.build-it
+	$(VBOX_KMK_TIME) rsync -v -a --delete rsync://vbox@$(VBOX_BLD_VM_OS2_IP)/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)/out/os2.x86 ./out
+
+.NOTPARALLEL: testsuite-build-os2.rsync-into-vm
+.PHONY:       testsuite-build-os2.rsync-into-vm testsuite-build-os2.rsync-out-of-vm testsuite-build-os2.build-it
+
+testsuite-build-os2.x86: testsuite-build-os2.rsync-out-of-vm
+endif # !OS/2
 
 testsuite-build-linux.amd64:   $(VBOX_TESTSUITE_BUILD_WIN_HOST_FIRST)
 ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),linux.amd64)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_TESTSUITE_BUILD.amd64) all $(VBOX_TESTSUITE_HOST_BUILD_TWEAK)
 else
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 testsuite)
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/amd64 Validation Kit)
+	#$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_AMD64_IP) " echo $@ && dchroot -c debian-4.0-amd64 \"cd /mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.amd64) all\""'
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_LNX_AMD64_IP) " echo $@ && cd /mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.amd64) all"
-	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 testsuite)
+	$(call VBOX_BLD_VM_MSG_END__,Linux/amd64 Validation Kit)
 endif
 
 testsuite-build-linux.x86:   $(VBOX_TESTSUITE_BUILD_WIN_HOST_FIRST)
 ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),linux.x86)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_TESTSUITE_BUILD.x86) all $(VBOX_TESTSUITE_HOST_BUILD_TWEAK)
 else
-	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 testsuite)
-	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_NEW_X86_IP) "echo $@ && dchroot -c rhel3-i386 \"cd /mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.x86) all\""'
-	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 testsuite)
+	$(call VBOX_BLD_VM_MSG_BEGIN,Linux/x86 Validation Kit)
+	#$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_X86_IP) "echo $@ && linux32 dchroot -c rhel3-i386 \"cd /mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.x86) all\""'
+	$(VBOX_KMK_TIME) ssh 'vbox@$(VBOX_BLD_VM_LNX_X86_IP) "echo $@ && dchroot -c rhel3-i386 \"cd /mnt/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.x86) all\""'
+	$(call VBOX_BLD_VM_MSG_END__,Linux/x86 Validation Kit)
 endif
 
 testsuite-build-freebsd.amd64:   $(VBOX_TESTSUITE_BUILD_WIN_HOST_FIRST)
@@ -1356,9 +1451,9 @@ ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),darwin.amd64)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_TESTSUITE_BUILD.amd64) all $(VBOX_TESTSUITE_HOST_BUILD_TWEAK)
 else
 	$(call VBOX_BLD_VM_MSG_BEGIN,Darwin/amd64 testsuite)
-	$(VBOX_KMK_TIME) $(call VBOX_RSYNC_IN_FN,darwin,amd64) . $(VBOX_BLD_VM_DARWIN_AMD64_IP):/Users/vbox/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)
+	$(VBOX_KMK_TIME) $(call VBOX_RSYNC_IN_FN,darwin,amd64) . $(VBOX_BLD_VM_DARWIN_AMD64_IP):/Users/vbox/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_DARWIN_AMD64_IP) " echo $@ && cd /Users/vbox/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.amd64) all"
-	$(VBOX_KMK_TIME) rsync -am -v --delete $(VBOX_BLD_VM_DARWIN_AMD64_IP):/Users/vbox/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)/out/darwin.amd64 out/
+	$(VBOX_KMK_TIME) rsync -am -v --delete $(VBOX_BLD_VM_DARWIN_AMD64_IP):/Users/vbox/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)/out/darwin.amd64 out/
 	$(call VBOX_BLD_VM_MSG_END__,Darwin/amd64 testsuite)
 endif
 
@@ -1367,9 +1462,9 @@ ifeq ($(KBUILD_TARGET).$(KBUILD_TARGET_ARCH),darwin.x86)
 	+ $(VBOX_KMK_TIME) $(KMK) $(VBOX_TESTSUITE_BUILD.x86) all $(VBOX_TESTSUITE_HOST_BUILD_TWEAK)
 else
 	$(call VBOX_BLD_VM_MSG_BEGIN,Darwin/x86 testsuite)
-	$(VBOX_KMK_TIME) $(call VBOX_RSYNC_IN_FN,darwin,x86) . $(VBOX_BLD_VM_DARWIN_X86_IP):/Users/vbox/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)
+	$(VBOX_KMK_TIME) $(call VBOX_RSYNC_IN_FN,darwin,x86) . $(VBOX_BLD_VM_DARWIN_X86_IP):/Users/vbox/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)
 	$(VBOX_KMK_TIME) ssh vbox@$(VBOX_BLD_VM_DARWIN_X86_IP) " echo $@ && cd /Users/vbox/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME) && tools/env.sh --no-wine kmk $(VBOX_TESTSUITE_BUILD.x86) all"
-	$(VBOX_KMK_TIME) rsync -am -v --delete $(VBOX_BLD_VM_DARWIN_X86_IP):/Users/vbox/tinderbox/$(VBOX_EXTPACKS_BUILD_SUBDIRNAME)/out/darwin.x86 out/
+	$(VBOX_KMK_TIME) rsync -am -v --delete $(VBOX_BLD_VM_DARWIN_X86_IP):/Users/vbox/tinderbox/$(VBOX_TESTSUITE_BUILD_SUBDIRNAME)/out/darwin.x86 out/
 	$(call VBOX_BLD_VM_MSG_END__,Darwin/x86 testsuite)
 endif
 
@@ -1382,13 +1477,14 @@ testsuite-packing:
 		VBOX_WITH_TESTSUITE_PACKING.freebsd.x86= \
 		VBOX_WITH_TESTSUITE_PACKING.linux.amd64=1 \
 		VBOX_WITH_TESTSUITE_PACKING.linux.x86=1 \
-		VBOX_WITH_TESTSUITE_PACKING.os2.x86= \
+		VBOX_WITH_TESTSUITE_PACKING.os2.x86=1 \
 		VBOX_WITH_TESTSUITE_PACKING.solaris.amd64=1 \
 		VBOX_WITH_TESTSUITE_PACKING.solaris.x86=1 \
 		VBOX_WITH_TESTSUITE_PACKING.win.amd64=1 \
 		VBOX_WITH_TESTSUITE_PACKING.win.x86=1 \
 		-C src/VBox/Testsuite \
-		$(PATH_OUT)/VBoxTestSuite.zip
+		$(PATH_OUT)/VBoxTestSuite.zip \
+		$(PATH_OUT)/VBoxTestBoxScript.zip
 
 .PHONY: \
 	testsuite-build-win.x86 \
@@ -1408,14 +1504,18 @@ testsuite-packing:
 #
 # Build the EFI firmware, all of it.
 #
-# Mainly hooks right now, maybe we need them later.
-#
 efi-fetch:
+	+ $(KMK) -C tools fetch VBOX_ONLY_EXTPACKS=1
 
 efi-build: $(VBOX_VERSION_HEADER)
-	$(PATH_ROOT)/webtools/tinderbox/client/efi-build.sh
+	+ $(KMK) -C src/VBox/Devices/EFI/Firmware
 
 efi-packing:
+	$(REDIRECT) -C "$(PATH_STAGE_BIN)" -- $(TOOL_ZIP_PACK) $(TOOL_ZIP_PACKFLAGS) -9X \
+		../VBoxEfiFirmware.zip \
+		VBoxEFI32.fd \
+		VBoxEFI64.fd
+## @todo zip up debug info as well!
 
 #
 # Generate VirtualBox-x.x.x.tar.bz2 (OSE) tarballs for distribution
@@ -1508,7 +1608,6 @@ snapshot-puel:
 	    -i!$(ZIPROOT)/tools/linux.amd64/bin/* \
 	    -x!$(ZIPROOT)/doc/Devices \
 	    -x!$(ZIPROOT)/doc/\*pdf \
-	    -x!$(ZIPROOT)/doc/L4VM \
 	    -x!$(ZIPROOT)/doc/VMM \
 	    -x!$(ZIPROOT)/doc/licenses_old \
 	    -x!$(ZIPROOT)/doc/manual/de_DE \

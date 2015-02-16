@@ -179,7 +179,7 @@ DRIVER_FILES += \
 		$(PATH_STAGE_BIN)/additions/VBoxMMRHook-x86.dll
   endif
 endif
- 
+
 
 VB_WIN_ADD_NSIS_ENV := \
 	-E 'PATH_OUT=$(subst /,\,$(PATH_OUT))' \

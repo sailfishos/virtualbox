@@ -201,13 +201,12 @@ typedef struct NATState
     int iIcmpCacheLimit;
 # ifdef RT_OS_WINDOWS
     void *pvIcmpBuffer;
-    size_t szIcmpBuffer;
-    /* Accordin MSDN specification IcmpParseReplies
-     * function should be detected in runtime
+    uint32_t cbIcmpBuffer;
+    /* According MSDN specification IcmpParseReplies
+     * function should be detected at runtime.
      */
     long (WINAPI * pfIcmpParseReplies)(void *, long);
     BOOL (WINAPI * pfIcmpCloseHandle)(HANDLE);
-    HMODULE hmIcmpLibrary;
 # endif
 #if defined(RT_OS_WINDOWS)
 # define VBOX_SOCKET_EVENT (pData->phEvents[VBOX_SOCKET_EVENT_INDEX])
@@ -247,6 +246,9 @@ typedef struct NATState
 #endif
     uma_zone_t zone_ext_refcnt;
     bool fUseHostResolver;
+    /** Flag whether using the host resolver mode is permanent
+     * because the user configured it that way. */
+    bool fUseHostResolverPermanent;
     /* from dnsproxy/dnsproxy.h*/
     unsigned int authoritative_port;
     unsigned int authoritative_timeout;

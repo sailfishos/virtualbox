@@ -24,16 +24,17 @@
 #include <VBoxDisplay.h>
 #include <VBox/VMMDev.h>
 #include <iprt/assert.h>
+#include <iprt/ldr.h>
 #include <VBoxGuestInternal.h>
 
 typedef struct _VBOXSEAMLESSCONTEXT
 {
     const VBOXSERVICEENV *pEnv;
 
-    HMODULE    hModule;
+    RTLDRMOD hModHook;
 
-    BOOL    (* pfnVBoxInstallHook)(HMODULE hDll);
-    BOOL    (* pfnVBoxRemoveHook)();
+    BOOL    (* pfnVBoxHookInstallWindowTracker)(HMODULE hDll);
+    BOOL    (* pfnVBoxHookRemoveWindowTracker)();
 
     PVBOXDISPIFESCAPE lpEscapeData;
 } VBOXSEAMLESSCONTEXT;
@@ -54,6 +55,7 @@ int VBoxSeamlessInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStar
 
     *pfStartThread = false;
     gCtx.pEnv = pEnv;
+    gCtx.hModHook = NIL_RTLDRMOD;
 
     OSVERSIONINFO OSinfo;
     OSinfo.dwOSVersionInfoSize = sizeof (OSinfo);
@@ -71,27 +73,25 @@ int VBoxSeamlessInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStar
     else
     {
         /* Will fail if SetWinEventHook is not present (version < NT4 SP6 apparently) */
-        gCtx.hModule = LoadLibrary(VBOXHOOK_DLL_NAME);
-        if (gCtx.hModule)
+        rc = RTLdrLoadAppPriv(VBOXHOOK_DLL_NAME, &gCtx.hModHook);
+        if (RT_SUCCESS(rc))
         {
-            *(uintptr_t *)&gCtx.pfnVBoxInstallHook = (uintptr_t)GetProcAddress(gCtx.hModule, "VBoxInstallHook");
-            *(uintptr_t *)&gCtx.pfnVBoxRemoveHook  = (uintptr_t)GetProcAddress(gCtx.hModule, "VBoxRemoveHook");
+            *(PFNRT *)&gCtx.pfnVBoxHookInstallWindowTracker = RTLdrGetFunction(gCtx.hModHook, "VBoxHookInstallWindowTracker");
+            *(PFNRT *)&gCtx.pfnVBoxHookRemoveWindowTracker  = RTLdrGetFunction(gCtx.hModHook, "VBoxHookRemoveWindowTracker");
 
-            /* Inform the host that we support the seamless window mode. */
-            rc = VbglR3SetGuestCaps(VMMDEV_GUEST_SUPPORTS_SEAMLESS, 0);
-            if (RT_SUCCESS(rc))
+            /* rc should contain success status */
+            AssertRC(rc);
+
+            VBoxSeamlessSetSupported(TRUE);
+
+//            if (RT_SUCCESS(rc))
             {
                 *pfStartThread = true;
                 *ppInstance = &gCtx;
             }
-            else
-                Log(("VBoxTray: VBoxSeamlessInit: Failed to set seamless capability\n"));
         }
         else
-        {
-            rc = RTErrConvertFromWin32(GetLastError());
             Log(("VBoxTray: VBoxSeamlessInit: LoadLibrary of \"%s\" failed with rc=%Rrc\n", VBOXHOOK_DLL_NAME, rc));
-        }
     }
 
     return rc;
@@ -102,34 +102,36 @@ void VBoxSeamlessDestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
 {
     Log(("VBoxTray: VBoxSeamlessDestroy\n"));
 
-    /* Inform the host that we no longer support the seamless window mode. */
-    int rc = VbglR3SetGuestCaps(0, VMMDEV_GUEST_SUPPORTS_SEAMLESS);
-    if (RT_FAILURE(rc))
-        Log(("VBoxTray: VBoxSeamlessDestroy: Failed to unset seamless capability, rc=%Rrc\n", rc));
+    VBoxSeamlessSetSupported(FALSE);
 
-    if (gCtx.pfnVBoxRemoveHook)
-        gCtx.pfnVBoxRemoveHook();
-    if (gCtx.hModule)
-        FreeLibrary(gCtx.hModule);
-    gCtx.hModule = 0;
+    /* Inform the host that we no longer support the seamless window mode. */
+    if (gCtx.pfnVBoxHookRemoveWindowTracker)
+        gCtx.pfnVBoxHookRemoveWindowTracker();
+    if (gCtx.hModHook != NIL_RTLDRMOD)
+    {
+        RTLdrClose(gCtx.hModHook);
+        gCtx.hModHook = NIL_RTLDRMOD;
+    }
     return;
 }
 
-void VBoxSeamlessInstallHook()
+static void VBoxSeamlessInstallHook()
 {
-    if (gCtx.pfnVBoxInstallHook)
+    if (gCtx.pfnVBoxHookInstallWindowTracker)
     {
         /* Check current visible region state */
-        VBoxSeamlessCheckWindows();
+        VBoxSeamlessCheckWindows(true);
 
-        gCtx.pfnVBoxInstallHook(gCtx.hModule);
+        HMODULE hMod = (HMODULE)RTLdrGetNativeHandle(gCtx.hModHook);
+        Assert(hMod != (HMODULE)~(uintptr_t)0);
+        gCtx.pfnVBoxHookInstallWindowTracker(hMod);
     }
 }
 
-void VBoxSeamlessRemoveHook()
+static void VBoxSeamlessRemoveHook()
 {
-    if (gCtx.pfnVBoxRemoveHook)
-        gCtx.pfnVBoxRemoveHook();
+    if (gCtx.pfnVBoxHookRemoveWindowTracker)
+        gCtx.pfnVBoxHookRemoveWindowTracker();
 
     if (gCtx.lpEscapeData)
     {
@@ -138,15 +140,32 @@ void VBoxSeamlessRemoveHook()
     }
 }
 
+extern HANDLE ghSeamlessKmNotifyEvent;
+
+static VBOXDISPIF_SEAMLESS gVBoxDispIfSeamless;
+
+
+void VBoxSeamlessEnable()
+{
+    Assert(ghSeamlessKmNotifyEvent);
+
+    VBoxDispIfSeamlesCreate(&gCtx.pEnv->dispIf, &gVBoxDispIfSeamless, ghSeamlessKmNotifyEvent);
+
+    VBoxSeamlessInstallHook();
+}
+
+void VBoxSeamlessDisable()
+{
+    VBoxSeamlessRemoveHook();
+
+    VBoxDispIfSeamlesTerm(&gVBoxDispIfSeamless);
+}
+
 BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
 {
     PVBOX_ENUM_PARAM    lpParam = (PVBOX_ENUM_PARAM)lParam;
     DWORD               dwStyle, dwExStyle;
     RECT                rectWindow, rectVisible;
-    OSVERSIONINFO       OSinfo;
-
-    OSinfo.dwOSVersionInfoSize = sizeof (OSinfo);
-    GetVersionEx (&OSinfo);
 
     dwStyle   = GetWindowLong(hwnd, GWL_STYLE);
     dwExStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
@@ -158,11 +177,29 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
     /* Only visible windows that are present on the desktop are interesting here */
     if (GetWindowRect(hwnd, &rectWindow))
     {
-        rectVisible = rectWindow;
-
         char szWindowText[256];
         szWindowText[0] = 0;
+        OSVERSIONINFO OSinfo;
+        HWND hStart = NULL;
         GetWindowText(hwnd, szWindowText, sizeof(szWindowText));
+        OSinfo.dwOSVersionInfoSize = sizeof (OSinfo);
+        GetVersionEx (&OSinfo);
+        if (OSinfo.dwMajorVersion >= 6)
+        {
+            hStart = ::FindWindowEx(GetDesktopWindow(), NULL, "Button", "Start");
+            if (  hwnd == hStart && szWindowText != NULL
+                && !(strcmp(szWindowText, "Start"))
+               )
+            {
+                /* for vista and above. To solve the issue of small bar above
+                 * the Start button when mouse is hovered over the start button in seamless mode.
+                 * Difference of 7 is observed in Win 7 platform between the dimensionsof rectangle with Start title and its shadow.
+                 */
+                rectWindow.top += 7;
+                rectWindow.bottom -=7;
+            }
+        }
+        rectVisible = rectWindow;
 
 #ifdef LOG_ENABLED
         DWORD pid = 0;
@@ -202,27 +239,7 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
             if (ret == ERROR)
             {
                 Log(("VBoxTray: GetWindowRgn failed with rc=%d\n", GetLastError()));
-
-                /* for vista and above. To solve the issue of small bar above the Start button */
-                if (OSinfo.dwMajorVersion >= 6)
-                {
-                    char szWindowTextStart[256];
-                    HWND hStart = NULL;
-                    hStart = ::FindWindowEx(GetDesktopWindow(), NULL, "Button", NULL);
-                    GetWindowText(hwnd, szWindowText, sizeof(szWindowText));
-                    GetWindowText(hStart,szWindowTextStart, sizeof(szWindowTextStart));
-                    if (   hwnd == hStart && szWindowText != NULL
-                        && !(strcmp(szWindowText, szWindowTextStart))
-                       )
-                    {
-                        LogRel(("VboxTray/Seamless: Start found.\n"));
-                        SetRectRgn(hrgn, rectVisible.left, rectVisible.top +7, rectVisible.right, rectVisible.bottom);
-                    }
-                    else
-                        SetRectRgn(hrgn, rectVisible.left, rectVisible.top , rectVisible.right , rectVisible.bottom);
-                }
-                else
-                    SetRectRgn(hrgn, rectVisible.left, rectVisible.top , rectVisible.right , rectVisible.bottom);
+                SetRectRgn(hrgn, rectVisible.left, rectVisible.top, rectVisible.right, rectVisible.bottom);
             }
             else
             {
@@ -248,8 +265,11 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
     return TRUE; /* continue enumeration */
 }
 
-void VBoxSeamlessCheckWindows()
+void VBoxSeamlessCheckWindows(bool fForce)
 {
+    if (!VBoxDispIfSeamlesIsValid(&gVBoxDispIfSeamless))
+        return;
+
     VBOX_ENUM_PARAM param;
 
     param.hdc       = GetDC(HWND_DESKTOP);
@@ -283,12 +303,13 @@ void VBoxSeamlessCheckWindows()
                     }
 #endif
                     LPRGNDATA lpCtxRgnData = VBOXDISPIFESCAPE_DATA(gCtx.lpEscapeData, RGNDATA);
-                    if (    !gCtx.lpEscapeData
+                    if (fForce
+                        ||  !gCtx.lpEscapeData
                         ||  (lpCtxRgnData->rdh.dwSize + lpCtxRgnData->rdh.nRgnSize != cbSize)
                         ||  memcmp(lpCtxRgnData, lpRgnData, cbSize))
                     {
                         /* send to display driver */
-                        VBoxDispIfEscape(&gCtx.pEnv->dispIf, lpEscapeData, cbSize);
+                        VBoxDispIfSeamlesSubmit(&gVBoxDispIfSeamless, lpEscapeData, cbSize);
 
                         if (gCtx.lpEscapeData)
                             free(gCtx.lpEscapeData);
@@ -381,7 +402,7 @@ unsigned __stdcall VBoxSeamlessThread(void *pInstance)
                                 if (!ret)
                                     Log(("VBoxTray: SystemParametersInfo SPI_SETSCREENSAVEACTIVE failed with %d\n", GetLastError()));
                             }
-                            PostMessage(ghwndToolWindow, WM_VBOX_REMOVE_SEAMLESS_HOOK, 0, 0);
+                            PostMessage(ghwndToolWindow, WM_VBOX_SEAMLESS_DISABLE, 0, 0);
                             break;
 
                         case VMMDev_Seamless_Visible_Region:
@@ -395,7 +416,7 @@ unsigned __stdcall VBoxSeamlessThread(void *pInstance)
                             ret = SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE, NULL, 0);
                             if (!ret)
                                 Log(("VBoxTray: SystemParametersInfo SPI_SETSCREENSAVEACTIVE failed with %d\n", GetLastError()));
-                            PostMessage(ghwndToolWindow, WM_VBOX_INSTALL_SEAMLESS_HOOK, 0, 0);
+                            PostMessage(ghwndToolWindow, WM_VBOX_SEAMLESS_ENABLE, 0, 0);
                             break;
 
                         case VMMDev_Seamless_Host_Window:

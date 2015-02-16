@@ -36,6 +36,7 @@ extern DWORD g_VBoxDisplayOnly;
 # include "wddm/VBoxMPTypes.h"
 #endif
 
+#define VBOXMP_MAX_VIDEO_MODES 128
 typedef struct VBOXMP_COMMON
 {
     int cDisplays;                      /* Number of displays. */
@@ -63,6 +64,8 @@ typedef struct VBOXMP_COMMON
     HGSMIHOSTCOMMANDCONTEXT hostCtx;
     /** Context information needed to submit commands to the host. */
     HGSMIGUESTCOMMANDCONTEXT guestCtx;
+
+    BOOLEAN fAnyX;                      /* Unrestricted horizontal resolution flag. */
 } VBOXMP_COMMON, *PVBOXMP_COMMON;
 
 typedef struct _VBOXMP_DEVEXT
@@ -74,7 +77,13 @@ typedef struct _VBOXMP_DEVEXT
    struct _VBOXMP_DEVEXT *pPrimary;            /* Pointer to the primary device extension. */
 
    ULONG iDevice;                              /* Device index: 0 for primary, otherwise a secondary device. */
-
+   /* Standart video modes list.
+    * Additional space is reserved for a custom video mode for this guest monitor.
+    * The custom video mode index is alternating for each mode set and 2 indexes are needed for the custom mode.
+    */
+   VIDEO_MODE_INFORMATION aVideoModes[VBOXMP_MAX_VIDEO_MODES + 2];
+   /* Number of available video modes, set by VBoxMPCmnBuildVideoModesTable. */
+   uint32_t cVideoModes;
    ULONG CurrentMode;                          /* Saved information about video modes */
    ULONG CurrentModeWidth;
    ULONG CurrentModeHeight;
@@ -82,6 +91,11 @@ typedef struct _VBOXMP_DEVEXT
 
    ULONG ulFrameBufferOffset;                  /* The framebuffer position in the VRAM. */
    ULONG ulFrameBufferSize;                    /* The size of the current framebuffer. */
+
+   uint8_t  iInvocationCounter;
+   uint32_t Prev_xres;
+   uint32_t Prev_yres;
+   uint32_t Prev_bpp;
 #endif /*VBOX_XPDM_MINIPORT*/
 
 #ifdef VBOX_WDDM_MINIPORT
@@ -92,30 +106,36 @@ typedef struct _VBOXMP_DEVEXT
    uint8_t * pvVisibleVram;
 
    VBOXVIDEOCM_MGR CmMgr;
+   VBOXVIDEOCM_MGR SeamlessCtxMgr;
    /* hgsmi allocation manager */
    VBOXVIDEOCM_ALLOC_MGR AllocMgr;
    VBOXVDMADDI_NODE aNodes[VBOXWDDM_NUM_NODES];
    LIST_ENTRY DpcCmdQueue;
    LIST_ENTRY SwapchainList3D;
    /* mutex for context list operations */
-#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
    KSPIN_LOCK ContextLock;
-#else
-   FAST_MUTEX ContextMutex;
-#endif
    KSPIN_LOCK SynchLock;
    volatile uint32_t cContexts3D;
    volatile uint32_t cContexts2D;
-   volatile uint32_t cRenderFromShadowDisabledContexts;
+   volatile uint32_t cContextsDispIfResize;
    volatile uint32_t cUnlockedVBVADisabled;
-   /* this is examined and swicthed by DxgkDdiSubmitCommand only! */
-   volatile BOOLEAN fRenderToShadowDisabled;
+
+   volatile uint32_t fCompletingCommands;
+
+   DWORD dwDrvCfgFlags;
+#ifdef VBOX_WITH_CROGL
+   BOOLEAN f3DEnabled;
+   BOOLEAN fTexPresentEnabled;
+   BOOLEAN fCmdVbvaEnabled;
+   BOOLEAN fComplexTopologiesEnabled;
+
+   uint32_t u32CrConDefaultClientID;
+
+   VBOXCMDVBVA CmdVbva;
 
    VBOXMP_CRCTLCON CrCtlCon;
-#ifdef VBOX_WDDM_MINIPORT_WITH_VISIBLE_RECTS
    VBOXMP_CRSHGSMITRANSPORT CrHgsmiTransport;
 #endif
-
    VBOXWDDM_GLOBAL_POINTER_INFO PointerInfo;
 
    VBOXVTLIST CtlList;
@@ -123,13 +143,19 @@ typedef struct _VBOXMP_DEVEXT
 #ifdef VBOX_WITH_VIDEOHWACCEL
    VBOXVTLIST VhwaCmdList;
 #endif
-   BOOL bNotifyDxDpc;
+   BOOLEAN bNotifyDxDpc;
+
+   BOOLEAN fDisableTargetUpdate;
+
+
 
 #ifdef VBOX_VDMA_WITH_WATCHDOG
    PKTHREAD pWdThread;
    KEVENT WdEvent;
 #endif
-
+   BOOL bVSyncTimerEnabled;
+   volatile uint32_t fVSyncInVBlank;
+   volatile LARGE_INTEGER VSyncTime;
    KTIMER VSyncTimer;
    KDPC VSyncDpc;
 
@@ -176,7 +202,6 @@ typedef struct _VBOXMP_DEVEXT
    } u;
 
    HGSMIAREA areaDisplay;                      /* Entire VRAM chunk for this display device. */
-   BOOLEAN fAnyX;                              /* Unrestricted horizontal resolution flag. */
 } VBOXMP_DEVEXT, *PVBOXMP_DEVEXT;
 
 DECLINLINE(PVBOXMP_DEVEXT) VBoxCommonToPrimaryExt(PVBOXMP_COMMON pCommon)
@@ -196,21 +221,23 @@ DECLINLINE(PVBOXMP_COMMON) VBoxCommonFromDeviceExt(PVBOXMP_DEVEXT pExt)
 #ifdef VBOX_WDDM_MINIPORT
 DECLINLINE(ULONG) vboxWddmVramCpuVisibleSize(PVBOXMP_DEVEXT pDevExt)
 {
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
-    /* all memory layout info should be initialized */
-    Assert(pDevExt->aSources[0].Vbva.offVBVA);
-    /* page aligned */
-    Assert(!(pDevExt->aSources[0].Vbva.offVBVA & 0xfff));
+#ifdef VBOX_WITH_CROGL
+    if (pDevExt->fCmdVbvaEnabled)
+    {
+        /* all memory layout info should be initialized */
+        Assert(pDevExt->CmdVbva.Vbva.offVRAMBuffer);
+        /* page aligned */
+        Assert(!(pDevExt->CmdVbva.Vbva.offVRAMBuffer & 0xfff));
 
-    return (ULONG)(pDevExt->aSources[0].Vbva.offVBVA & ~0xfffULL);
-#else
-    /* all memory layout info should be initialized */
-    Assert(pDevExt->u.primary.Vdma.CmdHeap.Heap.area.offBase);
-    /* page aligned */
-    Assert(!(pDevExt->u.primary.Vdma.CmdHeap.Heap.area.offBase & 0xfff));
-
-    return pDevExt->u.primary.Vdma.CmdHeap.Heap.area.offBase & ~0xfffUL;
+        return (ULONG)(pDevExt->CmdVbva.Vbva.offVRAMBuffer & ~0xfffULL);
+    }
 #endif
+    /* all memory layout info should be initialized */
+    Assert(pDevExt->aSources[0].Vbva.Vbva.offVRAMBuffer);
+    /* page aligned */
+    Assert(!(pDevExt->aSources[0].Vbva.Vbva.offVRAMBuffer & 0xfff));
+
+    return (ULONG)(pDevExt->aSources[0].Vbva.Vbva.offVRAMBuffer & ~0xfffULL);
 }
 
 DECLINLINE(ULONG) vboxWddmVramCpuVisibleSegmentSize(PVBOXMP_DEVEXT pDevExt)
@@ -218,11 +245,13 @@ DECLINLINE(ULONG) vboxWddmVramCpuVisibleSegmentSize(PVBOXMP_DEVEXT pDevExt)
     return vboxWddmVramCpuVisibleSize(pDevExt);
 }
 
-#ifdef VBOXWDDM_RENDER_FROM_SHADOW
+/* 128 MB */
 DECLINLINE(ULONG) vboxWddmVramCpuInvisibleSegmentSize(PVBOXMP_DEVEXT pDevExt)
 {
-    return vboxWddmVramCpuVisibleSegmentSize(pDevExt);
+    return 128 * 1024 * 1024;
 }
+
+#ifdef VBOXWDDM_RENDER_FROM_SHADOW
 
 DECLINLINE(bool) vboxWddmCmpSurfDescsBase(VBOXWDDM_SURFACE_DESC *pDesc1, VBOXWDDM_SURFACE_DESC *pDesc2)
 {

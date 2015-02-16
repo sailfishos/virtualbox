@@ -125,7 +125,7 @@ static int testLdrOne(const char *pszFilename)
      */
     for (i = 0; i < RT_ELEMENTS(aLoads); i++)
     {
-        if (!strncmp(aLoads[i].pszName, "kLdr-", sizeof("kLdr-") - 1))
+        if (!strncmp(aLoads[i].pszName, RT_STR_TUPLE("kLdr-")))
             rc = RTLdrOpenkLdr(pszFilename, 0, RTLDRARCH_WHATEVER, &aLoads[i].hLdrMod);
         else
             rc = RTLdrOpen(pszFilename, 0, RTLDRARCH_WHATEVER, &aLoads[i].hLdrMod);
@@ -175,9 +175,11 @@ static int testLdrOne(const char *pszFilename)
         {
             /* get the pointer. */
             RTUINTPTR Value;
-            rc = RTLdrGetSymbolEx(aLoads[i].hLdrMod, aLoads[i].pvBits, (uintptr_t)aLoads[i].pvBits, "DisasmTest1", &Value);
+            rc = RTLdrGetSymbolEx(aLoads[i].hLdrMod, aLoads[i].pvBits, (uintptr_t)aLoads[i].pvBits,
+                                  UINT32_MAX, "DisasmTest1", &Value);
             if (rc == VERR_SYMBOL_NOT_FOUND)
-                rc = RTLdrGetSymbolEx(aLoads[i].hLdrMod, aLoads[i].pvBits, (uintptr_t)aLoads[i].pvBits, "_DisasmTest1", &Value);
+                rc = RTLdrGetSymbolEx(aLoads[i].hLdrMod, aLoads[i].pvBits, (uintptr_t)aLoads[i].pvBits,
+                                      UINT32_MAX, "_DisasmTest1", &Value);
             if (RT_FAILURE(rc))
             {
                 RTPrintf("tstLdr-4: Failed to get symbol \"DisasmTest1\" from load #%d: %Rrc\n", i, rc);

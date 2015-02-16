@@ -43,7 +43,11 @@
 #       undef  _interlockedbittestandset64
 #       undef  _interlockedbittestandreset64
 
+#ifdef VBOX_WITH_NEW_WINE
+#include "../../../Wine_new/vbox/VBoxWineEx.h"
+#else
 #include "../../../Wine/vbox/VBoxWineEx.h"
+#endif
 
 /* D3D functionality the VBOXDISPD3D provides */
 typedef HRESULT WINAPI FNVBOXDISPD3DCREATE9EX(UINT SDKVersion, IDirect3D9Ex **ppD3D);
@@ -66,17 +70,21 @@ typedef struct VBOXDISPD3D
 
     PFNVBOXWINEEXD3DDEV9_VOLTEXBLT pfnVBoxWineExD3DDev9VolTexBlt;
 
-    PFNVBOXWINEEXD3DDEV9_UPDATE pfnVBoxWineExD3DDev9Update;
-
     PFNVBOXWINEEXD3DDEV9_TERM pfnVBoxWineExD3DDev9Term;
-
-    PFNVBOXWINEEXD3DRC9_SETSHRCSTATE pfnVBoxWineExD3DRc9SetShRcState;
 
     PFNVBOXWINEEXD3DSWAPCHAIN9_PRESENT pfnVBoxWineExD3DSwapchain9Present;
 
     PFNVBOXWINEEXD3DDEV9_FLUSHTOHOST pfnVBoxWineExD3DDev9FlushToHost;
 
     PFNVBOXWINEEXD3DDEV9_FINISH pfnVBoxWineExD3DDev9Finish;
+
+    PFNVBOXWINEEXD3DSURF9_GETHOSTID pfnVBoxWineExD3DSurf9GetHostId;
+
+    PFNVBOXWINEEXD3DSURF9_SYNCTOHOST pfnVBoxWineExD3DSurf9SyncToHost;
+
+    PFNVBOXWINEEXD3DSWAPCHAIN9_GETHOSTWINID pfnVBoxWineExD3DSwapchain9GetHostWinID;
+
+    PFNVBOXWINEEXD3DDEV9_GETHOSTID pfnVBoxWineExD3DDev9GetHostId;
 
     /* module handle */
     HMODULE hD3DLib;

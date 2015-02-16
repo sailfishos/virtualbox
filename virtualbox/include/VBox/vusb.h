@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2012 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,6 +28,8 @@
 
 #include <VBox/cdefs.h>
 #include <VBox/types.h>
+
+#include <iprt/queueatomic.h>
 
 struct PDMLED;
 
@@ -536,7 +538,7 @@ typedef struct VUSBIROOTHUBCONNECTOR
      * @param   pInterface  Pointer to this struct.
      * @param   cMillies    Number of milliseconds to poll for completion.
      */
-    DECLR3CALLBACKMEMBER(void, pfnReapAsyncUrbs,(PVUSBIROOTHUBCONNECTOR pInterface, RTMSINTERVAL cMillies));
+    DECLR3CALLBACKMEMBER(void, pfnReapAsyncUrbs,(PVUSBIROOTHUBCONNECTOR pInterface, PVUSBIDEVICE pDevice, RTMSINTERVAL cMillies));
 
     /**
      * Cancels and completes - with CRC failure - all URBs queued on an endpoint.
@@ -595,9 +597,9 @@ DECLINLINE(int) VUSBIRhSubmitUrb(PVUSBIROOTHUBCONNECTOR pInterface, PVUSBURB pUr
 }
 
 /** @copydoc VUSBIROOTHUBCONNECTOR::pfnReapAsyncUrbs */
-DECLINLINE(void) VUSBIRhReapAsyncUrbs(PVUSBIROOTHUBCONNECTOR pInterface, RTMSINTERVAL cMillies)
+DECLINLINE(void) VUSBIRhReapAsyncUrbs(PVUSBIROOTHUBCONNECTOR pInterface, PVUSBIDEVICE pDevice, RTMSINTERVAL cMillies)
 {
-    pInterface->pfnReapAsyncUrbs(pInterface, cMillies);
+    pInterface->pfnReapAsyncUrbs(pInterface, pDevice, cMillies);
 }
 
 /** @copydoc VUSBIROOTHUBCONNECTOR::pfnCancelAllUrbs */
@@ -1036,15 +1038,16 @@ typedef struct VUSBURB
         uint32_t        u32FrameNo;
         /** Flag indicating that the TDs have been unlinked. */
         bool            fUnlinked;
+        RTQUEUEATOMICITEM QueueItem;
     } Hci;
 
     /** The device data. */
     struct VUSBURBDEV
     {
         /** Pointer to private device specific data.  */
-        void           *pvPrivate;
+        void             *pvPrivate;
         /** Used by the device when linking the URB in some list of its own.   */
-        PVUSBURB        pNext;
+        PVUSBURB          pNext;
     } Dev;
 
 #ifndef RDESKTOP
@@ -1086,7 +1089,8 @@ typedef struct VUSBURB
     uint32_t        cbData;
     /** The message data.
      * IN: On host to device transfers, the data to send.
-     * OUT: On device to host transfers, the data to received. */
+     * OUT: On device to host transfers, the data to received.
+     * This array has actually a size of VUsb.cbDataAllocated, not 8KB! */
     uint8_t         abData[8*_1K];
 } VUSBURB;
 

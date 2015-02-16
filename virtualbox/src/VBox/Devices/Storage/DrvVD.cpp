@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,13 +36,18 @@
 #include <iprt/poll.h>
 #include <iprt/pipe.h>
 #include <iprt/system.h>
+#include <iprt/memsafer.h>
 
 #ifdef VBOX_WITH_INIP
 /* All lwip header files are not C++ safe. So hack around this. */
 RT_C_DECLS_BEGIN
+#include <lwip/opt.h>
 #include <lwip/inet.h>
 #include <lwip/tcp.h>
 #include <lwip/sockets.h>
+# ifdef VBOX_WITH_NEW_LWIP
+#  include <lwip/inet6.h>
+# endif
 RT_C_DECLS_END
 #endif /* VBOX_WITH_INIP */
 
@@ -181,6 +186,19 @@ typedef struct VBOXDISK
 
     /** The block cache handle if configured. */
     PPDMBLKCACHE             pBlkCache;
+
+    /** Cryptographic support
+     * @{ */
+    /** Pointer to the CFGM node containing the config of the crypto filter
+     * if enable. */
+    PCFGMNODE                pCfgCrypto;
+    /** Config interface for the encryption filter. */
+    VDINTERFACECONFIG        VDIfCfg;
+    /** Crypto interface for the encryption filter. */
+    VDINTERFACECRYPTO        VDIfCrypto;
+    /** The secret key interface used to retrieve keys. */
+    PPDMISECKEY              pIfSecKey;
+    /** @} */
 } VBOXDISK, *PVBOXDISK;
 
 
@@ -308,7 +326,7 @@ static DECLCALLBACK(void) drvvdAsyncTaskCompleted(PPDMDRVINS pDrvIns, void *pvTe
     {
         Assert(!pvUser);
         pStorageBackend->rcReqLast      = rcReq;
-        pStorageBackend->fSyncIoPending = false;
+        ASMAtomicWriteBool(&pStorageBackend->fSyncIoPending, false);
         RTSemEventSignal(pStorageBackend->EventSem);
     }
     else
@@ -345,9 +363,9 @@ static DECLCALLBACK(int) drvvdAsyncIOOpen(void *pvUser, const char *pszLocation,
                                                         drvvdAsyncTaskCompleted, pStorageBackend, "AsyncTaskCompleted");
             if (RT_SUCCESS(rc))
             {
-                uint32_t fFlags =    (fOpen & RTFILE_O_ACCESS_MASK) == RTFILE_O_READ
-                                   ? PDMACEP_FILE_FLAGS_READ_ONLY
-                                   : 0;
+                uint32_t fFlags = (fOpen & RTFILE_O_ACCESS_MASK) == RTFILE_O_READ
+                                ? PDMACEP_FILE_FLAGS_READ_ONLY
+                                : 0;
                 if (pThis->fShareable)
                 {
                     Assert((fOpen & RTFILE_O_DENY_MASK) == RTFILE_O_DENY_NONE);
@@ -368,6 +386,8 @@ static DECLCALLBACK(int) drvvdAsyncIOOpen(void *pvUser, const char *pszLocation,
 
                     if (RT_SUCCESS(rc))
                     {
+                        LogFlow(("drvvdAsyncIOOpen: Successfully opened '%s'; fOpen=%#x pStorage=%p\n",
+                                 pszLocation, fOpen, pStorageBackend));
                         *ppStorage = pStorageBackend;
                         return VINF_SUCCESS;
                     }
@@ -408,8 +428,8 @@ static DECLCALLBACK(int) drvvdAsyncIOReadSync(void *pvUser, void *pStorage, uint
     RTSGSEG DataSeg;
     PPDMASYNCCOMPLETIONTASK pTask;
 
-    Assert(!pStorageBackend->fSyncIoPending);
-    ASMAtomicXchgBool(&pStorageBackend->fSyncIoPending, true);
+    bool fOld = ASMAtomicXchgBool(&pStorageBackend->fSyncIoPending, true);
+    Assert(!fOld);
     DataSeg.cbSeg = cbRead;
     DataSeg.pvSeg = pvBuf;
 
@@ -440,8 +460,8 @@ static DECLCALLBACK(int) drvvdAsyncIOWriteSync(void *pvUser, void *pStorage, uin
     RTSGSEG DataSeg;
     PPDMASYNCCOMPLETIONTASK pTask;
 
-    Assert(!pStorageBackend->fSyncIoPending);
-    ASMAtomicXchgBool(&pStorageBackend->fSyncIoPending, true);
+    bool fOld = ASMAtomicXchgBool(&pStorageBackend->fSyncIoPending, true);
+    Assert(!fOld);
     DataSeg.cbSeg = cbWrite;
     DataSeg.pvSeg = (void *)pvBuf;
 
@@ -472,8 +492,8 @@ static DECLCALLBACK(int) drvvdAsyncIOFlushSync(void *pvUser, void *pStorage)
 
     LogFlowFunc(("pvUser=%#p pStorage=%#p\n", pvUser, pStorage));
 
-    Assert(!pStorageBackend->fSyncIoPending);
-    ASMAtomicXchgBool(&pStorageBackend->fSyncIoPending, true);
+    bool fOld = ASMAtomicXchgBool(&pStorageBackend->fSyncIoPending, true);
+    Assert(!fOld);
 
     int rc = PDMR3AsyncCompletionEpFlush(pStorageBackend->pEndpoint, NULL, &pTask);
     if (RT_FAILURE(rc))
@@ -500,7 +520,7 @@ static DECLCALLBACK(int) drvvdAsyncIOReadAsync(void *pvUser, void *pStorage, uin
     PVBOXDISK pThis = (PVBOXDISK)pvUser;
     PDRVVDSTORAGEBACKEND pStorageBackend = (PDRVVDSTORAGEBACKEND)pStorage;
 
-    int rc = PDMR3AsyncCompletionEpRead(pStorageBackend->pEndpoint, uOffset, paSegments, cSegments, cbRead,
+    int rc = PDMR3AsyncCompletionEpRead(pStorageBackend->pEndpoint, uOffset, paSegments, (unsigned)cSegments, cbRead,
                                         pvCompletion, (PPPDMASYNCCOMPLETIONTASK)ppTask);
     if (rc == VINF_AIO_TASK_PENDING)
         rc = VERR_VD_ASYNC_IO_IN_PROGRESS;
@@ -516,7 +536,7 @@ static DECLCALLBACK(int) drvvdAsyncIOWriteAsync(void *pvUser, void *pStorage, ui
     PVBOXDISK pThis = (PVBOXDISK)pvUser;
     PDRVVDSTORAGEBACKEND pStorageBackend = (PDRVVDSTORAGEBACKEND)pStorage;
 
-    int rc = PDMR3AsyncCompletionEpWrite(pStorageBackend->pEndpoint, uOffset, paSegments, cSegments, cbWrite,
+    int rc = PDMR3AsyncCompletionEpWrite(pStorageBackend->pEndpoint, uOffset, paSegments, (unsigned)cSegments, cbWrite,
                                          pvCompletion, (PPPDMASYNCCOMPLETIONTASK)ppTask);
     if (rc == VINF_AIO_TASK_PENDING)
         rc = VERR_VD_ASYNC_IO_IN_PROGRESS;
@@ -609,16 +629,60 @@ static int drvvdCfgQuery(void *pvUser, const char *pszName, char *pszString, siz
     return CFGMR3QueryString((PCFGMNODE)pvUser, pszName, pszString, cchString);
 }
 
+static int drvvdCfgQueryBytes(void *pvUser, const char *pszName, void *ppvData, size_t cbData)
+{
+    return CFGMR3QueryBytes((PCFGMNODE)pvUser, pszName, ppvData, cbData);
+}
+
+
+/*******************************************************************************
+*   VD Crypto interface implementation for the encryption support       *
+*******************************************************************************/
+
+static DECLCALLBACK(int) drvvdCryptoKeyRetain(void *pvUser, const char *pszId, const uint8_t **ppbKey, size_t *pcbKey)
+{
+    PVBOXDISK pThis = (PVBOXDISK)pvUser;
+    int rc = VINF_SUCCESS;
+
+    AssertPtr(pThis->pIfSecKey);
+    if (pThis->pIfSecKey)
+        rc = pThis->pIfSecKey->pfnKeyRetain(pThis->pIfSecKey, pszId, ppbKey, pcbKey);
+    else
+        rc = VERR_NOT_SUPPORTED;
+
+    return rc;
+}
+
+static DECLCALLBACK(int) drvvdCryptoKeyRelease(void *pvUser, const char *pszId)
+{
+    PVBOXDISK pThis = (PVBOXDISK)pvUser;
+    int rc = VINF_SUCCESS;
+
+    AssertPtr(pThis->pIfSecKey);
+    if (pThis->pIfSecKey)
+        rc = pThis->pIfSecKey->pfnKeyRelease(pThis->pIfSecKey, pszId);
+    else
+        rc = VERR_NOT_SUPPORTED;
+
+    return rc;
+}
 
 #ifdef VBOX_WITH_INIP
 /*******************************************************************************
 *   VD TCP network stack interface implementation - INIP case                  *
 *******************************************************************************/
 
+/**
+ * vvl: this structure duplicate meaning of sockaddr,
+ * perhaps it'd be better to get rid of it.
+ */
 typedef union INIPSOCKADDRUNION
 {
     struct sockaddr     Addr;
     struct sockaddr_in  Ipv4;
+#ifdef VBOX_WITH_NEW_LWIP
+    struct sockaddr_in6 Ipv6;
+#endif
 } INIPSOCKADDRUNION;
 
 typedef struct INIPSOCKET
@@ -665,6 +729,11 @@ static DECLCALLBACK(int) drvvdINIPClientConnect(VDSOCKET Sock, const char *pszAd
 {
     int rc = VINF_SUCCESS;
     PINIPSOCKET pSocketInt = (PINIPSOCKET)Sock;
+    int iInetFamily = PF_INET;
+    struct in_addr ip;
+#ifdef VBOX_WITH_NEW_LWIP
+    ip6_addr_t ip6;
+#endif
 
     /* Check whether lwIP is set up in this VM instance. */
     if (!DevINIPConfigured())
@@ -674,21 +743,43 @@ static DECLCALLBACK(int) drvvdINIPClientConnect(VDSOCKET Sock, const char *pszAd
     }
     /* Resolve hostname. As there is no standard resolver for lwIP yet,
      * just accept numeric IP addresses for now. */
-    struct in_addr ip;
-    if (!lwip_inet_aton(pszAddress, &ip))
+#ifdef VBOX_WITH_NEW_LWIP
+    if (inet6_aton(pszAddress, &ip6))
+        iInetFamily = PF_INET6;
+    else /* concatination with if */
+#endif
+      if (!lwip_inet_aton(pszAddress, &ip))
     {
         LogRelFunc(("cannot resolve IP %s\n", pszAddress));
         return VERR_NET_HOST_UNREACHABLE;
     }
     /* Create socket and connect. */
-    int iSock = lwip_socket(PF_INET, SOCK_STREAM, 0);
+    int iSock = lwip_socket(iInetFamily, SOCK_STREAM, 0);
     if (iSock != -1)
     {
-        struct sockaddr_in InAddr = {0};
-        InAddr.sin_family = AF_INET;
-        InAddr.sin_port = htons(uPort);
-        InAddr.sin_addr = ip;
-        if (!lwip_connect(iSock, (struct sockaddr *)&InAddr, sizeof(InAddr)))
+        struct sockaddr *pSockAddr = NULL;
+        if (iInetFamily == PF_INET)
+        {
+            struct sockaddr_in InAddr = {0};
+            InAddr.sin_family = AF_INET;
+            InAddr.sin_port = htons(uPort);
+            InAddr.sin_addr = ip;
+            InAddr.sin_len = sizeof(InAddr);
+            pSockAddr = (struct sockaddr *)&InAddr;
+        }
+#ifdef VBOX_WITH_NEW_LWIP
+        else
+        {
+            struct sockaddr_in6 In6Addr = {0};
+            In6Addr.sin6_family = AF_INET6;
+            In6Addr.sin6_port = htons(uPort);
+            memcpy(&In6Addr.sin6_addr, &ip6, sizeof(ip6));
+            In6Addr.sin6_len = sizeof(In6Addr);
+            pSockAddr = (struct sockaddr *)&In6Addr;
+        }
+#endif
+        if (   pSockAddr
+            && !lwip_connect(iSock, pSockAddr, pSockAddr->sa_len))
         {
             pSocketInt->hSock = iSock;
             return VINF_SUCCESS;
@@ -882,6 +973,16 @@ static DECLCALLBACK(int) drvvdINIPGetLocalAddress(VDSOCKET Sock, PRTNETADDR pAdd
             pAddr->uPort        = RT_N2H_U16(u.Ipv4.sin_port);
             pAddr->uAddr.IPv4.u = u.Ipv4.sin_addr.s_addr;
         }
+#ifdef VBOX_WITH_NEW_LWIP
+        else if (   cbAddr == sizeof(struct sockaddr_in6)
+            && u.Addr.sa_family == AF_INET6)
+        {
+            RT_ZERO(*pAddr);
+            pAddr->enmType      = RTNETADDRTYPE_IPV6;
+            pAddr->uPort        = RT_N2H_U16(u.Ipv6.sin6_port);
+            memcpy(&pAddr->uAddr.IPv6, &u.Ipv6.sin6_addr, sizeof(RTNETADDRIPV6));
+        }
+#endif
         else
             return VERR_NET_ADDRESS_FAMILY_NOT_SUPPORTED;
         return VINF_SUCCESS;
@@ -909,6 +1010,16 @@ static DECLCALLBACK(int) drvvdINIPGetPeerAddress(VDSOCKET Sock, PRTNETADDR pAddr
             pAddr->uPort        = RT_N2H_U16(u.Ipv4.sin_port);
             pAddr->uAddr.IPv4.u = u.Ipv4.sin_addr.s_addr;
         }
+#ifdef VBOX_WITH_NEW_LWIP
+        else if (   cbAddr == sizeof(struct sockaddr_in6)
+                 && u.Addr.sa_family == AF_INET6)
+        {
+            RT_ZERO(*pAddr);
+            pAddr->enmType      = RTNETADDRTYPE_IPV6;
+            pAddr->uPort        = RT_N2H_U16(u.Ipv6.sin6_port);
+            memcpy(&pAddr->uAddr.IPv6, &u.Ipv6.sin6_addr, sizeof(RTNETADDRIPV6));
+        }
+#endif
         else
             return VERR_NET_ADDRESS_FAMILY_NOT_SUPPORTED;
         return VINF_SUCCESS;
@@ -1439,6 +1550,15 @@ static DECLCALLBACK(int) drvvdRead(PPDMIMEDIA pInterface,
     LogFlowFunc(("off=%#llx pvBuf=%p cbRead=%d\n", off, pvBuf, cbRead));
     PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
 
+    if (   pThis->pCfgCrypto
+        && !pThis->pIfSecKey)
+    {
+        rc = PDMDrvHlpVMSetRuntimeError(pThis->pDrvIns, VMSETRTERR_FLAGS_SUSPEND | VMSETRTERR_FLAGS_NO_WAIT, "DrvVD_DEKMISSING",
+                                        N_("VD: The DEK for this disk is missing"));
+        AssertRC(rc);
+        return VERR_VD_DEK_MISSING;
+    }
+
     if (!pThis->fBootAccelActive)
         rc = VDRead(pThis->pDisk, off, pvBuf, cbRead);
     else
@@ -1474,7 +1594,61 @@ static DECLCALLBACK(int) drvvdRead(PPDMIMEDIA pInterface,
     }
 
     if (RT_SUCCESS(rc))
-        Log2(("%s: off=%#llx pvBuf=%p cbRead=%d %.*Rhxd\n", __FUNCTION__,
+        Log2(("%s: off=%#llx pvBuf=%p cbRead=%d\n%.*Rhxd\n", __FUNCTION__,
+              off, pvBuf, cbRead, cbRead, pvBuf));
+    LogFlowFunc(("returns %Rrc\n", rc));
+    return rc;
+}
+
+/** @copydoc PDMIMEDIA::pfnReadPcBios */
+static DECLCALLBACK(int) drvvdReadPcBios(PPDMIMEDIA pInterface,
+                                         uint64_t off, void *pvBuf, size_t cbRead)
+{
+    int rc = VINF_SUCCESS;
+
+    LogFlowFunc(("off=%#llx pvBuf=%p cbRead=%d\n", off, pvBuf, cbRead));
+    PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
+
+    if (   pThis->pCfgCrypto
+        && !pThis->pIfSecKey)
+        return VERR_VD_DEK_MISSING;
+
+    if (!pThis->fBootAccelActive)
+        rc = VDRead(pThis->pDisk, off, pvBuf, cbRead);
+    else
+    {
+        /* Can we serve the request from the buffer? */
+        if (   off >= pThis->offDisk
+            && off - pThis->offDisk < pThis->cbDataValid)
+        {
+            size_t cbToCopy = RT_MIN(cbRead, pThis->offDisk + pThis->cbDataValid - off);
+
+            memcpy(pvBuf, pThis->pbData + (off - pThis->offDisk), cbToCopy);
+            cbRead -= cbToCopy;
+            off    += cbToCopy;
+            pvBuf   = (char *)pvBuf + cbToCopy;
+        }
+
+        if (   cbRead > 0
+            && cbRead < pThis->cbBootAccelBuffer)
+        {
+            /* Increase request to the buffer size and read. */
+            pThis->cbDataValid = RT_MIN(pThis->cbDisk - off, pThis->cbBootAccelBuffer);
+            pThis->offDisk = off;
+            rc = VDRead(pThis->pDisk, off, pThis->pbData, pThis->cbDataValid);
+            if (RT_FAILURE(rc))
+                pThis->cbDataValid = 0;
+            else
+                memcpy(pvBuf, pThis->pbData, cbRead);
+        }
+        else if (cbRead >= pThis->cbBootAccelBuffer)
+        {
+            pThis->fBootAccelActive = false; /* Deactiviate */
+        }
+    }
+
+    if (RT_SUCCESS(rc))
+        Log2(("%s: off=%#llx pvBuf=%p cbRead=%d\n%.*Rhxd\n", __FUNCTION__,
               off, pvBuf, cbRead, cbRead, pvBuf));
     LogFlowFunc(("returns %Rrc\n", rc));
     return rc;
@@ -1487,8 +1661,17 @@ static DECLCALLBACK(int) drvvdWrite(PPDMIMEDIA pInterface,
 {
     LogFlowFunc(("off=%#llx pvBuf=%p cbWrite=%d\n", off, pvBuf, cbWrite));
     PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
-    Log2(("%s: off=%#llx pvBuf=%p cbWrite=%d %.*Rhxd\n", __FUNCTION__,
+    Log2(("%s: off=%#llx pvBuf=%p cbWrite=%d\n%.*Rhxd\n", __FUNCTION__,
           off, pvBuf, cbWrite, cbWrite, pvBuf));
+
+    if (   pThis->pCfgCrypto
+        && !pThis->pIfSecKey)
+    {
+        int rc = PDMDrvHlpVMSetRuntimeError(pThis->pDrvIns, VMSETRTERR_FLAGS_SUSPEND | VMSETRTERR_FLAGS_NO_WAIT, "DrvVD_DEKMISSING",
+                                            N_("VD: The DEK for this disk is missing"));
+        AssertRC(rc);
+        return VERR_VD_DEK_MISSING;
+    }
 
     /* Invalidate any buffer if boot acceleration is enabled. */
     if (pThis->fBootAccelActive)
@@ -1547,6 +1730,53 @@ static DECLCALLBACK(int) drvvdMerge(PPDMIMEDIA pInterface,
     return rc;
 }
 
+/** @copydoc PDMIMEDIA::pfnSetKey */
+static DECLCALLBACK(int) drvvdSetSecKeyIf(PPDMIMEDIA pInterface, PPDMISECKEY pIfSecKey)
+{
+    LogFlowFunc(("\n"));
+    PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
+    int rc = VINF_SUCCESS;
+
+    if (pThis->pCfgCrypto)
+    {
+        PVDINTERFACE pVDIfFilter = NULL;
+
+        if (   pThis->pIfSecKey
+            && !pIfSecKey)
+        {
+            /* Unload the crypto filter first to make sure it doesn't access the keys anymore. */
+            rc = VDFilterRemove(pThis->pDisk);
+            AssertRC(rc);
+
+            pThis->pIfSecKey = NULL;
+        }
+
+        if (   pIfSecKey
+            && RT_SUCCESS(rc))
+        {
+            pThis->pIfSecKey = pIfSecKey;
+
+            rc = VDInterfaceAdd(&pThis->VDIfCfg.Core, "DrvVD_Config", VDINTERFACETYPE_CONFIG,
+                                pThis->pCfgCrypto, sizeof(VDINTERFACECONFIG), &pVDIfFilter);
+            AssertRC(rc);
+
+            rc = VDInterfaceAdd(&pThis->VDIfCrypto.Core, "DrvVD_Crypto", VDINTERFACETYPE_CRYPTO,
+                                pThis, sizeof(VDINTERFACECRYPTO), &pVDIfFilter);
+            AssertRC(rc);
+
+            /* Load the crypt filter plugin. */
+            rc = VDFilterAdd(pThis->pDisk, "CRYPT", pVDIfFilter);
+            if (RT_FAILURE(rc))
+                pThis->pIfSecKey = NULL;
+        }
+    }
+    else
+        rc = VERR_NOT_SUPPORTED;
+
+    LogFlowFunc(("returns %Rrc\n", rc));
+    return rc;
+}
+
 /** @copydoc PDMIMEDIA::pfnGetSize */
 static DECLCALLBACK(uint64_t) drvvdGetSize(PPDMIMEDIA pInterface)
 {
@@ -1554,6 +1784,16 @@ static DECLCALLBACK(uint64_t) drvvdGetSize(PPDMIMEDIA pInterface)
     PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
     uint64_t cb = VDGetSize(pThis->pDisk, VD_LAST_IMAGE);
     LogFlowFunc(("returns %#llx (%llu)\n", cb, cb));
+    return cb;
+}
+
+/** @copydoc PDMIMEDIA::pfnGetSectorSize */
+static DECLCALLBACK(uint32_t) drvvdGetSectorSize(PPDMIMEDIA pInterface)
+{
+    LogFlowFunc(("\n"));
+    PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
+    uint32_t cb = VDGetSectorSize(pThis->pDisk, VD_LAST_IMAGE);
+    LogFlowFunc(("returns %u\n", cb));
     return cb;
 }
 
@@ -1671,6 +1911,53 @@ static DECLCALLBACK(int) drvvdDiscard(PPDMIMEDIA pInterface, PCRTRANGE paRanges,
     return rc;
 }
 
+/** @copydoc PDMIMEDIA::pfnIoBufAlloc */
+static DECLCALLBACK(int) drvvdIoBufAlloc(PPDMIMEDIA pInterface, size_t cb, void **ppvNew)
+{
+    LogFlowFunc(("\n"));
+    int rc;
+    PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
+
+    /* Configured encryption requires locked down memory. */
+    if (pThis->pCfgCrypto)
+        rc = RTMemSaferAllocZEx(ppvNew, cb, RTMEMSAFER_F_REQUIRE_NOT_PAGABLE);
+    else
+    {
+        cb = RT_ALIGN_Z(cb, _4K);
+        void *pvNew = RTMemPageAlloc(cb);
+        if (RT_LIKELY(pvNew))
+        {
+            *ppvNew = pvNew;
+            rc = VINF_SUCCESS;
+        }
+        else
+            rc = VERR_NO_MEMORY;
+    }
+
+    LogFlowFunc(("returns %Rrc\n", rc));
+    return rc;
+}
+
+/** @copydoc PDMIMEDIA::pfnIoBufFree */
+static DECLCALLBACK(int) drvvdIoBufFree(PPDMIMEDIA pInterface, void *pv, size_t cb)
+{
+    LogFlowFunc(("\n"));
+    int rc = VINF_SUCCESS;
+    PVBOXDISK pThis = PDMIMEDIA_2_VBOXDISK(pInterface);
+
+    if (pThis->pCfgCrypto)
+        RTMemSaferFree(pv, cb);
+    else
+    {
+        cb = RT_ALIGN_Z(cb, _4K);
+        RTMemPageFree(pv, cb);
+    }
+
+    LogFlowFunc(("returns %Rrc\n", rc));
+    return rc;
+}
+
+
 /*******************************************************************************
 *   Async Media interface methods                                              *
 *******************************************************************************/
@@ -1697,6 +1984,15 @@ static DECLCALLBACK(int) drvvdStartRead(PPDMIMEDIAASYNC pInterface, uint64_t uOf
                  uOffset, paSeg, cSeg, cbRead, pvUser));
     int rc = VINF_SUCCESS;
     PVBOXDISK pThis = PDMIMEDIAASYNC_2_VBOXDISK(pInterface);
+
+    if (   pThis->pCfgCrypto
+        && !pThis->pIfSecKey)
+    {
+        rc = PDMDrvHlpVMSetRuntimeError(pThis->pDrvIns, VMSETRTERR_FLAGS_SUSPEND | VMSETRTERR_FLAGS_NO_WAIT, "DrvVD_DEKMISSING",
+                                        N_("VD: The DEK for this disk is missing"));
+        AssertRC(rc);
+        return VERR_VD_DEK_MISSING;
+    }
 
     pThis->fBootAccelActive = false;
 
@@ -1726,6 +2022,15 @@ static DECLCALLBACK(int) drvvdStartWrite(PPDMIMEDIAASYNC pInterface, uint64_t uO
                  uOffset, paSeg, cSeg, cbWrite, pvUser));
     int rc = VINF_SUCCESS;
     PVBOXDISK pThis = PDMIMEDIAASYNC_2_VBOXDISK(pInterface);
+
+    if (   pThis->pCfgCrypto
+        && !pThis->pIfSecKey)
+    {
+        rc = PDMDrvHlpVMSetRuntimeError(pThis->pDrvIns, VMSETRTERR_FLAGS_SUSPEND | VMSETRTERR_FLAGS_NO_WAIT, "DrvVD_DEKMISSING",
+                                        N_("VD: The DEK for this disk is missing"));
+        AssertRC(rc);
+        return VERR_VD_DEK_MISSING;
+    }
 
     pThis->fBootAccelActive = false;
 
@@ -1811,6 +2116,8 @@ static int drvvdBlkCacheXferEnqueue(PPDMDRVINS pDrvIns,
     int rc = VINF_SUCCESS;
     PVBOXDISK pThis = PDMINS_2_DATA(pDrvIns, PVBOXDISK);
 
+    Assert (!pThis->pCfgCrypto);
+
     switch (enmXferDir)
     {
         case PDMBLKCACHEXFERDIR_READ:
@@ -1853,6 +2160,76 @@ static int drvvdBlkCacheXferEnqueueDiscard(PPDMDRVINS pDrvIns, PCRTRANGE paRange
         PDMR3BlkCacheIoXferComplete(pThis->pBlkCache, hIoXfer, rc);
 
     return VINF_SUCCESS;
+}
+
+/**
+ * Loads all configured plugins.
+ *
+ * @returns VBox status code.
+ * @param   pThis    The disk instance.
+ * @param   pCfg     CFGM node holding plugin list.
+ */
+static int drvvdLoadPlugins(PVBOXDISK pThis, PCFGMNODE pCfg)
+{
+    int rc = VINF_SUCCESS;
+    PCFGMNODE pCfgPlugins = CFGMR3GetChild(pCfg, "Plugins");
+
+    if (pCfgPlugins)
+    {
+        PCFGMNODE pPluginCur = CFGMR3GetFirstChild(pCfgPlugins);
+        while (   pPluginCur
+               && RT_SUCCESS(rc))
+        {
+            char *pszPluginFilename = NULL;
+            rc = CFGMR3QueryStringAlloc(pPluginCur, "Path", &pszPluginFilename);
+            if (RT_SUCCESS(rc))
+                rc = VDPluginLoadFromFilename(pszPluginFilename);
+
+            pPluginCur = CFGMR3GetNextChild(pPluginCur);
+        }
+    }
+
+    return rc;
+}
+
+
+/**
+ * Sets up the disk filter chain.
+ *
+ * @returns VBox status code.
+ * @param   pThis    The disk instance.
+ * @param   pCfg     CFGM node holding the filter parameters.
+ */
+static int drvvdSetupFilters(PVBOXDISK pThis, PCFGMNODE pCfg)
+{
+    int rc = VINF_SUCCESS;
+    PCFGMNODE pCfgFilter = CFGMR3GetChild(pCfg, "Filters");
+
+    if (pCfgFilter)
+    {
+        PCFGMNODE pCfgFilterConfig = CFGMR3GetChild(pCfgFilter, "VDConfig");
+        char *pszFilterName = NULL;
+        VDINTERFACECONFIG VDIfConfig;
+        PVDINTERFACE pVDIfsFilter = NULL;
+
+        rc = CFGMR3QueryStringAlloc(pCfgFilter, "FilterName", &pszFilterName);
+        if (RT_SUCCESS(rc))
+        {
+            VDIfConfig.pfnAreKeysValid = drvvdCfgAreKeysValid;
+            VDIfConfig.pfnQuerySize    = drvvdCfgQuerySize;
+            VDIfConfig.pfnQuery        = drvvdCfgQuery;
+            VDIfConfig.pfnQueryBytes   = drvvdCfgQueryBytes;
+            rc = VDInterfaceAdd(&VDIfConfig.Core, "DrvVD_Config", VDINTERFACETYPE_CONFIG,
+                                pCfgFilterConfig, sizeof(VDINTERFACECONFIG), &pVDIfsFilter);
+            AssertRC(rc);
+
+            rc = VDFilterAdd(pThis->pDisk, pszFilterName, pVDIfsFilter);
+
+            MMR3HeapFree(pszFilterName);
+        }
+    }
+
+    return rc;
 }
 
 /*******************************************************************************
@@ -2010,9 +2387,9 @@ static DECLCALLBACK(void) drvvdReset(PPDMDRVINS pDrvIns)
  */
 static DECLCALLBACK(void) drvvdDestruct(PPDMDRVINS pDrvIns)
 {
+    PDMDRV_CHECK_VERSIONS_RETURN_VOID(pDrvIns);
     PVBOXDISK pThis = PDMINS_2_DATA(pDrvIns, PVBOXDISK);
     LogFlowFunc(("\n"));
-    PDMDRV_CHECK_VERSIONS_RETURN_VOID(pDrvIns);
 
     RTSEMFASTMUTEX mutex;
     ASMAtomicXchgHandle(&pThis->MergeCompleteMutex, NIL_RTSEMFASTMUTEX, &mutex);
@@ -2029,13 +2406,13 @@ static DECLCALLBACK(void) drvvdDestruct(PPDMDRVINS pDrvIns)
         AssertRC(rc);
     }
 
-    if (VALID_PTR(pThis->pBlkCache))
+    if (RT_VALID_PTR(pThis->pBlkCache))
     {
         PDMR3BlkCacheRelease(pThis->pBlkCache);
         pThis->pBlkCache = NULL;
     }
 
-    if (VALID_PTR(pThis->pDisk))
+    if (RT_VALID_PTR(pThis->pDisk))
     {
         VDDestroy(pThis->pDisk);
         pThis->pDisk = NULL;
@@ -2049,7 +2426,10 @@ static DECLCALLBACK(void) drvvdDestruct(PPDMDRVINS pDrvIns)
         pThis->MergeLock = NIL_RTSEMRW;
     }
     if (pThis->pbData)
+    {
         RTMemFree(pThis->pbData);
+        pThis->pbData = NULL;
+    }
     if (pThis->pszBwGroup)
     {
         MMR3HeapFree(pThis->pszBwGroup);
@@ -2062,11 +2442,10 @@ static DECLCALLBACK(void) drvvdDestruct(PPDMDRVINS pDrvIns)
  *
  * @copydoc FNPDMDRVCONSTRUCT
  */
-static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
-                                        PCFGMNODE pCfg,
-                                        uint32_t fFlags)
+static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t fFlags)
 {
     LogFlowFunc(("\n"));
+    PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
     PVBOXDISK pThis = PDMINS_2_DATA(pDrvIns, PVBOXDISK);
     int rc = VINF_SUCCESS;
     char *pszName = NULL;        /**< The path of the disk image file. */
@@ -2076,7 +2455,6 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
     bool fReadOnly;              /**< True if the media is read-only. */
     bool fMaybeReadOnly;         /**< True if the media may or may not be read-only. */
     bool fHonorZeroWrites;       /**< True if zero blocks should be written. */
-    PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
 
     /*
      * Init the static parts.
@@ -2089,15 +2467,21 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
     pThis->fShareable                   = false;
     pThis->fMergePending                = false;
     pThis->MergeCompleteMutex           = NIL_RTSEMFASTMUTEX;
+    pThis->MergeLock                    = NIL_RTSEMRW;
     pThis->uMergeSource                 = VD_LAST_IMAGE;
     pThis->uMergeTarget                 = VD_LAST_IMAGE;
+    pThis->pCfgCrypto                   = NULL;
+    pThis->pIfSecKey                    = NULL;
 
     /* IMedia */
     pThis->IMedia.pfnRead               = drvvdRead;
+    pThis->IMedia.pfnReadPcBios         = drvvdReadPcBios;
     pThis->IMedia.pfnWrite              = drvvdWrite;
     pThis->IMedia.pfnFlush              = drvvdFlush;
     pThis->IMedia.pfnMerge              = drvvdMerge;
+    pThis->IMedia.pfnSetSecKeyIf        = drvvdSetSecKeyIf;
     pThis->IMedia.pfnGetSize            = drvvdGetSize;
+    pThis->IMedia.pfnGetSectorSize      = drvvdGetSectorSize;
     pThis->IMedia.pfnIsReadOnly         = drvvdIsReadOnly;
     pThis->IMedia.pfnBiosGetPCHSGeometry = drvvdBiosGetPCHSGeometry;
     pThis->IMedia.pfnBiosSetPCHSGeometry = drvvdBiosSetPCHSGeometry;
@@ -2105,6 +2489,8 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
     pThis->IMedia.pfnBiosSetLCHSGeometry = drvvdBiosSetLCHSGeometry;
     pThis->IMedia.pfnGetUuid             = drvvdGetUuid;
     pThis->IMedia.pfnDiscard             = drvvdDiscard;
+    pThis->IMedia.pfnIoBufAlloc          = drvvdIoBufAlloc;
+    pThis->IMedia.pfnIoBufFree           = drvvdIoBufFree;
 
     /* IMediaAsync */
     pThis->IMediaAsync.pfnStartRead       = drvvdStartRead;
@@ -2131,6 +2517,11 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
 
     /* Try to attach async media port interface above.*/
     pThis->pDrvMediaAsyncPort = PDMIBASE_QUERY_INTERFACE(pDrvIns->pUpBase, PDMIMEDIAASYNCPORT);
+
+    /* Before we access any VD API load all given plugins. */
+    rc = drvvdLoadPlugins(pThis, pCfg);
+    if (RT_FAILURE(rc))
+        return PDMDRV_SET_ERROR(pDrvIns, rc, N_("Loading VD plugins failed"));
 
     /*
      * Validate configuration and find all parent images.
@@ -2490,9 +2881,26 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
         pImage->VDIfConfig.pfnAreKeysValid = drvvdCfgAreKeysValid;
         pImage->VDIfConfig.pfnQuerySize    = drvvdCfgQuerySize;
         pImage->VDIfConfig.pfnQuery        = drvvdCfgQuery;
+        pImage->VDIfConfig.pfnQueryBytes   = NULL;
         rc = VDInterfaceAdd(&pImage->VDIfConfig.Core, "DrvVD_Config", VDINTERFACETYPE_CONFIG,
                             pCfgVDConfig, sizeof(VDINTERFACECONFIG), &pImage->pVDIfsImage);
         AssertRC(rc);
+
+        /* Check VDConfig for encryption config. */
+        if (pCfgVDConfig)
+            pThis->pCfgCrypto = CFGMR3GetChild(pCfgVDConfig, "CRYPT");
+
+        if (pThis->pCfgCrypto)
+        {
+            /* Setup VDConfig interface for disk encryption support. */
+            pThis->VDIfCfg.pfnAreKeysValid  = drvvdCfgAreKeysValid;
+            pThis->VDIfCfg.pfnQuerySize     = drvvdCfgQuerySize;
+            pThis->VDIfCfg.pfnQuery         = drvvdCfgQuery;
+            pThis->VDIfCfg.pfnQueryBytes    = NULL;
+
+            pThis->VDIfCrypto.pfnKeyRetain  = drvvdCryptoKeyRetain;
+            pThis->VDIfCrypto.pfnKeyRelease = drvvdCryptoKeyRelease;
+        }
 
         /* Unconditionally insert the TCPNET interface, don't bother to check
          * if an image really needs it. Will be ignored. Since the TCPNET
@@ -2680,7 +3088,7 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
 
     /* Open the cache image if set. */
     if (   RT_SUCCESS(rc)
-        && VALID_PTR(pszCachePath))
+        && RT_VALID_PTR(pszCachePath))
     {
         /* Insert the custom I/O interface only if we're told to use new IO.
          * Since the I/O interface is per image we could make this more
@@ -2713,9 +3121,9 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
             rc = PDMDRV_SET_ERROR(pDrvIns, rc, N_("DrvVD: Could not open cache image"));
     }
 
-    if (VALID_PTR(pszCachePath))
+    if (RT_VALID_PTR(pszCachePath))
         MMR3HeapFree(pszCachePath);
-    if (VALID_PTR(pszCacheFormat))
+    if (RT_VALID_PTR(pszCacheFormat))
         MMR3HeapFree(pszCacheFormat);
 
     if (   RT_SUCCESS(rc)
@@ -2731,6 +3139,7 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
     if (   fUseBlockCache
         && !pThis->fShareable
         && !fDiscard
+        && !pThis->pCfgCrypto /* Disk encryption disables the block cache for security reasons */
         && RT_SUCCESS(rc))
     {
         /*
@@ -2778,6 +3187,9 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
         }
     }
 
+    if (RT_SUCCESS(rc))
+        rc = drvvdSetupFilters(pThis, pCfg);
+
     /*
      * Register a load-done callback so we can undo TempReadOnly config before
      * we get to drvvdResume.  Autoamtically deregistered upon destruction.
@@ -2807,9 +3219,9 @@ static DECLCALLBACK(int) drvvdConstruct(PPDMDRVINS pDrvIns,
 
     if (RT_FAILURE(rc))
     {
-        if (VALID_PTR(pszName))
+        if (RT_VALID_PTR(pszName))
             MMR3HeapFree(pszName);
-        if (VALID_PTR(pszFormat))
+        if (RT_VALID_PTR(pszFormat))
             MMR3HeapFree(pszFormat);
         /* drvvdDestruct does the rest. */
     }

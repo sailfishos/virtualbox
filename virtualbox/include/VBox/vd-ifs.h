@@ -67,6 +67,10 @@ typedef enum VDINTERFACETYPE
     VDINTERFACETYPE_IOINT,
     /** Interface to query the use of block ranges on the disk. Per-operation. */
     VDINTERFACETYPE_QUERYRANGEUSE,
+    /** Interface for the metadata traverse callback. Per-operation. */
+    VDINTERFACETYPE_TRAVERSEMETADATA,
+    /** Interface for crypto opertions. Per-disk. */
+    VDINTERFACETYPE_CRYPTO,
     /** invalid interface. */
     VDINTERFACETYPE_INVALID
 } VDINTERFACETYPE;
@@ -605,6 +609,43 @@ DECLINLINE(int) vdIfIoFileFlushSync(PVDINTERFACEIO pIfIo, void *pStorage)
 }
 
 /**
+ * Create a VFS stream handle around a VD I/O interface.
+ *
+ * The I/O interface will not be closed or free by the stream, the caller will
+ * do so after it is done with the stream and has released the instances of the
+ * I/O stream object returned by this API.
+ *
+ * @return  VBox status code.
+ * @param   pVDIfsIo        Pointer to the VD I/O interface.
+ * @param   pvStorage       The storage argument to pass to the interface
+ *                          methods.
+ * @param   fFlags          RTFILE_O_XXX, access mask requied.
+ * @param   phVfsIos        Where to return the VFS I/O stream handle on
+ *                          success.
+ */
+VBOXDDU_DECL(int) VDIfCreateVfsStream(PVDINTERFACEIO pVDIfsIo, void *pvStorage, uint32_t fFlags, PRTVFSIOSTREAM phVfsIos);
+
+/**
+ * Create a VFS file handle around a VD I/O interface.
+ *
+ * The I/O interface will not be closed or free by the VFS file, the caller will
+ * do so after it is done with the VFS file and has released the instances of
+ * the VFS object returned by this API.
+ *
+ * @return  VBox status code.
+ * @param   pVDIfs          Pointer to the VD I/O interface.  If NULL, then @a
+ *                          pVDIfsInt must be specified.
+ * @param   pVDIfsInt       Pointer to the internal VD I/O interface.  If NULL,
+ *                          then @ pVDIfs must be specified.
+ * @param   pvStorage       The storage argument to pass to the interface
+ *                          methods.
+ * @param   fFlags          RTFILE_O_XXX, access mask requied.
+ * @param   phVfsFile       Where to return the VFS file handle on success.
+ */
+VBOXDDU_DECL(int) VDIfCreateVfsFile(PVDINTERFACEIO pVDIfs, struct VDINTERFACEIOINT *pVDIfsInt, void *pvStorage, uint32_t fFlags, PRTVFSFILE phVfsFile);
+
+
+/**
  * Callback which provides progress information about a currently running
  * lengthy operation.
  *
@@ -703,6 +744,19 @@ typedef struct VDINTERFACECONFIG
      * @param   cchValue        Length of value buffer.
      */
     DECLR3CALLBACKMEMBER(int, pfnQuery, (void *pvUser, const char *pszName, char *pszValue, size_t cchValue));
+
+    /**
+     * Query the bytes value associated with a key.
+     *
+     * @return  VBox status code.
+     *          VERR_CFGM_VALUE_NOT_FOUND means that the key is not known.
+     *          VERR_CFGM_NOT_ENOUGH_SPACE means that the buffer is not big enough.
+     * @param   pvUser          The opaque user data associated with this interface.
+     * @param   pszName         Name of the key to query.
+     * @param   ppvData         Pointer to buffer where to store the data.
+     * @param   cbData          Length of data buffer.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnQueryBytes, (void *pvUser, const char *pszName, void *ppvData, size_t cbData));
 
 } VDINTERFACECONFIG, *PVDINTERFACECONFIG;
 
@@ -911,11 +965,18 @@ DECLINLINE(int) VDCFGQueryBytesAlloc(PVDINTERFACECONFIG pCfgIf,
         pbData = (char *)RTMemAlloc(cb);
         if (pbData)
         {
-            rc = pCfgIf->pfnQuery(pCfgIf->Core.pvUser, pszName, pbData, cb);
+            if(pCfgIf->pfnQueryBytes)
+                rc = pCfgIf->pfnQueryBytes(pCfgIf->Core.pvUser, pszName, pbData, cb);
+            else
+                rc = pCfgIf->pfnQuery(pCfgIf->Core.pvUser, pszName, pbData, cb);
+
             if (RT_SUCCESS(rc))
             {
                 *ppvData = pbData;
-                *pcbData = cb - 1; /* Exclude terminator of the queried string. */
+                /* Exclude terminator if the byte data was obtained using the string query callback. */
+                *pcbData = cb;
+                if (!pCfgIf->pfnQueryBytes)
+                    (*pcbData)--;
             }
             else
                 RTMemFree(pbData);
@@ -1282,6 +1343,84 @@ DECLINLINE(int) vdIfQueryRangeUse(PVDINTERFACEQUERYRANGEUSE pIfQueryRangeUse, ui
                                   bool *pfUsed)
 {
     return pIfQueryRangeUse->pfnQueryRangeUse(pIfQueryRangeUse->Core.pvUser, off, cb, pfUsed);
+}
+
+
+/**
+ * Interface used to retrieve keys for cryptographic operations.
+ *
+ * Per-module interface. Optional but cryptographic modules might fail and
+ * return an error if this is not present.
+ */
+typedef struct VDINTERFACECRYPTO
+{
+    /**
+     * Common interface header.
+     */
+    VDINTERFACE    Core;
+
+    /**
+     * Retains a key identified by the ID. The caller will only hold a reference
+     * to the key and must not modify the key buffer in any way.
+     *
+     * @returns VBox status code.
+     * @param   pvUser          The opaque user data associated with this interface.
+     * @param   pszId           The alias/id for the key to retrieve.
+     * @param   ppbKey          Where to store the pointer to the key buffer on success.
+     * @param   pcbKey          Where to store the size of the key in bytes on success.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnKeyRetain, (void *pvUser, const char *pszId, const uint8_t **ppbKey, size_t *pcbKey));
+
+    /**
+     * Releases one reference of the key identified by the given identifier.
+     * The caller must not access the key buffer after calling this operation.
+     *
+     * @returns VBox status code.
+     * @param   pvUser          The opaque user data associated with this interface.
+     * @param   pszId           The alias/id for the key to release.
+     *
+     * @note: It is advised to release the key whenever it is not used anymore so the entity
+     *        storing the key can do anything to make retrieving the key from memory more
+     *        difficult like scrambling the memory buffer for instance.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnKeyRelease, (void *pvUser, const char *pszId));
+
+} VDINTERFACECRYPTO, *PVDINTERFACECRYPTO;
+
+
+/**
+ * Get error interface from interface list.
+ *
+ * @return Pointer to the first error interface in the list.
+ * @param  pVDIfs    Pointer to the interface list.
+ */
+DECLINLINE(PVDINTERFACECRYPTO) VDIfCryptoGet(PVDINTERFACE pVDIfs)
+{
+    PVDINTERFACE pIf = VDInterfaceGet(pVDIfs, VDINTERFACETYPE_CRYPTO);
+
+    /* Check that the interface descriptor is a crypto interface. */
+    AssertMsgReturn(   !pIf
+                    || (   (pIf->enmInterface == VDINTERFACETYPE_CRYPTO)
+                        && (pIf->cbSize == sizeof(VDINTERFACECRYPTO))),
+                    ("Not an crypto interface\n"), NULL);
+
+    return (PVDINTERFACECRYPTO)pIf;
+}
+
+/**
+ * @copydoc VDINTERFACECRYPTOKEYS::pfnKeyRetain
+ */
+DECLINLINE(int) vdIfCryptoKeyRetain(PVDINTERFACECRYPTO pIfCrypto, const char *pszId, const uint8_t **ppbKey, size_t *pcbKey)
+{
+    return pIfCrypto->pfnKeyRetain(pIfCrypto->Core.pvUser, pszId, ppbKey, pcbKey);
+}
+
+/**
+ * @copydoc VDINTERFACECRYPTOKEYS::pfnKeyRelease
+ */
+DECLINLINE(int) vdIfCryptoKeyRelease(PVDINTERFACECRYPTO pIfCrypto, const char *pszId)
+{
+    return pIfCrypto->pfnKeyRelease(pIfCrypto->Core.pvUser, pszId);
 }
 
 RT_C_DECLS_END

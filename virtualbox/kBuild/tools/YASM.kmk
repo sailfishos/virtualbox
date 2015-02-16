@@ -1,10 +1,10 @@
-# $Id: YASM.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: YASM.kmk 2694 2013-07-22 13:39:36Z bird $
 ## @file
 # kBuild Tool Config - YASM 0.4.0 or later.
 #
 
 #
-# Copyright (c) 2006-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2006-2013 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -67,18 +67,36 @@ TOOL_YASM_ASFLAGS ?=
 # @param    $(objsuff)  Object suffix.
 #
 TOOL_YASM_COMPILE_AS_OUTPUT = $(outbase).lst
+TOOL_YASM_COMPILE_AS_OUTPUT_MAYBE = $(obj).map
 TOOL_YASM_COMPILE_AS_DEPEND =
 TOOL_YASM_COMPILE_AS_DEPORD =
 define TOOL_YASM_COMPILE_AS_CMDS
 	$(QUIET)$(TOOL_YASM_AS)\
-		$(flags) $(addsuffix /,$(addprefix -I, $(incs))) $(addprefix -D, $(defs))\
+		$(patsubst --mapfile%,--mapfile=$(obj).map,$(flags))\
+		$(addsuffix /,$(addprefix -I, $(incs))) $(addprefix -D, $(defs))\
 		-l $(outbase).lst\
 		-o $(obj)\
 		$(abspath $(source))
-	$(QUIET)$(REDIRECT) -wo $(dep) -- $(TOOL_YASM_AS)\
-		$(flags) $(addsuffix /,$(addprefix -I, $(incs))) $(addprefix -D, $(defs))\
+	$(QUIET)$(REDIRECT) -wo $(dep) -- $(TOOL_YASM_AS) -DKBUILD_GENERATING_MAKEFILE_DEPENDENCIES\
+		$(patsubst --mapfile%,--mapfile=$(obj).map,$(flags))\
+		$(addsuffix /,$(addprefix -I, $(incs))) $(addprefix -D, $(defs))\
 		-o $(obj) \
 		$(abspath $(source)) \
 		-M
+ if1of ($(KBUILD_HOST), win nt os2)
+	$(QUIET)$(SED) -e 's/\\\(.\)/\/\1/g' --output "$(dep).tmp" "$(dep)"
+ else
+	$(QUIET)$(CP) -f -- "$(dep)" "$(dep).tmp"
+ endif
+	$(QUIET)$(APPEND) -n "$(dep).tmp" "" ""
+	$(QUIET)$(SED) $(if $(intersects $(KBUILD_HOST), win nt os2), -e 's/\\\(.\)/\/\1/g',)\
+		-e 's/^[^ ]*: / /'\
+		-e 's/ *\\$$(DOLLAR)//'\
+		-e 's/^ *//'\
+		-e 's/  */\n/g'\
+		-e 's/ *\([^ \n][^ \n]*\)/\1:\n/g'\
+		--append "$(dep).tmp"\
+		"$(dep)"
+	$(QUIET)$(MV) -f -- "$(dep).tmp" "$(dep)"
 endef
 

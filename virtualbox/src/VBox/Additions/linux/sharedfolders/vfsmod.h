@@ -25,7 +25,6 @@
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
 # include <linux/backing-dev.h>
-# include <linux/completion.h>
 #endif
 
 #include "VBoxGuestR0LibSharedFolders.h"
@@ -59,15 +58,11 @@ struct sf_inode_info
     int force_restat;
     /* directory content changed, update the whole directory on next sf_getdent */
     int force_reread;
+    /* file structure, only valid between open() and release() */
+    struct file *file;
     /* handle valid if a file was created with sf_create_aux until it will
      * be opened with sf_reg_open() */
     SHFLHANDLE handle;
-    /* list of sf_reg_info for open files, most recent first */
-    struct list_head handles;
-    /* identification of host-side inode, to detect if it changed */
-    /* these can be 0 if not known yet */
-    RTINODE host_ino;
-    RTDEV host_dev;
 };
 
 struct sf_dir_info
@@ -87,9 +82,6 @@ struct sf_dir_buf
 struct sf_reg_info
 {
     SHFLHANDLE handle;
-    u32 createflags; /* SHFL_CF_ flags for this handle */
-    struct list_head head; /* starts at sf_i->handles */
-    u32 generation;
 };
 
 /* globals */
@@ -109,7 +101,6 @@ extern void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
 extern int  sf_stat(const char *caller, struct sf_glob_info *sf_g,
                     SHFLSTRING *path, PSHFLFSOBJINFO result, int ok_to_fail);
 extern int  sf_inode_revalidate(struct dentry *dentry);
-extern void sf_revalidate_mapping(struct inode *inode, PSHFLFSOBJINFO info);
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
 extern int  sf_getattr(struct vfsmount *mnt, struct dentry *dentry,
                        struct kstat *kstat);

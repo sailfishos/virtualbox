@@ -35,6 +35,8 @@
 #include <iprt/alloc.h>
 #include <iprt/param.h>
 #include <iprt/path.h>
+#include <iprt/system.h>
+
 #include "Logging.h"
 #include "Performance.h"
 
@@ -48,6 +50,7 @@
 namespace pm {
 
     typedef libzfs_handle_t *(*PFNZFSINIT)(void);
+    typedef void (*PFNZFSFINI)(libzfs_handle_t *);
     typedef zfs_handle_t *(*PFNZFSOPEN)(libzfs_handle_t *, const char *, int);
     typedef void (*PFNZFSCLOSE)(zfs_handle_t *);
     typedef uint64_t (*PFNZFSPROPGETINT)(zfs_handle_t *, zfs_prop_t);
@@ -83,13 +86,14 @@ private:
     uint64_t wrapCorrection(uint32_t cur, uint64_t prev, const char *name);
     uint64_t wrapDetection(uint64_t cur, uint64_t prev, const char *name);
 
-    kstat_ctl_t *mKC;
-    kstat_t     *mSysPages;
-    kstat_t     *mZFSCache;
+    kstat_ctl_t      *mKC;
+    kstat_t          *mSysPages;
+    kstat_t          *mZFSCache;
 
     void             *mZfsSo;
     libzfs_handle_t  *mZfsLib;
     PFNZFSINIT        mZfsInit;
+    PFNZFSFINI        mZfsFini;
     PFNZFSOPEN        mZfsOpen;
     PFNZFSCLOSE       mZfsClose;
     PFNZFSPROPGETINT  mZfsPropGetInt;
@@ -100,6 +104,7 @@ private:
 
     FsMap             mFsMap;
     uint32_t          mCpus;
+    ULONG             totalRAM;
 };
 
 CollectorHAL *createHAL()
@@ -138,17 +143,24 @@ CollectorSolaris::CollectorSolaris()
     mZfsSo = dlopen("libzfs.so", RTLD_LAZY);
     if (mZfsSo)
     {
-        mZfsInit        =        (PFNZFSINIT)dlsym(mZfsSo, "libzfs_init");
-        mZfsOpen        =        (PFNZFSOPEN)dlsym(mZfsSo, "zfs_open");
-        mZfsClose       =       (PFNZFSCLOSE)dlsym(mZfsSo, "zfs_close");
-        mZfsPropGetInt  =  (PFNZFSPROPGETINT)dlsym(mZfsSo, "zfs_prop_get_int");
-        mZpoolOpen      =      (PFNZPOOLOPEN)dlsym(mZfsSo, "zpool_open");
-        mZpoolClose     =     (PFNZPOOLCLOSE)dlsym(mZfsSo, "zpool_close");
-        mZpoolGetConfig = (PFNZPOOLGETCONFIG)dlsym(mZfsSo, "zpool_get_config");
-        mZpoolVdevName  =  (PFNZPOOLVDEVNAME)dlsym(mZfsSo, "zpool_vdev_name");
+        mZfsInit        =        (PFNZFSINIT)(uintptr_t)dlsym(mZfsSo, "libzfs_init");
+        mZfsFini        =        (PFNZFSFINI)(uintptr_t)dlsym(mZfsSo, "libzfs_fini");
+        mZfsOpen        =        (PFNZFSOPEN)(uintptr_t)dlsym(mZfsSo, "zfs_open");
+        mZfsClose       =       (PFNZFSCLOSE)(uintptr_t)dlsym(mZfsSo, "zfs_close");
+        mZfsPropGetInt  =  (PFNZFSPROPGETINT)(uintptr_t)dlsym(mZfsSo, "zfs_prop_get_int");
+        mZpoolOpen      =      (PFNZPOOLOPEN)(uintptr_t)dlsym(mZfsSo, "zpool_open");
+        mZpoolClose     =     (PFNZPOOLCLOSE)(uintptr_t)dlsym(mZfsSo, "zpool_close");
+        mZpoolGetConfig = (PFNZPOOLGETCONFIG)(uintptr_t)dlsym(mZfsSo, "zpool_get_config");
+        mZpoolVdevName  =  (PFNZPOOLVDEVNAME)(uintptr_t)dlsym(mZfsSo, "zpool_vdev_name");
 
-        if (mZfsInit && mZfsOpen && mZfsClose && mZfsPropGetInt
-            && mZpoolOpen && mZpoolClose && mZpoolGetConfig && mZpoolVdevName)
+        if (   mZfsInit
+            && mZfsOpen
+            && mZfsClose
+            && mZfsPropGetInt
+            && mZpoolOpen
+            && mZpoolClose
+            && mZpoolGetConfig
+            && mZpoolVdevName)
             mZfsLib = mZfsInit();
         else
             LogRel(("Incompatible libzfs? libzfs_init=%p zfs_open=%p zfs_close=%p zfs_prop_get_int=%p\n",
@@ -157,12 +169,22 @@ CollectorSolaris::CollectorSolaris()
 
     updateFilesystemMap();
     /* Notice that mCpus member will be initialized by HostCpuLoadRaw::init() */
+
+    uint64_t cb;
+    int rc = RTSystemQueryTotalRam(&cb);
+    if (RT_FAILURE(rc))
+        totalRAM = 0;
+    else
+        totalRAM = (ULONG)(cb / 1024);
 }
 
 CollectorSolaris::~CollectorSolaris()
 {
     if (mKC)
         kstat_close(mKC);
+    /* Not calling libzfs_fini() causes file descriptor leaks (#6788). */
+    if (mZfsFini && mZfsLib)
+        mZfsFini(mZfsLib);
     if (mZfsSo)
         dlclose(mZfsSo);
 }
@@ -258,61 +280,15 @@ int CollectorSolaris::getRawProcessCpuLoad(RTPROCESS process, uint64_t *user, ui
 
 int CollectorSolaris::getHostMemoryUsage(ULONG *total, ULONG *used, ULONG *available)
 {
-    int rc = VINF_SUCCESS;
-
-    kstat_named_t *kn;
-
-    if (mKC == 0 || mSysPages == 0)
-        return VERR_INTERNAL_ERROR;
-
-    if (kstat_read(mKC, mSysPages, 0) == -1)
+    AssertReturn(totalRAM, VERR_INTERNAL_ERROR);
+    uint64_t cb;
+    int rc = RTSystemQueryAvailableRam(&cb);
+    if (RT_SUCCESS(rc))
     {
-        Log(("kstat_read(sys_pages) -> %d\n", errno));
-        return VERR_INTERNAL_ERROR;
+        *total = totalRAM;
+        *available = cb / 1024;
+        *used = *total - *available;
     }
-    if ((kn = (kstat_named_t *)kstat_data_lookup(mSysPages, (char *)"freemem")) == 0)
-    {
-        Log(("kstat_data_lookup(freemem) -> %d\n", errno));
-        return VERR_INTERNAL_ERROR;
-    }
-    *available = kn->value.ul * (PAGE_SIZE/1024);
-
-    if (kstat_read(mKC, mZFSCache, 0) != -1)
-    {
-        if (mZFSCache)
-        {
-            if ((kn = (kstat_named_t *)kstat_data_lookup(mZFSCache, (char *)"size")))
-            {
-                ulong_t ulSize = kn->value.ul;
-
-                if ((kn = (kstat_named_t *)kstat_data_lookup(mZFSCache, (char *)"c_min")))
-                {
-                    /*
-                     * Account for ZFS minimum arc cache size limit.
-                     * "c_min" is the target minimum size of the ZFS cache, and not the hard limit. It's possible
-                     * for "size" to shrink below "c_min" (e.g: during boot & high memory consumption).
-                     */
-                    ulong_t ulMin = kn->value.ul;
-                    *available += ulSize > ulMin ? (ulSize - ulMin) / 1024 : 0;
-                }
-                else
-                    Log(("kstat_data_lookup(c_min) ->%d\n", errno));
-            }
-            else
-                Log(("kstat_data_lookup(size) -> %d\n", errno));
-        }
-        else
-            Log(("mZFSCache missing.\n"));
-    }
-
-    if ((kn = (kstat_named_t *)kstat_data_lookup(mSysPages, (char *)"physmem")) == 0)
-    {
-        Log(("kstat_data_lookup(physmem) -> %d\n", errno));
-        return VERR_INTERNAL_ERROR;
-    }
-    *total = kn->value.ul * (PAGE_SIZE/1024);
-    *used = *total - *available;
-
     return rc;
 }
 
@@ -374,6 +350,7 @@ uint32_t CollectorSolaris::getInstance(const char *pszIfaceName, char *pszDevNam
 
 uint64_t CollectorSolaris::wrapCorrection(uint32_t cur, uint64_t prev, const char *name)
 {
+    NOREF(name);
     uint64_t corrected = (prev & 0xffffffff00000000) + cur;
     if (cur < (prev & 0xffffffff))
     {
@@ -407,13 +384,13 @@ int CollectorSolaris::getRawHostNetworkLoad(const char *name, uint64_t *rx, uint
     static bool g_fNotReported = true;
     AssertReturn(strlen(name) < KSTAT_STRLEN, VERR_INVALID_PARAMETER);
     LogFlowThisFunc(("m=%s i=%d n=%s\n", "link", -1, name));
-    kstat_t *ksAdapter = kstat_lookup(mKC, "link", -1, (char *)name);
+    kstat_t *ksAdapter = kstat_lookup(mKC, (char *)"link", -1, (char *)name);
     if (ksAdapter == 0)
     {
         char szModule[KSTAT_STRLEN];
         uint32_t uInstance = getInstance(name, szModule);
         LogFlowThisFunc(("m=%s i=%u n=%s\n", szModule, uInstance, "phys"));
-        ksAdapter = kstat_lookup(mKC, szModule, uInstance, "phys");
+        ksAdapter = kstat_lookup(mKC, szModule, uInstance, (char *)"phys");
         if (ksAdapter == 0)
         {
             LogFlowThisFunc(("m=%s i=%u n=%s\n", szModule, uInstance, name));
@@ -548,7 +525,6 @@ uint64_t CollectorSolaris::getZfsTotal(uint64_t cbTotal, const char *szFsType, c
 int CollectorSolaris::getHostFilesystemUsage(const char *path, ULONG *total, ULONG *used, ULONG *available)
 {
     struct statvfs64 stats;
-    const unsigned _MB = 1024 * 1024;
 
     if (statvfs64(path, &stats) == -1)
     {
@@ -556,10 +532,10 @@ int CollectorSolaris::getHostFilesystemUsage(const char *path, ULONG *total, ULO
         return VERR_ACCESS_DENIED;
     }
     uint64_t cbBlock = stats.f_frsize ? stats.f_frsize : stats.f_bsize;
-    *total = (ULONG)(getZfsTotal(cbBlock * stats.f_blocks, stats.f_basetype, path) / _MB);
+    *total = (ULONG)(getZfsTotal(cbBlock * stats.f_blocks, stats.f_basetype, path) / _1M);
     LogFlowThisFunc(("f_blocks=%llu.\n", stats.f_blocks));
-    *used  = (ULONG)(cbBlock * (stats.f_blocks - stats.f_bfree) / _MB);
-    *available = (ULONG)(cbBlock * stats.f_bavail / _MB);
+    *used  = (ULONG)(cbBlock * (stats.f_blocks - stats.f_bfree) / _1M);
+    *available = (ULONG)(cbBlock * stats.f_bavail / _1M);
 
     return VINF_SUCCESS;
 }

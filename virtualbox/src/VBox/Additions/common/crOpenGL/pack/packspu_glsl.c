@@ -114,13 +114,87 @@ GLint PACKSPU_APIENTRY packspu_GetUniformLocation(GLuint program, const char * n
     return crStateGetUniformLocation(program, name);
 }
 
+GLint PACKSPU_APIENTRY packspu_GetAttribLocationUnchached( GLuint program, const char * name )
+{
+    GET_THREAD(thread);
+    int writeback = 1;
+    GLint return_val = (GLint) 0;
+    if (!CRPACKSPU_IS_WDDM_CRHGSMI() && !(pack_spu.thread[pack_spu.idxThreadInUse].netServer.conn->actual_network))
+    {
+        crError( "packspu_GetAttribLocation doesn't work when there's no actual network involved!\nTry using the simplequery SPU in your chain!" );
+    }
+    if (pack_spu.swap)
+    {
+        crPackGetAttribLocationSWAP( program, name, &return_val, &writeback );
+    }
+    else
+    {
+        crPackGetAttribLocation( program, name, &return_val, &writeback );
+    }
+    packspuFlush( (void *) thread );
+    CRPACKSPU_WRITEBACK_WAIT(thread, writeback);
+    if (pack_spu.swap)
+    {
+        return_val = (GLint) SWAP32(return_val);
+    }
+    return return_val;
+}
+
+GLint PACKSPU_APIENTRY packspu_GetAttribLocation(GLuint program, const char * name)
+{
+    if (!(CR_VBOX_CAP_GETATTRIBSLOCATIONS & g_u32VBoxHostCaps))
+        return packspu_GetAttribLocationUnchached(program, name);
+
+    if (!crStateIsProgramAttribsCached(program))
+    {
+        GET_THREAD(thread);
+        int writeback = 1;
+        GLsizei maxcbData;
+        GLsizei *pData;
+        GLint mu;
+
+        packspu_GetIntegerv(GL_MAX_VERTEX_ATTRIBS, &mu);
+        maxcbData = 4*32*mu*sizeof(char);
+
+        pData = (GLsizei *) crAlloc(maxcbData+sizeof(GLsizei));
+        if (!pData)
+        {
+            crWarning("packspu_GetAttribLocation: not enough memory, fallback to single query");
+            return packspu_GetAttribLocationUnchached(program, name);
+        }
+
+        crPackGetAttribsLocations(program, maxcbData, pData, NULL, &writeback);
+
+        packspuFlush((void *) thread);
+        CRPACKSPU_WRITEBACK_WAIT(thread, writeback);
+
+        crStateGLSLProgramCacheAttribs(program, pData[0], &pData[1]);
+
+        CRASSERT(crStateIsProgramAttribsCached(program));
+
+        crFree(pData);
+    }
+
+    /*crDebug("packspu_GetAttribLocation(%d, %s)=%i", program, name, crStateGetAttribLocation(program, name));*/
+    return crStateGetAttribLocation(program, name);
+}
+
 void PACKSPU_APIENTRY packspu_GetUniformsLocations(GLuint program, GLsizei maxcbData, GLsizei * cbData, GLvoid * pData)
 {
     (void) program;
     (void) maxcbData;
     (void) cbData;
     (void) pData;
-    crWarning("packspu_GetUniformsLocations shouldn't be called directly");
+    WARN(("packspu_GetUniformsLocations shouldn't be called directly"));
+}
+
+void PACKSPU_APIENTRY packspu_GetAttribsLocations(GLuint program, GLsizei maxcbData, GLsizei * cbData, GLvoid * pData)
+{
+    (void) program;
+    (void) maxcbData;
+    (void) cbData;
+    (void) pData;
+    WARN(("packspu_GetAttribsLocations shouldn't be called directly"));
 }
 
 void PACKSPU_APIENTRY packspu_DeleteProgram(GLuint program)
@@ -129,12 +203,14 @@ void PACKSPU_APIENTRY packspu_DeleteProgram(GLuint program)
     crPackDeleteProgram(program);
 }
 
-void PACK_APIENTRY packspu_DeleteObjectARB(GLhandleARB obj)
+void PACK_APIENTRY packspu_DeleteObjectARB(VBoxGLhandleARB obj)
 {
     GLuint hwid = crStateGetProgramHWID(obj);
 
     CRASSERT(obj);
 
+    /* we do not track shader creation inside guest since it is not needed currently.
+     * this is why we only care about programs here */
     if (hwid)
     {
         crStateDeleteProgram(obj);
@@ -143,8 +219,57 @@ void PACK_APIENTRY packspu_DeleteObjectARB(GLhandleARB obj)
     crPackDeleteObjectARB(obj);
 }
 
+#ifdef VBOX_WITH_CRPACKSPU_DUMPER
+static void packspu_RecCheckInitRec()
+{
+    if (pack_spu.Recorder.pDumper)
+        return;
+
+    crDmpDbgPrintInit(&pack_spu.Dumper);
+
+    crRecInit(&pack_spu.Recorder, NULL /*pBlitter: we do not support blitter operations here*/, &pack_spu.self, &pack_spu.Dumper.Base);
+}
+#endif
+
 void PACKSPU_APIENTRY packspu_LinkProgram(GLuint program)
 {
+#ifdef VBOX_WITH_CRPACKSPU_DUMPER
+    GLint linkStatus = 0;
+#endif
+
     crStateLinkProgram(program);
     crPackLinkProgram(program);
+
+#ifdef VBOX_WITH_CRPACKSPU_DUMPER
+    pack_spu.self.GetObjectParameterivARB(program, GL_OBJECT_LINK_STATUS_ARB, &linkStatus);
+    Assert(linkStatus);
+    if (!linkStatus)
+    {
+        CRContext *ctx = crStateGetCurrent();
+        packspu_RecCheckInitRec();
+        crRecDumpProgram(&pack_spu.Recorder, ctx, program, program);
+    }
+#endif
 }
+
+void PACKSPU_APIENTRY packspu_CompileShader(GLuint shader)
+{
+#ifdef VBOX_WITH_CRPACKSPU_DUMPER
+    GLint compileStatus = 0;
+#endif
+
+//    crStateCompileShader(shader);
+    crPackCompileShader(shader);
+
+#ifdef VBOX_WITH_CRPACKSPU_DUMPER
+    pack_spu.self.GetObjectParameterivARB(shader, GL_OBJECT_COMPILE_STATUS_ARB, &compileStatus);
+    Assert(compileStatus);
+    if (!compileStatus)
+    {
+        CRContext *ctx = crStateGetCurrent();
+        packspu_RecCheckInitRec();
+        crRecDumpShader(&pack_spu.Recorder, ctx, shader, shader);
+    }
+#endif
+}
+

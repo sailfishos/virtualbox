@@ -1,3 +1,6 @@
+* Wed Feb 12 2015 Fabio Isgro <fabio.isgro@messinalug.org> - 4.3.20
+- Bump Version to 4.3.20
+
 * Wed Mar 13 2013 David Greaves <david@dgreaves.com> - 4.2.4
 - Add the systemd vboxservice.service to enable time-sync in guests
 

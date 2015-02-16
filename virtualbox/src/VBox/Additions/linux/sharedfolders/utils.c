@@ -71,7 +71,6 @@ static void sf_timespec_from_ftime(RTTIMESPEC *ts, struct timespec *tv)
 void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
                    PSHFLFSOBJINFO info)
 {
-    struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
     PSHFLFSOBJATTR attr;
     int mode;
 
@@ -100,12 +99,6 @@ void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
     inode->i_mapping->a_ops = &sf_reg_aops;
     inode->i_mapping->backing_dev_info = &sf_g->bdi;
-    /* Tell generic_read to not use GFP_HIGHUSER. This is needed as
-     * long as sf_reg_read_aux() calls vboxCallRead() which works on
-     * virtual addresses. On Linux cannot reliably determine the
-     * physical address for high memory, see
-     * rtR0MemObjNativeLockKernel(). */
-    mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
 #endif
 
     if (RTFS_IS_DIRECTORY(attr->fMode))
@@ -172,49 +165,6 @@ void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
     sf_ftime_from_timespec(&inode->i_atime, &info->AccessTime);
     sf_ftime_from_timespec(&inode->i_ctime, &info->ChangeTime);
     sf_ftime_from_timespec(&inode->i_mtime, &info->ModificationTime);
-
-    if (attr->enmAdditional == SHFLFSOBJATTRADD_UNIX)
-    {
-        sf_i->host_dev = attr->u.Unix.INodeIdDevice;
-        sf_i->host_ino = attr->u.Unix.INodeId;
-    }
-}
-
-/* Check if the host-side inode is likely to have had content changes,
- * so that we should throw away the cached pages. */
-void sf_revalidate_mapping(struct inode *inode, PSHFLFSOBJINFO info)
-{
-    struct timespec mtime;
-    PSHFLFSOBJATTR attr = &info->Attr;
-
-    TRACE();
-
-    if (i_size_read(inode) != info->cbObject)
-    {
-        spin_lock(&inode->i_lock);
-        truncate_setsize(inode, info->cbObject);
-        spin_unlock(&inode->i_lock);
-        goto out_invalid;
-    }
-
-    sf_ftime_from_timespec(&mtime, &info->ModificationTime);
-    if (timespec_compare(&inode->i_mtime, &mtime))
-        goto out_invalid;
-
-    if (attr->enmAdditional == SHFLFSOBJATTRADD_UNIX)
-    {
-        struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
-        if (   (sf_i->host_dev && sf_i->host_dev != attr->u.Unix.INodeIdDevice)
-            || (sf_i->host_ino && sf_i->host_ino != attr->u.Unix.INodeId))
-            goto out_invalid;
-    }
-
-    return;
-
-  out_invalid:
-    invalidate_inode_pages2(inode->i_mapping);
-    inode->i_generation++;
-    return;
 }
 
 int sf_stat(const char *caller, struct sf_glob_info *sf_g,
@@ -294,13 +244,11 @@ int sf_inode_revalidate(struct dentry *dentry)
             return 0;
     }
 
-    sf_i->force_restat = 0;
     err = sf_stat(__func__, sf_g, sf_i->path, &info, 1);
     if (err)
         return err;
 
     dentry->d_time = jiffies;
-    sf_revalidate_mapping(dentry->d_inode, &info);
     sf_init_inode(sf_g, dentry->d_inode, &info);
     return 0;
 }
@@ -460,7 +408,6 @@ int sf_setattr(struct dentry *dentry, struct iattr *iattr)
     if (RT_FAILURE(rc))
         LogFunc(("vboxCallClose(%s) failed rc=%Rrc\n", sf_i->path->String.utf8, rc));
 
-    sf_i->force_restat = 1;
     return sf_inode_revalidate(dentry);
 
 fail1:

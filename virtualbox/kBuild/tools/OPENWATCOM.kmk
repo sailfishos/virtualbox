@@ -1,4 +1,4 @@
-# $Id: OPENWATCOM.kmk 2576 2012-05-31 15:07:00Z bird $
+# $Id: OPENWATCOM.kmk 2663 2012-10-15 13:13:45Z bird $
 ## @file
 # kBuild Tool Config - Open Watcom v1.4 and later.
 #
@@ -147,10 +147,13 @@ else
 
 endif
 
+# Functions for changing slashes (SQ = single quoted).
 if1of ($(KBUILD_HOST), os2 win)
  TOOL_OPENWATCOM_FIX_SLASHES = $(subst /,\\,$1)
+ TOOL_OPENWATCOM_FIX_SLASHES_SQ = $(subst /,\,$1)
 else
  TOOL_OPENWATCOM_FIX_SLASHES = $1
+ TOOL_OPENWATCOM_FIX_SLASHES_SQ = $1
 endif
 
 # General Properties used by kBuild

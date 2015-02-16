@@ -64,6 +64,12 @@
 #endif /* VBOX_WITH_HGSMI */
 #include "DevVGASavedState.h"
 
+#ifdef VBOX_WITH_VMSVGA
+# include "DevVGA-SVGA.h"
+#endif
+
+# include <iprt/list.h>
+
 #define MSR_COLOR_EMULATION 0x01
 #define MSR_PAGE_SELECT     0x20
 
@@ -195,6 +201,118 @@ typedef void FNCURSORDRAWLINE(struct VGAState *s, uint8_t *d, int y);
 typedef struct VBOXVDMAHOST *PVBOXVDMAHOST;
 #endif
 
+#ifdef VBOX_WITH_VIDEOHWACCEL
+#define VBOX_VHWA_MAX_PENDING_COMMANDS 1000
+
+typedef struct _VBOX_VHWA_PENDINGCMD
+{
+    RTLISTNODE Node;
+    PVBOXVHWACMD pCommand;
+} VBOX_VHWA_PENDINGCMD;
+#endif
+
+#ifdef VBOX_WITH_VMSVGA
+
+#define VMSVGA_FIFO_EXTCMD_NONE                 0
+#define VMSVGA_FIFO_EXTCMD_TERMINATE            1
+#define VMSVGA_FIFO_EXTCMD_SAVESTATE            2
+#define VMSVGA_FIFO_EXTCMD_LOADSTATE            3
+#define VMSVGA_FIFO_EXTCMD_RESET                4
+
+typedef struct
+{
+    PSSMHANDLE      pSSM;
+    uint32_t        uVersion;
+    uint32_t        uPass;
+} VMSVGA_STATE_LOAD, *PVMSVGA_STATE_LOAD;
+
+typedef struct
+{
+    /** The host window handle */
+    uint64_t                    u64HostWindowId;
+    /** The R3 FIFO pointer. */
+    R3PTRTYPE(uint32_t *)       pFIFOR3;
+    /** The R0 FIFO pointer. */
+    R0PTRTYPE(uint32_t *)       pFIFOR0;
+    /** R3 Opaque pointer to svga state. */
+    R3PTRTYPE(void *)           pSVGAState;
+    /** R3 Opaque pointer to 3d state. */
+    R3PTRTYPE(void *)           p3dState;
+    /** R3 Opaque pointer to a copy of the first 32k of the framebuffer before switching into svga mode. */
+    R3PTRTYPE(void *)           pFrameBufferBackup;
+    /** R3 Opaque pointer to an external fifo cmd parameter. */
+    R3PTRTYPE(void *)           pFIFOExtCmdParam;
+
+    /** Guest physical address of the FIFO memory range. */
+    RTGCPHYS                    GCPhysFIFO;
+    /** Size in bytes of the FIFO memory range. */
+    uint32_t                    cbFIFO;
+    /** SVGA id. */
+    uint32_t                    u32SVGAId;
+    /** SVGA extensions enabled or not. */
+    uint32_t                    fEnabled;
+    /** SVGA memory area configured status. */
+    uint32_t                    fConfigured;
+    /** Device is busy handling FIFO requests. */
+    uint32_t                    fBusy;
+    /** Traces (dirty page detection) enabled or not. */
+    uint32_t                    fTraces;
+    /** Guest OS identifier. */
+    uint32_t                    u32GuestId;
+    /** Scratch region size. */
+    uint32_t                    cScratchRegion;
+    /** Scratch array. */
+    uint32_t                    au32ScratchRegion[VMSVGA_SCRATCH_SIZE];
+    /** Irq status. */
+    uint32_t                    u32IrqStatus;
+    /** Irq mask. */
+    uint32_t                    u32IrqMask;
+    /** Pitch lock. */
+    uint32_t                    u32PitchLock;
+    /** Current GMR id. (SVGA_REG_GMR_ID) */
+    uint32_t                    u32CurrentGMRId;
+    /** Register caps. */
+    uint32_t                    u32RegCaps;
+    uint32_t                    Padding2;
+    /** Physical address of command mmio range. */
+    RTIOPORT                    BasePort;
+    /** Port io index register. */
+    uint32_t                    u32IndexReg;
+    /** FIFO request semaphore. */
+    RTSEMEVENT                  FIFORequestSem;
+    /** FIFO external command semaphore. */
+    RTSEMEVENT                  FIFOExtCmdSem;
+    /** FIFO IO Thread. */
+    R3PTRTYPE(PPDMTHREAD)       pFIFOIOThread;
+    uint32_t                    uWidth;
+    uint32_t                    uHeight;
+    uint32_t                    uBpp;
+    uint32_t                    cbScanline;
+    /** Maximum width supported. */
+    uint32_t                    u32MaxWidth;
+    /** Maximum height supported. */
+    uint32_t                    u32MaxHeight;
+    /** Viewport rectangle */
+    struct
+    {
+        uint32_t                x;
+        uint32_t                y;
+        uint32_t                cx;
+        uint32_t                cy;
+    } viewport;
+    /** Action flags */
+    uint32_t                    u32ActionFlags;
+    /** SVGA 3d extensions enabled or not. */
+    bool                        f3DEnabled;
+    /** VRAM page monitoring enabled or not. */
+    bool                        fVRAMTracking;
+    /** External command to be executed in the FIFO thread. */
+    uint8_t                     u8FIFOExtCommand;
+    bool                        Padding6[HC_ARCH_BITS == 64 ? 1 : 5];
+} VMSVGAState;
+#endif /* VBOX_WITH_VMSVGA */
+
+
 typedef struct VGAState {
 #ifndef VBOX
     VGA_STATE_COMMON
@@ -259,8 +377,7 @@ typedef struct VGAState {
     PPDMDEVINSRC                pDevInsRC;
     /** Pointer to the GC vram mapping. */
     RCPTRTYPE(uint8_t *)        vram_ptrRC;
-    /** Pointer to vgaGCLFBAccessHandler(). */
-    RTRCPTR                     RCPtrLFBHandler;
+    uint32_t                    PaddingMinus1;
 
     /** Pointer to the device instance - R3 Ptr. */
     PPDMDEVINSR3                pDevInsR3;
@@ -277,8 +394,6 @@ typedef struct VGAState {
 # if defined(VBOX_WITH_HGSMI) && (defined(VBOX_WITH_VIDEOHWACCEL) || defined(VBOX_WITH_CRHGSMI))
     /** LUN\#0: VBVA callbacks interface */
     PDMIDISPLAYVBVACALLBACKS    IVBVACallbacks;
-# elif HC_ARCH_BITS == 32
-    uint32_t                    Padding0;
 # endif
     /** Pointer to base interface of the driver. */
     R3PTRTYPE(PPDMIBASE)        pDrvBase;
@@ -292,6 +407,13 @@ typedef struct VGAState {
     PPDMDEVINSR0                pDevInsR0;
     /** The R0 vram pointer... */
     R0PTRTYPE(uint8_t *)        vram_ptrR0;
+
+#ifdef VBOX_WITH_VMSVGA
+# if HC_ARCH_BITS == 32
+    uint32_t                    Padding3;
+# endif
+    VMSVGAState                 svga;
+#endif
 
     /** The number of monitors. */
     uint32_t                    cMonitors;
@@ -312,12 +434,18 @@ typedef struct VGAState {
     bool                        fRemappedVGA;
     /** Whether to render the guest VRAM to the framebuffer memory. False only for some LFB modes. */
     bool                        fRenderVRAM;
+#ifdef VBOX_WITH_VMSVGA
+    /* Whether the SVGA emulation is enabled or not. */
+    bool                        fVMSVGAEnabled;
+    bool                        Padding1[1];
+#else
     bool                        Padding1[2];
+#endif
 
     /** The physical address the VRAM was assigned. */
     RTGCPHYS                    GCPhysVRAM;
-    /** The critical section. */
-    PDMCRITSECT                 lock;
+    /** The critical section protect the instance data. */
+    PDMCRITSECT                 CritSect;
     /** The PCI device. */
     PCIDEVICE                   Dev;
 
@@ -420,6 +548,23 @@ typedef struct VGAState {
     uint8_t                     Padding10[14];
 #  endif
 # endif /* VBOX_WITH_HGSMI */
+
+    PDMLED Led3D;
+
+    struct {
+        volatile uint32_t cPending;
+        uint32_t Padding1;
+        union
+        {
+            RTLISTNODE PendingList;
+            /* make sure the structure sized cross different contexts correctly */
+            struct
+            {
+                R3PTRTYPE(void *) dummy1;
+                R3PTRTYPE(void *) dummy2;
+            } dummy;
+        };
+    } pendingVhwaCommands;
 #endif /* VBOX */
 } VGAState;
 #ifdef VBOX
@@ -481,10 +626,16 @@ int      VBVAInit       (PVGASTATE pVGAState);
 void     VBVADestroy    (PVGASTATE pVGAState);
 int      VBVAUpdateDisplay (PVGASTATE pVGAState);
 void     VBVAReset (PVGASTATE pVGAState);
+void     VBVAPause (PVGASTATE pVGAState, bool fPause);
 
 bool VBVAIsEnabled(PVGASTATE pVGAState);
 
 void VBVARaiseIrq (PVGASTATE pVGAState, uint32_t fFlags);
+void VBVARaiseIrqNoWait(PVGASTATE pVGAState, uint32_t fFlags);
+
+int VBVAInfoView(PVGASTATE pVGAState, VBVAINFOVIEW *pView);
+int VBVAInfoScreen(PVGASTATE pVGAState, VBVAINFOSCREEN *pScreen);
+int VBVAGetInfoViewAndScreen(PVGASTATE pVGAState, uint32_t u32ViewIndex, VBVAINFOVIEW *pView, VBVAINFOSCREEN *pScreen);
 
 /* @return host-guest flags that were set on reset
  * this allows the caller to make further cleaning when needed,
@@ -492,9 +643,11 @@ void VBVARaiseIrq (PVGASTATE pVGAState, uint32_t fFlags);
 uint32_t HGSMIReset (PHGSMIINSTANCE pIns);
 
 # ifdef VBOX_WITH_VIDEOHWACCEL
-int vbvaVHWACommandCompleteAsynch(PPDMIDISPLAYVBVACALLBACKS pInterface, PVBOXVHWACMD pCmd);
+int vbvaVHWACommandCompleteAsync(PPDMIDISPLAYVBVACALLBACKS pInterface, PVBOXVHWACMD pCmd);
 int vbvaVHWAConstruct (PVGASTATE pVGAState);
 int vbvaVHWAReset (PVGASTATE pVGAState);
+
+void vbvaTimerCb(PVGASTATE pVGAState);
 
 int vboxVBVASaveStatePrep (PPDMDEVINS pDevIns, PSSMHANDLE pSSM);
 int vboxVBVASaveStateDone (PPDMDEVINS pDevIns, PSSMHANDLE pSSM);
@@ -507,23 +660,48 @@ int vboxVBVASaveStateDone (PPDMDEVINS pDevIns, PSSMHANDLE pSSM);
 # ifdef VBOX_WITH_CRHGSMI
 int vboxVDMACrHgsmiCommandCompleteAsync(PPDMIDISPLAYVBVACALLBACKS pInterface, PVBOXVDMACMD_CHROMIUM_CMD pCmd, int rc);
 int vboxVDMACrHgsmiControlCompleteAsync(PPDMIDISPLAYVBVACALLBACKS pInterface, PVBOXVDMACMD_CHROMIUM_CTL pCmd, int rc);
+int vboxCmdVBVACmdHostCtl(PPDMIDISPLAYVBVACALLBACKS pInterface,
+                                                               struct VBOXCRCMDCTL* pCmd, uint32_t cbCmd,
+                                                               PFNCRCTLCOMPLETION pfnCompletion,
+                                                               void *pvCompletion);
+int vboxCmdVBVACmdHostCtlSync(PPDMIDISPLAYVBVACALLBACKS pInterface,
+                                                               struct VBOXCRCMDCTL* pCmd, uint32_t cbCmd);
 # endif
 
 int vboxVBVASaveStateExec (PPDMDEVINS pDevIns, PSSMHANDLE pSSM);
 int vboxVBVALoadStateExec (PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t u32Version);
 int vboxVBVALoadStateDone (PPDMDEVINS pDevIns, PSSMHANDLE pSSM);
 
+int vgaUpdateDisplayAll(PVGASTATE pThis);
+
 # ifdef VBOX_WITH_VDMA
 typedef struct VBOXVDMAHOST *PVBOXVDMAHOST;
 int vboxVDMAConstruct(PVGASTATE pVGAState, uint32_t cPipeElements);
 int vboxVDMADestruct(PVBOXVDMAHOST pVdma);
+int vboxVDMAReset(PVBOXVDMAHOST pVdma);
 void vboxVDMAControl(PVBOXVDMAHOST pVdma, PVBOXVDMA_CTL pCmd, uint32_t cbCmd);
 void vboxVDMACommand(PVBOXVDMAHOST pVdma, PVBOXVDMACBUF_DR pCmd, uint32_t cbCmd);
 int vboxVDMASaveStateExecPrep(struct VBOXVDMAHOST *pVdma, PSSMHANDLE pSSM);
 int vboxVDMASaveStateExecDone(struct VBOXVDMAHOST *pVdma, PSSMHANDLE pSSM);
+int vboxVDMASaveStateExecPerform(struct VBOXVDMAHOST *pVdma, PSSMHANDLE pSSM);
+int vboxVDMASaveLoadExecPerform(struct VBOXVDMAHOST *pVdma, PSSMHANDLE pSSM, uint32_t u32Version);
+int vboxVDMASaveLoadDone(struct VBOXVDMAHOST *pVdma);
 # endif /* VBOX_WITH_VDMA */
 
+# ifdef VBOX_WITH_CRHGSMI
+int vboxCmdVBVACmdSubmit(PVGASTATE pVGAState);
+int vboxCmdVBVACmdFlush(PVGASTATE pVGAState);
+void vboxCmdVBVACmdTimer(PVGASTATE pVGAState);
+int vboxCmdVBVACmdCtl(PVGASTATE pVGAState, VBOXCMDVBVA_CTL *pCtl, uint32_t cbCtl);
+bool vboxCmdVBVAIsEnabled(PVGASTATE pVGAState);
+# endif /* VBOX_WITH_CRHGSMI */
 #endif /* VBOX_WITH_HGSMI */
+
+# ifdef VBOX_WITH_VMSVGA
+int vgaR3RegisterVRAMHandler(PVGASTATE pVGAState, uint64_t cbFrameBuffer);
+int vgaR3UnregisterVRAMHandler(PVGASTATE pVGAState);
+int vgaR3UpdateDisplay(PVGASTATE pVGAState, unsigned xStart, unsigned yStart, unsigned width, unsigned height);
+# endif
 
 #ifndef VBOX
 void vga_common_init(VGAState *s, DisplayState *ds, uint8_t *vga_ram_base,

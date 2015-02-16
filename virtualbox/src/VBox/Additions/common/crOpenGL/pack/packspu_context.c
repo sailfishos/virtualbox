@@ -10,8 +10,6 @@
 #include "cr_string.h"
 #include "packspu_proto.h"
 
-#define MAGIC_OFFSET 3000
-
 /*
  * Allocate a new ThreadInfo structure, setup a connection to the
  * server, allocate/init a packer context, bind this ThreadInfo to
@@ -150,7 +148,16 @@ packspu_VBoxConDestroy(GLint con)
 
     crPackDeleteContext(thread->packer);
 
+    if (thread->buffer.pack)
+    {
+        crNetFree(thread->netServer.conn, thread->buffer.pack);
+        thread->buffer.pack = NULL;
+    }
+
     crNetFreeConnection(thread->netServer.conn);
+
+    if (thread->netServer.name)
+        crFree(thread->netServer.name);
 
     pack_spu.numThreads--;
     /*note can't shift the array here, because other threads have TLS references to array elements*/
@@ -175,6 +182,121 @@ packspu_VBoxConDestroy(GLint con)
 #endif
 }
 
+GLvoid PACKSPU_APIENTRY
+packspu_VBoxConChromiumParameteriCR(GLint con, GLenum param, GLint value)
+{
+    GET_THREAD(thread);
+    CRPackContext * curPacker = crPackGetContext();
+    ThreadInfo *curThread = thread;
+    int writeback = 1;
+    GLint serverCtx = (GLint) -1;
+
+    CRASSERT(!curThread == !curPacker);
+    CRASSERT(!curThread || !curPacker || curThread->packer == curPacker);
+#ifdef CHROMIUM_THREADSAFE
+    crLockMutex(&_PackMutex);
+#endif
+
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+    CRASSERT(!con == !CRPACKSPU_IS_WDDM_CRHGSMI());
+#endif
+
+    if (CRPACKSPU_IS_WDDM_CRHGSMI())
+    {
+        if (!con)
+        {
+            crError("connection should be specified!");
+            return;
+        }
+        thread = GET_THREAD_VAL_ID(con);
+    }
+    else
+    {
+        CRASSERT(!con);
+        if (!thread)
+        {
+            thread = packspuNewThread(
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+                NULL
+#endif
+                );
+        }
+    }
+    CRASSERT(thread);
+    CRASSERT(thread->packer);
+
+    crPackSetContext( thread->packer );
+
+    packspu_ChromiumParameteriCR(param, value);
+
+#ifdef CHROMIUM_THREADSAFE
+    crUnlockMutex(&_PackMutex);
+#endif
+
+    if (CRPACKSPU_IS_WDDM_CRHGSMI())
+    {
+        /* restore the packer context to the tls */
+        crPackSetContext(curPacker);
+    }
+}
+
+GLvoid PACKSPU_APIENTRY
+packspu_VBoxConChromiumParametervCR(GLint con, GLenum target, GLenum type, GLsizei count, const GLvoid *values)
+{
+    GET_THREAD(thread);
+    CRPackContext * curPacker = crPackGetContext();
+    ThreadInfo *curThread = thread;
+    int writeback = 1;
+    GLint serverCtx = (GLint) -1;
+
+    CRASSERT(!curThread == !curPacker);
+    CRASSERT(!curThread || !curPacker || curThread->packer == curPacker);
+#ifdef CHROMIUM_THREADSAFE
+    crLockMutex(&_PackMutex);
+#endif
+
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+    CRASSERT(!con == !CRPACKSPU_IS_WDDM_CRHGSMI());
+#endif
+
+    if (CRPACKSPU_IS_WDDM_CRHGSMI())
+    {
+        if (!con)
+        {
+            crError("connection should be specified!");
+            return;
+        }
+        thread = GET_THREAD_VAL_ID(con);
+    }
+    else
+    {
+        CRASSERT(!con);
+        if (!thread)
+        {
+            thread = packspuNewThread(
+#if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
+                NULL
+#endif
+                );
+        }
+    }
+    CRASSERT(thread);
+    CRASSERT(thread->packer);
+
+    crPackSetContext( thread->packer );
+
+    packspu_ChromiumParametervCR(target, type, count, values);
+
+#ifdef CHROMIUM_THREADSAFE
+    crUnlockMutex(&_PackMutex);
+#endif
+
+    if (CRPACKSPU_IS_WDDM_CRHGSMI())
+    {
+        /* restore the packer context to the tls */
+        crPackSetContext(curPacker);
+    }
+}
 
 GLint PACKSPU_APIENTRY
 packspu_VBoxCreateContext( GLint con, const char *dpyName, GLint visual, GLint shareCtx )
@@ -353,6 +475,8 @@ void PACKSPU_APIENTRY packspu_DestroyContext( GLint ctx )
     context->serverCtx = 0;
     context->currentThread = NULL;
 
+    crMemset (&context->zvaBufferInfo, 0, sizeof (context->zvaBufferInfo));
+
     if (curContext == context)
     {
         if (!CRPACKSPU_IS_WDDM_CRHGSMI())
@@ -414,7 +538,7 @@ void PACKSPU_APIENTRY packspu_MakeCurrent( GLint window, GLint nativeWindow, GLi
         }
         else
         {
-            if (!newCtx->fAutoFlush)
+            if (newCtx->fAutoFlush)
             {
                 if (newCtx->currentThread && newCtx->currentThread != thread)
                 {
@@ -432,6 +556,9 @@ void PACKSPU_APIENTRY packspu_MakeCurrent( GLint window, GLint nativeWindow, GLi
                 }
                 newCtx->currentThread = thread;
             }
+
+            if (thread->currentContext && newCtx != thread->currentContext && thread->currentContext->fCheckZerroVertAttr)
+                crStateCurrentRecoverNew(thread->currentContext->clientState, &thread->packer->current);
 
             thread->currentContext = newCtx;
             crPackSetContext( thread->packer );
@@ -466,6 +593,11 @@ void PACKSPU_APIENTRY packspu_MakeCurrent( GLint window, GLint nativeWindow, GLi
         crPackMakeCurrentSWAP( window, nativeWindow, serverCtx );
     else
         crPackMakeCurrent( window, nativeWindow, serverCtx );
+
+    if (serverCtx)
+    {
+        packspuInitStrings();
+    }
 
     {
         GET_THREAD(t);

@@ -258,7 +258,7 @@ DWORD APIENTRY NPAddConnection3(HWND hwndOwner,
         }
     }
 
-    
+
     if (dwStatus == WN_SUCCESS)
     {
         /* Append the remote name. */
@@ -732,7 +732,7 @@ DWORD APIENTRY NPOpenEnum(DWORD dwScope,
 
     if (dwStatus != WN_SUCCESS)
     {
-        Log(("VBOXNP: NPOpenEnum: Returned error 0x%08X\n", 
+        Log(("VBOXNP: NPOpenEnum: Returned error 0x%08X\n",
              dwStatus));
         if (pCtx)
         {
@@ -859,7 +859,7 @@ DWORD APIENTRY NPEnumResource(HANDLE hEnum,
                     *pDst++ = L'\\';
                     CopyMemory(pDst, RemoteName, cbRemoteName);
                     pDst += cbRemoteName / sizeof(WCHAR);
-                    
+
                     pNetResource->lpComment = NULL;
 
                     pNetResource->lpProvider = pDst;
@@ -1597,7 +1597,7 @@ BOOL WINAPI DllMain(HINSTANCE hDLLInst,
     switch (fdwReason)
     {
         case DLL_PROCESS_ATTACH:
-            RTR3InitDll(0);
+            RTR3InitDll(RTR3INIT_FLAGS_UNOBTRUSIVE);
             VbglR3Init();
             LogRel(("VBOXNP: DLL loaded.\n"));
             break;

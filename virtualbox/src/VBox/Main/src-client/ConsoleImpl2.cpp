@@ -46,6 +46,7 @@
 #include "AutoCaller.h"
 #include "Logging.h"
 
+#include <iprt/base64.h>
 #include <iprt/buildconfig.h>
 #include <iprt/ctype.h>
 #include <iprt/dir.h>
@@ -113,15 +114,24 @@
 # endif
 #endif /* VBOX_WITH_NETFLT */
 
-#include "DHCPServerRunner.h"
+#include "NetworkServiceRunner.h"
 #include "BusAssignmentManager.h"
 #ifdef VBOX_WITH_EXTPACK
 # include "ExtPackManagerImpl.h"
 #endif
+#if defined(RT_OS_DARWIN)
+# include "IOKit/IOKitLib.h"
+#endif
+
+
+/*******************************************************************************
+*   Internal Functions                                                         *
+*******************************************************************************/
+static Utf8Str *GetExtraDataBoth(IVirtualBox *pVirtualBox, IMachine *pMachine, const char *pszName, Utf8Str *pStrValue);
+
+
 
 #if defined(RT_OS_DARWIN)
-
-# include "IOKit/IOKitLib.h"
 
 static int DarwinSmcKey(char *pabKey, uint32_t cbKey)
 {
@@ -160,7 +170,7 @@ static int DarwinSmcKey(char *pabKey, uint32_t cbKey)
 
     for (int i = 0; i < 2; i++)
     {
-        inputStruct.key = (uint32_t)((i == 0) ? 'OSK0' : 'OSK1');
+        inputStruct.key = (uint32_t)(i == 0 ? 'OSK0' : 'OSK1');
         kr = IOConnectCallStructMethod((mach_port_t)port,
                                        (uint32_t)2,
                                        (const void *)&inputStruct,
@@ -246,20 +256,18 @@ static int findEfiRom(IVirtualBox* vbox, FirmwareType_T aFirmwareType, Utf8Str *
     return VINF_SUCCESS;
 }
 
-static int getSmcDeviceKey(IMachine *pMachine, BSTR *aKey, bool *pfGetKeyFromRealSMC)
+/**
+ * @throws HRESULT on extra data retrival error.
+ */
+static int getSmcDeviceKey(IVirtualBox *pVirtualBox, IMachine *pMachine, Utf8Str *pStrKey, bool *pfGetKeyFromRealSMC)
 {
     *pfGetKeyFromRealSMC = false;
 
     /*
      * The extra data takes precedence (if non-zero).
      */
-    HRESULT hrc = pMachine->GetExtraData(Bstr("VBoxInternal2/SmcDeviceKey").raw(),
-                                         aKey);
-    if (FAILED(hrc))
-        return Global::vboxStatusCodeFromCOM(hrc);
-    if (   SUCCEEDED(hrc)
-        && *aKey
-        && **aKey)
+    GetExtraDataBoth(pVirtualBox, pMachine, "VBoxInternal2/SmcDeviceKey", pStrKey);
+    if (pStrKey->isNotEmpty())
         return VINF_SUCCESS;
 
 #ifdef RT_OS_DARWIN
@@ -270,7 +278,8 @@ static int getSmcDeviceKey(IMachine *pMachine, BSTR *aKey, bool *pfGetKeyFromRea
     int rc = DarwinSmcKey(abKeyBuf, sizeof(abKeyBuf));
     if (SUCCEEDED(rc))
     {
-        Bstr(abKeyBuf).detachTo(aKey);
+        *pStrKey = abKeyBuf;
+        *pfGetKeyFromRealSMC = true;
         return rc;
     }
     LogRel(("Warning: DarwinSmcKey failed with rc=%Rrc!\n", rc));
@@ -296,10 +305,10 @@ static int getSmcDeviceKey(IMachine *pMachine, BSTR *aKey, bool *pfGetKeyFromRea
         char szProdName[256];
         szProdName[0] = '\0';
         RTSystemQueryDmiString(RTSYSDMISTR_PRODUCT_NAME, szProdName, sizeof(szProdName));
-        if (   (   !strncmp(szProdName, "Mac", 3)
-                || !strncmp(szProdName, "iMac", 4)
-                || !strncmp(szProdName, "iMac", 4)
-                || !strncmp(szProdName, "Xserve", 6)
+        if (   (   !strncmp(szProdName, RT_STR_TUPLE("Mac"))
+                || !strncmp(szProdName, RT_STR_TUPLE("iMac"))
+                || !strncmp(szProdName, RT_STR_TUPLE("iMac"))
+                || !strncmp(szProdName, RT_STR_TUPLE("Xserve"))
                )
             && !strchr(szProdName, ' ')                             /* no spaces */
             && RT_C_IS_DIGIT(szProdName[strlen(szProdName) - 1])    /* version number */
@@ -464,10 +473,137 @@ static void RemoveConfigValue(PCFGMNODE pNode,
         throw ConfigError("CFGMR3RemoveValue", vrc, pcszName);
 }
 
+/**
+ * Gets an extra data value, consulting both machine and global extra data.
+ *
+ * @throws  HRESULT on failure
+ * @returns pStrValue for the callers convenience.
+ * @param   pVirtualBox     Pointer to the IVirtualBox interface.
+ * @param   pMachine        Pointer to the IMachine interface.
+ * @param   pszName         The value to get.
+ * @param   pStrValue       Where to return it's value (empty string if not
+ *                          found).
+ */
+static Utf8Str *GetExtraDataBoth(IVirtualBox *pVirtualBox, IMachine *pMachine, const char *pszName, Utf8Str *pStrValue)
+{
+    pStrValue->setNull();
+
+    Bstr bstrName(pszName);
+    Bstr bstrValue;
+    HRESULT hrc = pMachine->GetExtraData(bstrName.raw(), bstrValue.asOutParam());
+    if (FAILED(hrc))
+        throw hrc;
+    if (bstrValue.isEmpty())
+    {
+        hrc = pVirtualBox->GetExtraData(bstrName.raw(), bstrValue.asOutParam());
+        if (FAILED(hrc))
+            throw hrc;
+    }
+
+    if (bstrValue.isNotEmpty())
+        *pStrValue = bstrValue;
+    return pStrValue;
+}
+
+
+/** Helper that finds out the next HBA port used
+ */
+static LONG GetNextUsedPort(LONG aPortUsed[30], LONG lBaseVal, uint32_t u32Size)
+{
+    LONG lNextPortUsed = 30;
+    for (size_t j = 0; j < u32Size; ++j)
+    {
+        if (   aPortUsed[j] >  lBaseVal
+            && aPortUsed[j] <= lNextPortUsed)
+           lNextPortUsed = aPortUsed[j];
+    }
+    return lNextPortUsed;
+}
+
+#define MAX_BIOS_LUN_COUNT   4
+
+static int SetBiosDiskInfo(ComPtr<IMachine> pMachine, PCFGMNODE pCfg, PCFGMNODE pBiosCfg,
+                           Bstr controllerName, const char * const s_apszBiosConfig[4])
+{
+    HRESULT             hrc;
+#define MAX_DEVICES     30
+#define H()     AssertLogRelMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_MAIN_CONFIG_CONSTRUCTOR_COM_ERROR)
+
+    LONG lPortLUN[MAX_BIOS_LUN_COUNT];
+    LONG lPortUsed[MAX_DEVICES];
+    uint32_t u32HDCount = 0;
+
+    /* init to max value */
+    lPortLUN[0] = MAX_DEVICES;
+
+    com::SafeIfaceArray<IMediumAttachment> atts;
+    hrc = pMachine->GetMediumAttachmentsOfController(controllerName.raw(),
+                                        ComSafeArrayAsOutParam(atts));  H();
+    size_t uNumAttachments = atts.size();
+    if (uNumAttachments > MAX_DEVICES)
+    {
+        LogRel(("Number of Attachments > Max=%d.\n", uNumAttachments));
+        uNumAttachments = MAX_DEVICES;
+    }
+
+    /* Find the relevant ports/IDs, i.e the ones to which a HD is attached. */
+    for (size_t j = 0; j < uNumAttachments; ++j)
+    {
+        IMediumAttachment *pMediumAtt = atts[j];
+        LONG lPortNum = 0;
+        hrc = pMediumAtt->COMGETTER(Port)(&lPortNum);                   H();
+        if (SUCCEEDED(hrc))
+        {
+            DeviceType_T lType;
+            hrc = pMediumAtt->COMGETTER(Type)(&lType);                    H();
+            if (SUCCEEDED(hrc) && lType == DeviceType_HardDisk)
+            {
+                /* find min port number used for HD */
+                if (lPortNum < lPortLUN[0])
+                    lPortLUN[0] = lPortNum;
+                lPortUsed[u32HDCount++] = lPortNum;
+                LogFlowFunc(("HD port Count=%d\n", u32HDCount));
+            }
+
+            /* Configure the hotpluggable flag for the port. */
+            BOOL fHotPluggable = FALSE;
+            hrc = pMediumAtt->COMGETTER(HotPluggable)(&fHotPluggable); H();
+            if (SUCCEEDED(hrc))
+            {
+                PCFGMNODE pPortCfg;
+                char szName[24];
+                RTStrPrintf(szName, sizeof(szName), "Port%d", lPortNum);
+
+                InsertConfigNode(pCfg, szName, &pPortCfg);
+                InsertConfigInteger(pPortCfg, "Hotpluggable", fHotPluggable ? 1 : 0);
+            }
+         }
+    }
+
+
+    /* Pick only the top 4 used HD Ports as CMOS doesn't have space
+     * to save details for all 30 ports
+     */
+    uint32_t u32MaxPortCount = MAX_BIOS_LUN_COUNT;
+    if (u32HDCount < MAX_BIOS_LUN_COUNT)
+        u32MaxPortCount = u32HDCount;
+    for (size_t j = 1; j < u32MaxPortCount; j++)
+        lPortLUN[j] = GetNextUsedPort(lPortUsed,
+                                      lPortLUN[j-1],
+                                       u32HDCount);
+    if (pBiosCfg)
+    {
+        for (size_t j = 0; j < u32MaxPortCount; j++)
+        {
+            InsertConfigInteger(pBiosCfg, s_apszBiosConfig[j], lPortLUN[j]);
+            LogFlowFunc(("Top %d HBA ports = %s, %d\n", j, s_apszBiosConfig[j], lPortLUN[j]));
+        }
+    }
+    return VINF_SUCCESS;
+}
+
 #ifdef VBOX_WITH_PCI_PASSTHROUGH
-HRESULT Console::attachRawPCIDevices(PVM pVM,
-                                     BusAssignmentManager *BusMgr,
-                                     PCFGMNODE            pDevices)
+HRESULT Console::attachRawPCIDevices(PUVM pUVM, BusAssignmentManager *pBusMgr, PCFGMNODE pDevices)
 {
     HRESULT hrc = S_OK;
     PCFGMNODE pInst, pCfg, pLunL0, pLunL1;
@@ -491,14 +627,12 @@ HRESULT Console::attachRawPCIDevices(PVM pVM,
 # ifdef VBOX_WITH_EXTPACK
     static const char *s_pszPCIRawExtPackName = "Oracle VM VirtualBox Extension Pack";
     if (!mptrExtPackManager->isExtPackUsable(s_pszPCIRawExtPackName))
-    {
         /* Always fatal! */
-        return VMSetError(pVM, VERR_NOT_FOUND, RT_SRC_POS,
+        return VMR3SetError(pUVM, VERR_NOT_FOUND, RT_SRC_POS,
                 N_("Implementation of the PCI passthrough framework not found!\n"
                    "The VM cannot be started. To fix this problem, either "
                    "install the '%s' or disable PCI passthrough via VBoxManage"),
                 s_pszPCIRawExtPackName);
-    }
 # endif
 
     PCFGMNODE pBridges = CFGMR3GetChild(pDevices, "ich9pcibridge");
@@ -520,7 +654,7 @@ HRESULT Console::attachRawPCIDevices(PVM pVM,
             int iBridgesMissed = 0;
             int iBase = GuestPCIAddress.miBus - 1;
 
-            while (!BusMgr->hasPCIDevice("ich9pcibridge", iBase) && iBase > 0)
+            while (!pBusMgr->hasPCIDevice("ich9pcibridge", iBase) && iBase > 0)
             {
                 iBridgesMissed++; iBase--;
             }
@@ -530,7 +664,7 @@ HRESULT Console::attachRawPCIDevices(PVM pVM,
             {
                 InsertConfigNode(pBridges, Utf8StrFmt("%d", iBase + iBridge).c_str(), &pInst);
                 InsertConfigInteger(pInst, "Trusted",              1);
-                hrc = BusMgr->assignPCIDevice("ich9pcibridge", pInst);
+                hrc = pBusMgr->assignPCIDevice("ich9pcibridge", pInst);
             }
         }
     }
@@ -583,7 +717,7 @@ HRESULT Console::attachRawPCIDevices(PVM pVM,
 
         GuestPCIAddress.fromLong(guest);
         Assert(GuestPCIAddress.valid());
-        hrc = BusMgr->assignHostPCIDevice("pciraw", pInst, HostPCIAddress, GuestPCIAddress, true);
+        hrc = pBusMgr->assignHostPCIDevice("pciraw", pInst, HostPCIAddress, GuestPCIAddress, true);
         if (hrc != S_OK)
             return hrc;
 
@@ -638,17 +772,18 @@ void Console::attachStatusDriver(PCFGMNODE pCtlInst, PPDMLED *papLeds,
  *  in the emulation thread (EMT). Any per thread COM/XPCOM initialization
  *  is done here.
  *
- *  @param   pVM                 VM handle.
+ *  @param   pUVM                The user mode VM handle.
+ *  @param   pVM                 The cross context VM handle.
  *  @param   pvConsole           Pointer to the VMPowerUpTask object.
  *  @return  VBox status code.
  *
  *  @note Locks the Console object for writing.
  */
-DECLCALLBACK(int) Console::configConstructor(PVM pVM, void *pvConsole)
+DECLCALLBACK(int) Console::configConstructor(PUVM pUVM, PVM pVM, void *pvConsole)
 {
     LogFlowFuncEnter();
 
-    AssertReturn(pvConsole, VERR_GENERAL_FAILURE);
+    AssertReturn(pvConsole, VERR_INVALID_POINTER);
     ComObjPtr<Console> pConsole = static_cast<Console *>(pvConsole);
 
     AutoCaller autoCaller(pConsole);
@@ -661,12 +796,12 @@ DECLCALLBACK(int) Console::configConstructor(PVM pVM, void *pvConsole)
      * Set the VM handle and do the rest of the job in an worker method so we
      * can easily reset the VM handle on failure.
      */
-    PUVM pUVM = pConsole->mpUVM = VMR3GetUVM(pVM);
+    pConsole->mpUVM = pUVM;
     VMR3RetainUVM(pUVM);
     int vrc;
     try
     {
-        vrc = pConsole->configConstructorInner(pVM, &alock);
+        vrc = pConsole->configConstructorInner(pUVM, pVM, &alock);
     }
     catch (...)
     {
@@ -686,23 +821,23 @@ DECLCALLBACK(int) Console::configConstructor(PVM pVM, void *pvConsole)
  * Worker for configConstructor.
  *
  * @return  VBox status code.
- * @param   pVM         The VM handle.
+ * @param   pUVM        The user mode VM handle.
+ * @param   pVM         The cross context VM handle.
  * @param   pAlock      The automatic lock instance.  This is for when we have
  *                      to leave it in order to avoid deadlocks (ext packs and
  *                      more).
  */
-int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
+int Console::configConstructorInner(PUVM pUVM, PVM pVM, AutoWriteLock *pAlock)
 {
-    VMMDev *pVMMDev = m_pVMMDev;
-    Assert(pVMMDev);
-
+    VMMDev         *pVMMDev   = m_pVMMDev; Assert(pVMMDev);
     ComPtr<IMachine> pMachine = machine();
 
     int             rc;
     HRESULT         hrc;
+    Utf8Str         strTmp;
     Bstr            bstr;
 
-#define H()         AssertMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_GENERAL_FAILURE)
+#define H()         AssertLogRelMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_MAIN_CONFIG_CONSTRUCTOR_COM_ERROR)
 
     /*
      * Get necessary objects and frequently used parameters.
@@ -746,7 +881,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         uMcfgBase = _4G - cbRamHole;
     }
 
-    BusAssignmentManager* BusMgr = mBusMgr = BusAssignmentManager::createInstance(chipsetType);
+    BusAssignmentManager *pBusMgr = mBusMgr = BusAssignmentManager::createInstance(chipsetType);
 
     ULONG cCpus = 1;
     hrc = pMachine->COMGETTER(CPUCount)(&cCpus);                                            H();
@@ -756,7 +891,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 
     Bstr osTypeId;
     hrc = pMachine->COMGETTER(OSTypeId)(osTypeId.asOutParam());                             H();
-    LogRel(("OS type: '%s'\n", Utf8Str(osTypeId).c_str()));
+    LogRel(("Guest OS type: '%s'\n", Utf8Str(osTypeId).c_str()));
 
     BOOL fIOAPIC;
     hrc = biosSettings->COMGETTER(IOAPICEnabled)(&fIOAPIC);                                 H();
@@ -774,7 +909,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
      * Get root node first.
      * This is the only node in the tree.
      */
-    PCFGMNODE pRoot = CFGMR3GetRoot(pVM);
+    PCFGMNODE pRoot = CFGMR3GetRootU(pUVM);
     Assert(pRoot);
 
     // InsertConfigString throws
@@ -854,6 +989,14 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             InsertConfigInteger(pCPUM, "NT4LeafLimit", true);
         }
 
+        /* Expose CMPXCHG16B. Currently a hack. */
+        if (   osTypeId == "Windows81_64"
+            || osTypeId == "Windows2012_64")
+        {
+            LogRel(("Enabling CMPXCHG16B for Windows 8.1 / 2k12 guests\n"));
+            InsertConfigInteger(pCPUM, "CMPXCHG16B", true);
+        }
+
         /* Expose extended MWAIT features to Mac OS X guests. */
         if (fOsXGuest)
         {
@@ -861,81 +1004,140 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             InsertConfigInteger(pCPUM, "MWaitExtensions", true);
         }
 
+        if (fOsXGuest)
+        {
+            InsertConfigInteger(pCPUM, "EnableHVP", 1);
+
+            /* Fake the CPU family/model so the guest works.  This is partly
+               because older mac releases really doesn't work on newer cpus,
+               and partly because mac os x expects more from systems with newer
+               cpus (MSRs, power features, whatever). */
+            uint32_t uMaxIntelFamilyModelStep = UINT32_MAX;
+            if (   osTypeId == "MacOS"
+                || osTypeId == "MacOS_64")
+                uMaxIntelFamilyModelStep = RT_MAKE_U32_FROM_U8(1, 23, 6, 7); /* Penryn / X5482. */
+            else if (   osTypeId == "MacOS106"
+                     || osTypeId == "MacOS106_64")
+                uMaxIntelFamilyModelStep = RT_MAKE_U32_FROM_U8(1, 23, 6, 7); /* Penryn / X5482 */
+            else if (   osTypeId == "MacOS107"
+                     || osTypeId == "MacOS107_64")
+                uMaxIntelFamilyModelStep = RT_MAKE_U32_FROM_U8(1, 23, 6, 7); /* Penryn / X5482 */ /** @todo figure out what is required here. */
+            else if (   osTypeId == "MacOS108"
+                     || osTypeId == "MacOS108_64")
+                uMaxIntelFamilyModelStep = RT_MAKE_U32_FROM_U8(1, 23, 6, 7); /* Penryn / X5482 */ /** @todo figure out what is required here. */
+            else if (   osTypeId == "MacOS109"
+                     || osTypeId == "MacOS109_64")
+                uMaxIntelFamilyModelStep = RT_MAKE_U32_FROM_U8(1, 23, 6, 7); /* Penryn / X5482 */ /** @todo figure out what is required here. */
+            if (uMaxIntelFamilyModelStep != UINT32_MAX)
+                InsertConfigInteger(pCPUM, "MaxIntelFamilyModelStep", uMaxIntelFamilyModelStep);
+        }
+
+
+        /* Synthetic CPU */
+        BOOL fSyntheticCpu = false;
+        hrc = pMachine->GetCPUProperty(CPUPropertyType_Synthetic, &fSyntheticCpu);          H();
+        InsertConfigInteger(pCPUM, "SyntheticCpu", fSyntheticCpu);
+
+        /* Physical Address Extension (PAE) */
+        BOOL fEnablePAE = false;
+        hrc = pMachine->GetCPUProperty(CPUPropertyType_PAE, &fEnablePAE);                   H();
+        InsertConfigInteger(pRoot, "EnablePAE", fEnablePAE);
+
+
         /*
          * Hardware virtualization extensions.
          */
-        BOOL fHWVirtExEnabled;
-        BOOL fHwVirtExtForced = false;
+        BOOL fSupportsHwVirtEx;
+        hrc = host->GetProcessorFeature(ProcessorFeature_HWVirtEx, &fSupportsHwVirtEx);     H();
+
+        BOOL fIsGuest64Bit;
+        hrc = pMachine->GetCPUProperty(CPUPropertyType_LongMode, &fIsGuest64Bit);           H();
+        if (fIsGuest64Bit)
+        {
+            BOOL fSupportsLongMode;
+            hrc = host->GetProcessorFeature(ProcessorFeature_LongMode, &fSupportsLongMode); H();
+            if (!fSupportsLongMode)
+            {
+                LogRel(("WARNING! 64-bit guest type selected but the host CPU does NOT support 64-bit.\n"));
+                fIsGuest64Bit = FALSE;
+            }
+            if (!fSupportsHwVirtEx)
+            {
+                LogRel(("WARNING! 64-bit guest type selected but the host CPU does NOT support HW virtualization.\n"));
+                fIsGuest64Bit = FALSE;
+            }
+        }
+
+        BOOL fHMEnabled;
+        hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_Enabled, &fHMEnabled);     H();
+        if (cCpus > 1 && !fHMEnabled)
+        {
+            LogRel(("Forced fHMEnabled to TRUE by SMP guest.\n"));
+            fHMEnabled = TRUE;
+        }
+
+        BOOL fHMForced;
 #ifdef VBOX_WITH_RAW_MODE
-        hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_Enabled, &fHWVirtExEnabled); H();
-        if (cCpus > 1) /** @todo SMP: This isn't nice, but things won't work on mac otherwise. */
-            fHWVirtExEnabled = TRUE;
-# ifdef RT_OS_DARWIN
-        fHwVirtExtForced = fHWVirtExEnabled;
-# else
         /* - With more than 4GB PGM will use different RAMRANGE sizes for raw
              mode and hv mode to optimize lookup times.
-           - With more than one virtual CPU, raw-mode isn't a fallback option. */
-        fHwVirtExtForced = fHWVirtExEnabled
-                        && (   cbRam + cbRamHole > _4G
-                            || cCpus > 1);
+           - With more than one virtual CPU, raw-mode isn't a fallback option.
+           - With a 64-bit guest, raw-mode isn't a fallback option either. */
+        fHMForced = fHMEnabled
+                 && (   cbRam + cbRamHole > _4G
+                     || cCpus > 1
+                     || fIsGuest64Bit);
+# ifdef RT_OS_DARWIN
+        fHMForced = fHMEnabled;
 # endif
-#else  /* !VBOX_WITH_RAW_MODE */
-        fHWVirtExEnabled = fHwVirtExtForced = true;
-#endif /* !VBOX_WITH_RAW_MODE */
-        /* only honor the property value if there was no other reason to enable it */
-        if (!fHwVirtExtForced)
+        if (fHMForced)
         {
-            hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_Force, &fHwVirtExtForced); H();
+            if (cbRam + cbRamHole > _4G)
+                LogRel(("fHMForced=true - Lots of RAM\n"));
+            if (cCpus > 1)
+                LogRel(("fHMForced=true - SMP\n"));
+            if (fIsGuest64Bit)
+                LogRel(("fHMForced=true - 64-bit guest\n"));
+# ifdef RT_OS_DARWIN
+            LogRel(("fHMForced=true - Darwin host\n"));
+# endif
         }
-        InsertConfigInteger(pRoot, "HwVirtExtForced",      fHwVirtExtForced);
-
-
-        /*
-         * MM values.
-         */
-        PCFGMNODE pMM;
-        InsertConfigNode(pRoot, "MM", &pMM);
-        InsertConfigInteger(pMM, "CanUseLargerHeap", chipsetType == ChipsetType_ICH9);
-
-        /*
-         * Hardware virtualization settings.
-         */
-        BOOL        fIsGuest64Bit = false;
-        PCFGMNODE   pHWVirtExt;
-        InsertConfigNode(pRoot, "HWVirtExt", &pHWVirtExt);
-        if (fHWVirtExEnabled)
+#else  /* !VBOX_WITH_RAW_MODE */
+        fHMEnabled = fHMForced = TRUE;
+        LogRel(("fHMForced=true - No raw-mode support in this build!\n"));
+#endif /* !VBOX_WITH_RAW_MODE */
+        if (!fHMForced) /* No need to query if already forced above. */
         {
-            InsertConfigInteger(pHWVirtExt, "Enabled",     1);
+            hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_Force, &fHMForced); H();
+            if (fHMForced)
+                LogRel(("fHMForced=true - HWVirtExPropertyType_Force\n"));
+        }
+        InsertConfigInteger(pRoot, "HMEnabled", fHMEnabled);
 
+        /* /EM/xzy */
+        PCFGMNODE pEM;
+        InsertConfigNode(pRoot, "EM", &pEM);
+
+        /* Triple fault behavior. */
+        BOOL fTripleFaultReset = false;
+        hrc = pMachine->GetCPUProperty(CPUPropertyType_TripleFaultReset, &fTripleFaultReset); H();
+        InsertConfigInteger(pEM, "TripleFaultReset", fTripleFaultReset);
+
+        /* /HM/xzy */
+        PCFGMNODE pHM;
+        InsertConfigNode(pRoot, "HM", &pHM);
+        InsertConfigInteger(pHM, "HMForced", fHMForced);
+        if (fHMEnabled)
+        {
             /* Indicate whether 64-bit guests are supported or not. */
-            /** @todo This is currently only forced off on 32-bit hosts only because it
-             *        makes a lof of difference there (REM and Solaris performance).
-             */
-            BOOL fSupportsLongMode = false;
-            hrc = host->GetProcessorFeature(ProcessorFeature_LongMode,
-                                            &fSupportsLongMode);                            H();
-            hrc = guestOSType->COMGETTER(Is64Bit)(&fIsGuest64Bit);                          H();
-
-            if (fSupportsLongMode && fIsGuest64Bit)
-            {
-                InsertConfigInteger(pHWVirtExt, "64bitEnabled", 1);
+            InsertConfigInteger(pHM, "64bitEnabled", fIsGuest64Bit);
 #if ARCH_BITS == 32 /* The recompiler must use VBoxREM64 (32-bit host only). */
-                PCFGMNODE pREM;
-                InsertConfigNode(pRoot, "REM", &pREM);
-                InsertConfigInteger(pREM, "64bitEnabled", 1);
-#endif
-            }
-#if ARCH_BITS == 32 /* 32-bit guests only. */
-            else
-            {
-                InsertConfigInteger(pHWVirtExt, "64bitEnabled", 0);
-            }
+            PCFGMNODE pREM;
+            InsertConfigNode(pRoot, "REM", &pREM);
+            InsertConfigInteger(pREM, "64bitEnabled", 1);
 #endif
 
             /** @todo Not exactly pretty to check strings; VBOXOSTYPE would be better, but that requires quite a bit of API change in Main. */
-            if (    !fIsGuest64Bit
-                &&  fIOAPIC
+            if (    fIOAPIC
                 &&  (   osTypeId == "WindowsNT4"
                      || osTypeId == "Windows2000"
                      || osTypeId == "WindowsXP"
@@ -944,45 +1146,46 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                 /* Only allow TPR patching for NT, Win2k, XP and Windows Server 2003. (32 bits mode)
                  * We may want to consider adding more guest OSes (Solaris) later on.
                  */
-                InsertConfigInteger(pHWVirtExt, "TPRPatchingEnabled", 1);
+                InsertConfigInteger(pHM, "TPRPatchingEnabled", 1);
             }
         }
 
         /* HWVirtEx exclusive mode */
-        BOOL fHWVirtExExclusive = true;
-        hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_Exclusive, &fHWVirtExExclusive); H();
-        InsertConfigInteger(pHWVirtExt, "Exclusive", fHWVirtExExclusive);
+        BOOL fHMExclusive = true;
+        hrc = systemProperties->COMGETTER(ExclusiveHwVirt)(&fHMExclusive);                  H();
+        InsertConfigInteger(pHM, "Exclusive", fHMExclusive);
 
         /* Nested paging (VT-x/AMD-V) */
         BOOL fEnableNestedPaging = false;
         hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_NestedPaging, &fEnableNestedPaging); H();
-        InsertConfigInteger(pHWVirtExt, "EnableNestedPaging", fEnableNestedPaging);
+        InsertConfigInteger(pHM, "EnableNestedPaging", fEnableNestedPaging);
 
         /* Large pages; requires nested paging */
         BOOL fEnableLargePages = false;
         hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_LargePages, &fEnableLargePages); H();
-        InsertConfigInteger(pHWVirtExt, "EnableLargePages", fEnableLargePages);
+        InsertConfigInteger(pHM, "EnableLargePages", fEnableLargePages);
 
         /* VPID (VT-x) */
         BOOL fEnableVPID = false;
         hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_VPID, &fEnableVPID);       H();
-        InsertConfigInteger(pHWVirtExt, "EnableVPID", fEnableVPID);
+        InsertConfigInteger(pHM, "EnableVPID", fEnableVPID);
 
-        /* Physical Address Extension (PAE) */
-        BOOL fEnablePAE = false;
-        hrc = pMachine->GetCPUProperty(CPUPropertyType_PAE, &fEnablePAE);                   H();
-        InsertConfigInteger(pRoot, "EnablePAE", fEnablePAE);
+        /* Unrestricted execution aka UX (VT-x) */
+        BOOL fEnableUX = false;
+        hrc = pMachine->GetHWVirtExProperty(HWVirtExPropertyType_UnrestrictedExecution, &fEnableUX); H();
+        InsertConfigInteger(pHM, "EnableUX", fEnableUX);
 
-        /* Synthetic CPU */
-        BOOL fSyntheticCpu = false;
-        hrc = pMachine->GetCPUProperty(CPUPropertyType_Synthetic, &fSyntheticCpu);          H();
-        InsertConfigInteger(pCPUM, "SyntheticCpu", fSyntheticCpu);
+        /* Reset overwrite. */
+        if (isResetTurnedIntoPowerOff())
+            InsertConfigInteger(pRoot, "PowerOffInsteadOfReset", 1);
 
-        if (fOsXGuest)
-            InsertConfigInteger(pCPUM, "EnableHVP", 1);
 
-        BOOL fPXEDebug;
-        hrc = biosSettings->COMGETTER(PXEDebugEnabled)(&fPXEDebug);                         H();
+        /*
+         * MM values.
+         */
+        PCFGMNODE pMM;
+        InsertConfigNode(pRoot, "MM", &pMM);
+        InsertConfigInteger(pMM, "CanUseLargerHeap", chipsetType == ChipsetType_ICH9);
 
         /*
          * PDM config.
@@ -1049,7 +1252,11 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 
             hrc = bwGroups[i]->COMGETTER(Name)(strName.asOutParam());                       H();
             hrc = bwGroups[i]->COMGETTER(Type)(&enmType);                                   H();
-            hrc = bwGroups[i]->COMGETTER(MaxBytesPerSec)(&cMaxBytesPerSec);                       H();
+            hrc = bwGroups[i]->COMGETTER(MaxBytesPerSec)(&cMaxBytesPerSec);                 H();
+
+            if (strName.isEmpty())
+                return VMR3SetError(pUVM, VERR_CFGM_NO_NODE, RT_SRC_POS,
+                                    N_("No bandwidth group name specified"));
 
             if (enmType == BandwidthGroupType_Disk)
             {
@@ -1082,6 +1289,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         PCFGMNODE pLunL2 = NULL;        /* /Devices/Dev/0/LUN#0/AttachedDriver/Config/ */
         PCFGMNODE pBiosCfg = NULL;      /* /Devices/pcbios/0/Config/ */
         PCFGMNODE pNetBootCfg = NULL;   /* /Devices/pcbios/0/Config/NetBoot/ */
+        bool fHaveBiosScsiConfig = false;
 
         InsertConfigNode(pRoot, "Devices", &pDevices);
 
@@ -1143,15 +1351,15 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             InsertConfigNode(pDevices, "ich9pcibridge", &pDev);
             InsertConfigNode(pDev,     "0", &pInst);
             InsertConfigInteger(pInst, "Trusted",              1); /* boolean */
-            hrc = BusMgr->assignPCIDevice("ich9pcibridge", pInst);                          H();
+            hrc = pBusMgr->assignPCIDevice("ich9pcibridge", pInst);                         H();
 
             InsertConfigNode(pDev,     "1", &pInst);
             InsertConfigInteger(pInst, "Trusted",              1); /* boolean */
-            hrc = BusMgr->assignPCIDevice("ich9pcibridge", pInst);                          H();
+            hrc = pBusMgr->assignPCIDevice("ich9pcibridge", pInst);                         H();
 
 #ifdef VBOX_WITH_PCI_PASSTHROUGH
             /* Add PCI passthrough devices */
-            hrc = attachRawPCIDevices(pVM, BusMgr, pDevices);                               H();
+            hrc = attachRawPCIDevices(pUVM, pBusMgr, pDevices);                             H();
 #endif
         }
 
@@ -1191,11 +1399,11 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             InsertConfigNode(pInst,    "Config", &pCfg);
 
             bool fGetKeyFromRealSMC;
-            Bstr bstrKey;
-            rc = getSmcDeviceKey(pMachine, bstrKey.asOutParam(), &fGetKeyFromRealSMC);
+            Utf8Str strKey;
+            rc = getSmcDeviceKey(virtualBox, pMachine, &strKey, &fGetKeyFromRealSMC);
             AssertRCReturn(rc, rc);
 
-            InsertConfigString(pCfg,   "DeviceKey", bstrKey);
+            InsertConfigString(pCfg,   "DeviceKey", strKey);
             InsertConfigInteger(pCfg,  "GetKeyFromRealSMC", fGetKeyFromRealSMC);
         }
 
@@ -1209,7 +1417,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         {
             InsertConfigNode(pDevices, "lpc", &pDev);
             InsertConfigNode(pDev,     "0", &pInst);
-            hrc = BusMgr->assignPCIDevice("lpc", pInst);                                    H();
+            hrc = pBusMgr->assignPCIDevice("lpc", pInst);                                   H();
             InsertConfigInteger(pInst, "Trusted",   1); /* boolean */
         }
 
@@ -1235,6 +1443,9 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         Keyboard *pKeyboard = mKeyboard;
         InsertConfigInteger(pCfg,  "Object",     (uintptr_t)pKeyboard);
 
+        Mouse *pMouse = mMouse;
+        PointingHIDType_T aPointingHID;
+        hrc = pMachine->COMGETTER(PointingHIDType)(&aPointingHID);                          H();
         InsertConfigNode(pInst,    "LUN#1", &pLunL0);
         InsertConfigString(pLunL0, "Driver",               "MouseQueue");
         InsertConfigNode(pLunL0,   "Config", &pCfg);
@@ -1243,7 +1454,6 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
         InsertConfigString(pLunL1, "Driver",               "MainMouse");
         InsertConfigNode(pLunL1,   "Config", &pCfg);
-        Mouse *pMouse = mMouse;
         InsertConfigInteger(pCfg,  "Object",     (uintptr_t)pMouse);
 
         /*
@@ -1301,87 +1511,26 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         /*
          * VGA.
          */
-        InsertConfigNode(pDevices, "vga", &pDev);
-        InsertConfigNode(pDev,     "0", &pInst);
-        InsertConfigInteger(pInst, "Trusted",              1); /* boolean */
-
-        hrc = BusMgr->assignPCIDevice("vga", pInst);                                        H();
-        InsertConfigNode(pInst,    "Config", &pCfg);
-        ULONG cVRamMBs;
-        hrc = pMachine->COMGETTER(VRAMSize)(&cVRamMBs);                                     H();
-        InsertConfigInteger(pCfg,  "VRamSize",             cVRamMBs * _1M);
-        ULONG cMonitorCount;
-        hrc = pMachine->COMGETTER(MonitorCount)(&cMonitorCount);                            H();
-        InsertConfigInteger(pCfg,  "MonitorCount",         cMonitorCount);
-#ifdef VBOX_WITH_2X_4GB_ADDR_SPACE
-        InsertConfigInteger(pCfg,  "R0Enabled",            fHWVirtExEnabled);
-#endif
-
-        /*
-         * BIOS logo
-         */
-        BOOL fFadeIn;
-        hrc = biosSettings->COMGETTER(LogoFadeIn)(&fFadeIn);                                H();
-        InsertConfigInteger(pCfg,  "FadeIn",  fFadeIn ? 1 : 0);
-        BOOL fFadeOut;
-        hrc = biosSettings->COMGETTER(LogoFadeOut)(&fFadeOut);                              H();
-        InsertConfigInteger(pCfg,  "FadeOut", fFadeOut ? 1: 0);
-        ULONG logoDisplayTime;
-        hrc = biosSettings->COMGETTER(LogoDisplayTime)(&logoDisplayTime);                   H();
-        InsertConfigInteger(pCfg,  "LogoTime", logoDisplayTime);
-        Bstr logoImagePath;
-        hrc = biosSettings->COMGETTER(LogoImagePath)(logoImagePath.asOutParam());           H();
-        InsertConfigString(pCfg,   "LogoFile", Utf8Str(!logoImagePath.isEmpty() ? logoImagePath : "") );
-
-        /*
-         * Boot menu
-         */
-        BIOSBootMenuMode_T eBootMenuMode;
-        int iShowBootMenu;
-        biosSettings->COMGETTER(BootMenuMode)(&eBootMenuMode);
-        switch (eBootMenuMode)
+        GraphicsControllerType_T graphicsController;
+        hrc = pMachine->COMGETTER(GraphicsControllerType)(&graphicsController);             H();
+        switch (graphicsController)
         {
-            case BIOSBootMenuMode_Disabled: iShowBootMenu = 0;  break;
-            case BIOSBootMenuMode_MenuOnly: iShowBootMenu = 1;  break;
-            default:                        iShowBootMenu = 2;  break;
-        }
-        InsertConfigInteger(pCfg, "ShowBootMenu", iShowBootMenu);
-
-        /* Custom VESA mode list */
-        unsigned cModes = 0;
-        for (unsigned iMode = 1; iMode <= 16; ++iMode)
-        {
-            char szExtraDataKey[sizeof("CustomVideoModeXX")];
-            RTStrPrintf(szExtraDataKey, sizeof(szExtraDataKey), "CustomVideoMode%u", iMode);
-            hrc = pMachine->GetExtraData(Bstr(szExtraDataKey).raw(), bstr.asOutParam());    H();
-            if (bstr.isEmpty())
+            case GraphicsControllerType_Null:
                 break;
-            InsertConfigString(pCfg, szExtraDataKey, bstr);
-            ++cModes;
+            case GraphicsControllerType_VBoxVGA:
+#ifdef VBOX_WITH_VMSVGA
+            case GraphicsControllerType_VMSVGA:
+#endif
+                rc = configGraphicsController(pDevices, graphicsController, pBusMgr, pMachine, biosSettings,
+                                              RT_BOOL(fHMEnabled));
+                if (FAILED(rc))
+                    return rc;
+                break;
+            default:
+                AssertMsgFailed(("Invalid graphicsController=%d\n", graphicsController));
+                return VMR3SetError(pUVM, VERR_INVALID_PARAMETER, RT_SRC_POS,
+                                    N_("Invalid graphics controller type '%d'"), graphicsController);
         }
-        InsertConfigInteger(pCfg, "CustomVideoModes", cModes);
-
-        /* VESA height reduction */
-        ULONG ulHeightReduction;
-        IFramebuffer *pFramebuffer = getDisplay()->getFramebuffer();
-        if (pFramebuffer)
-        {
-            hrc = pFramebuffer->COMGETTER(HeightReduction)(&ulHeightReduction);             H();
-        }
-        else
-        {
-            /* If framebuffer is not available, there is no height reduction. */
-            ulHeightReduction = 0;
-        }
-        InsertConfigInteger(pCfg,  "HeightReduction", ulHeightReduction);
-
-        /* Attach the display. */
-        InsertConfigNode(pInst,    "LUN#0", &pLunL0);
-        InsertConfigString(pLunL0, "Driver",               "MainDisplay");
-        InsertConfigNode(pLunL0,   "Config", &pCfg);
-        Display *pDisplay = mDisplay;
-        InsertConfigInteger(pCfg,  "Object", (uintptr_t)pDisplay);
-
 
         /*
          * Firmware.
@@ -1409,6 +1558,8 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             InsertConfigString(pBiosCfg,   "HardDiskDevice",       "piix3ide");
             InsertConfigString(pBiosCfg,   "FloppyDevice",         "i82078");
             InsertConfigInteger(pBiosCfg,  "IOAPIC",               fIOAPIC);
+            BOOL fPXEDebug;
+            hrc = biosSettings->COMGETTER(PXEDebugEnabled)(&fPXEDebug);                     H();
             InsertConfigInteger(pBiosCfg,  "PXEDebug",             fPXEDebug);
             InsertConfigBytes(pBiosCfg,    "UUID", &HardwareUuid,sizeof(HardwareUuid));
             InsertConfigNode(pBiosCfg,     "NetBoot", &pNetBootCfg);
@@ -1416,12 +1567,8 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             InsertConfigInteger(pBiosCfg,  "McfgLength", cbMcfgLength);
 
             DeviceType_T bootDevice;
-            if (SchemaDefs::MaxBootPosition > 9)
-            {
-                AssertMsgFailed(("Too many boot devices %d\n",
-                                SchemaDefs::MaxBootPosition));
-                return VERR_INVALID_PARAMETER;
-            }
+            AssertMsgReturn(SchemaDefs::MaxBootPosition <= 9, ("Too many boot devices %d\n", SchemaDefs::MaxBootPosition),
+                            VERR_INVALID_PARAMETER);
 
             for (ULONG pos = 1; pos <= SchemaDefs::MaxBootPosition; ++pos)
             {
@@ -1450,11 +1597,16 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                         break;
                     default:
                         AssertMsgFailed(("Invalid bootDevice=%d\n", bootDevice));
-                        return VMSetError(pVM, VERR_INVALID_PARAMETER, RT_SRC_POS,
-                                        N_("Invalid boot device '%d'"), bootDevice);
+                        return VMR3SetError(pUVM, VERR_INVALID_PARAMETER, RT_SRC_POS,
+                                            N_("Invalid boot device '%d'"), bootDevice);
                 }
                 InsertConfigString(pBiosCfg, szParamName, pszBootDevice);
             }
+
+            /** @todo @bugref{7145}: We might want to enable this by default for new VMs. For now,
+             *        this is required for Windows 2012 guests. */
+            if (osTypeId == "Windows2012_64")
+                InsertConfigInteger(pBiosCfg, "DmiExposeMemoryTable", 1); /* boolean */
         }
         else
         {
@@ -1472,29 +1624,29 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             AssertRCReturn(rc, rc);
 
             /* Get boot args */
-            Bstr bootArgs;
-            hrc = pMachine->GetExtraData(Bstr("VBoxInternal2/EfiBootArgs").raw(), bootArgs.asOutParam()); H();
+            Utf8Str bootArgs;
+            GetExtraDataBoth(virtualBox, pMachine, "VBoxInternal2/EfiBootArgs", &bootArgs);
 
             /* Get device props */
-            Bstr deviceProps;
-            hrc = pMachine->GetExtraData(Bstr("VBoxInternal2/EfiDeviceProps").raw(), deviceProps.asOutParam()); H();
+            Utf8Str deviceProps;
+            GetExtraDataBoth(virtualBox, pMachine, "VBoxInternal2/EfiDeviceProps", &deviceProps);
 
             /* Get GOP mode settings */
             uint32_t u32GopMode = UINT32_MAX;
-            hrc = pMachine->GetExtraData(Bstr("VBoxInternal2/EfiGopMode").raw(), bstr.asOutParam()); H();
-            if (!bstr.isEmpty())
-                u32GopMode = Utf8Str(bstr).toUInt32();
+            GetExtraDataBoth(virtualBox, pMachine, "VBoxInternal2/EfiGopMode", &strTmp);
+            if (!strTmp.isEmpty())
+                u32GopMode = strTmp.toUInt32();
 
             /* UGA mode settings */
             uint32_t u32UgaHorisontal = 0;
-            hrc = pMachine->GetExtraData(Bstr("VBoxInternal2/EfiUgaHorizontalResolution").raw(), bstr.asOutParam()); H();
-            if (!bstr.isEmpty())
-                u32UgaHorisontal = Utf8Str(bstr).toUInt32();
+            GetExtraDataBoth(virtualBox, pMachine, "VBoxInternal2/EfiUgaHorizontalResolution", &strTmp);
+            if (!strTmp.isEmpty())
+                u32UgaHorisontal = strTmp.toUInt32();
 
             uint32_t u32UgaVertical = 0;
-            hrc = pMachine->GetExtraData(Bstr("VBoxInternal2/EfiUgaVerticalResolution").raw(), bstr.asOutParam()); H();
-            if (!bstr.isEmpty())
-                u32UgaVertical = Utf8Str(bstr).toUInt32();
+            GetExtraDataBoth(virtualBox, pMachine, "VBoxInternal2/EfiUgaVerticalResolution", &strTmp);
+            if (!strTmp.isEmpty())
+                u32UgaVertical = strTmp.toUInt32();
 
             /*
              * EFI subtree.
@@ -1522,11 +1674,10 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                 InsertConfigInteger(pCfg, "DmiUseHostInfo", 1);
                 InsertConfigInteger(pCfg, "DmiExposeMemoryTable", 1);
             }
-            PCFGMNODE pDrv;
             InsertConfigNode(pInst,    "LUN#0", &pLunL0);
             InsertConfigString(pLunL0, "Driver", "NvramStorage");
             InsertConfigNode(pLunL0,   "Config", &pCfg);
-            InsertConfigInteger(pCfg,  "Object", (uint64_t)mNvram);
+            InsertConfigInteger(pCfg,  "Object", (uintptr_t)mNvram);
 #ifdef DEBUG_vvl
             InsertConfigInteger(pCfg,  "PermanentSave", 1);
 #endif
@@ -1580,13 +1731,31 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             InsertConfigInteger(pCtlInst, "Trusted",   1);
             InsertConfigNode(pCtlInst,    "Config",    &pCfg);
 
+            static const char * const apszBiosConfigScsi[MAX_BIOS_LUN_COUNT] =
+            { "ScsiLUN1", "ScsiLUN2", "ScsiLUN3", "ScsiLUN4" };
+
+            static const char * const apszBiosConfigSata[MAX_BIOS_LUN_COUNT] =
+            { "SataLUN1", "SataLUN2", "SataLUN3", "SataLUN4" };
+
             switch (enmCtrlType)
             {
                 case StorageControllerType_LsiLogic:
                 {
-                    hrc = BusMgr->assignPCIDevice("lsilogic", pCtlInst);                    H();
+                    hrc = pBusMgr->assignPCIDevice("lsilogic", pCtlInst);                   H();
 
                     InsertConfigInteger(pCfg, "Bootable",  fBootable);
+
+                    /* BIOS configuration values, first controller only. */
+                    if (!pBusMgr->hasPCIDevice("lsilogicscsi", 1) && pBiosCfg)
+                    {
+                        if (!fHaveBiosScsiConfig)
+                        {
+                            fHaveBiosScsiConfig = true;
+                            InsertConfigString(pBiosCfg, "ScsiHardDiskDevice", "lsilogicscsi");
+
+                            hrc = SetBiosDiskInfo(pMachine, pCfg, pBiosCfg, controllerName, apszBiosConfigScsi);    H();
+                        }
+                    }
 
                     /* Attach the status driver */
                     Assert(cLedScsi >= 16);
@@ -1598,9 +1767,21 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 
                 case StorageControllerType_BusLogic:
                 {
-                    hrc = BusMgr->assignPCIDevice("buslogic", pCtlInst);                    H();
+                    hrc = pBusMgr->assignPCIDevice("buslogic", pCtlInst);                   H();
 
                     InsertConfigInteger(pCfg, "Bootable",  fBootable);
+
+                    /* BIOS configuration values, first controller only. */
+                    if (!pBusMgr->hasPCIDevice("buslogic", 1) && pBiosCfg)
+                    {
+                        if (!fHaveBiosScsiConfig)
+                        {
+                            fHaveBiosScsiConfig = true;
+                            InsertConfigString(pBiosCfg, "ScsiHardDiskDevice", "buslogic");
+
+                            hrc = SetBiosDiskInfo(pMachine, pCfg, pBiosCfg, controllerName, apszBiosConfigScsi);    H();
+                        }
+                    }
 
                     /* Attach the status driver */
                     Assert(cLedScsi >= 16);
@@ -1612,7 +1793,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 
                 case StorageControllerType_IntelAhci:
                 {
-                    hrc = BusMgr->assignPCIDevice("ahci", pCtlInst);                        H();
+                    hrc = pBusMgr->assignPCIDevice("ahci", pCtlInst);                       H();
 
                     ULONG cPorts = 0;
                     hrc = ctrls[i]->COMGETTER(PortCount)(&cPorts);                          H();
@@ -1620,12 +1801,14 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                     InsertConfigInteger(pCfg, "Bootable",  fBootable);
 
                     /* Needed configuration values for the bios, only first controller. */
-                    if (!BusMgr->hasPCIDevice("ahci", 1))
+                    if (!pBusMgr->hasPCIDevice("ahci", 1))
                     {
                         if (pBiosCfg)
                         {
                             InsertConfigString(pBiosCfg, "SataHardDiskDevice", "ahci");
                         }
+
+                        hrc = SetBiosDiskInfo(pMachine, pCfg, pBiosCfg, controllerName, apszBiosConfigSata);    H();
                     }
 
                     /* Attach the status driver */
@@ -1643,7 +1826,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                     /*
                      * IDE (update this when the main interface changes)
                      */
-                    hrc = BusMgr->assignPCIDevice("piix3ide", pCtlInst);                    H();
+                    hrc = pBusMgr->assignPCIDevice("piix3ide", pCtlInst);                   H();
                     InsertConfigString(pCfg,   "Type", controllerString(enmCtrlType));
                     /* Attach the status driver */
                     Assert(cLedIde >= 4);
@@ -1679,10 +1862,26 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 
                 case StorageControllerType_LsiLogicSas:
                 {
-                    hrc = BusMgr->assignPCIDevice("lsilogicsas", pCtlInst);                 H();
+                    hrc = pBusMgr->assignPCIDevice("lsilogicsas", pCtlInst);                H();
 
                     InsertConfigString(pCfg,  "ControllerType", "SAS1068");
                     InsertConfigInteger(pCfg, "Bootable",  fBootable);
+
+                    /* BIOS configuration values, first controller only. */
+                    if (!pBusMgr->hasPCIDevice("lsilogicsas", 1) && pBiosCfg)
+                    {
+                        if (!fHaveBiosScsiConfig)
+                        {
+                            fHaveBiosScsiConfig = true;
+                            InsertConfigString(pBiosCfg, "ScsiHardDiskDevice", "lsilogicsas");
+
+                            hrc = SetBiosDiskInfo(pMachine, pCfg, pBiosCfg, controllerName, apszBiosConfigScsi);    H();
+                        }
+                    }
+
+                    ULONG cPorts = 0;
+                    hrc = ctrls[i]->COMGETTER(PortCount)(&cPorts);                          H();
+                    InsertConfigInteger(pCfg, "NumPorts", cPorts);
 
                     /* Attach the status driver */
                     Assert(cLedSas >= 8);
@@ -1693,7 +1892,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                 }
 
                 default:
-                    AssertMsgFailedReturn(("invalid storage controller type: %d\n", enmCtrlType), VERR_GENERAL_FAILURE);
+                    AssertLogRelMsgFailedReturn(("invalid storage controller type: %d\n", enmCtrlType), VERR_MAIN_CONFIG_CONSTRUCTOR_IPE);
             }
 
             /* Attach the media to the storage controllers. */
@@ -1724,8 +1923,9 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                                             false /* fAttachDetach */,
                                             false /* fForceUnmount */,
                                             false /* fHotplug */,
-                                            pVM,
-                                            paLedDevType);
+                                            pUVM,
+                                            paLedDevType,
+                                            NULL /* ppLunL0 */);
                 if (RT_FAILURE(rc))
                     return rc;
             }
@@ -1788,9 +1988,9 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                 default:
                     AssertMsgFailed(("Invalid network adapter type '%d' for slot '%d'",
                                     adapterType, ulInstance));
-                    return VMSetError(pVM, VERR_INVALID_PARAMETER, RT_SRC_POS,
-                                      N_("Invalid network adapter type '%d' for slot '%d'"),
-                                      adapterType, ulInstance);
+                    return VMR3SetError(pUVM, VERR_INVALID_PARAMETER, RT_SRC_POS,
+                                        N_("Invalid network adapter type '%d' for slot '%d'"),
+                                        adapterType, ulInstance);
             }
 
             InsertConfigNode(pDev, Utf8StrFmt("%u", ulInstance).c_str(), &pInst);
@@ -1817,7 +2017,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 #ifdef VMWARE_NET_IN_SLOT_11
             /*
              * Dirty hack for PCI slot compatibility with VMWare,
-             * it assigns slot 11 to the first network controller.
+             * it assigns slot 0x11 to the first network controller.
              */
             if (iPCIDeviceNo == 3 && adapterType == NetworkAdapterType_I82545EM)
             {
@@ -1828,7 +2028,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                 iPCIDeviceNo = 3;
 #endif
             PCIBusAddress PCIAddr = PCIBusAddress(0, iPCIDeviceNo, 0);
-            hrc = BusMgr->assignPCIDevice(pszAdapterName, pInst, PCIAddr);                  H();
+            hrc = pBusMgr->assignPCIDevice(pszAdapterName, pInst, PCIAddr);                 H();
 
             InsertConfigNode(pInst, "Config", &pCfg);
 #ifdef VBOX_WITH_2X_4GB_ADDR_SPACE   /* not safe here yet. */ /** @todo Make PCNet ring-0 safe on 32-bit mac kernels! */
@@ -1882,7 +2082,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             char *macStr = (char*)macAddrUtf8.c_str();
             Assert(strlen(macStr) == 12);
             RTMAC Mac;
-            memset(&Mac, 0, sizeof(Mac));
+            RT_ZERO(Mac);
             char *pMac = (char*)&Mac;
             for (uint32_t i = 0; i < 6; ++i)
             {
@@ -2061,7 +2261,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         InsertConfigNode(pDev,     "0", &pInst);
         InsertConfigNode(pInst,    "Config", &pCfg);
         InsertConfigInteger(pInst, "Trusted",              1); /* boolean */
-        hrc = BusMgr->assignPCIDevice("VMMDev", pInst);                                     H();
+        hrc = pBusMgr->assignPCIDevice("VMMDev", pInst);                                    H();
 
         Bstr hwVersion;
         hrc = pMachine->COMGETTER(HardwareVersion)(hwVersion.asOutParam());                 H();
@@ -2118,7 +2318,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                     InsertConfigNode(pDevices, "ichac97", &pDev);
                     InsertConfigNode(pDev,     "0", &pInst);
                     InsertConfigInteger(pInst, "Trusted",          1); /* boolean */
-                    hrc = BusMgr->assignPCIDevice("ichac97", pInst);                        H();
+                    hrc = pBusMgr->assignPCIDevice("ichac97", pInst);                       H();
                     InsertConfigNode(pInst,    "Config", &pCfg);
                     break;
                 }
@@ -2142,7 +2342,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                     InsertConfigNode(pDevices, "hda", &pDev);
                     InsertConfigNode(pDev,     "0", &pInst);
                     InsertConfigInteger(pInst, "Trusted",          1); /* boolean */
-                    hrc = BusMgr->assignPCIDevice("hda", pInst);                            H();
+                    hrc = pBusMgr->assignPCIDevice("hda", pInst);                           H();
                     InsertConfigNode(pInst,    "Config", &pCfg);
                 }
             }
@@ -2227,34 +2427,55 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         }
 
         /*
-         * The USB Controller.
+         * The USB Controllers.
          */
-        ComPtr<IUSBController> USBCtlPtr;
-        hrc = pMachine->COMGETTER(USBController)(USBCtlPtr.asOutParam());
-        if (USBCtlPtr)
+        com::SafeIfaceArray<IUSBController> usbCtrls;
+        hrc = pMachine->COMGETTER(USBControllers)(ComSafeArrayAsOutParam(usbCtrls));        H();
+        bool fOhciPresent = false; /**< Flag whether at least one OHCI controller is presnet. */
+
+        for (size_t i = 0; i < usbCtrls.size(); ++i)
         {
-            BOOL fOhciEnabled;
-            hrc = USBCtlPtr->COMGETTER(Enabled)(&fOhciEnabled);                             H();
-            if (fOhciEnabled)
+            USBControllerType_T enmCtrlType;
+            rc = usbCtrls[i]->COMGETTER(Type)(&enmCtrlType);                                   H();
+            if (enmCtrlType == USBControllerType_OHCI)
             {
-                InsertConfigNode(pDevices, "usb-ohci", &pDev);
-                InsertConfigNode(pDev,     "0", &pInst);
-                InsertConfigNode(pInst,    "Config", &pCfg);
-                InsertConfigInteger(pInst, "Trusted",              1); /* boolean */
-                hrc = BusMgr->assignPCIDevice("usb-ohci", pInst);                           H();
-                InsertConfigNode(pInst,    "LUN#0", &pLunL0);
-                InsertConfigString(pLunL0, "Driver",               "VUSBRootHub");
-                InsertConfigNode(pLunL0,   "Config", &pCfg);
+                fOhciPresent = true;
+                break;
+            }
+        }
 
-                /*
-                 * Attach the status driver.
-                 */
-                attachStatusDriver(pInst, &mapUSBLed[0], 0, 0, NULL, NULL, 0);
+        /*
+         * Currently EHCI is only enabled when a OHCI controller is present too.
+         * This might change when XHCI is supported.
+         */
+        if (fOhciPresent)
+            mfVMHasUsbController = true;
 
+        if (mfVMHasUsbController)
+        {
+            for (size_t i = 0; i < usbCtrls.size(); ++i)
+            {
+                USBControllerType_T enmCtrlType;
+                rc = usbCtrls[i]->COMGETTER(Type)(&enmCtrlType);                                   H();
+
+                if (enmCtrlType == USBControllerType_OHCI)
+                {
+                    InsertConfigNode(pDevices, "usb-ohci", &pDev);
+                    InsertConfigNode(pDev,     "0", &pInst);
+                    InsertConfigNode(pInst,    "Config", &pCfg);
+                    InsertConfigInteger(pInst, "Trusted",              1); /* boolean */
+                    hrc = pBusMgr->assignPCIDevice("usb-ohci", pInst);                          H();
+                    InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+                    InsertConfigString(pLunL0, "Driver",               "VUSBRootHub");
+                    InsertConfigNode(pLunL0,   "Config", &pCfg);
+
+                    /*
+                     * Attach the status driver.
+                     */
+                    attachStatusDriver(pInst, &mapUSBLed[0], 0, 0, NULL, NULL, 0);
+                }
 #ifdef VBOX_WITH_EHCI
-                BOOL fEHCIEnabled;
-                hrc = USBCtlPtr->COMGETTER(EnabledEHCI)(&fEHCIEnabled);                     H();
-                if (fEHCIEnabled)
+                else if (enmCtrlType == USBControllerType_EHCI)
                 {
                     /*
                      * USB 2.0 is only available if the proper ExtPack is installed.
@@ -2273,7 +2494,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                         InsertConfigNode(pDev,     "0", &pInst);
                         InsertConfigNode(pInst,    "Config", &pCfg);
                         InsertConfigInteger(pInst, "Trusted", 1); /* boolean */
-                        hrc = BusMgr->assignPCIDevice("usb-ehci", pInst);                   H();
+                        hrc = pBusMgr->assignPCIDevice("usb-ehci", pInst);                  H();
 
                         InsertConfigNode(pInst,    "LUN#0", &pLunL0);
                         InsertConfigString(pLunL0, "Driver",               "VUSBRootHub");
@@ -2289,7 +2510,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
                     {
                         /* Always fatal! Up to VBox 4.0.4 we allowed to start the VM anyway
                          * but this induced problems when the user saved + restored the VM! */
-                        return VMSetError(pVM, VERR_NOT_FOUND, RT_SRC_POS,
+                        return VMR3SetError(pUVM, VERR_NOT_FOUND, RT_SRC_POS,
                                 N_("Implementation of the USB 2.0 controller not found!\n"
                                    "Because the USB 2.0 controller state is part of the saved "
                                    "VM state, the VM cannot be started. To fix "
@@ -2300,144 +2521,134 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
 # endif
                 }
 #endif
+            } /* for every USB controller. */
 
-                /*
-                 * Virtual USB Devices.
-                 */
-                PCFGMNODE pUsbDevices = NULL;
-                InsertConfigNode(pRoot, "USB", &pUsbDevices);
+
+            /*
+             * Virtual USB Devices.
+             */
+            PCFGMNODE pUsbDevices = NULL;
+            InsertConfigNode(pRoot, "USB", &pUsbDevices);
 
 #ifdef VBOX_WITH_USB
-                {
-                    /*
-                    * Global USB options, currently unused as we'll apply the 2.0 -> 1.1 morphing
-                    * on a per device level now.
-                    */
-                    InsertConfigNode(pUsbDevices, "USBProxy", &pCfg);
-                    InsertConfigNode(pCfg, "GlobalConfig", &pCfg);
-                    // This globally enables the 2.0 -> 1.1 device morphing of proxied devices to keep windows quiet.
-                    //InsertConfigInteger(pCfg, "Force11Device", true);
-                    // The following breaks stuff, but it makes MSDs work in vista. (I include it here so
-                    // that it's documented somewhere.) Users needing it can use:
-                    //      VBoxManage setextradata "myvm" "VBoxInternal/USB/USBProxy/GlobalConfig/Force11PacketSize" 1
-                    //InsertConfigInteger(pCfg, "Force11PacketSize", true);
-                }
-#endif
-
-#ifdef VBOX_WITH_USB_VIDEO
-                BOOL aEmulatedUSBWebcamEnabled = FALSE;
-                hrc = pMachine->COMGETTER(EmulatedUSBWebcameraEnabled)(&aEmulatedUSBWebcamEnabled);    H();
-                if (aEmulatedUSBWebcamEnabled)
-                {
-                    InsertConfigNode(pUsbDevices, "Webcam", &pDev);
-                    InsertConfigNode(pDev,     "0", &pInst);
-                    InsertConfigNode(pInst,    "Config", &pCfg);
-                    InsertConfigNode(pInst,    "LUN#0", &pLunL0);
-# ifdef VBOX_WITH_USB_VIDEO_TEST
-                    InsertConfigString(pLunL0, "Driver", "WebcamFileFeeder");
-                    InsertConfigNode(pLunL0,   "Config", &pCfg);
-                    InsertConfigString(pCfg,   "DirToFeed", "out");
-# else
-                    InsertConfigString(pLunL0, "Driver", "EmWebcam");
-                    InsertConfigNode(pLunL0,   "Config", &pCfg);
-                    InsertConfigInteger(pCfg,  "Object", (uintptr_t)mEmWebcam);
-# endif
-                }
+            {
+                /*
+                 * Global USB options, currently unused as we'll apply the 2.0 -> 1.1 morphing
+                 * on a per device level now.
+                 */
+                InsertConfigNode(pUsbDevices, "USBProxy", &pCfg);
+                InsertConfigNode(pCfg, "GlobalConfig", &pCfg);
+                // This globally enables the 2.0 -> 1.1 device morphing of proxied devices to keep windows quiet.
+                //InsertConfigInteger(pCfg, "Force11Device", true);
+                // The following breaks stuff, but it makes MSDs work in vista. (I include it here so
+                // that it's documented somewhere.) Users needing it can use:
+                //      VBoxManage setextradata "myvm" "VBoxInternal/USB/USBProxy/GlobalConfig/Force11PacketSize" 1
+                //InsertConfigInteger(pCfg, "Force11PacketSize", true);
+            }
 #endif
 
 #ifdef VBOX_WITH_USB_CARDREADER
-                BOOL aEmulatedUSBCardReaderEnabled = FALSE;
-                hrc = pMachine->COMGETTER(EmulatedUSBCardReaderEnabled)(&aEmulatedUSBCardReaderEnabled);    H();
-                if (aEmulatedUSBCardReaderEnabled)
-                {
-                    InsertConfigNode(pUsbDevices, "CardReader", &pDev);
-                    InsertConfigNode(pDev,     "0", &pInst);
-                    InsertConfigNode(pInst,    "Config", &pCfg);
+            BOOL aEmulatedUSBCardReaderEnabled = FALSE;
+            hrc = pMachine->COMGETTER(EmulatedUSBCardReaderEnabled)(&aEmulatedUSBCardReaderEnabled);    H();
+            if (aEmulatedUSBCardReaderEnabled)
+            {
+                InsertConfigNode(pUsbDevices, "CardReader", &pDev);
+                InsertConfigNode(pDev,     "0", &pInst);
+                InsertConfigNode(pInst,    "Config", &pCfg);
 
-                    InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+                InsertConfigNode(pInst,    "LUN#0", &pLunL0);
 # ifdef VBOX_WITH_USB_CARDREADER_TEST
-                    InsertConfigString(pLunL0, "Driver", "DrvDirectCardReader");
-                    InsertConfigNode(pLunL0,   "Config", &pCfg);
+                InsertConfigString(pLunL0, "Driver", "DrvDirectCardReader");
+                InsertConfigNode(pLunL0,   "Config", &pCfg);
 # else
-                    InsertConfigString(pLunL0, "Driver", "UsbCardReader");
-                    InsertConfigNode(pLunL0,   "Config", &pCfg);
-                    InsertConfigInteger(pCfg,  "Object", (uintptr_t)mUsbCardReader);
+                InsertConfigString(pLunL0, "Driver", "UsbCardReader");
+                InsertConfigNode(pLunL0,   "Config", &pCfg);
+                InsertConfigInteger(pCfg,  "Object", (uintptr_t)mUsbCardReader);
 # endif
-                }
+             }
 #endif
 
 # if 0  /* Virtual MSD*/
+            InsertConfigNode(pUsbDevices, "Msd", &pDev);
+            InsertConfigNode(pDev,     "0", &pInst);
+            InsertConfigNode(pInst,    "Config", &pCfg);
+            InsertConfigNode(pInst,    "LUN#0", &pLunL0);
 
-                InsertConfigNode(pUsbDevices, "Msd", &pDev);
-                InsertConfigNode(pDev,     "0", &pInst);
-                InsertConfigNode(pInst,    "Config", &pCfg);
-                InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+            InsertConfigString(pLunL0, "Driver", "SCSI");
+            InsertConfigNode(pLunL0,   "Config", &pCfg);
 
-                InsertConfigString(pLunL0, "Driver", "SCSI");
-                InsertConfigNode(pLunL0,   "Config", &pCfg);
+            InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
+            InsertConfigString(pLunL1, "Driver", "Block");
+            InsertConfigNode(pLunL1,   "Config", &pCfg);
+            InsertConfigString(pCfg,   "Type", "HardDisk");
+            InsertConfigInteger(pCfg,  "Mountable", 0);
 
-                InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
-                InsertConfigString(pLunL1, "Driver", "Block");
-                InsertConfigNode(pLunL1,   "Config", &pCfg);
-                InsertConfigString(pCfg,   "Type", "HardDisk");
-                InsertConfigInteger(pCfg,  "Mountable", 0);
-
-                InsertConfigNode(pLunL1,   "AttachedDriver", &pLunL2);
-                InsertConfigString(pLunL2, "Driver", "VD");
-                InsertConfigNode(pLunL2,   "Config", &pCfg);
-                InsertConfigString(pCfg,   "Path", "/Volumes/DataHFS/bird/VDIs/linux.vdi");
-                InsertConfigString(pCfg,   "Format", "VDI");
+            InsertConfigNode(pLunL1,   "AttachedDriver", &pLunL2);
+            InsertConfigString(pLunL2, "Driver", "VD");
+            InsertConfigNode(pLunL2,   "Config", &pCfg);
+            InsertConfigString(pCfg,   "Path", "/Volumes/DataHFS/bird/VDIs/linux.vdi");
+            InsertConfigString(pCfg,   "Format", "VDI");
 # endif
 
-                /* Virtual USB Mouse/Tablet */
-                PointingHIDType_T aPointingHID;
-                hrc = pMachine->COMGETTER(PointingHIDType)(&aPointingHID);                  H();
-                if (aPointingHID == PointingHIDType_USBMouse || aPointingHID == PointingHIDType_USBTablet)
-                {
-                    InsertConfigNode(pUsbDevices, "HidMouse", &pDev);
-                    InsertConfigNode(pDev,     "0", &pInst);
-                    InsertConfigNode(pInst,    "Config", &pCfg);
+            /* Virtual USB Mouse/Tablet */
+            if (   aPointingHID == PointingHIDType_USBMouse
+                || aPointingHID == PointingHIDType_USBTablet
+                || aPointingHID == PointingHIDType_USBMultiTouch)
+            {
+                InsertConfigNode(pUsbDevices, "HidMouse", &pDev);
+                InsertConfigNode(pDev,     "0", &pInst);
+                InsertConfigNode(pInst,    "Config", &pCfg);
 
-                    if (aPointingHID == PointingHIDType_USBTablet)
-                    {
-                        InsertConfigInteger(pCfg, "Absolute", 1);
-                    }
-                    else
-                    {
-                        InsertConfigInteger(pCfg, "Absolute", 0);
-                    }
-                    InsertConfigNode(pInst,    "LUN#0", &pLunL0);
-                    InsertConfigString(pLunL0, "Driver",        "MouseQueue");
-                    InsertConfigNode(pLunL0,   "Config", &pCfg);
-                    InsertConfigInteger(pCfg,  "QueueSize",            128);
+                if (aPointingHID == PointingHIDType_USBMouse)
+                    InsertConfigString(pCfg,   "Mode", "relative");
+                else
+                    InsertConfigString(pCfg,   "Mode", "absolute");
+                InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+                InsertConfigString(pLunL0, "Driver",        "MouseQueue");
+                InsertConfigNode(pLunL0,   "Config", &pCfg);
+                InsertConfigInteger(pCfg,  "QueueSize",            128);
 
-                    InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
-                    InsertConfigString(pLunL1, "Driver",        "MainMouse");
-                    InsertConfigNode(pLunL1,   "Config", &pCfg);
-                    pMouse = mMouse;
-                    InsertConfigInteger(pCfg,  "Object",     (uintptr_t)pMouse);
-                }
+                InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
+                InsertConfigString(pLunL1, "Driver",        "MainMouse");
+                InsertConfigNode(pLunL1,   "Config", &pCfg);
+                InsertConfigInteger(pCfg,  "Object",     (uintptr_t)pMouse);
+            }
+            if (aPointingHID == PointingHIDType_USBMultiTouch)
+            {
+                InsertConfigNode(pDev,     "1", &pInst);
+                InsertConfigNode(pInst,    "Config", &pCfg);
 
-                /* Virtual USB Keyboard */
-                KeyboardHIDType_T aKbdHID;
-                hrc = pMachine->COMGETTER(KeyboardHIDType)(&aKbdHID);                       H();
-                if (aKbdHID == KeyboardHIDType_USBKeyboard)
-                {
-                    InsertConfigNode(pUsbDevices, "HidKeyboard", &pDev);
-                    InsertConfigNode(pDev,     "0", &pInst);
-                    InsertConfigNode(pInst,    "Config", &pCfg);
+                InsertConfigString(pCfg,   "Mode", "multitouch");
+                InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+                InsertConfigString(pLunL0, "Driver",        "MouseQueue");
+                InsertConfigNode(pLunL0,   "Config", &pCfg);
+                InsertConfigInteger(pCfg,  "QueueSize",            128);
 
-                    InsertConfigNode(pInst,    "LUN#0", &pLunL0);
-                    InsertConfigString(pLunL0, "Driver",               "KeyboardQueue");
-                    InsertConfigNode(pLunL0,   "Config", &pCfg);
-                    InsertConfigInteger(pCfg,  "QueueSize",            64);
+                InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
+                InsertConfigString(pLunL1, "Driver",        "MainMouse");
+                InsertConfigNode(pLunL1,   "Config", &pCfg);
+                InsertConfigInteger(pCfg,  "Object",     (uintptr_t)pMouse);
+            }
 
-                    InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
-                    InsertConfigString(pLunL1, "Driver",               "MainKeyboard");
-                    InsertConfigNode(pLunL1,   "Config", &pCfg);
-                    pKeyboard = mKeyboard;
-                    InsertConfigInteger(pCfg,  "Object",     (uintptr_t)pKeyboard);
-                }
+            /* Virtual USB Keyboard */
+            KeyboardHIDType_T aKbdHID;
+            hrc = pMachine->COMGETTER(KeyboardHIDType)(&aKbdHID);                       H();
+            if (aKbdHID == KeyboardHIDType_USBKeyboard)
+            {
+                InsertConfigNode(pUsbDevices, "HidKeyboard", &pDev);
+                InsertConfigNode(pDev,     "0", &pInst);
+                InsertConfigNode(pInst,    "Config", &pCfg);
+
+                InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+                InsertConfigString(pLunL0, "Driver",               "KeyboardQueue");
+                InsertConfigNode(pLunL0,   "Config", &pCfg);
+                InsertConfigInteger(pCfg,  "QueueSize",            64);
+
+                InsertConfigNode(pLunL0,   "AttachedDriver", &pLunL1);
+                InsertConfigString(pLunL1, "Driver",               "MainKeyboard");
+                InsertConfigNode(pLunL1,   "Config", &pCfg);
+                pKeyboard = mKeyboard;
+                InsertConfigInteger(pCfg,  "Object",     (uintptr_t)pKeyboard);
             }
         }
 
@@ -2542,7 +2753,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             {
                 BOOL fSupports3D = VBoxOglIs3DAccelerationSupported();
                 if (!fSupports3D)
-                    return VMSetError(pVM, VERR_NOT_AVAILABLE, RT_SRC_POS,
+                    return VMR3SetError(pUVM, VERR_NOT_AVAILABLE, RT_SRC_POS,
                             N_("This VM was configured to use 3D acceleration. However, the "
                                "3D support of the host is not working properly and the "
                                "VM cannot be started. To fix this problem, either "
@@ -2588,7 +2799,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
          * Guest property service
          */
 
-        rc = configGuestProperties(this, pVM);
+        rc = configGuestProperties(this, pUVM);
 #endif /* VBOX_WITH_GUEST_PROPS defined */
 
 #ifdef VBOX_WITH_GUEST_CONTROL
@@ -2606,22 +2817,22 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         hrc = biosSettings->COMGETTER(ACPIEnabled)(&fACPI);                                 H();
         if (fACPI)
         {
-            BOOL fCpuHotPlug = false;
-            BOOL fShowCpu = fOsXGuest;
             /* Always show the CPU leafs when we have multiple VCPUs or when the IO-APIC is enabled.
              * The Windows SMP kernel needs a CPU leaf or else its idle loop will burn cpu cycles; the
              * intelppm driver refuses to register an idle state handler.
-             */
-            if ((cCpus > 1) || fIOAPIC)
+             * Always show CPU leafs for OS X guests. */
+            BOOL fShowCpu = fOsXGuest;
+            if (cCpus > 1 || fIOAPIC)
                 fShowCpu = true;
 
+            BOOL fCpuHotPlug;
             hrc = pMachine->COMGETTER(CPUHotPlugEnabled)(&fCpuHotPlug);                     H();
 
             InsertConfigNode(pDevices, "acpi", &pDev);
             InsertConfigNode(pDev,     "0", &pInst);
             InsertConfigInteger(pInst, "Trusted", 1); /* boolean */
             InsertConfigNode(pInst,    "Config", &pCfg);
-            hrc = BusMgr->assignPCIDevice("acpi", pInst);                                   H();
+            hrc = pBusMgr->assignPCIDevice("acpi", pInst);                                  H();
 
             InsertConfigInteger(pCfg,  "RamSize",          cbRam);
             InsertConfigInteger(pCfg,  "RamHoleSize",      cbRamHole);
@@ -2641,7 +2852,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
             if (fOsXGuest && fAudioEnabled)
             {
                 PCIBusAddress Address;
-                if (BusMgr->findPCIAddress("hda", 0, Address))
+                if (pBusMgr->findPCIAddress("hda", 0, Address))
                 {
                     uint32_t u32AudioPCIAddr = (Address.miDevice << 16) | Address.miFn;
                     InsertConfigInteger(pCfg, "AudioPciAddress",    u32AudioPCIAddr);
@@ -2732,6 +2943,10 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
         // InsertConfig threw something:
         return x.m_vrc;
     }
+    catch (HRESULT hrcXcpt)
+    {
+        AssertLogRelMsgFailedReturn(("hrc=%Rhrc\n", hrcXcpt), VERR_MAIN_CONFIG_CONSTRUCTOR_COM_ERROR);
+    }
 
 #ifdef VBOX_WITH_EXTPACK
     /*
@@ -2749,7 +2964,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
      * Apply the CFGM overlay.
      */
     if (RT_SUCCESS(rc))
-        rc = configCfgmOverlay(pVM, virtualBox, pMachine);
+        rc = configCfgmOverlay(pRoot, virtualBox, pMachine);
 
     /*
      * Dump all extradata API settings tweaks, both global and per VM.
@@ -2764,7 +2979,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
     /*
      * Register VM state change handler.
      */
-    int rc2 = VMR3AtStateRegister(pVM, Console::vmstateChangeCallback, this);
+    int rc2 = VMR3AtStateRegister(pUVM, Console::vmstateChangeCallback, this);
     AssertRC(rc2);
     if (RT_SUCCESS(rc))
         rc = rc2;
@@ -2772,7 +2987,7 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
     /*
      * Register VM runtime error handler.
      */
-    rc2 = VMR3AtRuntimeErrorRegister(pVM, Console::setVMRuntimeErrorCallback, this);
+    rc2 = VMR3AtRuntimeErrorRegister(pUVM, Console::setVMRuntimeErrorCallback, this);
     AssertRC(rc2);
     if (RT_SUCCESS(rc))
         rc = rc2;
@@ -2790,12 +3005,12 @@ int Console::configConstructorInner(PVM pVM, AutoWriteLock *pAlock)
  * values.
  *
  * @returns VBox status code.
- * @param   pVM             The VM handle.
+ * @param   pRoot           The root of the configuration tree.
  * @param   pVirtualBox     Pointer to the IVirtualBox interface.
  * @param   pMachine        Pointer to the IMachine interface.
  */
 /* static */
-int Console::configCfgmOverlay(PVM pVM, IVirtualBox *pVirtualBox, IMachine *pMachine)
+int Console::configCfgmOverlay(PCFGMNODE pRoot, IVirtualBox *pVirtualBox, IMachine *pMachine)
 {
     /*
      * CFGM overlay handling.
@@ -2810,8 +3025,7 @@ int Console::configCfgmOverlay(PVM pVM, IVirtualBox *pVirtualBox, IMachine *pMac
      * We first perform a run on global extra data, then on the machine
      * extra data to support global settings with local overrides.
      */
-    PCFGMNODE pRoot = CFGMR3GetRoot(pVM);
-    int       rc    = VINF_SUCCESS;
+    int rc = VINF_SUCCESS;
     try
     {
         /** @todo add support for removing nodes and byte blobs. */
@@ -2863,7 +3077,7 @@ int Console::configCfgmOverlay(PVM pVM, IVirtualBox *pVirtualBox, IMachine *pMac
                 hrc = pMachine->GetExtraData(Bstr(strKey).raw(),
                                              bstrExtraDataValue.asOutParam());
             if (FAILED(hrc))
-                LogRel(("Warning: Cannot get extra data key %s, rc = %Rrc\n", strKey.c_str(), hrc));
+                LogRel(("Warning: Cannot get extra data key %s, rc = %Rhrc\n", strKey.c_str(), hrc));
 
             /*
              * The key will be in the format "Node1/Node2/Value" or simply "Value".
@@ -2915,16 +3129,36 @@ int Console::configCfgmOverlay(PVM pVM, IVirtualBox *pVirtualBox, IMachine *pMac
                 uint64_t u64Value;
 
                 /* check for type prefix first. */
-                if (!strncmp(strCFGMValueUtf8.c_str(), "string:", sizeof("string:") - 1))
+                if (!strncmp(strCFGMValueUtf8.c_str(), RT_STR_TUPLE("string:")))
                     InsertConfigString(pNode, pszCFGMValueName, strCFGMValueUtf8.c_str() + sizeof("string:") - 1);
-                else if (!strncmp(strCFGMValueUtf8.c_str(), "integer:", sizeof("integer:") - 1))
+                else if (!strncmp(strCFGMValueUtf8.c_str(), RT_STR_TUPLE("integer:")))
                 {
                     rc = RTStrToUInt64Full(strCFGMValueUtf8.c_str() + sizeof("integer:") - 1, 0, &u64Value);
                     if (RT_SUCCESS(rc))
                         rc = CFGMR3InsertInteger(pNode, pszCFGMValueName, u64Value);
                 }
-                else if (!strncmp(strCFGMValueUtf8.c_str(), "bytes:", sizeof("bytes:") - 1))
-                    rc = VERR_NOT_IMPLEMENTED;
+                else if (!strncmp(strCFGMValueUtf8.c_str(), RT_STR_TUPLE("bytes:")))
+                {
+                    char const *pszBase64 = strCFGMValueUtf8.c_str() + sizeof("bytes:") - 1;
+                    ssize_t cbValue = RTBase64DecodedSize(pszBase64, NULL);
+                    if (cbValue > 0)
+                    {
+                        void *pvBytes = RTMemTmpAlloc(cbValue);
+                        if (pvBytes)
+                        {
+                            rc = RTBase64Decode(pszBase64, pvBytes, cbValue, NULL, NULL);
+                            if (RT_SUCCESS(rc))
+                                rc = CFGMR3InsertBytes(pNode, pszCFGMValueName, pvBytes, cbValue);
+                            RTMemTmpFree(pvBytes);
+                        }
+                        else
+                            rc = VERR_NO_TMP_MEMORY;
+                    }
+                    else if (cbValue == 0)
+                        rc = CFGMR3InsertBytes(pNode, pszCFGMValueName, NULL, 0);
+                    else
+                        rc = VERR_INVALID_BASE64_ENCODING;
+                }
                 /* auto detect type. */
                 else if (RT_SUCCESS(RTStrToUInt64Full(strCFGMValueUtf8.c_str(), 0, &u64Value)))
                     rc = CFGMR3InsertInteger(pNode, pszCFGMValueName, u64Value);
@@ -3002,15 +3236,146 @@ int Console::configDumpAPISettingsTweaks(IVirtualBox *pVirtualBox, IMachine *pMa
     return VINF_SUCCESS;
 }
 
+int Console::configGraphicsController(PCFGMNODE pDevices,
+                                      const GraphicsControllerType_T graphicsController,
+                                      BusAssignmentManager *pBusMgr,
+                                      const ComPtr<IMachine> &pMachine,
+                                      const ComPtr<IBIOSSettings> &biosSettings,
+                                      bool fHMEnabled)
+{
+    // InsertConfig* throws
+    try
+    {
+        PCFGMNODE pDev, pInst, pCfg, pLunL0;
+        HRESULT hrc;
+        Bstr    bstr;
+        const char *pcszDevice = "vga";
+
+#define H()         AssertLogRelMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_MAIN_CONFIG_CONSTRUCTOR_COM_ERROR)
+        InsertConfigNode(pDevices, pcszDevice, &pDev);
+        InsertConfigNode(pDev,     "0", &pInst);
+        InsertConfigInteger(pInst, "Trusted",              1); /* boolean */
+
+        hrc = pBusMgr->assignPCIDevice(pcszDevice, pInst);                                  H();
+        InsertConfigNode(pInst,    "Config", &pCfg);
+        ULONG cVRamMBs;
+        hrc = pMachine->COMGETTER(VRAMSize)(&cVRamMBs);                                     H();
+        InsertConfigInteger(pCfg,  "VRamSize",             cVRamMBs * _1M);
+        ULONG cMonitorCount;
+        hrc = pMachine->COMGETTER(MonitorCount)(&cMonitorCount);                            H();
+        InsertConfigInteger(pCfg,  "MonitorCount",         cMonitorCount);
+#ifdef VBOX_WITH_2X_4GB_ADDR_SPACE
+        InsertConfigInteger(pCfg,  "R0Enabled",            fHMEnabled);
+#else
+        NOREF(fHMEnabled);
+#endif
+
+#ifdef VBOX_WITH_VMSVGA
+        if (graphicsController == GraphicsControllerType_VMSVGA)
+        {
+            InsertConfigInteger(pCfg, "VMSVGAEnabled", true);
+#ifdef VBOX_WITH_VMSVGA3D
+            IFramebuffer *pFramebuffer = getDisplay()->getFramebuffer();
+            if (pFramebuffer)
+            {
+                LONG64 winId = 0;
+                /* @todo deal with multimonitor setup */
+                Assert(cMonitorCount == 1);
+                hrc = pFramebuffer->COMGETTER(WinId)(&winId);
+                InsertConfigInteger(pCfg, "HostWindowId", winId);
+            }
+            BOOL f3DEnabled;
+            pMachine->COMGETTER(Accelerate3DEnabled)(&f3DEnabled);
+            InsertConfigInteger(pCfg, "VMSVGA3dEnabled", f3DEnabled);
+#endif
+        }
+#endif
+
+        /* Custom VESA mode list */
+        unsigned cModes = 0;
+        for (unsigned iMode = 1; iMode <= 16; ++iMode)
+        {
+            char szExtraDataKey[sizeof("CustomVideoModeXX")];
+            RTStrPrintf(szExtraDataKey, sizeof(szExtraDataKey), "CustomVideoMode%u", iMode);
+            hrc = pMachine->GetExtraData(Bstr(szExtraDataKey).raw(), bstr.asOutParam());    H();
+            if (bstr.isEmpty())
+                break;
+            InsertConfigString(pCfg, szExtraDataKey, bstr);
+            ++cModes;
+        }
+        InsertConfigInteger(pCfg, "CustomVideoModes", cModes);
+
+        /* VESA height reduction */
+        ULONG ulHeightReduction;
+        IFramebuffer *pFramebuffer = getDisplay()->getFramebuffer();
+        if (pFramebuffer)
+        {
+            hrc = pFramebuffer->COMGETTER(HeightReduction)(&ulHeightReduction);             H();
+        }
+        else
+        {
+            /* If framebuffer is not available, there is no height reduction. */
+            ulHeightReduction = 0;
+        }
+        InsertConfigInteger(pCfg,  "HeightReduction", ulHeightReduction);
+
+        /*
+         * BIOS logo
+         */
+        BOOL fFadeIn;
+        hrc = biosSettings->COMGETTER(LogoFadeIn)(&fFadeIn);                                H();
+        InsertConfigInteger(pCfg,  "FadeIn",  fFadeIn ? 1 : 0);
+        BOOL fFadeOut;
+        hrc = biosSettings->COMGETTER(LogoFadeOut)(&fFadeOut);                              H();
+        InsertConfigInteger(pCfg,  "FadeOut", fFadeOut ? 1: 0);
+        ULONG logoDisplayTime;
+        hrc = biosSettings->COMGETTER(LogoDisplayTime)(&logoDisplayTime);                   H();
+        InsertConfigInteger(pCfg,  "LogoTime", logoDisplayTime);
+        Bstr logoImagePath;
+        hrc = biosSettings->COMGETTER(LogoImagePath)(logoImagePath.asOutParam());           H();
+        InsertConfigString(pCfg,   "LogoFile", Utf8Str(!logoImagePath.isEmpty() ? logoImagePath : "") );
+
+        /*
+         * Boot menu
+         */
+        BIOSBootMenuMode_T eBootMenuMode;
+        int iShowBootMenu;
+        biosSettings->COMGETTER(BootMenuMode)(&eBootMenuMode);
+        switch (eBootMenuMode)
+        {
+            case BIOSBootMenuMode_Disabled: iShowBootMenu = 0;  break;
+            case BIOSBootMenuMode_MenuOnly: iShowBootMenu = 1;  break;
+            default:                        iShowBootMenu = 2;  break;
+        }
+        InsertConfigInteger(pCfg, "ShowBootMenu", iShowBootMenu);
+
+        /* Attach the display. */
+        InsertConfigNode(pInst,    "LUN#0", &pLunL0);
+        InsertConfigString(pLunL0, "Driver",               "MainDisplay");
+        InsertConfigNode(pLunL0,   "Config", &pCfg);
+        Display *pDisplay = mDisplay;
+        InsertConfigInteger(pCfg,  "Object", (uintptr_t)pDisplay);
+    }
+    catch (ConfigError &x)
+    {
+        // InsertConfig threw something:
+        return x.m_vrc;
+    }
+
+#undef H
+
+    return VINF_SUCCESS;
+}
+
+
 /**
  * Ellipsis to va_list wrapper for calling setVMRuntimeErrorCallback.
  */
-/*static*/
-void Console::setVMRuntimeErrorCallbackF(PVM pVM, void *pvConsole, uint32_t fFlags, const char *pszErrorId, const char *pszFormat, ...)
+void Console::setVMRuntimeErrorCallbackF(uint32_t fFlags, const char *pszErrorId, const char *pszFormat, ...)
 {
     va_list va;
     va_start(va, pszFormat);
-    setVMRuntimeErrorCallback(pVM, pvConsole, fFlags, pszErrorId, pszFormat, va);
+    setVMRuntimeErrorCallback(NULL, this, fFlags, pszErrorId, pszFormat, va);
     va_end(va);
 }
 
@@ -3049,8 +3414,9 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                                     bool fAttachDetach,
                                     bool fForceUnmount,
                                     bool fHotplug,
-                                    PVM pVM,
-                                    DeviceType_T *paLedDevType)
+                                    PUVM pUVM,
+                                    DeviceType_T *paLedDevType,
+                                    PCFGMNODE *ppLunL0)
 {
     // InsertConfig* throws
     try
@@ -3060,7 +3426,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
         Bstr    bstr;
 
 // #define RC_CHECK()  AssertMsgReturn(RT_SUCCESS(rc), ("rc=%Rrc\n", rc), rc)
-#define H()         AssertMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_GENERAL_FAILURE)
+#define H()         AssertLogRelMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_MAIN_CONFIG_CONSTRUCTOR_COM_ERROR)
 
         LONG lDev;
         hrc = pMediumAtt->COMGETTER(Device)(&lDev);                                         H();
@@ -3087,7 +3453,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                 {
                     /* Unmount existing media only for floppy and DVD drives. */
                     PPDMIBASE pBase;
-                    rc = PDMR3QueryLun(pVM, pcszDevice, uInstance, uLUN, &pBase);
+                    rc = PDMR3QueryLun(pUVM, pcszDevice, uInstance, uLUN, &pBase);
                     if (RT_FAILURE(rc))
                     {
                         if (rc == VERR_PDM_LUN_NOT_FOUND || rc == VERR_PDM_NO_DRIVER_ATTACHED_TO_LUN)
@@ -3109,7 +3475,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                     }
                 }
 
-                rc = PDMR3DeviceDetach(pVM, pcszDevice, uInstance, uLUN, fHotplug ? 0 : PDM_TACH_FLAGS_NOT_HOT_PLUG);
+                rc = PDMR3DeviceDetach(pUVM, pcszDevice, uInstance, uLUN, fHotplug ? 0 : PDM_TACH_FLAGS_NOT_HOT_PLUG);
                 if (rc == VERR_PDM_NO_DRIVER_ATTACHED_TO_LUN)
                     rc = VINF_SUCCESS;
                 AssertRCReturn(rc, rc);
@@ -3121,6 +3487,8 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
         }
 
         InsertConfigNode(pCtlInst, Utf8StrFmt("LUN#%u", uLUN).c_str(), &pLunL0);
+        if (ppLunL0)
+            *ppLunL0 = pLunL0;
 
         PCFGMNODE pCfg = CFGMR3GetChild(pCtlInst, "Config");
         if (pCfg)
@@ -3179,8 +3547,13 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
              */
             ComPtr<IMediumFormat> pMediumFormat;
             hrc = pMedium->COMGETTER(MediumFormat)(pMediumFormat.asOutParam());             H();
-            ULONG uCaps;
-            hrc = pMediumFormat->COMGETTER(Capabilities)(&uCaps);                           H();
+            ULONG uCaps = 0;
+            com::SafeArray <MediumFormatCapabilities_T> mediumFormatCap;
+            hrc = pMediumFormat->COMGETTER(Capabilities)(ComSafeArrayAsOutParam(mediumFormatCap));    H();
+
+            for (ULONG j = 0; j < mediumFormatCap.size(); j++)
+                uCaps |= mediumFormatCap[j];
+
             if (uCaps & MediumFormatCapabilities_File)
             {
                 Bstr strFile;
@@ -3213,8 +3586,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                 {
                     const char *pszUnit;
                     uint64_t u64Print = formatDiskSize((uint64_t)i64Size, &pszUnit);
-                    setVMRuntimeErrorCallbackF(pVM, this, 0,
-                            "FatPartitionDetected",
+                    setVMRuntimeErrorCallbackF(0, "FatPartitionDetected",
                             N_("The medium '%ls' has a logical size of %RU64%s "
                             "but the file system the medium is located on seems "
                             "to be FAT(32) which cannot handle files bigger than 4GB.\n"
@@ -3245,8 +3617,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                             const char *pszUnitMax;
                             uint64_t u64PrintSiz = formatDiskSize((LONG64)i64Size, &pszUnitSiz);
                             uint64_t u64PrintMax = formatDiskSize(maxSize, &pszUnitMax);
-                            setVMRuntimeErrorCallbackF(pVM, this, 0,
-                                    "FatPartitionDetected", /* <= not exact but ... */
+                            setVMRuntimeErrorCallbackF(0, "FatPartitionDetected", /* <= not exact but ... */
                                     N_("The medium '%ls' has a logical size of %RU64%s "
                                     "but the file system the medium is located on can "
                                     "only handle files up to %RU64%s in theory.\n"
@@ -3269,8 +3640,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                 {
                     const char *pszUnit;
                     uint64_t u64Print = formatDiskSize(i64Size, &pszUnit);
-                    setVMRuntimeErrorCallbackF(pVM, this, 0,
-                            "FatPartitionDetected",
+                    setVMRuntimeErrorCallbackF(0, "FatPartitionDetected",
 #ifdef RT_OS_WINDOWS
                             N_("The snapshot folder of this VM '%ls' seems to be located on "
                             "a FAT(32) file system. The logical size of the medium '%ls' "
@@ -3311,8 +3681,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                     if (   enmFsTypeFile == RTFSTYPE_EXT4
                         || enmFsTypeFile == RTFSTYPE_XFS)
                     {
-                        setVMRuntimeErrorCallbackF(pVM, this, 0,
-                                "Ext4PartitionDetected",
+                        setVMRuntimeErrorCallbackF(0, "Ext4PartitionDetected",
                                 N_("The host I/O cache for at least one controller is disabled "
                                    "and the medium '%ls' for this VM "
                                    "is located on an %s partition. There is a known Linux "
@@ -3329,8 +3698,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
                                 || enmFsTypeSnap == RTFSTYPE_XFS)
                              && !mfSnapshotFolderExt4WarningShown)
                     {
-                        setVMRuntimeErrorCallbackF(pVM, this, 0,
-                                "Ext4PartitionDetected",
+                        setVMRuntimeErrorCallbackF(0, "Ext4PartitionDetected",
                                 N_("The host I/O cache for at least one controller is disabled "
                                    "and the snapshot folder for this VM "
                                    "is located on an %s partition. There is a known Linux "
@@ -3349,19 +3717,17 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
             }
         }
 
-        if (   pMedium
-            && (   lType == DeviceType_DVD
-                || lType == DeviceType_Floppy))
+        if (pMedium)
         {
-            /*
-             * Informative logging.
-             */
-            ComPtr<IMediumFormat> pMediumFormat;
-            hrc = pMedium->COMGETTER(MediumFormat)(pMediumFormat.asOutParam());             H();
-            ULONG uCaps;
-            hrc = pMediumFormat->COMGETTER(Capabilities)(&uCaps);                           H();
-            if (uCaps & MediumFormatCapabilities_File)
+            BOOL fHostDrive;
+            hrc = pMedium->COMGETTER(HostDrive)(&fHostDrive);                               H();
+            if (  (   lType == DeviceType_DVD
+                   || lType == DeviceType_Floppy)
+                && !fHostDrive)
             {
+                /*
+                 * Informative logging.
+                 */
                 Bstr strFile;
                 hrc = pMedium->COMGETTER(Location)(strFile.asOutParam());                   H();
                 Utf8Str utfFile = Utf8Str(strFile);
@@ -3404,8 +3770,8 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
         if (fAttachDetach)
         {
             /* Attach the new driver. */
-            rc = PDMR3DeviceAttach(pVM, pcszDevice, uInstance, uLUN,
-                                fHotplug ? 0 : PDM_TACH_FLAGS_NOT_HOT_PLUG, NULL /*ppBase*/);
+            rc = PDMR3DeviceAttach(pUVM, pcszDevice, uInstance, uLUN,
+                                   fHotplug ? 0 : PDM_TACH_FLAGS_NOT_HOT_PLUG, NULL /*ppBase*/);
             AssertRCReturn(rc, rc);
 
             /* There is no need to handle removable medium mounting, as we
@@ -3424,7 +3790,7 @@ int Console::configMediumAttachment(PCFGMNODE pCtlInst,
 
 #undef H
 
-    return VINF_SUCCESS;;
+    return VINF_SUCCESS;
 }
 
 int Console::configMedium(PCFGMNODE pLunL0,
@@ -3521,10 +3887,7 @@ int Console::configMedium(PCFGMNODE pLunL0,
                 {
                     Bstr loc;
                     hrc = pMedium->COMGETTER(Location)(loc.asOutParam());                   H();
-                    setVMRuntimeErrorCallbackF(VMR3GetVM(mpUVM),
-                                               this,
-                                               0,
-                                               "DvdOrFloppyImageInaccessible",
+                    setVMRuntimeErrorCallbackF(0, "DvdOrFloppyImageInaccessible",
                                                "The image file '%ls' is inaccessible and is being ignored. Please select a different image file for the virtual %s drive.",
                                                loc.raw(),
                                                enmType == DeviceType_DVD ? "DVD" : "floppy");
@@ -3556,6 +3919,26 @@ int Console::configMedium(PCFGMNODE pLunL0,
                 InsertConfigNode(pLunL0, "AttachedDriver", &pLunL1);
                 InsertConfigString(pLunL1, "Driver", "VD");
                 InsertConfigNode(pLunL1, "Config", &pCfg);
+
+# ifdef VBOX_WITH_EXTPACK
+                static const Utf8Str strExtPackPuel("Oracle VM VirtualBox Extension Pack");
+                static const char *s_pszVDPlugin = "VDPluginCrypt";
+                if (mptrExtPackManager->isExtPackUsable(strExtPackPuel.c_str()))
+                {
+                    /* Configure loading the VDPlugin. */
+                    PCFGMNODE pCfgPlugins = NULL;
+                    PCFGMNODE pCfgPlugin = NULL;
+                    Utf8Str strPlugin;
+                    hrc = mptrExtPackManager->getLibraryPathForExtPack(s_pszVDPlugin, &strExtPackPuel, &strPlugin);
+                    // Don't fail, this is optional!
+                    if (SUCCEEDED(hrc))
+                    {
+                        InsertConfigNode(pCfg, "Plugins", &pCfgPlugins);
+                        InsertConfigNode(pCfgPlugins, s_pszVDPlugin, &pCfgPlugin);
+                        InsertConfigString(pCfgPlugin, "Path", strPlugin.c_str());
+                    }
+                }
+# endif
 
                 hrc = pMedium->COMGETTER(Location)(bstr.asOutParam());                      H();
                 InsertConfigString(pCfg, "Path", bstr);
@@ -3645,12 +4028,32 @@ int Console::configMedium(PCFGMNODE pLunL0,
                     {
                         if (values[ii] && *values[ii])
                         {
+                            /* Put properties of filters in a separate config node. */
                             Utf8Str name = names[ii];
                             Utf8Str value = values[ii];
-                            InsertConfigString(pVDC, name.c_str(), value);
-                            if (    name.compare("HostIPStack") == 0
-                                &&  value.compare("0") == 0)
-                                fHostIP = false;
+                            size_t offSlash = name.find("/", 0);
+                            if (   offSlash != name.npos
+                                && !name.startsWith("Special/"))
+                            {
+                                com::Utf8Str strFilter;
+                                com::Utf8Str strKey;
+
+                                hrc = strFilter.assignEx(name, 0, offSlash); H();
+                                hrc = strKey.assignEx(name, offSlash + 1, name.length() - offSlash - 1); /* Skip slash */ H();
+
+                                PCFGMNODE pCfgFilterConfig = CFGMR3GetChild(pVDC, strFilter.c_str());
+                                if (!pCfgFilterConfig)
+                                    InsertConfigNode(pVDC, strFilter.c_str(), &pCfgFilterConfig);
+
+                                InsertConfigString(pCfgFilterConfig, strKey.c_str(), value);
+                            }
+                            else
+                            {
+                                InsertConfigString(pVDC, name.c_str(), value);
+                                if (    name.compare("HostIPStack") == 0
+                                    &&  value.compare("0") == 0)
+                                    fHostIP = false;
+                            }
                         }
                     }
                 }
@@ -3769,7 +4172,7 @@ int Console::configNetwork(const char *pszDevice,
         HRESULT hrc;
         Bstr bstr;
 
-#define H()         AssertMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_GENERAL_FAILURE)
+#define H()         AssertLogRelMsgReturn(!FAILED(hrc), ("hrc=%Rhrc\n", hrc), VERR_MAIN_CONFIG_CONSTRUCTOR_COM_ERROR)
 
         /*
          * Locking the object before doing VMR3* calls is quite safe here, since
@@ -3777,8 +4180,6 @@ int Console::configNetwork(const char *pszDevice,
          * meAttachmentType member.
          */
         AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-
-        PVM pVM = VMR3GetVM(mpUVM);     /* We're on an EMT, so this is safe. */
 
         ComPtr<IMachine> pMachine = machine();
 
@@ -3804,7 +4205,7 @@ int Console::configNetwork(const char *pszDevice,
 
         if (fAttachDetach)
         {
-            rc = PDMR3DeviceDetach(pVM, pszDevice, uInstance, uLun, 0 /*fFlags*/);
+            rc = PDMR3DeviceDetach(mpUVM, pszDevice, uInstance, uLun, 0 /*fFlags*/);
             if (rc == VINF_PDM_NO_DRIVER_ATTACHED_TO_LUN)
                 rc = VINF_SUCCESS;
             AssertLogRelRCReturn(rc, rc);
@@ -3981,6 +4382,10 @@ int Console::configNetwork(const char *pszDevice,
                     if (!fValid)
                         continue;
 
+                    if (strName.isEmpty())
+                        VMSetError(VMR3GetVM(mpUVM), VERR_CFGM_NO_NODE, RT_SRC_POS,
+                                   N_("NAT redirection rule without a name"));
+
                     InsertConfigNode(pCfg, strName.c_str(), &pPF);
                     InsertConfigString(pPF, "Protocol", strProto);
 
@@ -4010,7 +4415,7 @@ int Console::configNetwork(const char *pszDevice,
                     switch (hrc)
                     {
                         case VERR_ACCESS_DENIED:
-                            return VMSetError(pVM, VERR_HOSTIF_INIT_FAILED, RT_SRC_POS,  N_(
+                            return VMSetError(VMR3GetVM(mpUVM), VERR_HOSTIF_INIT_FAILED, RT_SRC_POS,  N_(
                                             "Failed to open '/dev/net/tun' for read/write access. Please check the "
                                             "permissions of that node. Either run 'chmod 0666 /dev/net/tun' or "
                                             "change the group of that node and make yourself a member of that group. Make "
@@ -4018,7 +4423,7 @@ int Console::configNetwork(const char *pszDevice,
                                             "using udev"));
                         default:
                             AssertMsgFailed(("Could not attach to host interface! Bad!\n"));
-                            return VMSetError(pVM, VERR_HOSTIF_INIT_FAILED, RT_SRC_POS, N_(
+                            return VMSetError(VMR3GetVM(mpUVM), VERR_HOSTIF_INIT_FAILED, RT_SRC_POS, N_(
                                             "Failed to initialize Host Interface Networking"));
                     }
                 }
@@ -4039,7 +4444,7 @@ int Console::configNetwork(const char *pszDevice,
                 hrc = aNetworkAdapter->COMGETTER(BridgedInterface)(BridgedIfName.asOutParam());
                 if (FAILED(hrc))
                 {
-                    LogRel(("NetworkAttachmentType_Bridged: COMGETTER(BridgedInterface) failed, hrc (0x%x)", hrc));
+                    LogRel(("NetworkAttachmentType_Bridged: COMGETTER(BridgedInterface) failed, hrc (0x%x)\n", hrc));
                     H();
                 }
 
@@ -4061,7 +4466,7 @@ int Console::configNetwork(const char *pszDevice,
 //                     * See @bugref{4750}.
 //                     * hrc = aNetworkAdapter->Detach();                                   H();
 //                     */
-//                     return VMSetError(pVM, VERR_INTERNAL_ERROR, RT_SRC_POS,
+//                     return VMSetError(VMR3GetVM(mpUVM), VERR_INTERNAL_ERROR, RT_SRC_POS,
 //                                       N_("Malformed host interface networking name '%ls'"),
 //                                       BridgedIfName.raw());
 //                 }
@@ -4097,7 +4502,7 @@ int Console::configNetwork(const char *pszDevice,
                 if (!SUCCEEDED(hrc))
                 {
                     AssertLogRelMsgFailed(("NetworkAttachmentType_Bridged: FindByName failed, rc=%Rhrc (0x%x)", hrc, hrc));
-                    return VMSetError(pVM, VERR_INTERNAL_ERROR, RT_SRC_POS,
+                    return VMSetError(VMR3GetVM(mpUVM), VERR_INTERNAL_ERROR, RT_SRC_POS,
                                       N_("Nonexistent host networking interface, name '%ls'"),
                                       BridgedIfName.raw());
                 }
@@ -4106,13 +4511,13 @@ int Console::configNetwork(const char *pszDevice,
                 hrc = hostInterface->COMGETTER(InterfaceType)(&eIfType);
                 if (FAILED(hrc))
                 {
-                    LogRel(("NetworkAttachmentType_Bridged: COMGETTER(InterfaceType) failed, hrc (0x%x)", hrc));
+                    LogRel(("NetworkAttachmentType_Bridged: COMGETTER(InterfaceType) failed, hrc (0x%x)\n", hrc));
                     H();
                 }
 
                 if (eIfType != HostNetworkInterfaceType_Bridged)
                 {
-                    return VMSetError(pVM, VERR_INTERNAL_ERROR, RT_SRC_POS,
+                    return VMSetError(VMR3GetVM(mpUVM), VERR_INTERNAL_ERROR, RT_SRC_POS,
                                       N_("Interface ('%ls') is not a Bridged Adapter interface"),
                                       BridgedIfName.raw());
                 }
@@ -4120,7 +4525,7 @@ int Console::configNetwork(const char *pszDevice,
                 hrc = hostInterface->COMGETTER(Id)(bstr.asOutParam());
                 if (FAILED(hrc))
                 {
-                    LogRel(("NetworkAttachmentType_Bridged: COMGETTER(Id) failed, hrc (0x%x)", hrc));
+                    LogRel(("NetworkAttachmentType_Bridged: COMGETTER(Id) failed, hrc (0x%x)\n", hrc));
                     H();
                 }
                 Guid hostIFGuid(bstr);
@@ -4142,7 +4547,7 @@ int Console::configNetwork(const char *pszDevice,
                 if (hrc != S_OK)
                 {
                     VBoxNetCfgWinReleaseINetCfg(pNc, FALSE /*fHasWriteLock*/);
-                    LogRel(("NetworkAttachmentType_Bridged: VBoxNetCfgWinGetComponentByGuid failed, hrc (0x%x)", hrc));
+                    LogRel(("NetworkAttachmentType_Bridged: VBoxNetCfgWinGetComponentByGuid failed, hrc (0x%x)\n", hrc));
                     H();
                 }
 #define VBOX_WIN_BINDNAME_PREFIX "\\DEVICE\\"
@@ -4202,14 +4607,14 @@ int Console::configNetwork(const char *pszDevice,
                  * This works and performs better than bridging a physical
                  * interface via the current FreeBSD vboxnetflt implementation.
                  */
-                if (!strncmp(pszBridgedIfName, "tap", sizeof "tap" - 1)) {
+                if (!strncmp(pszBridgedIfName, RT_STR_TUPLE("tap"))) {
                     hrc = attachToTapInterface(aNetworkAdapter);
                     if (FAILED(hrc))
                     {
                         switch (hrc)
                         {
                             case VERR_ACCESS_DENIED:
-                                return VMSetError(pVM, VERR_HOSTIF_INIT_FAILED, RT_SRC_POS,  N_(
+                                return VMSetError(VMR3GetVM(mpUVM), VERR_HOSTIF_INIT_FAILED, RT_SRC_POS,  N_(
                                                 "Failed to open '/dev/%s' for read/write access.  Please check the "
                                                 "permissions of that node, and that the net.link.tap.user_open "
                                                 "sysctl is set.  Either run 'chmod 0666 /dev/%s' or "
@@ -4217,7 +4622,7 @@ int Console::configNetwork(const char *pszDevice,
                                                 "a member of that group.  Make sure that these changes are permanent."), pszBridgedIfName, pszBridgedIfName);
                             default:
                                 AssertMsgFailed(("Could not attach to tap interface! Bad!\n"));
-                                return VMSetError(pVM, VERR_HOSTIF_INIT_FAILED, RT_SRC_POS, N_(
+                                return VMSetError(VMR3GetVM(mpUVM), VERR_HOSTIF_INIT_FAILED, RT_SRC_POS, N_(
                                                 "Failed to initialize Host Interface Networking"));
                         }
                     }
@@ -4242,12 +4647,12 @@ int Console::configNetwork(const char *pszDevice,
                     {
                         struct ifreq Req;
                         RT_ZERO(Req);
-                        strncpy(Req.ifr_name, pszBridgedIfName, sizeof(Req.ifr_name) - 1);
+                        RTStrCopy(Req.ifr_name, sizeof(Req.ifr_name), pszBridgedIfName);
                         if (ioctl(iSock, SIOCGIFFLAGS, &Req) >= 0)
                             if ((Req.ifr_flags & IFF_UP) == 0)
-                                setVMRuntimeErrorCallbackF(pVM, this, 0, "BridgedInterfaceDown",
-                                                           "Bridged interface %s is down. Guest will not be able to use this interface",
-                                                           pszBridgedIfName);
+                                setVMRuntimeErrorCallbackF(0, "BridgedInterfaceDown",
+                                    N_("Bridged interface %s is down. Guest will not be able to use this interface"),
+                                    pszBridgedIfName);
 
                         close(iSock);
                     }
@@ -4291,7 +4696,7 @@ int Console::configNetwork(const char *pszDevice,
                 {
                     struct iwreq WRq;
 
-                    memset(&WRq, 0, sizeof(WRq));
+                    RT_ZERO(WRq);
                     strncpy(WRq.ifr_name, pszBridgedIfName, IFNAMSIZ);
                     bool fSharedMacOnWire = ioctl(iSock, SIOCGIWNAME, &WRq) >= 0;
                     close(iSock);
@@ -4312,7 +4717,7 @@ int Console::configNetwork(const char *pszDevice,
                     struct ieee80211req WReq;
                     uint8_t abData[32];
 
-                    memset(&WReq, 0, sizeof(WReq));
+                    RT_ZERO(WReq);
                     strncpy(WReq.i_name, pszBridgedIfName, sizeof(WReq.i_name));
                     WReq.i_type = IEEE80211_IOC_SSID;
                     WReq.i_val = -1;
@@ -4468,7 +4873,7 @@ int Console::configNetwork(const char *pszDevice,
                 if (!SUCCEEDED(rc))
                 {
                     LogRel(("NetworkAttachmentType_HostOnly: FindByName failed, rc (0x%x)\n", rc));
-                    return VMSetError(pVM, VERR_INTERNAL_ERROR, RT_SRC_POS,
+                    return VMSetError(VMR3GetVM(mpUVM), VERR_INTERNAL_ERROR, RT_SRC_POS,
                                       N_("Nonexistent host networking interface, name '%ls'"),
                                       HostOnlyName.raw());
                 }
@@ -4493,7 +4898,7 @@ int Console::configNetwork(const char *pszDevice,
                 }
 
                 if (eIfType != HostNetworkInterfaceType_HostOnly)
-                    return VMSetError(pVM, VERR_INTERNAL_ERROR, RT_SRC_POS,
+                    return VMSetError(VMR3GetVM(mpUVM), VERR_INTERNAL_ERROR, RT_SRC_POS,
                                       N_("Interface ('%ls') is not a Host-Only Adapter interface"),
                                       HostOnlyName.raw());
 
@@ -4669,6 +5074,23 @@ int Console::configNetwork(const char *pszDevice,
                 break;
             }
 
+            case NetworkAttachmentType_NATNetwork:
+            {
+                hrc = aNetworkAdapter->COMGETTER(NATNetwork)(bstr.asOutParam());            H();
+                if (!bstr.isEmpty())
+                {
+                    /** @todo add intnet prefix to separate namespaces, and add trunk if dealing with vboxnatX */
+                    InsertConfigString(pLunL0, "Driver", "IntNet");
+                    InsertConfigNode(pLunL0, "Config", &pCfg);
+                    InsertConfigString(pCfg, "Network", bstr);
+                    InsertConfigInteger(pCfg, "TrunkType", kIntNetTrunkType_WhateverNone);
+                    InsertConfigString(pCfg, "IfPolicyPromisc", pszPromiscuousGuestPolicy);
+                    networkName = bstr;
+                    trunkType = Bstr(TRUNKTYPE_WHATEVER);
+                }
+                break;
+            }
+
             default:
                 AssertMsgFailed(("should not get here!\n"));
                 break;
@@ -4687,12 +5109,13 @@ int Console::configNetwork(const char *pszDevice,
             case NetworkAttachmentType_HostOnly:
             case NetworkAttachmentType_NAT:
             case NetworkAttachmentType_Generic:
+            case NetworkAttachmentType_NATNetwork:
             {
                 if (SUCCEEDED(hrc) && SUCCEEDED(rc))
                 {
                     if (fAttachDetach)
                     {
-                        rc = PDMR3DriverAttach(pVM, pszDevice, uInstance, uLun, 0 /*fFlags*/, NULL /* ppBase */);
+                        rc = PDMR3DriverAttach(mpUVM, pszDevice, uInstance, uLun, 0 /*fFlags*/, NULL /* ppBase */);
                         //AssertRC(rc);
                     }
 
@@ -4705,7 +5128,11 @@ int Console::configNetwork(const char *pszDevice,
                         /* Stop the hostonly DHCP Server */
                     }
 
-                    if (!networkName.isEmpty())
+                    /*
+                     * NAT networks start their DHCP server theirself, see NATNetwork::Start()
+                     */
+                    if (   !networkName.isEmpty()
+                        && eAttachmentType != NetworkAttachmentType_NATNetwork)
                     {
                         /*
                          * Until we implement service reference counters DHCP Server will be stopped
@@ -4721,7 +5148,7 @@ int Console::configNetwork(const char *pszDevice,
                             hrc = dhcpServer->COMGETTER(Enabled)(&fEnabledDhcp);
                             if (FAILED(hrc))
                             {
-                                LogRel(("DHCP svr: COMGETTER(Enabled) failed, hrc (%Rhrc)", hrc));
+                                LogRel(("DHCP svr: COMGETTER(Enabled) failed, hrc (%Rhrc)\n", hrc));
                                 H();
                             }
 
@@ -4802,13 +5229,13 @@ static void configSetProperty(VMMDev * const pVMMDev,
     AssertPtrReturnVoid(pszFlags);
     parms[0].type = VBOX_HGCM_SVC_PARM_PTR;
     parms[0].u.pointer.addr = (void *)pszName;
-    parms[0].u.pointer.size = strlen(pszName) + 1;
+    parms[0].u.pointer.size = (uint32_t)strlen(pszName) + 1;
     parms[1].type = VBOX_HGCM_SVC_PARM_PTR;
     parms[1].u.pointer.addr = (void *)pszValue;
-    parms[1].u.pointer.size = strlen(pszValue) + 1;
+    parms[1].u.pointer.size = (uint32_t)strlen(pszValue) + 1;
     parms[2].type = VBOX_HGCM_SVC_PARM_PTR;
     parms[2].u.pointer.addr = (void *)pszFlags;
-    parms[2].u.pointer.size = strlen(pszFlags) + 1;
+    parms[2].u.pointer.size = (uint32_t)strlen(pszFlags) + 1;
     pVMMDev->hgcmHostCall("VBoxGuestPropSvc", guestProp::SET_PROP_HOST, 3,
                           &parms[0]);
 }
@@ -4844,12 +5271,12 @@ int configSetGlobalPropertyFlags(VMMDev * const pVMMDev,
  * Set up the Guest Property service, populate it with properties read from
  * the machine XML and set a couple of initial properties.
  */
-/* static */ int Console::configGuestProperties(void *pvConsole, PVM pVM)
+/* static */ int Console::configGuestProperties(void *pvConsole, PUVM pUVM)
 {
 #ifdef VBOX_WITH_GUEST_PROPS
-    AssertReturn(pvConsole, VERR_GENERAL_FAILURE);
+    AssertReturn(pvConsole, VERR_INVALID_POINTER);
     ComObjPtr<Console> pConsole = static_cast<Console *>(pvConsole);
-    AssertReturn(pConsole->m_pVMMDev, VERR_GENERAL_FAILURE);
+    AssertReturn(pConsole->m_pVMMDev, VERR_INVALID_POINTER);
 
     /* Load the service */
     int rc = pConsole->m_pVMMDev->hgcmLoadService("VBoxGuestPropSvc", "VBoxGuestPropSvc");
@@ -4876,7 +5303,7 @@ int configSetGlobalPropertyFlags(VMMDev * const pVMMDev,
             {
                 PFNDBGFHANDLEREXT pfnHandler = (PFNDBGFHANDLEREXT)(uintptr_t)Params[0].u.pointer.addr;
                 void *pService = (void*)Params[1].u.pointer.addr;
-                DBGFR3InfoRegisterExternal(pVM, "guestprops", "Display the guest properties", pfnHandler, pService);
+                DBGFR3InfoRegisterExternal(pUVM, "guestprops", "Display the guest properties", pfnHandler, pService);
             }
         }
 
@@ -4900,7 +5327,7 @@ int configSetGlobalPropertyFlags(VMMDev * const pVMMDev,
                                                       ComSafeArrayAsOutParam(valuesOut),
                                                       ComSafeArrayAsOutParam(timestampsOut),
                                                       ComSafeArrayAsOutParam(flagsOut));
-        AssertMsgReturn(SUCCEEDED(hrc), ("hrc=%Rrc\n", hrc), VERR_GENERAL_FAILURE);
+        AssertLogRelMsgReturn(SUCCEEDED(hrc), ("hrc=%Rhrc\n", hrc), VERR_MAIN_CONFIG_CONSTRUCTOR_COM_ERROR);
         size_t cProps = namesOut.size();
         size_t cAlloc = cProps + 1;
         if (   valuesOut.size() != cProps
@@ -5004,7 +5431,7 @@ int configSetGlobalPropertyFlags(VMMDev * const pVMMDev,
 /* static */ int Console::configGuestControl(void *pvConsole)
 {
 #ifdef VBOX_WITH_GUEST_CONTROL
-    AssertReturn(pvConsole, VERR_GENERAL_FAILURE);
+    AssertReturn(pvConsole, VERR_INVALID_POINTER);
     ComObjPtr<Console> pConsole = static_cast<Console *>(pvConsole);
 
     /* Load the service */

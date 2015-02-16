@@ -34,7 +34,6 @@ VBoxTray_SOURCES  = \
 	VBoxClipboard.cpp \
 	VBoxDisplay.cpp \
 	VBoxVRDP.cpp \
-	VBoxRestore.cpp \
 	VBoxIPC.cpp \
 	VBoxHelpers.cpp \
 	VBoxTray.rc
@@ -51,10 +50,16 @@ ifdef VBOX_WITH_SHARED_FOLDERS
  VBoxTray_LIBS.win += \
 	mpr.lib
 endif
+ifdef VBOX_WITH_MMR
+ VBoxTray_DEFS     += VBOX_WITH_MMR
+ VBoxTray_SOURCES  += \
+        VBoxMMR.cpp
+endif
 
 ifdef VBOX_WITH_WDDM
  VBoxTray_DEFS   += VBOX_WITH_WDDM
  # VBoxTray_DEFS   += LOG_ENABLED
+ VBoxTray_SOURCES += ../Graphics/Video/disp/wddm/VBoxDispKmt.cpp
 endif
 
 # VBoxTray.cpp uses VBOX_SVN_REV.
