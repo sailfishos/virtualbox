@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -52,7 +52,9 @@ typedef enum DRVDISKAIOTXDIR
     /** Flush */
     DRVDISKAIOTXDIR_FLUSH,
     /** Discard */
-    DRVDISKAIOTXDIR_DISCARD
+    DRVDISKAIOTXDIR_DISCARD,
+    /** Read after write for immediate verification. */
+    DRVDISKAIOTXDIR_READ_AFTER_WRITE
 } DRVDISKAIOTXDIR;
 
 /**
@@ -160,6 +162,8 @@ typedef struct DRVDISKINTEGRITY
 
     /** Flag whether consistency checks are enabled. */
     bool                    fCheckConsistency;
+    /** Flag whether the RAM disk was prepopulated. */
+    bool                    fPrepopulateRamDisk;
     /** AVL tree containing the disk blocks to check. */
     PAVLRFOFFTREE           pTreeSegments;
 
@@ -188,6 +192,12 @@ typedef struct DRVDISKINTEGRITY
     PDRVDISKAIOREQ          *papIoReq;
     /** Current entry in the array. */
     unsigned                iEntry;
+
+    /** Flag whether to do a immediate read after write for verification. */
+    bool                    fReadAfterWrite;
+    /** Flag whether to record the data to write before the write completed successfully.
+     * Useful in case the data is modified in place later on (encryption for instance). */
+    bool                    fRecordWriteBeforeCompletion;
 
     /** I/O logger to use if enabled. */
     VDIOLOGGER              hIoLogger;
@@ -437,6 +447,17 @@ static int drvdiskintReadVerify(PDRVDISKINTEGRITY pThis, PCRTSGSEG paSeg, unsign
                 cbRange = cbLeft;
             else
                 cbRange = pSeg->Core.Key - offCurr;
+
+            if (pThis->fPrepopulateRamDisk)
+            {
+                /* No segment means everything should be 0 for this part. */
+                if (!RTSgBufIsZero(&SgBuf, cbRange))
+                {
+                    RTMsgError("Corrupted disk at offset %llu (expected everything to be 0)!\n",
+                               offCurr);
+                    RTAssertDebugBreak();
+                }
+            }
         }
         else
         {
@@ -522,7 +543,7 @@ static int drvdiskintDiscardRecords(PDRVDISKINTEGRITY pThis, PCRTRANGE paRanges,
             {
                 size_t cbPreLeft, cbPostLeft;
 
-                cbRange    = RT_MIN(cbRange, pSeg->Core.KeyLast - offStart + 1);
+                cbRange    = RT_MIN(cbLeft, pSeg->Core.KeyLast - offStart + 1);
                 cbPreLeft  = offStart - pSeg->Core.Key;
                 cbPostLeft = pSeg->cbSeg - cbRange - cbPreLeft;
 
@@ -702,6 +723,25 @@ static int drvdiskIntIoReqExpiredCheck(RTTHREAD pThread, void *pvUser)
     return VINF_SUCCESS;
 }
 
+/**
+ * Verify a completed read after write request.
+ *
+ * @returns VBox status code.
+ * @param   pThis    The driver instance data.
+ * @param   pIoReq   The request to be verified.
+ */
+static int drvdiskintReadAfterWriteVerify(PDRVDISKINTEGRITY pThis, PDRVDISKAIOREQ pIoReq)
+{
+    int rc = VINF_SUCCESS;
+
+    if (pThis->fCheckConsistency)
+        rc = drvdiskintReadVerify(pThis, pIoReq->paSeg, pIoReq->cSeg, pIoReq->off, pIoReq->cbTransfer);
+    else /** @todo: Implement read after write verification without a memory based image of the disk. */
+        AssertMsgFailed(("TODO\n"));
+
+    return rc;
+}
+
 /* -=-=-=-=- IMedia -=-=-=-=- */
 
 /** Makes a PDRVDISKINTEGRITY out of a PPDMIMEDIA. */
@@ -758,6 +798,15 @@ static DECLCALLBACK(int) drvdiskintRead(PPDMIMEDIA pInterface,
     return rc;
 }
 
+/** @copydoc PDMIMEDIA::pfnReadPcBios */
+static DECLCALLBACK(int) drvdiskintReadPcBios(PPDMIMEDIA pInterface,
+                                              uint64_t off, void *pvBuf, size_t cbRead)
+{
+    PDRVDISKINTEGRITY pThis = PDMIMEDIA_2_DRVDISKINTEGRITY(pInterface);
+
+    return pThis->pDrvMedia->pfnReadPcBios(pThis->pDrvMedia, off, pvBuf, cbRead);
+}
+
 /** @copydoc PDMIMEDIA::pfnWrite */
 static DECLCALLBACK(int) drvdiskintWrite(PPDMIMEDIA pInterface,
                                          uint64_t off, const void *pvBuf,
@@ -781,6 +830,17 @@ static DECLCALLBACK(int) drvdiskintWrite(PPDMIMEDIA pInterface,
         AssertRC(rc);
     }
 
+    if (pThis->fRecordWriteBeforeCompletion)
+    {
+        RTSGSEG Seg;
+        Seg.cbSeg = cbWrite;
+        Seg.pvSeg = (void *)pvBuf;
+
+        rc = drvdiskintWriteRecord(pThis, &Seg, 1, off, cbWrite);
+        if (RT_FAILURE(rc))
+            return rc;
+    }
+
     rc = pThis->pDrvMedia->pfnWrite(pThis->pDrvMedia, off, pvBuf, cbWrite);
 
     if (pThis->hIoLogger)
@@ -792,7 +852,8 @@ static DECLCALLBACK(int) drvdiskintWrite(PPDMIMEDIA pInterface,
     if (RT_FAILURE(rc))
         return rc;
 
-    if (pThis->fCheckConsistency)
+    if (   pThis->fCheckConsistency
+        && !pThis->fRecordWriteBeforeCompletion)
     {
         /* Record the write. */
         RTSGSEG Seg;
@@ -880,12 +941,19 @@ static DECLCALLBACK(int) drvdiskintStartWrite(PPDMIMEDIAASYNC pInterface, uint64
         AssertRC(rc2);
     }
 
+    if (pThis->fRecordWriteBeforeCompletion)
+    {
+        int rc2 = drvdiskintWriteRecord(pThis, paSeg, cSeg, uOffset, cbWrite);
+        AssertRC(rc2);
+    }
+
     int rc = pThis->pDrvMediaAsync->pfnStartWrite(pThis->pDrvMediaAsync, uOffset, paSeg, cSeg,
                                                   cbWrite, pIoReq);
     if (rc == VINF_VD_ASYNC_IO_FINISHED)
     {
         /* Record the write. */
-        if  (pThis->fCheckConsistency)
+        if  (   pThis->fCheckConsistency
+             && !pThis->fRecordWriteBeforeCompletion)
         {
             int rc2 = drvdiskintWriteRecord(pThis, paSeg, cSeg, uOffset, cbWrite);
             AssertRC(rc2);
@@ -1060,6 +1128,13 @@ static DECLCALLBACK(int) drvdiskintGetUuid(PPDMIMEDIA pInterface, PRTUUID pUuid)
     return pThis->pDrvMedia->pfnGetUuid(pThis->pDrvMedia, pUuid);
 }
 
+/** @copydoc PDMIMEDIA::pfnGetSectorSize */
+static DECLCALLBACK(uint32_t) drvdiskintGetSectorSize(PPDMIMEDIA pInterface)
+{
+    PDRVDISKINTEGRITY pThis = PDMIMEDIA_2_DRVDISKINTEGRITY(pInterface);
+    return pThis->pDrvMedia->pfnGetSectorSize(pThis->pDrvMedia);
+}
+
 /** @copydoc PDMIMEDIA::pfnDiscard */
 static DECLCALLBACK(int) drvdiskintDiscard(PPDMIMEDIA pInterface, PCRTRANGE paRanges, unsigned cRanges)
 {
@@ -1108,12 +1183,17 @@ static DECLCALLBACK(int) drvdiskintAsyncTransferCompleteNotify(PPDMIMEDIAASYNCPO
     {
         if (pIoReq->enmTxDir == DRVDISKAIOTXDIR_READ)
             rc = drvdiskintReadVerify(pThis, pIoReq->paSeg, pIoReq->cSeg, pIoReq->off, pIoReq->cbTransfer);
-        else if (pIoReq->enmTxDir == DRVDISKAIOTXDIR_WRITE)
+        else if (   pIoReq->enmTxDir == DRVDISKAIOTXDIR_WRITE
+                 && !pThis->fRecordWriteBeforeCompletion)
             rc = drvdiskintWriteRecord(pThis, pIoReq->paSeg, pIoReq->cSeg, pIoReq->off, pIoReq->cbTransfer);
         else if (pIoReq->enmTxDir == DRVDISKAIOTXDIR_DISCARD)
             rc = drvdiskintDiscardRecords(pThis, pIoReq->paRanges, pIoReq->cRanges);
+        else if (pIoReq->enmTxDir == DRVDISKAIOTXDIR_READ_AFTER_WRITE)
+            rc = drvdiskintReadAfterWriteVerify(pThis, pIoReq);
         else
-            AssertMsg(pIoReq->enmTxDir == DRVDISKAIOTXDIR_FLUSH, ("Huh?\n"));
+            AssertMsg(   pIoReq->enmTxDir == DRVDISKAIOTXDIR_FLUSH
+                      || (   pIoReq->enmTxDir == DRVDISKAIOTXDIR_WRITE
+                          && pThis->fRecordWriteBeforeCompletion), ("Huh?\n"));
 
         AssertRC(rc);
     }
@@ -1129,11 +1209,37 @@ static DECLCALLBACK(int) drvdiskintAsyncTransferCompleteNotify(PPDMIMEDIAASYNCPO
         AssertRC(rc2);
     }
 
-    void *pvUserComplete = pIoReq->pvUser;
+    if (   pThis->fReadAfterWrite
+        && pIoReq->enmTxDir == DRVDISKAIOTXDIR_WRITE)
+    {
+        pIoReq->enmTxDir = DRVDISKAIOTXDIR_READ_AFTER_WRITE;
 
-    drvdiskintIoReqFree(pThis, pIoReq);
+        /* Readd because it was rmeoved above. */
+        if (pThis->fTraceRequests)
+            drvdiskintIoReqAdd(pThis, pIoReq);
 
-    rc = pThis->pDrvMediaAsyncPort->pfnTransferCompleteNotify(pThis->pDrvMediaAsyncPort, pvUserComplete, rcReq);
+        rc = pThis->pDrvMediaAsync->pfnStartRead(pThis->pDrvMediaAsync, pIoReq->off, pIoReq->paSeg, pIoReq->cSeg,
+                                                 pIoReq->cbTransfer, pIoReq);
+        if (rc == VINF_VD_ASYNC_IO_FINISHED)
+        {
+            rc = drvdiskintReadAfterWriteVerify(pThis, pIoReq);
+
+            if (pThis->fTraceRequests)
+                drvdiskintIoReqRemove(pThis, pIoReq);
+            RTMemFree(pIoReq);
+        }
+        else if (rc == VERR_VD_ASYNC_IO_IN_PROGRESS)
+            rc = VINF_SUCCESS;
+        else if (RT_FAILURE(rc))
+            RTMemFree(pIoReq);
+    }
+    else
+    {
+        void *pvUserComplete = pIoReq->pvUser;
+        drvdiskintIoReqFree(pThis, pIoReq);
+
+        rc = pThis->pDrvMediaAsyncPort->pfnTransferCompleteNotify(pThis->pDrvMediaAsyncPort, pvUserComplete, rcReq);
+    }
 
     return rc;
 }
@@ -1241,7 +1347,10 @@ static DECLCALLBACK(int) drvdiskintConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg,
                                     "ExpireIntervalMs\0"
                                     "CheckDoubleCompletions\0"
                                     "HistorySize\0"
-                                    "IoLog\0"))
+                                    "IoLog\0"
+                                    "PrepopulateRamDisk\0"
+                                    "ReadAfterWrite\0"
+                                    "RecordWriteBeforeCompletion\0"))
         return VERR_PDM_DRVINS_UNKNOWN_CFG_VALUES;
 
     rc = CFGMR3QueryBoolDef(pCfg, "CheckConsistency", &pThis->fCheckConsistency, false);
@@ -1255,6 +1364,12 @@ static DECLCALLBACK(int) drvdiskintConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg,
     rc = CFGMR3QueryBoolDef(pCfg, "CheckDoubleCompletions", &pThis->fCheckDoubleCompletion, false);
     AssertRC(rc);
     rc = CFGMR3QueryU32Def(pCfg, "HistorySize", &pThis->cEntries, 512);
+    AssertRC(rc);
+    rc = CFGMR3QueryBoolDef(pCfg, "PrepopulateRamDisk", &pThis->fPrepopulateRamDisk, false);
+    AssertRC(rc);
+    rc = CFGMR3QueryBoolDef(pCfg, "ReadAfterWrite", &pThis->fReadAfterWrite, false);
+    AssertRC(rc);
+    rc = CFGMR3QueryBoolDef(pCfg, "RecordWriteBeforeCompletion", &pThis->fRecordWriteBeforeCompletion, false);
     AssertRC(rc);
 
     char *pszIoLogFilename = NULL;
@@ -1271,6 +1386,7 @@ static DECLCALLBACK(int) drvdiskintConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg,
 
     /* IMedia */
     pThis->IMedia.pfnRead                = drvdiskintRead;
+    pThis->IMedia.pfnReadPcBios          = drvdiskintReadPcBios;
     pThis->IMedia.pfnWrite               = drvdiskintWrite;
     pThis->IMedia.pfnFlush               = drvdiskintFlush;
     pThis->IMedia.pfnGetSize             = drvdiskintGetSize;
@@ -1280,6 +1396,7 @@ static DECLCALLBACK(int) drvdiskintConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg,
     pThis->IMedia.pfnBiosGetLCHSGeometry = drvdiskintBiosGetLCHSGeometry;
     pThis->IMedia.pfnBiosSetLCHSGeometry = drvdiskintBiosSetLCHSGeometry;
     pThis->IMedia.pfnGetUuid             = drvdiskintGetUuid;
+    pThis->IMedia.pfnGetSectorSize       = drvdiskintGetSectorSize;
 
     /* IMediaAsync */
     pThis->IMediaAsync.pfnStartRead      = drvdiskintStartRead;
@@ -1361,6 +1478,50 @@ static DECLCALLBACK(int) drvdiskintConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg,
     {
         rc = VDDbgIoLogCreate(&pThis->hIoLogger, pszIoLogFilename, VDDBG_IOLOG_LOG_DATA);
         MMR3HeapFree(pszIoLogFilename);
+    }
+
+    /* Read in all data before the start if requested. */
+    if (pThis->fPrepopulateRamDisk)
+    {
+        uint64_t cbDisk = 0;
+
+        LogRel(("DiskIntegrity: Prepopulating RAM disk, this will take some time...\n"));
+
+        cbDisk = pThis->pDrvMedia->pfnGetSize(pThis->pDrvMedia);
+        if (cbDisk)
+        {
+            uint64_t off = 0;
+            uint8_t abBuffer[_64K];
+            RTSGSEG Seg;
+
+            Seg.pvSeg = abBuffer;
+
+            while (cbDisk)
+            {
+                size_t cbThisRead = RT_MIN(cbDisk, sizeof(abBuffer));
+
+                rc = pThis->pDrvMedia->pfnRead(pThis->pDrvMedia, off, abBuffer, cbThisRead);
+                if (RT_FAILURE(rc))
+                    break;
+
+                if (ASMBitFirstSet(abBuffer, sizeof(abBuffer) * 8) != -1)
+                {
+                    Seg.cbSeg = cbThisRead;
+                    rc = drvdiskintWriteRecord(pThis, &Seg, 1,
+                                               off, cbThisRead);
+                    if (RT_FAILURE(rc))
+                        break;
+                }
+
+                cbDisk -= cbThisRead;
+                off    += cbThisRead;
+            }
+
+            LogRel(("DiskIntegrity: Prepopulating RAM disk finished with %Rrc\n", rc));
+        }
+        else
+            return PDMDRV_SET_ERROR(pDrvIns, VERR_INTERNAL_ERROR,
+                                    N_("DiskIntegrity: Error querying the media size below"));
     }
 
     return rc;

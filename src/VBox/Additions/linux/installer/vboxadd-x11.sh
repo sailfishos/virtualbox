@@ -1,6 +1,6 @@
 #! /bin/sh
 #
-# Linux Additions X11 setup init script ($Revision: 84552 $)
+# Linux Additions X11 setup init script ($Revision: 97087 $)
 #
 
 #
@@ -38,17 +38,19 @@ cpu=`uname -m`;
 case "$cpu" in
   i[3456789]86|x86)
     cpu="x86"
-    LIB="/usr/lib"
+    lib_candidates="/usr/lib/i386-linux-gnu /usr/lib /lib"
     ;;
   x86_64|amd64)
     cpu="amd64"
-    if test -d "/usr/lib64"; then
-      LIB="/usr/lib64"
-    else
-      LIB="/usr/lib"
-    fi
+    lib_candidates="/usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib64 /lib"
     ;;
 esac
+for i in $lib_candidates; do
+  if test -d "$i/VBoxGuestAdditions"; then
+    LIB=$i
+    break
+  fi
+done
 
 # Find the version of X installed
 # The last of the three is for the X.org 6.7 included in Fedora Core 2
@@ -284,9 +286,9 @@ setup()
     dox11config="true"
     # By default, we want to run our xorg.conf setup script
     setupxorgconf="true"
-    # On all but the oldest X servers we want to use our new mouse
-    # driver.
-    newmouse="--newMouse"
+    # All but the oldest supported X servers can automatically set up the
+    # keyboard driver.
+    autokeyboard="--autoKeyboard"
     # On more recent servers our kernel mouse driver will be used
     # automatically
     automouse="--autoMouse"
@@ -295,12 +297,20 @@ setup()
     case "`uname -r`" in 2.4.*)
         test -c /dev/psaux && nopsaux="";;
     esac
+    # Should we use the VMSVGA driver instead of VBoxVideo?
+    vmsvga=""
+    if ! grep 80eebeef /proc/bus/pci/devices > /dev/null; then
+        vmsvga="--vmsvga"
+    fi
     # The video driver to install for X.Org 6.9+
     vboxvideo_src=
     # The mouse driver to install for X.Org 6.9+
     vboxmouse_src=
     # The driver extension
     driver_ext=".so"
+    # The configuration file we generate if no original was found but we need
+    # one.
+    main_cfg="/etc/X11/xorg.conf"
 
     modules_dir=`X -showDefaultModulePath 2>&1` || modules_dir=
     if [ -z "$modules_dir" ]; then
@@ -313,7 +323,11 @@ setup()
     fi
 
     test -z "$x_version" -o -z "$modules_dir" &&
-        fail "Could not find the X.Org or XFree86 Window System."
+        {
+            echo
+            echo "Could not find the X.Org or XFree86 Window System, skipping."
+            exit 0
+        }
 
     echo
     # openSUSE 10.3 shipped X.Org 7.2 with X.Org Server 1.3, but didn't
@@ -332,24 +346,24 @@ setup()
         1.11.* )
             xserver_version="X.Org Server 1.11"
             vboxvideo_src=vboxvideo_drv_111.so
-            test "$system" = "redhat" || setupxorgconf=""
+            test "$system" = "redhat" && test -z "${vmsvga}" || setupxorgconf=""
             ;;
         1.10.* )
             xserver_version="X.Org Server 1.10"
             vboxvideo_src=vboxvideo_drv_110.so
-            test "$system" = "redhat" || setupxorgconf=""
+            test "$system" = "redhat" && test -z "${vmsvga}" || setupxorgconf=""
             ;;
         1.9.* )
             xserver_version="X.Org Server 1.9"
             vboxvideo_src=vboxvideo_drv_19.so
             # Fedora 14 to 16 patched out vboxvideo detection
-            test "$system" = "redhat" || setupxorgconf=""
+            test "$system" = "redhat" && test -z "${vmsvga}" || setupxorgconf=""
             ;;
         1.8.* )
             xserver_version="X.Org Server 1.8"
             vboxvideo_src=vboxvideo_drv_18.so
             # Fedora 13 shipped without vboxvideo detection
-            test "$system" = "redhat" || setupxorgconf=""
+            test "$system" = "redhat" && test -z "${vmsvga}" || setupxorgconf=""
             ;;
         1.7.* )
             xserver_version="X.Org Server 1.7"
@@ -403,12 +417,22 @@ setup()
             automouse=""
             ;;
         6.7* | 6.8.* | 4.2.* | 4.3.* )
-            # Assume X.Org post-fork or XFree86
+            # As the module binaries are the same we use one text for these
+            # four server versions.
             xserver_version="XFree86 4.2/4.3 and X.Org 6.7/6.8"
             driver_ext=.o
             vboxvideo_src=vboxvideo_drv.o
             vboxmouse_src=vboxmouse_drv.o
             automouse=""
+            autokeyboard=""
+            case $x_version in
+                6.8.* )
+                    autokeyboard="true"
+                    ;;
+                4.2.* | 4.3.* )
+                    main_cfg="/etc/X11/XF86Config"
+                    ;;
+            esac
             ;;
         * )
             # Anything else, including all X server versions as of 1.12.
@@ -458,7 +482,7 @@ setup()
                     if grep -q "VirtualBox generated" "$i"; then
                         generated="$generated  `printf "$i\n"`"
                     else
-                        "$lib_dir/x11config.sh" $newmouse $automouse $nopsaux "$i"
+                        "$lib_dir/x11config.sh" $autokeyboard $automouse $nopsaux $vmsvga "$i"
                     fi
                     configured="true"
                 fi
@@ -468,12 +492,11 @@ setup()
             done
             # X.Org Server 1.5 and 1.6 can detect hardware they know, but they
             # need a configuration file for VBoxVideo.
-            main_cfg="/etc/X11/xorg.conf"
-            nobak="/etc/X11/xorg.vbox.nobak"
+            nobak_cfg="`expr "${main_cfg}" : '\([^.]*\)'`.vbox.nobak"
             if test -z "$configured"; then
                 touch "$main_cfg"
-                "$lib_dir/x11config.sh" $newmouse $automouse $nopsaux --noBak "$main_cfg"
-                touch "$nobak"
+                "$lib_dir/x11config.sh" $autokeyboard $automouse $nopsaux $vmsvga --noBak "$main_cfg"
+                touch "${nobak_cfg}"
             fi
         fi
         succ_msg
@@ -533,6 +556,7 @@ EOF
     # And set up VBoxClient to start when the X session does
     install_x11_startup_app "$lib_dir/98vboxadd-xclient" "$share_dir/vboxclient.desktop" VBoxClient VBoxClient-all ||
         fail "See the log file $LOG for more information."
+    ln -s "$lib_dir/98vboxadd-xclient" /usr/bin/VBoxClient-all 2>/dev/null
     succ_msg
 }
 
@@ -540,24 +564,30 @@ EOF
 cleanup()
 {
     # Restore xorg.conf files as far as possible
-    ## List of generated files which have been changed since we generated them
+    # List of generated files which have been changed since we generated them
     newer=""
-    ## Are we dealing with a legacy information which didn't support
+    # Are we dealing with a legacy information which didn't support
     # uninstallation?
     legacy=""
-    ## Do any of the restored configuration files still reference our drivers?
+    # Do any of the restored configuration files still reference our drivers?
     failed=""
+    # Have we encountered a "nobak" configuration file which means that there
+    # is no original file to restore?
+    nobak=""
     test -r "$CONFIG_DIR/$CONFIG" || legacy="true"
-    main_cfg="/etc/X11/xorg.conf"
-    nobak="/etc/X11/xorg.vbox.nobak"
-    if test -r "$nobak"; then
-        test -r "$main_cfg" &&
-            if test -n "$legacy" -o ! "$nobak" -ot "$main_cfg"; then
-                rm -f "$nobak" "$main_cfg"
+    for main_cfg in "/etc/X11/xorg.conf" "/etc/X11/XF86Config"; do
+        nobak_cfg="`expr "${main_cfg}" : '\([^.]*\)'`.vbox.nobak"
+        if test -r "${nobak_cfg}"; then
+            test -r "${main_cfg}" &&
+            if test -n "${legacy}" -o ! "${nobak_cfg}" -ot "${main_cfg}"; then
+                rm -f "${nobak_cfg}" "${main_cfg}"
             else
-                newer="$newer`printf "  $main_cfg (no original)\n"`"
+                newer="${newer}`printf "  ${main_cfg} (no original)\n"`"
             fi
-    else
+            nobak="true"
+        fi
+    done
+    if test -n "${nobak}"; then
         for i in $x11conf_files; do
             if test -r "$i.vbox"; then
                 if test ! "$i" -nt "$i.vbox" -o -n "$legacy"; then
@@ -607,6 +637,7 @@ EOF
     rm /etc/X11/xinit/xinitrc.d/98vboxadd-xclient.sh 2>/dev/null
     rm /etc/xdg/autostart/vboxclient.desktop 2>/dev/null
     rm /usr/share/autostart/vboxclient.desktop 2>/dev/null
+    rm /usr/bin/VBoxClient-all 2>/dev/null
 
     # Remove other files
     rm /usr/share/xserver-xorg/pci/vboxvideo.ids 2>/dev/null

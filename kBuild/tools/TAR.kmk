@@ -1,10 +1,10 @@
-# $Id: TAR.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: TAR.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - tar unpacker.
 #
 
 #
-# Copyright (c) 2006-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2006-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,9 +35,9 @@ TOOL_TAR := tar unpacker.
 
 # Tool Specific Properties
 ifndef TOOL_TAR_TAR
- TOOL_TAR_TAR := $(wildcard $(PATH_DEVTOOLS_BLD)/tar/v*/tar$(HOSTSUFF_EXE))
+ TOOL_TAR_TAR := $(wildcard $(KBUILD_DEVTOOLS_HST)/tar/v*/tar$(HOSTSUFF_EXE))
  ifeq ($(TOOL_TAR_TAR),)
-  TOOL_TAR_TAR := $(wildcard $(PATH_DEVTOOLS_BLD)/bin/tar$(HOSTSUFF_EXE))
+  TOOL_TAR_TAR := $(wildcard $(KBUILD_DEVTOOLS_HST)/bin/tar$(HOSTSUFF_EXE))
  endif
  ifneq ($(TOOL_TAR_TAR),)
   TOOL_TAR_TAR := $(lastword $(sort $(TOOL_TAR_TAR)))

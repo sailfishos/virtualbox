@@ -47,16 +47,71 @@ ifdef VBOX_WITH_TESTCASES
  tstVDCopy_SOURCES  = tstVDCopy.cpp
  tstVDCopy_LIBS = $(LIB_DDU)
 
- ifn1of ($(KBUILD_TARGET),win)
-  PROGRAMS += tstVDIo
+ PROGRAMS += tstVDIo
 
-  tstVDIo_TEMPLATE = VBOXR3TSTEXE
-  tstVDIo_SOURCES  = tstVDIo.cpp \
-  	VDIoBackendMem.cpp \
-  	VDMemDisk.cpp \
-  	VDIoRnd.cpp
-  tstVDIo_LIBS = \
-  	$(LIB_DDU) \
+ #
+ # VD I/O test scripts to built in -> .cpp
+ #
+ TSTVDIO_BUILTIN_TESTS_FILE = $(tstVDIo_0_OUTDIR)/BuiltinTests.cpp
+ TSTVDIO_BUILTIN_TESTS := \
+        tstVDIo=tstVDIo.vd \
+        tstVDResize=tstVDResize.vd \
+        tstVDCompact=tstVDCompact.vd \
+        tstVDCopy=tstVDCopy.vd \
+        tstVDDiscard=tstVDDiscard.vd \
+        tstVDShareable=tstVDShareable.vd
+ TSTVDIO_BUILTIN_TEST_NAMES := $(foreach test,$(TSTVDIO_BUILTIN_TESTS),$(firstword $(subst =,$(SPACE) ,$(test))))
+ TSTVDIO_PATH_TESTS := $(PATH_SUB_CURRENT)
+
+ # 1=name, 2=filter
+ TSTVDIO_GEN_TEST_MACRO = 'TSTVDIOTESTENTRY const g_a$(1)[] =' '{' \
+	$(foreach testnm,$(filter $(2),$(TSTVDIO_BUILTIN_TEST_NAMES)), '    TSTVDIOTESTENTRY_GEN(g_ab$(testnm)),') \
+	'};' 'unsigned const g_c$(1) = RT_ELEMENTS(g_a$(1));' '' ''
+
+ $$(TSTVDIO_BUILTIN_TESTS_FILE): $(MAKEFILE_CURRENT) \
+		$(foreach test,$(TSTVDIO_BUILTIN_TESTS),$(TSTVDIO_PATH_TESTS)/$(lastword $(subst =,$(SPACE) ,$(test)))) \
+		$(VBOX_BIN2C) \
+		| $$(dir $$@)
+	$(QUIET)$(RM) -f -- $@ $@.vd
+	$(QUIET)$(APPEND) -n "$@" \
+      	'' \
+      	'#include "BuiltinTests.h"' \
+               ''
+	$(foreach test,$(TSTVDIO_BUILTIN_TESTS), $(NLTAB)$(VBOX_BIN2C) -ascii --append \
+		"$(firstword $(subst =,$(SP) ,$(test)))" \
+		"$(TSTVDIO_PATH_TESTS)/$(lastword $(subst =,$(SP) ,$(test)))" \
+		"$@")
+
+# Generate test lists.
+	$(QUIET)$(APPEND) -n "$@" '' \
+               $(call TSTVDIO_GEN_TEST_MACRO,VDIoTests,%) \
+
+ ifn1of ($(KBUILD_TARGET), win)
+  VBOX_TSTVDIO_WITH_LOG_REPLAY = 1
+ endif
+
+ tstVDIo_TEMPLATE = VBOXR3TSTEXE
+ tstVDIo_INCS := $(PATH_SUB_CURRENT)
+
+ ifdef VBOX_TSTVDIO_WITH_LOG_REPLAY
+  tstVDIo_DEFS += VBOX_TSTVDIO_WITH_LOG_REPLAY
+ endif
+
+ tstVDIo_SOURCES  = tstVDIo.cpp \
+ 	VDIoBackend.cpp \
+ 	VDIoBackendMem.cpp \
+ 	VDMemDisk.cpp \
+ 	VDIoRnd.cpp \
+ 	VDScript.cpp \
+ 	VDScriptAst.cpp \
+ 	VDScriptChecker.cpp \
+ 	VDScriptInterp.cpp \
+ 	$(TSTVDIO_BUILTIN_TESTS_FILE)
+ tstVDIo_LIBS = \
+ 	$(LIB_DDU)
+
+ ifdef VBOX_TSTVDIO_WITH_LOG_REPLAY
+  tstVDIo_LIBS += \
   	$(PATH_STAGE_LIB)/StorageDbgLib$(VBOX_SUFF_LIB)
  endif
 
@@ -78,23 +133,26 @@ if defined(VBOX_WITH_TESTCASES) || defined(VBOX_WITH_VBOX_IMG)
  #
  # vbox-img - static because it migth be used as at standalone tool.
  #
- vbox-img_TEMPLATE = VBOXR3STATIC
- vbox-img_DEFS += IN_VBOXDDU IN_VBOXDDU_STATIC VBOX_HDD_NO_DYNAMIC_BACKENDS IN_RT_R3
+ vbox-img_TEMPLATE = VBoxR3Static
+ vbox-img_DEFS += IN_VBOXDDU IN_VBOXDDU_STATIC VBOX_HDD_NO_DYNAMIC_BACKENDS
  vbox-img_SOURCES = \
 	vbox-img.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/VD.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/VDVfs.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/VDI.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/VMDK.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/VHD.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/DMG.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/Parallels.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/ISCSI.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/RAW.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/QED.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/QCOW.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/VHDX.cpp \
-	$(VBOX_PATH_STORAGE_SRC)/VCICache.cpp
+	../VD.cpp \
+	../VDVfs.cpp \
+	../VDI.cpp \
+	../VMDK.cpp \
+	../VHD.cpp \
+	../DMG.cpp \
+	../Parallels.cpp \
+	../ISCSI.cpp \
+	../RAW.cpp \
+	../QED.cpp \
+	../QCOW.cpp \
+	../VHDX.cpp \
+	../VCICache.cpp \
+	../VDIfVfs.cpp
+ vbox-img_SOURCES.win = \
+	vbox-img.rc
  vbox-img_LIBS = \
 	$(VBOX_LIB_RUNTIME_STATIC)
  if1of ($(KBUILD_TARGET),os2 win)
@@ -108,6 +166,9 @@ if defined(VBOX_WITH_TESTCASES) || defined(VBOX_WITH_VBOX_IMG)
  endif
  ifeq ($(KBUILD_TARGET),linux)
   vbox-img_LIBS += crypt
+  ifdef SDK_VBOX_LIBXML2_LIBS
+   vbox-img_LIBS += xml2
+  endif
  else if1of ($(KBUILD_TARGET),darwin freebsd)
   vbox-img_LIBS += iconv
  else ifeq ($(KBUILD_TARGET),win)

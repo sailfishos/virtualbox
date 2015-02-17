@@ -42,6 +42,11 @@ protected:
 
 private slots:
 
+#ifdef Q_WS_X11
+    /** X11: Performs machine-window async geometry normalization. */
+    void sltNormalizeGeometry() { normalizeGeometry(true /* adjust position */); }
+#endif /* Q_WS_X11 */
+
     /* Session event-handlers: */
     void sltMachineStateChanged();
     void sltMediumChange(const CMediumAttachment &attachment);
@@ -49,6 +54,7 @@ private slots:
     void sltUSBDeviceStateChange();
     void sltNetworkAdapterChange();
     void sltSharedFolderChange();
+    void sltVideoCaptureChange();
     void sltCPUExecutionCapChange();
 
     /* LED connections: */
@@ -80,6 +86,9 @@ private:
     /* Show stuff: */
     void showInNecessaryMode();
 
+    /* Helper: Machine-window geometry stuff: */
+    void normalizeGeometry(bool fAdjustPosition);
+
     /* Update stuff: */
     void updateAppearanceOf(int aElement);
 
@@ -93,7 +102,6 @@ private:
 
     /* Widgets: */
     UIIndicatorsPool *m_pIndicatorsPool;
-    QWidget *m_pCntHostkey;
     QLabel *m_pNameHostkey;
 
     /* Variables: */

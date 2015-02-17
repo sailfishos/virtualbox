@@ -50,14 +50,35 @@ setDefaults(void)
 
     cr_server.uniqueWindows = 0;
 
-    cr_server.idsPool.freeWindowID = 1;
-    cr_server.idsPool.freeContextID = 1;
-    cr_server.idsPool.freeClientID = 1;
-
     cr_server.screenCount = 0;
-    cr_server.bForceOffscreenRendering = GL_FALSE;
     cr_server.bUsePBOForReadback = GL_FALSE;
-    cr_server.bUseOutputRedirect = GL_FALSE;
+    cr_server.bWindowsInitiallyHidden = GL_FALSE;
+
+    cr_server.pfnNotifyEventCB = NULL;
+}
+
+/* Check if host reports minimal OpenGL capabilities.
+ * For example, on Windows host this may happen if host has no graphics
+ * card drivers installed or drivers were not properly signed or VBox
+ * is running via remote desktop session etc. Currently, we take care
+ * about Windows host only when specific RENDERER and VERSION strings
+ * returned in this case. Later this check should be expanded to the
+ * rest of hosts. */
+static bool crServerHasInsufficientCaps()
+{
+    const char *sRealRender;
+    const char *sRealVersion;
+
+    if (!cr_server.head_spu)
+        return true;
+
+    sRealRender  = cr_server.head_spu->dispatch_table.GetString(GL_REAL_RENDERER);
+    sRealVersion = cr_server.head_spu->dispatch_table.GetString(GL_REAL_VERSION);
+
+    if (sRealRender && RTStrCmp(sRealRender, "GDI Generic") == 0)
+        if (sRealVersion && RTStrCmp(sRealVersion, "1.1.0") == 0)
+            return true;
+    return false;
 }
 
 void crServerSetVBoxConfiguration()
@@ -79,6 +100,7 @@ void crServerSetVBoxConfiguration()
     char hostname[1024];
     char **clientchain, **clientlist;
     GLint dims[4];
+    const char * env;
 
     defaultMural = (CRMuralInfo *) crHashtableSearch(cr_server.muralTable, 0);
     CRASSERT(defaultMural);
@@ -154,6 +176,44 @@ void crServerSetVBoxConfiguration()
      */
     cr_server.head_spu =
         crSPULoadChain(num_spus, spu_ids, spu_names, spu_dir, &cr_server);
+
+    env = crGetenv( "CR_SERVER_DEFAULT_VISUAL_BITS" );
+    if (env != NULL && env[0] != '\0')
+    {
+        unsigned int bits = (unsigned int)crStrParseI32(env, 0);
+        if (bits <= CR_ALL_BITS)
+            cr_server.fVisualBitsDefault = bits;
+        else
+            crWarning("invalid bits option %c", bits);
+    }
+    else
+        cr_server.fVisualBitsDefault = CR_RGB_BIT | CR_ALPHA_BIT | CR_DOUBLE_BIT;
+
+    env = crGetenv("CR_SERVER_CAPS");
+    if (env && env[0] != '\0')
+    {
+        cr_server.u32Caps = crStrParseI32(env, 0);
+        cr_server.u32Caps &= CR_VBOX_CAPS_ALL;
+    }
+    else
+    {
+        cr_server.u32Caps = CR_VBOX_CAP_TEX_PRESENT
+                | CR_VBOX_CAP_CMDVBVA
+                | CR_VBOX_CAP_CMDBLOCKS
+                | CR_VBOX_CAP_GETATTRIBSLOCATIONS
+                | CR_VBOX_CAP_CMDBLOCKS_FLUSH
+                ;
+    }
+
+    if (crServerHasInsufficientCaps())
+    {
+        crDebug("Cfg: report minimal OpenGL capabilities");
+        cr_server.u32Caps |= CR_VBOX_CAP_HOST_CAPS_NOT_SUFFICIENT;
+    }
+
+    crInfo("Cfg: u32Caps(%#x), fVisualBitsDefault(%#x)",
+            cr_server.u32Caps,
+            cr_server.fVisualBitsDefault);
 
     /* Need to do this as early as possible */
 
@@ -258,6 +318,7 @@ void crServerSetVBoxConfigurationHGCM()
     char *spu_dir = NULL;
     int i;
     GLint dims[4];
+    const char * env;
 
     defaultMural = (CRMuralInfo *) crHashtableSearch(cr_server.muralTable, 0);
     CRASSERT(defaultMural);
@@ -271,6 +332,45 @@ void crServerSetVBoxConfigurationHGCM()
 
     if (!cr_server.head_spu)
         return;
+
+
+    env = crGetenv( "CR_SERVER_DEFAULT_VISUAL_BITS" );
+    if (env != NULL && env[0] != '\0')
+    {
+        unsigned int bits = (unsigned int)crStrParseI32(env, 0);
+        if (bits <= CR_ALL_BITS)
+            cr_server.fVisualBitsDefault = bits;
+        else
+            crWarning("invalid bits option %c", bits);
+    }
+    else
+        cr_server.fVisualBitsDefault = CR_RGB_BIT | CR_ALPHA_BIT | CR_DOUBLE_BIT;
+
+    env = crGetenv("CR_SERVER_CAPS");
+    if (env && env[0] != '\0')
+    {
+        cr_server.u32Caps = crStrParseI32(env, 0);
+        cr_server.u32Caps &= CR_VBOX_CAPS_ALL;
+    }
+    else
+    {
+        cr_server.u32Caps = CR_VBOX_CAP_TEX_PRESENT
+                | CR_VBOX_CAP_CMDVBVA
+                | CR_VBOX_CAP_CMDBLOCKS
+                | CR_VBOX_CAP_GETATTRIBSLOCATIONS
+                | CR_VBOX_CAP_CMDBLOCKS_FLUSH
+                ;
+    }
+
+    if (crServerHasInsufficientCaps())
+    {
+        crDebug("Cfg: report minimal OpenGL capabilities");
+        cr_server.u32Caps |= CR_VBOX_CAP_HOST_CAPS_NOT_SUFFICIENT;
+    }
+
+    crInfo("Cfg: u32Caps(%#x), fVisualBitsDefault(%#x)",
+            cr_server.u32Caps,
+            cr_server.fVisualBitsDefault);
 
     cr_server.head_spu->dispatch_table.GetChromiumParametervCR(GL_WINDOW_POSITION_CR, 0, GL_INT, 2, &dims[0]);
     cr_server.head_spu->dispatch_table.GetChromiumParametervCR(GL_WINDOW_SIZE_CR, 0, GL_INT, 2, &dims[2]);

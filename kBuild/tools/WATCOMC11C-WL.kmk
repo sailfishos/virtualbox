@@ -1,4 +1,4 @@
-# $Id: WATCOMC11C-WL.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: WATCOMC11C-WL.kmk 2749 2015-01-23 01:01:02Z bird $
 ## @file
 # kBuild Tool Config - Watcom C/C++ v11.0c, using wlink.
 #
@@ -53,7 +53,7 @@ define TOOL_WATCOMC11C-WL_LINK_PROGRAM_CMDS
 		$(foreach p,$(subst /,\,$(libpath)),'LIBPath $p') \
         $(foreach o,$(subst /,\,$(filter-out %.res,$(objs)) $(othersrc)),'$(if $(filter %.lib %.a,$l),LIB,)File $o') \
 		$(foreach l,$(subst /,\,$(libs)),'Library $l')
-	$(QUIET)$(call TOOL_WATCOMC11C_ENV_SETUP) \
+	$(QUIET)$(call TOOL_WATCOMC11C_ENV_SETUP_BD) \
 		$(TOOL_WATCOMC11C_WLINK) @$(outbase).rsp
 	$(if $(filter %.res,$(objs)), $(QUIET)$(call TOOL_WATCOMC11C_ENV_SETUP) \
 		$(TOOL_WATCOMC11C_RC) \

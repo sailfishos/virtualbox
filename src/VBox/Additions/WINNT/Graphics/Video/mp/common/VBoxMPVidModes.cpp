@@ -32,17 +32,6 @@ extern "C" int __cdecl swprintf(wchar_t *, const wchar_t *, ...);
 /* Custom video modes which are being read from registry at driver startup. */
 static VIDEO_MODE_INFORMATION g_CustomVideoModes[VBOX_VIDEO_MAX_SCREENS] = { 0 };
 
-#ifdef VBOX_XPDM_MINIPORT
-/* Standart video modes list.
- * Additional space is reserved for custom video modes for VBOX_VIDEO_MAX_SCREENS guest monitors.
- * The custom video mode index is alternating and 2 indexes are reserved for the last custom mode.
- */
-static VIDEO_MODE_INFORMATION g_VideoModes[VBOXMP_MAX_VIDEO_MODES + VBOX_VIDEO_MAX_SCREENS + 2] = { 0 };
-
-/* Number of available video modes, set by VBoxMPCmnBuildVideoModesTable. */
-static uint32_t g_NumVideoModes = 0;
-#endif
-
 static BOOLEAN
 VBoxMPValidateVideoModeParamsGuest(PVBOXMP_DEVEXT pExt, uint32_t iDisplay, uint32_t xres, uint32_t yres, uint32_t bpp)
 {
@@ -213,9 +202,9 @@ VIDEO_MODE_INFORMATION *VBoxMPCmnGetCustomVideoModeInfo(ULONG ulIndex)
 }
 
 #ifdef VBOX_XPDM_MINIPORT
-VIDEO_MODE_INFORMATION* VBoxMPCmnGetVideoModeInfo(ULONG ulIndex)
+VIDEO_MODE_INFORMATION* VBoxMPCmnGetVideoModeInfo(PVBOXMP_DEVEXT pExt, ULONG ulIndex)
 {
-    return (ulIndex<RT_ELEMENTS(g_VideoModes)) ? &g_VideoModes[ulIndex] : NULL;
+    return (ulIndex<RT_ELEMENTS(pExt->aVideoModes)) ? &pExt->aVideoModes[ulIndex] : NULL;
 }
 #endif
 
@@ -283,8 +272,15 @@ VBoxMPFillModesTable(PVBOXMP_DEVEXT pExt, int iDisplay, PVIDEO_MODE_INFORMATION 
     ULONG vramSize = pExt->pPrimary->u.primary.ulMaxFrameBufferSize;
 #else
     ULONG vramSize = vboxWddmVramCpuVisibleSegmentSize(pExt);
-    /* at least two surfaces will be needed: primary & shadow */
-    vramSize /= 2 * pExt->u.primary.commonInfo.cDisplays;
+    vramSize /= pExt->u.primary.commonInfo.cDisplays;
+# ifdef VBOX_WDDM_WIN8
+    if (!g_VBoxDisplayOnly)
+# endif
+    {
+        /* at least two surfaces will be needed: primary & shadow */
+        vramSize /= 2;
+    }
+    vramSize &= ~PAGE_OFFSET_MASK;
 #endif
 
     uint32_t iMode=0, iPrefIdx=0;
@@ -356,9 +352,13 @@ VBoxMPFillModesTable(PVBOXMP_DEVEXT pExt, int iDisplay, PVIDEO_MODE_INFORMATION 
                      * For small host display resolutions, host will dislike the mode 1024x768 and above
                      * if the framebuffer window requires scrolling to fit the guest resolution.
                      * So add 1024x768 resolution for win8 guest to allow user switch to it */
-                    (VBoxQueryWinVersion() != WIN8 || resolutionMatrix[resIndex].xRes != 1024 || resolutionMatrix[resIndex].yRes != 768) &&
+                       (   (VBoxQueryWinVersion() != WIN8 && VBoxQueryWinVersion() != WIN81)
+                        || resolutionMatrix[resIndex].xRes != 1024
+                        || resolutionMatrix[resIndex].yRes != 768)
+                    &&
 #endif
-                    !VBoxLikesVideoMode(iDisplay, resolutionMatrix[resIndex].xRes, resolutionMatrix[resIndex].yRes - yOffset, bitsPerPixel))
+                       !VBoxLikesVideoMode(iDisplay, resolutionMatrix[resIndex].xRes,
+                                           resolutionMatrix[resIndex].yRes - yOffset, bitsPerPixel))
             {
                 /* host doesn't like this mode */
                 continue;
@@ -419,7 +419,7 @@ VBoxMPFillModesTable(PVBOXMP_DEVEXT pExt, int iDisplay, PVIDEO_MODE_INFORMATION 
         LOG(("got custom mode[%u]=%ux%u:%u", curKey, xres, yres, bpp));
 
         /* round down width to be a multiple of 8 if necessary */
-        if (!pExt->fAnyX)
+        if (!VBoxCommonFromDeviceExt(pExt)->fAnyX)
         {
             xres &= 0xFFF8;
         }
@@ -496,11 +496,9 @@ static BOOLEAN VBoxMPIsStartingUp(PVBOXMP_DEVEXT pExt, uint32_t iDisplay)
 {
 #ifdef VBOX_XPDM_MINIPORT
     return (pExt->CurrentMode == 0);
-#elif defined(VBOX_WDDM_WIN8)
-    return FALSE;
-#else /* VBOX_WDDM_MINIPORT && !VBOX_WDDM_MINIPORT */
-    return (!VBoxCommonFromDeviceExt(pExt)->cDisplays
-            || !pExt->aSources[iDisplay].pPrimaryAllocation);
+#else
+    VBOXWDDM_SOURCE *pSource = &pExt->aSources[iDisplay];
+    return !pSource->AllocData.SurfDesc.width || !pSource->AllocData.SurfDesc.height;
 #endif
 }
 
@@ -573,7 +571,7 @@ VBoxMPValidateVideoModeParams(PVBOXMP_DEVEXT pExt, uint32_t iDisplay, uint32_t &
     }
 
     /* Round down width to be a multiple of 8 if necessary */
-    if (!pExt->fAnyX)
+    if (!VBoxCommonFromDeviceExt(pExt)->fAnyX)
     {
         xres &= 0xFFF8;
     }
@@ -609,6 +607,7 @@ VBoxMPValidateVideoModeParams(PVBOXMP_DEVEXT pExt, uint32_t iDisplay, uint32_t &
         /* at least two surfaces will be needed: primary & shadow */
         vramSize /= 2;
     }
+    vramSize &= ~PAGE_OFFSET_MASK;
 #endif
 
     /* Check that values are valid and mode fits into VRAM */
@@ -656,7 +655,7 @@ VBoxMPCheckPendingVideoMode(PVBOXMP_DEVEXT pExt, PVIDEO_MODE_INFORMATION pPendin
     /* Check if there's a pending display change request for this display */
     if (VBoxQueryDisplayRequest(&xres, &yres, &bpp, &display) && (xres || yres || bpp))
     {
-        if (display>RT_ELEMENTS(g_CustomVideoModes))
+        if (display >= RT_ELEMENTS(g_CustomVideoModes))
         {
             /*display = RT_ELEMENTS(g_CustomVideoModes) - 1;*/
             WARN(("VBoxQueryDisplayRequest returned invalid display number %d", display));
@@ -719,12 +718,12 @@ static void VBoxMPRegSaveModeInfo(PVBOXMP_DEVEXT pExt, uint32_t iDisplay, PVIDEO
 #ifdef VBOX_XPDM_MINIPORT
 VIDEO_MODE_INFORMATION* VBoxMPXpdmCurrentVideoMode(PVBOXMP_DEVEXT pExt)
 {
-    return VBoxMPCmnGetVideoModeInfo(pExt->CurrentMode - 1);
+    return VBoxMPCmnGetVideoModeInfo(pExt, pExt->CurrentMode - 1);
 }
 
-ULONG VBoxMPXpdmGetVideoModesCount()
+ULONG VBoxMPXpdmGetVideoModesCount(PVBOXMP_DEVEXT pExt)
 {
-    return g_NumVideoModes;
+    return pExt->cVideoModes;
 }
 
 /* Makes a table of video modes consisting of:
@@ -735,85 +734,86 @@ ULONG VBoxMPXpdmGetVideoModesCount()
  */
 void VBoxMPXpdmBuildVideoModesTable(PVBOXMP_DEVEXT pExt)
 {
-    uint32_t cStandartModes, cCustomModes;
+    uint32_t cStandartModes;
     BOOLEAN bPending, bHaveSpecial;
     VIDEO_MODE_INFORMATION specialMode;
 
-    /* Fill table with standart modes and ones manually added to registry */
-    cStandartModes = VBoxMPFillModesTable(pExt, pExt->iDevice, g_VideoModes, RT_ELEMENTS(g_VideoModes), NULL);
+    /* Fill table with standart modes and ones manually added to registry.
+     * Up to VBOXMP_MAX_VIDEO_MODES elements can be used, the rest is reserved
+     * for custom mode alternating indexes.
+     */
+    cStandartModes = VBoxMPFillModesTable(pExt, pExt->iDevice, pExt->aVideoModes, VBOXMP_MAX_VIDEO_MODES, NULL);
 
-    /* Add custom modes for all displays to the table */
-    cCustomModes = VBoxCommonFromDeviceExt(pExt)->cDisplays;
-    for (uint32_t i=0; i<cCustomModes; i++)
-    {
-        memcpy(&g_VideoModes[cStandartModes+i], &g_CustomVideoModes[i], sizeof(VIDEO_MODE_INFORMATION));
-        g_VideoModes[cStandartModes+i].ModeIndex = cStandartModes+i+1;
-    }
+    /* Add custom mode for this display to the table */
+    /* Make 2 entries in the video mode table. */
+    uint32_t iModeBase = cStandartModes;
+
+    /* Take the alternating index into account. */
+    BOOLEAN bAlternativeIndex = (pExt->iInvocationCounter % 2)? TRUE: FALSE;
+
+    uint32_t iSpecialMode = iModeBase + (bAlternativeIndex? 1: 0);
+    uint32_t iStandardMode = iModeBase + (bAlternativeIndex? 0: 1);
+
+    /* Fill the special mode. */
+    memcpy(&pExt->aVideoModes[iSpecialMode], &g_CustomVideoModes[pExt->iDevice], sizeof(VIDEO_MODE_INFORMATION));
+    pExt->aVideoModes[iSpecialMode].ModeIndex = iSpecialMode + 1;
+
+    /* Wipe the other entry so it is not selected. */
+    memcpy(&pExt->aVideoModes[iStandardMode], &pExt->aVideoModes[3], sizeof(VIDEO_MODE_INFORMATION));
+    pExt->aVideoModes[iStandardMode].ModeIndex = iStandardMode + 1;
+
+    LOG(("added special mode[%d] %dx%d:%d for display %d\n",
+         iSpecialMode,
+         pExt->aVideoModes[iSpecialMode].VisScreenWidth,
+         pExt->aVideoModes[iSpecialMode].VisScreenHeight,
+         pExt->aVideoModes[iSpecialMode].BitsPerPlane,
+         pExt->iDevice));
 
     /* Check if host wants us to switch video mode and it's for this adapter */
     bPending = VBoxMPCheckPendingVideoMode(pExt, &specialMode);
     bHaveSpecial = bPending && (pExt->iDevice == specialMode.ModeIndex);
+    LOG(("bPending %d, pExt->iDevice %d, specialMode.ModeIndex %d",
+          bPending, pExt->iDevice, specialMode.ModeIndex));
 
     /* Check the startup case */
     if (!bHaveSpecial && VBoxMPIsStartingUp(pExt, pExt->iDevice))
     {
         uint32_t xres=0, yres=0, bpp=0;
+        LOG(("Startup for screen %d", pExt->iDevice));
         /* Check if we could make valid mode from values stored to registry */
         if (VBoxMPValidateVideoModeParams(pExt, pExt->iDevice, xres, yres, bpp))
         {
+            LOG(("Startup for screen %d validated %dx%d %d", pExt->iDevice, xres, yres, bpp));
             VBoxFillVidModeInfo(&specialMode, xres, yres, bpp, 0, 0);
             bHaveSpecial = TRUE;
         }
     }
 
-    /* Update number of modes */
-    g_NumVideoModes = cStandartModes + cCustomModes;
+    /* Update number of modes. Each display has 2 entries for alternating custom mode index. */
+    pExt->cVideoModes = cStandartModes + 2;
 
-    if (!bHaveSpecial)
-    {
-        /* Just add 2 dummy modes to maintain table size. */
-        memcpy(&g_VideoModes[g_NumVideoModes], &g_VideoModes[2], sizeof(VIDEO_MODE_INFORMATION));
-        g_VideoModes[g_NumVideoModes].ModeIndex = g_NumVideoModes+1;
-        g_NumVideoModes++;
-        memcpy(&g_VideoModes[g_NumVideoModes], &g_VideoModes[2], sizeof(VIDEO_MODE_INFORMATION));
-        g_VideoModes[g_NumVideoModes].ModeIndex = g_NumVideoModes+1;
-        g_NumVideoModes++;
-    }
-    else
+    if (bHaveSpecial)
     {
         /* We need to alternate mode index entry for a pending mode change,
          * else windows will ignore actual mode change call.
          * Only alternate index if one of mode parameters changed and
          * regardless of conditions always add 2 entries to the table.
          */
-        static int s_InvocationCounter=0;
         BOOLEAN bAlternativeIndex = FALSE;
 
-        static uint32_t s_Prev_xres=0;
-        static uint32_t s_Prev_yres=0;
-        static uint32_t s_Prev_bpp=0;
-        BOOLEAN bChanged = (s_Prev_xres!=specialMode.VisScreenWidth
-                            || s_Prev_yres!=specialMode.VisScreenHeight
-                            || s_Prev_bpp!=specialMode.BitsPerPlane);
+        BOOLEAN bChanged = (pExt->Prev_xres!=specialMode.VisScreenWidth
+                            || pExt->Prev_yres!=specialMode.VisScreenHeight
+                            || pExt->Prev_bpp!=specialMode.BitsPerPlane);
+
+        LOG(("prev %dx%dx%d, special %dx%dx%d",
+             pExt->Prev_xres, pExt->Prev_yres, pExt->Prev_bpp,
+             specialMode.VisScreenWidth, specialMode.VisScreenHeight, specialMode.BitsPerPlane));
+
         if (bChanged)
         {
-            s_Prev_xres = specialMode.VisScreenWidth;
-            s_Prev_yres = specialMode.VisScreenHeight;
-            s_Prev_bpp = specialMode.BitsPerPlane;
-        }
-
-        /* Make sure there's no other mode in the table with same parameters,
-         * because we need windows to pick up a new video mode index otherwise
-         * actual mode change wouldn't happen.
-         */
-        int iFoundIdx;
-        uint32_t uiStart=0;
-
-        while (0 <= (iFoundIdx = VBoxMPFindVideoMode(&g_VideoModes[uiStart], g_NumVideoModes-uiStart, &specialMode)))
-        {
-            memcpy(&g_VideoModes[uiStart+iFoundIdx], &g_VideoModes[2], sizeof(VIDEO_MODE_INFORMATION));
-            g_VideoModes[uiStart+iFoundIdx].ModeIndex = uiStart+iFoundIdx+1;
-            uiStart += iFoundIdx+1;
+            pExt->Prev_xres = specialMode.VisScreenWidth;
+            pExt->Prev_yres = specialMode.VisScreenHeight;
+            pExt->Prev_bpp = specialMode.BitsPerPlane;
         }
 
         /* Check if we need to alternate the index */
@@ -821,46 +821,34 @@ void VBoxMPXpdmBuildVideoModesTable(PVBOXMP_DEVEXT pExt)
         {
             if (bChanged)
             {
-                s_InvocationCounter++;
+                pExt->iInvocationCounter++;
             }
 
-            if (s_InvocationCounter % 2)
+            if (pExt->iInvocationCounter % 2)
             {
                 bAlternativeIndex = TRUE;
-                memcpy(&g_VideoModes[g_NumVideoModes], &g_VideoModes[2], sizeof(VIDEO_MODE_INFORMATION));
-                g_VideoModes[g_NumVideoModes].ModeIndex = g_NumVideoModes+1;
-                ++g_NumVideoModes;
             }
         }
 
-        LOG(("add special mode[%d] %dx%d:%d for display %d (bChanged=%d, bAlretnativeIndex=%d)",
-             g_NumVideoModes, specialMode.VisScreenWidth, specialMode.VisScreenHeight, specialMode.BitsPerPlane,
+        uint32_t iSpecialModeElement = cStandartModes + (bAlternativeIndex? 1: 0);
+        uint32_t iSpecialModeElementOld = cStandartModes + (bAlternativeIndex? 0: 1);
+
+        LOG(("add special mode[%d] %dx%d:%d for display %d (bChanged=%d, bAlternativeIndex=%d)",
+             iSpecialModeElement, specialMode.VisScreenWidth, specialMode.VisScreenHeight, specialMode.BitsPerPlane,
              pExt->iDevice, bChanged, bAlternativeIndex));
 
         /* Add special mode to the table
          * Note: Y offset isn't used for a host-supplied modes
          */
-        specialMode.ModeIndex = g_NumVideoModes+1;
-        memcpy(&g_VideoModes[g_NumVideoModes], &specialMode, sizeof(VIDEO_MODE_INFORMATION));
-        ++g_NumVideoModes;
+        specialMode.ModeIndex = iSpecialModeElement + 1;
+        memcpy(&pExt->aVideoModes[iSpecialModeElement], &specialMode, sizeof(VIDEO_MODE_INFORMATION));
 
         /* Save special mode in the custom modes table */
         memcpy(&g_CustomVideoModes[pExt->iDevice], &specialMode, sizeof(VIDEO_MODE_INFORMATION));
 
-
-        /* Make sure we've added 2nd mode if necessary to maintain table size */
-        if (VBoxMPIsStartingUp(pExt, pExt->iDevice))
-        {
-            memcpy(&g_VideoModes[g_NumVideoModes], &g_VideoModes[g_NumVideoModes-1], sizeof(VIDEO_MODE_INFORMATION));
-            g_VideoModes[g_NumVideoModes].ModeIndex = g_NumVideoModes+1;
-            ++g_NumVideoModes;
-        }
-        else if (!bAlternativeIndex)
-        {
-            memcpy(&g_VideoModes[g_NumVideoModes], &g_VideoModes[2], sizeof(VIDEO_MODE_INFORMATION));
-            g_VideoModes[g_NumVideoModes].ModeIndex = g_NumVideoModes+1;
-            ++g_NumVideoModes;
-        }
+        /* Wipe the old entry so the special mode will be found in the new positions. */
+        memcpy(&pExt->aVideoModes[iSpecialModeElementOld], &pExt->aVideoModes[3], sizeof(VIDEO_MODE_INFORMATION));
+        pExt->aVideoModes[iSpecialModeElementOld].ModeIndex = iSpecialModeElementOld + 1;
 
         /* Save special mode info to registry */
         VBoxMPRegSaveModeInfo(pExt, pExt->iDevice, &specialMode);
@@ -869,535 +857,15 @@ void VBoxMPXpdmBuildVideoModesTable(PVBOXMP_DEVEXT pExt)
 #if defined(LOG_ENABLED)
     do
     {
-        LOG(("Filled %d modes", g_NumVideoModes));
+        LOG(("Filled %d modes for display %d", pExt->cVideoModes, pExt->iDevice));
 
-        for (uint32_t i=0; i<g_NumVideoModes; ++i)
+        for (uint32_t i=0; i < pExt->cVideoModes; ++i)
         {
             LOG(("Mode[%2d]: %4dx%4d:%2d (idx=%d)",
-                i, g_VideoModes[i].VisScreenWidth, g_VideoModes[i].VisScreenHeight,
-                g_VideoModes[i].BitsPerPlane, g_VideoModes[i].ModeIndex));
+                 i, pExt->aVideoModes[i].VisScreenWidth, pExt->aVideoModes[i].VisScreenHeight,
+                 pExt->aVideoModes[i].BitsPerPlane, pExt->aVideoModes[i].ModeIndex));
         }
     } while (0);
 #endif
 }
 #endif /*VBOX_XPDM_MINIPORT*/
-
-#ifdef VBOX_WDDM_MINIPORT
-static VBOXWDDM_VIDEOMODES_INFO g_aVBoxVideoModeInfos[VBOX_VIDEO_MAX_SCREENS] = {0};
-
-bool VBoxWddmFillMode(PVBOXMP_DEVEXT pExt, uint32_t iDisplay, VIDEO_MODE_INFORMATION *pInfo, D3DDDIFORMAT enmFormat, ULONG w, ULONG h)
-{
-    switch (enmFormat)
-    {
-        case D3DDDIFMT_A8R8G8B8:
-            if (!VBoxMPValidateVideoModeParamsGuest(pExt, iDisplay, w, h, 32))
-            {
-                WARN(("unsupported mode info for format(%d)", enmFormat));
-                return false;
-            }
-            VBoxFillVidModeInfo(pInfo, w, h, 32, 0, 0);
-            return true;
-        case D3DDDIFMT_R8G8B8:
-            if (!VBoxMPValidateVideoModeParamsGuest(pExt, iDisplay, w, h, 24))
-            {
-                WARN(("unsupported mode info for format(%d)", enmFormat));
-                return false;
-            }
-            VBoxFillVidModeInfo(pInfo, w, h, 24, 0, 0);
-            return true;
-        case D3DDDIFMT_R5G6B5:
-            if (!VBoxMPValidateVideoModeParamsGuest(pExt, iDisplay, w, h, 16))
-            {
-                WARN(("unsupported mode info for format(%d)", enmFormat));
-                return false;
-            }
-            VBoxFillVidModeInfo(pInfo, w, h, 16, 0, 0);
-            return true;
-        case D3DDDIFMT_P8:
-            if (!VBoxMPValidateVideoModeParamsGuest(pExt, iDisplay, w, h, 8))
-            {
-                WARN(("unsupported mode info for format(%d)", enmFormat));
-                return false;
-            }
-            VBoxFillVidModeInfo(pInfo, w, h, 8, 0, 0);
-            return true;
-        default:
-            WARN(("unsupported enmFormat(%d)", enmFormat));
-            AssertBreakpoint();
-            break;
-    }
-
-    return false;
-}
-
-static void
-VBoxWddmBuildResolutionTable(PVIDEO_MODE_INFORMATION pModesTable, size_t tableSize, int iPreferredMode,
-                             SIZE *pResolutions, uint32_t * pcResolutions, int *piPreferredResolution)
-{
-    uint32_t cResolutionsArray = *pcResolutions;
-    uint32_t cResolutions = 0;
-
-    *piPreferredResolution = -1;
-
-    for (uint32_t i=0; i<tableSize; ++i)
-    {
-        PVIDEO_MODE_INFORMATION pMode = &pModesTable[i];
-        int iResolution = -1;
-
-        for (uint32_t j=0; j<cResolutions; ++j)
-        {
-            if (pResolutions[j].cx == pMode->VisScreenWidth
-                && pResolutions[j].cy == pMode->VisScreenHeight)
-            {
-                iResolution = j;
-                break;
-            }
-        }
-
-        if (iResolution < 0)
-        {
-            if (cResolutions == cResolutionsArray)
-            {
-                WARN(("table overflow!"));
-                break;
-            }
-
-            iResolution = cResolutions;
-            pResolutions[cResolutions].cx = pMode->VisScreenWidth;
-            pResolutions[cResolutions].cy = pMode->VisScreenHeight;
-            ++cResolutions;
-        }
-
-        Assert(iResolution >= 0);
-        if (i == iPreferredMode)
-        {
-            Assert(*piPreferredResolution == -1);
-            *piPreferredResolution = iResolution;
-        }
-    }
-
-    *pcResolutions = cResolutions;
-    Assert(*piPreferredResolution >= 0);
-}
-
-static void VBoxWddmBuildResolutionTableForModes(PVBOXWDDM_VIDEOMODES_INFO pModes)
-{
-    pModes->cResolutions = RT_ELEMENTS(pModes->aResolutions);
-    VBoxWddmBuildResolutionTable(pModes->aModes, pModes->cModes, pModes->iPreferredMode,
-            (SIZE*)((void*)pModes->aResolutions), &pModes->cResolutions, &pModes->iPreferredResolution);
-    Assert(pModes->aResolutions[pModes->iPreferredResolution].cx == pModes->aModes[pModes->iPreferredMode].VisScreenWidth
-            && pModes->aResolutions[pModes->iPreferredResolution].cy == pModes->aModes[pModes->iPreferredMode].VisScreenHeight);
-}
-
-AssertCompile(sizeof (SIZE) == sizeof (D3DKMDT_2DREGION));
-AssertCompile(RT_OFFSETOF(SIZE, cx) == RT_OFFSETOF(D3DKMDT_2DREGION, cx));
-AssertCompile(RT_OFFSETOF(SIZE, cy) == RT_OFFSETOF(D3DKMDT_2DREGION, cy));
-static void
-VBoxWddmBuildVideoModesInfo(PVBOXMP_DEVEXT pExt, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId,
-                            PVBOXWDDM_VIDEOMODES_INFO pModes, VIDEO_MODE_INFORMATION *paAddlModes,
-                            UINT cAddlModes)
-{
-    pModes->cResolutions = RT_ELEMENTS(pModes->aResolutions);
-
-    /* Add default modes and ones read from registry. */
-    pModes->cModes = VBoxMPFillModesTable(pExt, VidPnTargetId, pModes->aModes, RT_ELEMENTS(pModes->aModes), &pModes->iPreferredMode);
-    Assert(pModes->cModes<=RT_ELEMENTS(pModes->aModes));
-
-    if (!VBoxMPIsStartingUp(pExt, VidPnTargetId))
-    {
-        /* make sure we keep the current mode to avoid mode flickering */
-        PVBOXWDDM_ALLOC_DATA pAllocData = pExt->aSources[VidPnTargetId].pPrimaryAllocation ?
-                  &pExt->aSources[VidPnTargetId].pPrimaryAllocation->AllocData
-                : &pExt->aSources[VidPnTargetId].AllocData;
-        if (pModes->cModes < RT_ELEMENTS(pModes->aModes))
-        {
-            /* VBox WDDM driver does not allow 24 modes since OS could choose the 24bit mode as default in that case,
-             * the pExt->aSources[iDisplay].AllocData.SurfDesc.bpp could be initially 24 though,
-             * i.e. when driver occurs the current mode on driver load via DxgkCbAcquirePostDisplayOwnership
-             * and until driver reports the supported modes
-             * This is true for Win8 Display-Only driver currently since DxgkCbAcquirePostDisplayOwnership is only used by it
-             *
-             * This is why we check the bpp to be supported here and add the current mode to the list only in that case */
-            if (VBoxMPIsSupportedBpp(pAllocData->SurfDesc.bpp))
-            {
-                int foundIdx;
-                VBoxFillVidModeInfo(&pModes->aModes[pModes->cModes], pAllocData->SurfDesc.width, pAllocData->SurfDesc.height, pAllocData->SurfDesc.bpp, 1/*index*/, 0);
-                if ((foundIdx=VBoxMPFindVideoMode(pModes->aModes, pModes->cModes, &pModes->aModes[pModes->cModes]))>=0)
-                {
-                    pModes->iPreferredMode = foundIdx;
-                }
-                else
-                {
-                    pModes->iPreferredMode = pModes->cModes;
-                    ++pModes->cModes;
-                }
-
-#ifdef VBOX_WITH_8BPP_MODES
-                int bytesPerPixel=1;
-#else
-                int bytesPerPixel=2;
-#endif
-                for (; bytesPerPixel<=4; bytesPerPixel++)
-                {
-                    int bpp = 8*bytesPerPixel;
-
-                    if (bpp == pAllocData->SurfDesc.bpp)
-                        continue;
-
-                    if (!VBoxMPValidateVideoModeParamsGuest(pExt, VidPnTargetId,
-                            pAllocData->SurfDesc.width, pAllocData->SurfDesc.height,
-                            bpp))
-                        continue;
-
-                    if (pModes->cModes >= RT_ELEMENTS(pModes->aModes))
-                    {
-                        WARN(("ran out of video modes 2"));
-                        break;
-                    }
-
-                    VBoxFillVidModeInfo(&pModes->aModes[pModes->cModes],
-                                            pAllocData->SurfDesc.width, pAllocData->SurfDesc.height,
-                                            bpp, pModes->cModes, 0);
-                    if (VBoxMPFindVideoMode(pModes->aModes, pModes->cModes, &pModes->aModes[pModes->cModes]) < 0)
-                    {
-                        ++pModes->cModes;
-                    }
-                }
-            }
-        }
-        else
-        {
-            WARN(("ran out of video modes 1"));
-        }
-    }
-
-    /* Check if there's a pending display change request for this adapter */
-    VIDEO_MODE_INFORMATION specialMode;
-    if (VBoxMPCheckPendingVideoMode(pExt, &specialMode) && (specialMode.ModeIndex==VidPnTargetId))
-    {
-        /*Minor hack, ModeIndex!=0 Means this mode has been validated already and not just read from registry */
-        specialMode.ModeIndex = 1;
-        memcpy(&g_CustomVideoModes[VidPnTargetId], &specialMode, sizeof(VIDEO_MODE_INFORMATION));
-
-        /* Save mode to registry */
-        VBoxMPRegSaveModeInfo(pExt, VidPnTargetId, &specialMode);
-    }
-
-    /* Validate the mode which has been read from registry */
-    if (!g_CustomVideoModes[VidPnTargetId].ModeIndex)
-    {
-        uint32_t xres, yres, bpp;
-
-        xres = g_CustomVideoModes[VidPnTargetId].VisScreenWidth;
-        yres = g_CustomVideoModes[VidPnTargetId].VisScreenHeight;
-        bpp = g_CustomVideoModes[VidPnTargetId].BitsPerPlane;
-
-        if (VBoxMPValidateVideoModeParams(pExt, VidPnTargetId, xres, yres, bpp))
-        {
-            VBoxFillVidModeInfo(&g_CustomVideoModes[VidPnTargetId], xres, yres, bpp, 1/*index*/, 0);
-            Assert(g_CustomVideoModes[VidPnTargetId].ModeIndex == 1);
-        }
-    }
-
-    /* Add custom mode to the table */
-    if (g_CustomVideoModes[VidPnTargetId].ModeIndex)
-    {
-        if (RT_ELEMENTS(pModes->aModes) > pModes->cModes)
-        {
-            g_CustomVideoModes[VidPnTargetId].ModeIndex = pModes->cModes;
-            pModes->aModes[pModes->cModes] = g_CustomVideoModes[VidPnTargetId];
-
-            /* Check if we already have this mode in the table */
-            int foundIdx;
-            if ((foundIdx=VBoxMPFindVideoMode(pModes->aModes, pModes->cModes, &pModes->aModes[pModes->cModes]))>=0)
-            {
-                pModes->iPreferredMode = foundIdx;
-            }
-            else
-            {
-                pModes->iPreferredMode = pModes->cModes;
-                ++pModes->cModes;
-            }
-
-            /* Add other bpp modes for this custom resolution */
-#ifdef VBOX_WITH_8BPP_MODES
-        UINT bpp=8;
-#else
-        UINT bpp=16;
-#endif
-            for (; bpp<=32; bpp+=8)
-            {
-                if (RT_ELEMENTS(pModes->aModes) == pModes->cModes)
-                {
-                    WARN(("table full, can't add other bpp for specail mode!"));
-#ifdef DEBUG_misha
-                    /* this is definitely something we do not expect */
-                    AssertFailed();
-#endif
-                    break;
-                }
-
-                AssertRelease(RT_ELEMENTS(pModes->aModes) > pModes->cModes); /* if not - the driver state is screwed up, @todo: better do KeBugCheckEx here */
-
-                if (pModes->aModes[pModes->iPreferredMode].BitsPerPlane == bpp)
-                    continue;
-
-                if (!VBoxMPValidateVideoModeParamsGuest(pExt, VidPnTargetId,
-                        pModes->aModes[pModes->iPreferredMode].VisScreenWidth,
-                        pModes->aModes[pModes->iPreferredMode].VisScreenHeight,
-                        bpp))
-                    continue;
-
-                VBoxFillVidModeInfo(&pModes->aModes[pModes->cModes],
-                                        pModes->aModes[pModes->iPreferredMode].VisScreenWidth,
-                                        pModes->aModes[pModes->iPreferredMode].VisScreenHeight,
-                                        bpp, pModes->cModes, 0);
-                if (VBoxMPFindVideoMode(pModes->aModes, pModes->cModes, &pModes->aModes[pModes->cModes]) < 0)
-                {
-                    ++pModes->cModes;
-                }
-            }
-        }
-        else
-        {
-            AssertRelease(RT_ELEMENTS(pModes->aModes) == pModes->cModes); /* if not - the driver state is screwed up, @todo: better do KeBugCheckEx here */
-            WARN(("table full, can't add video mode for a host request!"));
-#ifdef DEBUG_misha
-            /* this is definitely something we do not expect */
-            AssertFailed();
-#endif
-        }
-    }
-
-    /* Check and Add additional modes passed in paAddlModes */
-    for (UINT i=0; i<cAddlModes; ++i)
-    {
-        if (RT_ELEMENTS(pModes->aModes) == pModes->cModes)
-        {
-           WARN(("table full, can't add addl modes!"));
-#ifdef DEBUG_misha
-            /* this is definitely something we do not expect */
-            AssertFailed();
-#endif
-           break;
-        }
-
-        AssertRelease(RT_ELEMENTS(pModes->aModes) > pModes->cModes); /* if not - the driver state is screwed up, @todo: better do KeBugCheckEx here */
-
-        if (!pExt->fAnyX)
-        {
-            paAddlModes[i].VisScreenWidth &= 0xFFF8;
-        }
-
-        if (VBoxLikesVideoMode(VidPnTargetId, paAddlModes[i].VisScreenWidth, paAddlModes[i].VisScreenHeight, paAddlModes[i].BitsPerPlane))
-        {
-            int foundIdx;
-            if ((foundIdx=VBoxMPFindVideoMode(pModes->aModes, pModes->cModes, &paAddlModes[i]))>=0)
-            {
-                pModes->iPreferredMode = foundIdx;
-            }
-            else
-            {
-                memcpy(&pModes->aModes[pModes->cModes], &paAddlModes[i], sizeof(VIDEO_MODE_INFORMATION));
-                pModes->aModes[pModes->cModes].ModeIndex = pModes->cModes;
-                ++pModes->cModes;
-            }
-        }
-    }
-
-    /* Build resolution table */
-    VBoxWddmBuildResolutionTableForModes(pModes);
-}
-
-void VBoxWddmInvalidateVideoModesInfo(PVBOXMP_DEVEXT pExt, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
-{
-    if (VidPnTargetId != D3DDDI_ID_ALL)
-    {
-        if (VidPnTargetId >= RT_ELEMENTS(g_aVBoxVideoModeInfos))
-        {
-            WARN(("VidPnTargetId (%d) must be less than (%d)", VidPnTargetId, RT_ELEMENTS(g_aVBoxVideoModeInfos)));
-            return;
-        }
-        LOG(("invalidating videomede info for screen %d", VidPnTargetId));
-        g_aVBoxVideoModeInfos[VidPnTargetId].cModes = 0;
-        return;
-    }
-
-    LOG(("invalidating ALL videomede infos"));
-
-    for (UINT i = 0; i < RT_ELEMENTS(g_aVBoxVideoModeInfos); ++i)
-    {
-        g_aVBoxVideoModeInfos[i].cModes = 0;
-    }
-}
-
-void VBoxWddmInvalidateAllVideoModesInfos(PVBOXMP_DEVEXT pExt)
-{
-    VBoxWddmInvalidateVideoModesInfo(pExt, D3DDDI_ID_ALL);
-}
-
-PVBOXWDDM_VIDEOMODES_INFO VBoxWddmUpdateVideoModesInfoByMask(PVBOXMP_DEVEXT pExt, uint8_t *pScreenIdMask)
-{
-    for (int i = 0; i < VBoxCommonFromDeviceExt(pExt)->cDisplays; ++i)
-    {
-        if (ASMBitTest(pScreenIdMask, i))
-            VBoxWddmInvalidateVideoModesInfo(pExt, i);
-    }
-
-    /* ensure we have all the rest populated */
-    VBoxWddmGetAllVideoModesInfos(pExt);
-    return g_aVBoxVideoModeInfos;
-}
-
-PVBOXWDDM_VIDEOMODES_INFO VBoxWddmUpdateAllVideoModesInfos(PVBOXMP_DEVEXT pExt)
-{
-    VBoxWddmInvalidateAllVideoModesInfos(pExt);
-
-    /* ensure we have all the rest populated */
-    VBoxWddmGetAllVideoModesInfos(pExt);
-    return g_aVBoxVideoModeInfos;
-}
-
-void VBoxWddmAdjustMode(PVBOXMP_DEVEXT pExt, PVBOXWDDM_ADJUSTVIDEOMODE pMode)
-{
-    pMode->fFlags = 0;
-
-    if (pMode->Mode.Id >= (UINT)VBoxCommonFromDeviceExt(pExt)->cDisplays)
-    {
-        WARN(("invalid screen id (%d)", pMode->Mode.Id));
-        pMode->fFlags = VBOXWDDM_ADJUSTVIDEOMODE_F_INVALISCREENID;
-        return;
-    }
-
-    PVBOXWDDM_TARGET pTarget = &pExt->aTargets[pMode->Mode.Id];
-    /* @todo: this info should go from the target actually */
-    PVBOXWDDM_SOURCE pSource = &pExt->aSources[pMode->Mode.Id];
-
-    UINT newWidth = pMode->Mode.Width;
-    UINT newHeight = pMode->Mode.Height;
-    UINT newBpp = pMode->Mode.BitsPerPixel;
-
-    if (!VBoxMPValidateVideoModeParams(pExt, pMode->Mode.Id, newWidth, newHeight, newBpp))
-    {
-        PVBOXWDDM_SOURCE pSource = &pExt->aSources[pMode->Mode.Id];
-        pMode->fFlags |= VBOXWDDM_ADJUSTVIDEOMODE_F_UNSUPPORTED;
-    }
-
-    if (pMode->Mode.Width != newWidth
-            || pMode->Mode.Height != newHeight
-            || pMode->Mode.BitsPerPixel != newBpp)
-    {
-        pMode->fFlags |= VBOXWDDM_ADJUSTVIDEOMODE_F_ADJUSTED;
-        pMode->Mode.Width = newWidth;
-        pMode->Mode.Height = newHeight;
-        pMode->Mode.BitsPerPixel = newBpp;
-    }
-
-    if (pTarget->HeightVisible /* <- active */
-            && pSource->AllocData.SurfDesc.width == pMode->Mode.Width
-            && pSource->AllocData.SurfDesc.height == pMode->Mode.Height
-            && pSource->AllocData.SurfDesc.bpp == pMode->Mode.BitsPerPixel)
-    {
-        pMode->fFlags |= VBOXWDDM_ADJUSTVIDEOMODE_F_CURRENT;
-        if (pMode->fFlags & VBOXWDDM_ADJUSTVIDEOMODE_F_UNSUPPORTED)
-        {
-            WARN(("current mode is reported as unsupported"));
-        }
-    }
-}
-
-void VBoxWddmAdjustModes(PVBOXMP_DEVEXT pExt, uint32_t cModes, PVBOXWDDM_ADJUSTVIDEOMODE aModes)
-{
-    for (UINT i = 0; i < cModes; ++i)
-    {
-        PVBOXWDDM_ADJUSTVIDEOMODE pMode = &aModes[i];
-        VBoxWddmAdjustMode(pExt, pMode);
-    }
-}
-
-NTSTATUS VBoxWddmGetModesForResolution(VIDEO_MODE_INFORMATION *pAllModes, uint32_t cAllModes, int iSearchPreferredMode,
-        const D3DKMDT_2DREGION *pResolution, VIDEO_MODE_INFORMATION * pModes, uint32_t cModes, uint32_t *pcModes, int32_t *piPreferrableMode)
-{
-    NTSTATUS Status = STATUS_SUCCESS;
-    uint32_t cFound = 0;
-    int iFoundPreferrableMode = -1;
-    for (uint32_t i = 0; i < cAllModes; ++i)
-    {
-        VIDEO_MODE_INFORMATION *pCur = &pAllModes[i];
-        if (pResolution->cx == pCur->VisScreenWidth
-                        && pResolution->cy == pCur->VisScreenHeight)
-        {
-            if (pModes && cModes > cFound)
-                memcpy(&pModes[cFound], pCur, sizeof(VIDEO_MODE_INFORMATION));
-            else
-                Status = STATUS_BUFFER_TOO_SMALL;
-
-            if (i == iSearchPreferredMode)
-                iFoundPreferrableMode = cFound;
-
-            ++cFound;
-        }
-    }
-
-    Assert(iFoundPreferrableMode < 0 || cFound > (uint32_t)iFoundPreferrableMode);
-
-    *pcModes = cFound;
-    if (piPreferrableMode)
-        *piPreferrableMode = iFoundPreferrableMode;
-
-    return Status;
-}
-
-static PVBOXWDDM_VIDEOMODES_INFO vboxWddmGetVideoModesInfoInternal(PVBOXMP_DEVEXT pExt, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
-{
-    Assert(VidPnTargetId < (D3DDDI_VIDEO_PRESENT_TARGET_ID)VBoxCommonFromDeviceExt(pExt)->cDisplays);
-    if (VidPnTargetId >= (D3DDDI_VIDEO_PRESENT_TARGET_ID)VBoxCommonFromDeviceExt(pExt)->cDisplays)
-    {
-        WARN(("video mode info for invalid screen (%d) requested", VidPnTargetId));
-        return NULL;
-    }
-
-    PVBOXWDDM_VIDEOMODES_INFO pInfo = &g_aVBoxVideoModeInfos[VidPnTargetId];
-
-    if (!pInfo->cModes)
-    {
-        VBoxWddmBuildVideoModesInfo(pExt, VidPnTargetId, pInfo, NULL, 0);
-        Assert(pInfo->cModes);
-    }
-
-    return pInfo;
-}
-
-static VOID vboxWddmAddVideoModes(PVBOXMP_DEVEXT pExt, PVBOXWDDM_VIDEOMODES_INFO pDstInfo, PVBOXWDDM_VIDEOMODES_INFO pSrcInfo)
-{
-    for (int i = 0; i < (int)pSrcInfo->cModes; ++i)
-    {
-        int foundIdx = VBoxMPFindVideoMode(pDstInfo->aModes, pDstInfo->cModes, &pSrcInfo->aModes[i]);
-        if (foundIdx >= 0)
-            continue;
-
-        Assert(0);
-        pDstInfo->aModes[pDstInfo->cModes] = pSrcInfo->aModes[i];
-        ++pDstInfo->cModes;
-    }
-
-    VBoxWddmBuildResolutionTableForModes(pDstInfo);
-}
-
-PVBOXWDDM_VIDEOMODES_INFO VBoxWddmGetAllVideoModesInfos(PVBOXMP_DEVEXT pExt)
-{
-    /* ensure all modes are initialized */
-    for (int i = 0; i < VBoxCommonFromDeviceExt(pExt)->cDisplays; ++i)
-    {
-        vboxWddmGetVideoModesInfoInternal(pExt, (D3DDDI_VIDEO_PRESENT_TARGET_ID)i);
-    }
-
-    return g_aVBoxVideoModeInfos;
-}
-
-PVBOXWDDM_VIDEOMODES_INFO VBoxWddmGetVideoModesInfo(PVBOXMP_DEVEXT pExt, D3DDDI_VIDEO_PRESENT_TARGET_ID VidPnTargetId)
-{
-    return &VBoxWddmGetAllVideoModesInfos(pExt)[VidPnTargetId];
-}
-
-#endif /*VBOX_WDDM_MINIPORT*/

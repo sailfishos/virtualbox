@@ -1,10 +1,10 @@
-# $Id: subheader.kmk 2434 2011-01-09 17:45:08Z bird $
+# $Id: subheader.kmk 2763 2015-01-28 18:25:31Z bird $
 ## @file
 # kBuild - File included at top of a makefile or sub-makefile.
 #
 
 #
-# Copyright (c) 2006-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2006-2015 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -52,24 +52,7 @@ else
  #
  # Set the default path and makefile for all new targets.
  #
- define def_subfooter
-  ifndef $(target)_PATH
-   ifndef $(target)_DEFPATH
-    $(target)_DEFPATH := $(PATH_SUB_CURRENT)
-   endif
-   $(call KB_FN_ASSIGN_DEPRECATED,$(target)_PATH,$($(target)_DEFPATH), $(target)_DEFPATH)
-  else ifndef $(target)_DEFPATH
-   $(target)_DEFPATH := $($(target)_PATH)
-  endif
-  ifndef $(target)_MAKEFILE
-   $(target)_MAKEFILE := $(MAKEFILE_CURRENT)
-  endif
-  ifndef $(target)_0_OUTDIR
-   $(target)_0_OUTDIR := $(call TARGET_PATH,$(target))
-   $(call KB_FN_ASSIGN_DEPRECATED,PATH_$(target),$($(target)_0_OUTDIR), $(target)_0_OUTDIR)
-  endif
- endef
-
+ ## @todo Wish there was an easy way of only enumerating only new targets...
  $(foreach target,\
 	$(ALL_TARGETS) \
 	$(FETCHES)     $(FETCHES.$(KBUILD_TARGET))      $(FETCHES.$(KBUILD_TARGET).$(KBUILD_TARGET_ARCH))     $(FETCHES.$(KBUILD_TARGET_ARCH))     $(FETCHES.$(KBUILD_TARGET_CPU))     $(FETCHES.$(KBUILD_TYPE))     \
@@ -83,7 +66,7 @@ else
 	$(MISCBINS)    $(MISCBINS.$(KBUILD_TARGET))     $(MISCBINS.$(KBUILD_TARGET).$(KBUILD_TARGET_ARCH))    $(MISCBINS.$(KBUILD_TARGET_ARCH))    $(MISCBINS.$(KBUILD_TARGET_CPU))    $(MISCBINS.$(KBUILD_TYPE))    \
 	$(INSTALLS)    $(INSTALLS.$(KBUILD_TARGET))     $(INSTALLS.$(KBUILD_TARGET).$(KBUILD_TARGET_ARCH))    $(INSTALLS.$(KBUILD_TARGET_ARCH))    $(INSTALLS.$(KBUILD_TARGET_CPU))    $(INSTALLS.$(KBUILD_TYPE))    \
 	$(OTHERS)      $(OTHERS.$(KBUILD_TARGET))       $(OTHERS.$(KBUILD_TARGET).$(KBUILD_TARGET_ARCH))      $(OTHERS.$(KBUILD_TARGET_ARCH))      $(OTHERS.$(KBUILD_TARGET_CPU))      $(OTHERS.$(KBUILD_TYPE))      \
- ,$(evalval def_subfooter))
+ ,$(if-expr defined($(target)_0_OUTDIR),,$(evalval def_subfooter_header_target_pass)))
 
 
  #

@@ -58,6 +58,7 @@ struct socket
                                   * PING reply's */
     struct tcpiphdr *so_ti;      /* Pointer to the original ti within
                                   * so_mconn, for non-blocking connections */
+    uint8_t         *so_ohdr;    /* unmolested IP header of the datagram in so_m */
     int             so_urgc;
     struct in_addr  so_faddr;    /* foreign host table entry */
     struct in_addr  so_laddr;    /* local host table entry */
@@ -67,6 +68,10 @@ struct socket
     struct in_addr  so_hladdr;    /* local host addr */
 
     u_int8_t        so_iptos;    /* Type of service */
+
+    uint8_t         so_sottl;    /* cached socket's IP_TTL option */
+    uint8_t         so_sotos;    /* cached socket's IP_TOS option */
+    int8_t          so_sodf;     /* cached socket's DF option */
 
     u_char          so_type;     /* Type of socket, UDP or TCP */
     int             so_state;    /* internal state flags SS_*, below */
@@ -96,10 +101,7 @@ struct socket
     /* storage of source ether address */
     unsigned char so_ethaddr[6];
 #endif
-    /* required for port-forwarding */
-    struct libalias *so_la;
-    /* libalias might attach the socket and we want to notify libalias we're freeing it */
-    void *so_pvLnk;
+
 #ifdef VBOX_WITH_NAT_UDP_SOCKET_CLONE
     struct socket *so_cloneOf; /* pointer to master instance */
     int so_cCloneCounter;      /* number of clones */
@@ -128,10 +130,6 @@ struct socket
     int fShouldBeRemoved;
 };
 
-/* this function inform libalias about socket close */
-void slirpDeleteLinkSocket(void *pvLnk);
-
-
 # define SOCKET_LOCK(so) do {} while (0)
 # define SOCKET_UNLOCK(so) do {} while (0)
 # define SOCKET_LOCK_CREATE(so) do {} while (0)
@@ -157,11 +155,20 @@ void slirpDeleteLinkSocket(void *pvLnk);
 extern struct socket tcb;
 
 #if defined(DECLARE_IOVEC) && !defined(HAVE_READV)
+# if !defined(RT_OS_WINDOWS)
 struct iovec
 {
     char *iov_base;
     size_t iov_len;
 };
+# else
+/* make it congruent with WSABUF */
+struct iovec
+{
+    ULONG iov_len;
+    char *iov_base;
+};
+# endif
 #endif
 
 void so_init (void);

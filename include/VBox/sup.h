@@ -91,6 +91,15 @@ typedef enum SUPPAGINGMODE
     SUPPAGINGMODE_AMD64_GLOBAL_NX
 } SUPPAGINGMODE;
 
+
+/** Flags returned by SUPR0GetKernelFeatures().
+ * @{
+ */
+/** GDT is read-only. */
+#define SUPKERNELFEATURES_GDT_READ_ONLY     RT_BIT(0)
+/** @} */
+
+
 /**
  * Usermode probe context information.
  */
@@ -423,8 +432,8 @@ typedef SUPVMMR0REQHDR *PSUPVMMR0REQHDR;
  */
 /** @see VMMR0_DO_RAW_RUN. */
 #define SUP_VMMR0_DO_RAW_RUN    0
-/** @see VMMR0_DO_HWACC_RUN. */
-#define SUP_VMMR0_DO_HWACC_RUN  1
+/** @see VMMR0_DO_HM_RUN. */
+#define SUP_VMMR0_DO_HM_RUN  1
 /** @see VMMR0_DO_NOP */
 #define SUP_VMMR0_DO_NOP        2
 /** @} */
@@ -695,6 +704,8 @@ typedef enum SUPINITOP
     kSupInitOp_Driver,
     /** IPRT init related. */
     kSupInitOp_IPRT,
+    /** Miscellaneous. */
+    kSupInitOp_Misc,
     /** Place holder. */
     kSupInitOp_End
 } SUPINITOP;
@@ -703,7 +714,9 @@ typedef enum SUPINITOP
  * Trusted error entry point, optional.
  *
  * This is exported as "TrustedError" by the dynamic libraries which contains
- * the "real" application binary for which the hardened stub is built.
+ * the "real" application binary for which the hardened stub is built. The
+ * hardened main() must specify SUPSECMAIN_FLAGS_TRUSTED_ERROR when calling
+ * SUPR3HardenedMain.
  *
  * @param   pszWhere        Where the error occurred (function name).
  * @param   enmWhat         Which operation went wrong.
@@ -737,21 +750,37 @@ typedef FNSUPTRUSTEDERROR *PFNSUPTRUSTEDERROR;
  */
 DECLHIDDEN(int) SUPR3HardenedMain(const char *pszProgName, uint32_t fFlags, int argc, char **argv, char **envp);
 
-/** @name SUPR3SecureMain flags.
+/** @name SUPR3HardenedMain flags.
  * @{ */
 /** Don't open the device. (Intended for VirtualBox without -startvm.) */
 #define SUPSECMAIN_FLAGS_DONT_OPEN_DEV      RT_BIT_32(0)
+/** The hardened DLL has a "TrustedError" function (see FNSUPTRUSTEDERROR). */
+#define SUPSECMAIN_FLAGS_TRUSTED_ERROR      RT_BIT_32(1)
 /** @} */
 
 /**
  * Initializes the support library.
- * Each successful call to SUPR3Init() must be countered by a
+ *
+ * Each successful call to SUPR3Init() or SUPR3InitEx must be countered by a
  * call to SUPR3Term(false).
  *
  * @returns VBox status code.
  * @param   ppSession       Where to store the session handle. Defaults to NULL.
  */
 SUPR3DECL(int) SUPR3Init(PSUPDRVSESSION *ppSession);
+
+
+/**
+ * Initializes the support library, extended version.
+ *
+ * Each successful call to SUPR3Init() or SUPR3InitEx must be countered by a
+ * call to SUPR3Term(false).
+ *
+ * @returns VBox status code.
+ * @param   fUnrestricted   The desired access.
+ * @param   ppSession       Where to store the session handle. Defaults to NULL.
+ */
+SUPR3DECL(int) SUPR3InitEx(bool fUnrestricted, PSUPDRVSESSION *ppSession);
 
 /**
  * Terminates the support library.
@@ -1054,6 +1083,18 @@ SUPR3DECL(int) SUPR3LoadServiceModule(const char *pszFilename, const char *pszMo
 SUPR3DECL(int) SUPR3FreeModule(void *pvImageBase);
 
 /**
+ * Lock down the module loader interface.
+ *
+ * This will lock down the module loader interface. No new modules can be
+ * loaded and all loaded modules can no longer be freed.
+ *
+ * @returns VBox status code.
+ * @param   pErrInfo        Where to return extended error information.
+ *                          Optional.
+ */
+SUPR3DECL(int) SUPR3LockDownLoader(PRTERRINFO pErrInfo);
+
+/**
  * Get the address of a symbol in a ring-0 module.
  *
  * @returns VBox status code.
@@ -1087,6 +1128,28 @@ SUPR3DECL(int) SUPR3UnloadVMM(void);
  * @param   pHCPhys     Where to store the physical address of the GIP.
  */
 SUPR3DECL(int) SUPR3GipGetPhys(PRTHCPHYS pHCPhys);
+
+/**
+ * Initializes only the bits relevant for the SUPR3HardenedVerify* APIs.
+ *
+ * This is for users that don't necessarily need to initialize the whole of
+ * SUPLib.  There is no harm in calling this one more time.
+ *
+ * @returns VBox status code.
+ * @remarks Currently not counted, so only call once.
+ */
+SUPR3DECL(int) SUPR3HardenedVerifyInit(void);
+
+/**
+ * Reverses the effect of SUPR3HardenedVerifyInit if SUPR3InitEx hasn't been
+ * called.
+ *
+ * Ignored if the support library was initialized using SUPR3Init or
+ * SUPR3InitEx.
+ *
+ * @returns VBox status code.
+ */
+SUPR3DECL(int) SUPR3HardenedVerifyTerm(void);
 
 /**
  * Verifies the integrity of a file, and optionally opens it.
@@ -1280,6 +1343,13 @@ SUPR3DECL(int) SUPR3TracerDeregisterModule(struct VTGOBJHDR *pVtgHdr);
  */
 SUPDECL(void)  SUPTracerFireProbe(struct VTGPROBELOC *pVtgProbeLoc, uintptr_t uArg0, uintptr_t uArg1, uintptr_t uArg2,
                                   uintptr_t uArg3, uintptr_t uArg4);
+/**
+ * Resume built-in keyboard on MacBook Air and Pro hosts.
+ *
+ * @returns VBox status code.
+ */
+SUPR3DECL(int) SUPR3ResumeSuspendedKeyboards(void);
+
 /** @} */
 #endif /* IN_RING3 */
 
@@ -1361,7 +1431,10 @@ SUPR0DECL(int) SUPR0QueryVTCaps(PSUPDRVSESSION pSession, uint32_t *pfCaps);
 SUPR0DECL(int) SUPR0GipUnmap(PSUPDRVSESSION pSession);
 SUPR0DECL(int) SUPR0Printf(const char *pszFormat, ...);
 SUPR0DECL(SUPPAGINGMODE) SUPR0GetPagingMode(void);
+SUPR0DECL(uint32_t) SUPR0GetKernelFeatures(void);
 SUPR0DECL(int) SUPR0EnableVTx(bool fEnable);
+SUPR0DECL(bool) SUPR0SuspendVTxOnCpu(void);
+SUPR0DECL(void) SUPR0ResumeVTxOnCpu(bool fSuspended);
 
 /** @name Absolute symbols
  * Take the address of these, don't try call them.
@@ -1735,6 +1808,63 @@ DECLEXPORT(void) ModuleTerm(void *hMod);
 
 /** @} */
 #endif
+
+
+/** @name Trust Anchors and Certificates
+ * @{ */
+
+/**
+ * Trust anchor table entry (in generated Certificates.cpp).
+ */
+typedef struct SUPTAENTRY
+{
+    /** Pointer to the raw bytes. */
+    const unsigned char    *pch;
+    /** Number of bytes. */
+    unsigned                cb;
+} SUPTAENTRY;
+/** Pointer to a trust anchor table entry. */
+typedef SUPTAENTRY const *PCSUPTAENTRY;
+
+/** Macro for simplifying generating the trust anchor tables. */
+#define SUPTAENTRY_GEN(a_abTA)      { &a_abTA[0], sizeof(a_abTA) }
+
+/** All certificates we know. */
+extern SUPTAENTRY const             g_aSUPAllTAs[];
+/** Number of entries in g_aSUPAllTAs. */
+extern unsigned const               g_cSUPAllTAs;
+
+/** Software publisher certificate roots (Authenticode). */
+extern SUPTAENTRY const             g_aSUPSpcRootTAs[];
+/** Number of entries in g_aSUPSpcRootTAs. */
+extern unsigned const               g_cSUPSpcRootTAs;
+
+/** Kernel root certificates used by Windows. */
+extern SUPTAENTRY const             g_aSUPNtKernelRootTAs[];
+/** Number of entries in g_aSUPNtKernelRootTAs. */
+extern unsigned const               g_cSUPNtKernelRootTAs;
+
+/** Timestamp root certificates trusted by Windows. */
+extern SUPTAENTRY const             g_aSUPTimestampTAs[];
+/** Number of entries in g_aSUPTimestampTAs. */
+extern unsigned const               g_cSUPTimestampTAs;
+
+/** TAs we trust (the build certificate, Oracle VirtualBox). */
+extern SUPTAENTRY const             g_aSUPTrustedTAs[];
+/** Number of entries in g_aSUPTrustedTAs. */
+extern unsigned const               g_cSUPTrustedTAs;
+
+/** Supplemental certificates, like cross signing certificates. */
+extern SUPTAENTRY const             g_aSUPSupplementalTAs[];
+/** Number of entries in g_aSUPTrustedTAs. */
+extern unsigned const               g_cSUPSupplementalTAs;
+
+/** The build certificate. */
+extern const unsigned char          g_abSUPBuildCert[];
+/** The size of the build certificate. */
+extern const unsigned               g_cbSUPBuildCert;
+
+/** @} */
 
 
 /** @} */

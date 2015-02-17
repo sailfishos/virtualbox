@@ -1,10 +1,13 @@
 /* $Id: DevPciIch9.cpp $ */
 /** @file
  * DevPCI - ICH9 southbridge PCI bus emulation device.
+ *
+ * @note    bird: I've cleaned up DevPCI.cpp to some extend, this file has not
+ *                be cleaned up and because of pending code merge.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,7 +22,7 @@
 *   Header Files                                                               *
 *******************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_PCI
-/* Hack to get PCIDEVICEINT declare at the right point - include "PCIInternal.h". */
+/* Hack to get PCIDEVICEINT declared at the right point - include "PCIInternal.h". */
 #define PCI_INCLUDE_PRIVATE
 #define PCIBus ICH9PCIBus
 #include <VBox/pci.h>
@@ -33,7 +36,6 @@
 #endif
 
 #include "VBoxDD.h"
-
 #include "MsiCommon.h"
 
 
@@ -194,6 +196,7 @@ DECLINLINE(void) ich9pciStateToPciAddr(PICH9PCIGLOBALS pGlobals, RTGCPHYS addr, 
 
 PDMBOTHCBDECL(void) ich9pciSetIrq(PPDMDEVINS pDevIns, PPCIDEVICE pPciDev, int iIrq, int iLevel, uint32_t uTagSrc)
 {
+    LogFlowFunc(("invoked by %p/%d: iIrq=%d iLevel=%d uTagSrc=%#x\n", pDevIns, pDevIns->iInstance, iIrq, iLevel, uTagSrc));
     ich9pciSetIrqInternal(PDMINS_2_DATA(pDevIns, PICH9PCIGLOBALS), pPciDev->devfn, pPciDev, iIrq, iLevel, uTagSrc);
 }
 
@@ -555,12 +558,14 @@ static void ich9pciSetIrqInternal(PICH9PCIGLOBALS pGlobals, uint8_t uDevFn, PPCI
     {
         if (MsiIsEnabled(pPciDev))
         {
+            LogFlowFunc(("PCI Dev %p : MSI\n", pPciDev));
             PPDMDEVINS pDevIns = pGlobals->aPciBus.CTX_SUFF(pDevIns);
             MsiNotify(pDevIns, pGlobals->aPciBus.CTX_SUFF(pPciHlp), pPciDev, iIrq, iLevel, uTagSrc);
         }
 
         if (MsixIsEnabled(pPciDev))
         {
+            LogFlowFunc(("PCI Dev %p : MSI-X\n", pPciDev));
             PPDMDEVINS pDevIns = pGlobals->aPciBus.CTX_SUFF(pDevIns);
             MsixNotify(pDevIns, pGlobals->aPciBus.CTX_SUFF(pPciHlp), pPciDev, iIrq, iLevel, uTagSrc);
         }
@@ -570,6 +575,7 @@ static void ich9pciSetIrqInternal(PICH9PCIGLOBALS pGlobals, uint8_t uDevFn, PPCI
     PICH9PCIBUS     pBus      =     &pGlobals->aPciBus;
     const bool  fIsAcpiDevice = PCIDevGetDeviceId(pPciDev) == 0x7113;
 
+    LogFlowFunc(("PCI Dev %p : IRQ\n", pPciDev));
     /* Check if the state changed. */
     if (pPciDev->Int.s.uIrqPinState != iLevel)
     {
@@ -969,21 +975,6 @@ static DECLCALLBACK(void) ich9pciSetConfigCallbacks(PPDMDEVINS pDevIns, PPCIDEVI
     pPciDev->Int.s.pfnConfigWrite = pfnWrite;
 }
 
-/**
- * Saves a state of the PCI device.
- *
- * @returns VBox status code.
- * @param   pDevIns         Device instance of the PCI Bus.
- * @param   pPciDev         Pointer to PCI device.
- * @param   pSSM            The handle to save the state to.
- */
-static DECLCALLBACK(int) ich9pciGenericSaveExec(PPDMDEVINS pDevIns, PPCIDEVICE pPciDev, PSSMHANDLE pSSM)
-{
-    NOREF(pDevIns);
-    Assert(!pciDevIsPassthrough(pPciDev));
-    return SSMR3PutMem(pSSM, &pPciDev->config[0], sizeof(pPciDev->config));
-}
-
 static int ich9pciR3CommonSaveExec(PICH9PCIBUS pBus, PSSMHANDLE pSSM)
 {
     /*
@@ -1152,54 +1143,54 @@ static void pciR3CommonRestoreConfig(PPCIDEVICE pDev, uint8_t const *pbSrcConfig
     } s_aFields[] =
     {
         /* off,cb,fW,fB, pszName */
-        { VBOX_PCI_VENDOR_ID, 2, 0, 3, "VENDOR_ID" },
-        { VBOX_PCI_DEVICE_ID, 2, 0, 3, "DEVICE_ID" },
-        { VBOX_PCI_STATUS, 2, 1, 3, "STATUS" },
-        { VBOX_PCI_REVISION_ID, 1, 0, 3, "REVISION_ID" },
-        { VBOX_PCI_CLASS_PROG, 1, 0, 3, "CLASS_PROG" },
-        { VBOX_PCI_CLASS_SUB, 1, 0, 3, "CLASS_SUB" },
-        { VBOX_PCI_CLASS_BASE, 1, 0, 3, "CLASS_BASE" },
-        { VBOX_PCI_CACHE_LINE_SIZE, 1, 1, 3, "CACHE_LINE_SIZE" },
-        { VBOX_PCI_LATENCY_TIMER, 1, 1, 3, "LATENCY_TIMER" },
-        { VBOX_PCI_HEADER_TYPE, 1, 0, 3, "HEADER_TYPE" },
-        { VBOX_PCI_BIST, 1, 1, 3, "BIST" },
-        { VBOX_PCI_BASE_ADDRESS_0, 4, 1, 3, "BASE_ADDRESS_0" },
-        { VBOX_PCI_BASE_ADDRESS_1, 4, 1, 3, "BASE_ADDRESS_1" },
-        { VBOX_PCI_BASE_ADDRESS_2, 4, 1, 1, "BASE_ADDRESS_2" },
-        { VBOX_PCI_PRIMARY_BUS, 1, 1, 2, "PRIMARY_BUS" },       // fWritable = ??
-        { VBOX_PCI_SECONDARY_BUS, 1, 1, 2, "SECONDARY_BUS" },     // fWritable = ??
-        { VBOX_PCI_SUBORDINATE_BUS, 1, 1, 2, "SUBORDINATE_BUS" },   // fWritable = ??
-        { VBOX_PCI_SEC_LATENCY_TIMER, 1, 1, 2, "SEC_LATENCY_TIMER" }, // fWritable = ??
-        { VBOX_PCI_BASE_ADDRESS_3, 4, 1, 1, "BASE_ADDRESS_3" },
-        { VBOX_PCI_IO_BASE, 1, 1, 2, "IO_BASE" },           // fWritable = ??
-        { VBOX_PCI_IO_LIMIT, 1, 1, 2, "IO_LIMIT" },          // fWritable = ??
-        { VBOX_PCI_SEC_STATUS, 2, 1, 2, "SEC_STATUS" },        // fWritable = ??
-        { VBOX_PCI_BASE_ADDRESS_4, 4, 1, 1, "BASE_ADDRESS_4" },
-        { VBOX_PCI_MEMORY_BASE, 2, 1, 2, "MEMORY_BASE" },       // fWritable = ??
-        { VBOX_PCI_MEMORY_LIMIT, 2, 1, 2, "MEMORY_LIMIT" },      // fWritable = ??
-        { VBOX_PCI_BASE_ADDRESS_5, 4, 1, 1, "BASE_ADDRESS_5" },
-        { VBOX_PCI_PREF_MEMORY_BASE, 2, 1, 2, "PREF_MEMORY_BASE" },  // fWritable = ??
-        { VBOX_PCI_PREF_MEMORY_LIMIT, 2, 1, 2, "PREF_MEMORY_LIMIT" }, // fWritable = ??
-        { VBOX_PCI_CARDBUS_CIS, 4, 1, 1, "CARDBUS_CIS" },       // fWritable = ??
-        { VBOX_PCI_PREF_BASE_UPPER32, 4, 1, 2, "PREF_BASE_UPPER32" }, // fWritable = ??
-        { VBOX_PCI_SUBSYSTEM_VENDOR_ID, 2, 0, 1, "SUBSYSTEM_VENDOR_ID" },// fWritable = !?
-        { VBOX_PCI_PREF_LIMIT_UPPER32, 4, 1, 2, "PREF_LIMIT_UPPER32" },// fWritable = ??
-        { VBOX_PCI_SUBSYSTEM_ID, 2, 0, 1, "SUBSYSTEM_ID" },      // fWritable = !?
-        { VBOX_PCI_ROM_ADDRESS, 4, 1, 1, "ROM_ADDRESS" },       // fWritable = ?!
-        { VBOX_PCI_IO_BASE_UPPER16, 2, 1, 2, "IO_BASE_UPPER16" },   // fWritable = ?!
-        { VBOX_PCI_IO_LIMIT_UPPER16, 2, 1, 2, "IO_LIMIT_UPPER16" },  // fWritable = ?!
-        { VBOX_PCI_CAPABILITY_LIST, 4, 0, 3, "CAPABILITY_LIST" },   // fWritable = !? cb=!?
-        { VBOX_PCI_RESERVED_38, 4, 1, 1, "RESERVED_38" },               // ???
-        { VBOX_PCI_ROM_ADDRESS_BR, 4, 1, 2, "ROM_ADDRESS_BR" },    // fWritable = !? cb=!? fBridge=!?
-        { VBOX_PCI_INTERRUPT_LINE, 1, 1, 3, "INTERRUPT_LINE" },    // fBridge=??
-        { VBOX_PCI_INTERRUPT_PIN, 1, 0, 3, "INTERRUPT_PIN" },     // fBridge=??
-        { VBOX_PCI_MIN_GNT, 1, 0, 1, "MIN_GNT" },
-        { VBOX_PCI_BRIDGE_CONTROL, 2, 1, 2, "BRIDGE_CONTROL" },    // fWritable = !?
-        { VBOX_PCI_MAX_LAT, 1, 0, 1, "MAX_LAT" },
+        { 0x00, 2, 0, 3, "VENDOR_ID" },
+        { 0x02, 2, 0, 3, "DEVICE_ID" },
+        { 0x06, 2, 1, 3, "STATUS" },
+        { 0x08, 1, 0, 3, "REVISION_ID" },
+        { 0x09, 1, 0, 3, "CLASS_PROG" },
+        { 0x0a, 1, 0, 3, "CLASS_SUB" },
+        { 0x0b, 1, 0, 3, "CLASS_BASE" },
+        { 0x0c, 1, 1, 3, "CACHE_LINE_SIZE" },
+        { 0x0d, 1, 1, 3, "LATENCY_TIMER" },
+        { 0x0e, 1, 0, 3, "HEADER_TYPE" },
+        { 0x0f, 1, 1, 3, "BIST" },
+        { 0x10, 4, 1, 3, "BASE_ADDRESS_0" },
+        { 0x14, 4, 1, 3, "BASE_ADDRESS_1" },
+        { 0x18, 4, 1, 1, "BASE_ADDRESS_2" },
+        { 0x18, 1, 1, 2, "PRIMARY_BUS" },       // fWritable = ??
+        { 0x19, 1, 1, 2, "SECONDARY_BUS" },     // fWritable = ??
+        { 0x1a, 1, 1, 2, "SUBORDINATE_BUS" },   // fWritable = ??
+        { 0x1b, 1, 1, 2, "SEC_LATENCY_TIMER" }, // fWritable = ??
+        { 0x1c, 4, 1, 1, "BASE_ADDRESS_3" },
+        { 0x1c, 1, 1, 2, "IO_BASE" },           // fWritable = ??
+        { 0x1d, 1, 1, 2, "IO_LIMIT" },          // fWritable = ??
+        { 0x1e, 2, 1, 2, "SEC_STATUS" },        // fWritable = ??
+        { 0x20, 4, 1, 1, "BASE_ADDRESS_4" },
+        { 0x20, 2, 1, 2, "MEMORY_BASE" },       // fWritable = ??
+        { 0x22, 2, 1, 2, "MEMORY_LIMIT" },      // fWritable = ??
+        { 0x24, 4, 1, 1, "BASE_ADDRESS_5" },
+        { 0x24, 2, 1, 2, "PREF_MEMORY_BASE" },  // fWritable = ??
+        { 0x26, 2, 1, 2, "PREF_MEMORY_LIMIT" }, // fWritable = ??
+        { 0x28, 4, 1, 1, "CARDBUS_CIS" },       // fWritable = ??
+        { 0x28, 4, 1, 2, "PREF_BASE_UPPER32" }, // fWritable = ??
+        { 0x2c, 2, 0, 1, "SUBSYSTEM_VENDOR_ID" },// fWritable = !?
+        { 0x2c, 4, 1, 2, "PREF_LIMIT_UPPER32" },// fWritable = ??
+        { 0x2e, 2, 0, 1, "SUBSYSTEM_ID" },      // fWritable = !?
+        { 0x30, 4, 1, 1, "ROM_ADDRESS" },       // fWritable = ?!
+        { 0x30, 2, 1, 2, "IO_BASE_UPPER16" },   // fWritable = ?!
+        { 0x32, 2, 1, 2, "IO_LIMIT_UPPER16" },  // fWritable = ?!
+        { 0x34, 4, 0, 3, "CAPABILITY_LIST" },   // fWritable = !? cb=!?
+        { 0x38, 4, 1, 1, "RESERVED_38" },       // ???
+        { 0x38, 4, 1, 2, "ROM_ADDRESS_BR" },    // fWritable = !? cb=!? fBridge=!?
+        { 0x3c, 1, 1, 3, "INTERRUPT_LINE" },    // fBridge=??
+        { 0x3d, 1, 0, 3, "INTERRUPT_PIN" },     // fBridge=??
+        { 0x3e, 1, 0, 1, "MIN_GNT" },
+        { 0x3e, 2, 1, 2, "BRIDGE_CONTROL" },    // fWritable = !?
+        { 0x3f, 1, 0, 1, "MAX_LAT" },
         /* The COMMAND register must come last as it requires the *ADDRESS*
            registers to be restored before we pretent to change it from 0 to
            whatever value the guest assigned it. */
-        { VBOX_PCI_COMMAND, 2, 1, 3, "COMMAND" },
+        { 0x04, 2, 1, 3, "COMMAND" },
     };
 
 #ifdef RT_STRICT
@@ -1444,21 +1435,6 @@ static DECLCALLBACK(int) ich9pciR3CommonLoadExec(PICH9PCIBUS pBus, PSSMHANDLE pS
     return rc;
 }
 
-/**
- * Loads a saved PCI device state.
- *
- * @returns VBox status code.
- * @param   pDevIns         Device instance of the PCI Bus.
- * @param   pPciDev         Pointer to PCI device.
- * @param   pSSM            The handle to the saved state.
- */
-static DECLCALLBACK(int) ich9pciGenericLoadExec(PPDMDEVINS pDevIns, PPCIDEVICE pPciDev, PSSMHANDLE pSSM)
-{
-    NOREF(pDevIns);
-    Assert(!pciDevIsPassthrough(pPciDev));
-    return SSMR3GetMem(pSSM, &pPciDev->config[0], sizeof(pPciDev->config));
-}
-
 static DECLCALLBACK(int) ich9pciR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass)
 {
     PICH9PCIGLOBALS pThis = PDMINS_2_DATA(pDevIns, PICH9PCIGLOBALS);
@@ -1701,7 +1677,9 @@ static void ich9pciBiosInitDevice(PICH9PCIGLOBALS pGlobals, uint8_t uBus, uint8_
                     cbRegSize64 = (~cbRegSize64) + 1;
 
                     /* No 64-bit PIO regions possible. */
-                    Assert((u8ResourceType & PCI_COMMAND_IOACCESS) == 0);
+#ifndef DEBUG_bird /* EFI triggers this for DevAHCI. */
+                    AssertMsg((u8ResourceType & PCI_COMMAND_IOACCESS) == 0, ("type=%#x rgn=%d\n", u8ResourceType, iRegion));
+#endif
                 }
                 else
                 {
@@ -1726,7 +1704,9 @@ static void ich9pciBiosInitDevice(PICH9PCIGLOBALS pGlobals, uint8_t uBus, uint8_
 
                     cbRegSize64 = cbRegSize32;
                 }
+#ifndef DEBUG_bird /* EFI triggers this for DevAHCI. */
                 Assert(cbRegSize64 == (uint32_t)cbRegSize64);
+#endif
                 Log2(("%s: Size of region %u for device %d on bus %d is %lld\n", __FUNCTION__, iRegion, uDevFn, uBus, cbRegSize64));
 
                 if (cbRegSize64)
@@ -2265,18 +2245,28 @@ static void ich9pciBusInfo(PICH9PCIBUS pBus, PCDBGFINFOHLP pHlp, int iIndent, bo
              * For passthrough devices MSI/MSI-X mostly reflects the way interrupts delivered to the guest,
              * as host driver handles real devices interrupts.
              */
-            pHlp->pfnPrintf(pHlp, "%02x:%02x:%02x %s%s: %04x-%04x%s%s",
+            pHlp->pfnPrintf(pHlp, "%02x:%02x:%02x %s%s: %04x-%04x",
                             pBus->iBus, (iDev >> 3) & 0xff, iDev & 0x7,
                             pPciDev->name,
                             pciDevIsPassthrough(pPciDev) ? " (PASSTHROUGH)" : "",
-                            ich9pciGetWord(pPciDev, VBOX_PCI_VENDOR_ID), ich9pciGetWord(pPciDev, VBOX_PCI_DEVICE_ID),
-                            pciDevIsMsiCapable(pPciDev)  ? " MSI" : "",
-                            pciDevIsMsixCapable(pPciDev) ? " MSI-X" : ""
+                            ich9pciGetWord(pPciDev, VBOX_PCI_VENDOR_ID), ich9pciGetWord(pPciDev, VBOX_PCI_DEVICE_ID)
                             );
             if (ich9pciGetByte(pPciDev, VBOX_PCI_INTERRUPT_PIN) != 0)
                 pHlp->pfnPrintf(pHlp, " IRQ%d", ich9pciGetByte(pPciDev, VBOX_PCI_INTERRUPT_LINE));
-
             pHlp->pfnPrintf(pHlp, "\n");
+
+            if (pciDevIsMsiCapable(pPciDev) || pciDevIsMsixCapable(pPciDev))
+            {
+                printIndent(pHlp, iIndent + 2);
+
+                if (pciDevIsMsiCapable(pPciDev))
+                    pHlp->pfnPrintf(pHlp, "MSI:%s ", MsiIsEnabled(pPciDev) ? "on" : "off");
+
+                if (pciDevIsMsixCapable(pPciDev))
+                    pHlp->pfnPrintf(pHlp, "MSI-X:%s ", MsixIsEnabled(pPciDev) ? "on" : "off");
+
+                pHlp->pfnPrintf(pHlp, "\n");
+            }
 
             uint16_t iCmd = ich9pciGetWord(pPciDev, VBOX_PCI_COMMAND);
             if ((iCmd & (VBOX_PCI_COMMAND_IO | VBOX_PCI_COMMAND_MEMORY)) != 0)
@@ -2318,8 +2308,8 @@ static void ich9pciBusInfo(PICH9PCIBUS pBus, PCDBGFINFOHLP pHlp, int iIndent, bo
 
             printIndent(pHlp, iIndent + 2);
             uint16_t iStatus = ich9pciGetWord(pPciDev, VBOX_PCI_STATUS);
-            pHlp->pfnPrintf(pHlp, "Command: %.*Rhxs, Status: %.*Rhxs\n",
-                            sizeof(uint16_t), &iCmd, sizeof(uint16_t), &iStatus);
+            pHlp->pfnPrintf(pHlp, "Command: %04X, Status: %04X\n",
+                            iCmd, iStatus);
             printIndent(pHlp, iIndent + 2);
             pHlp->pfnPrintf(pHlp, "Bus master: %s\n",
                             iCmd & VBOX_PCI_COMMAND_MASTER ? "Yes" : "No");
@@ -2462,8 +2452,6 @@ static DECLCALLBACK(int) ich9pciConstruct(PPDMDEVINS pDevIns,
     PciBusReg.pfnIORegionRegisterR3   = ich9pciIORegionRegister;
     PciBusReg.pfnSetConfigCallbacksR3 = ich9pciSetConfigCallbacks;
     PciBusReg.pfnSetIrqR3             = ich9pciSetIrq;
-    PciBusReg.pfnSaveExecR3           = ich9pciGenericSaveExec;
-    PciBusReg.pfnLoadExecR3           = ich9pciGenericLoadExec;
     PciBusReg.pfnFakePCIBIOSR3        = ich9pciFakePCIBIOS;
     PciBusReg.pszSetIrqRC             = fGCEnabled ? "ich9pciSetIrq" : NULL;
     PciBusReg.pszSetIrqR0             = fR0Enabled ? "ich9pciSetIrq" : NULL;
@@ -2593,15 +2581,30 @@ static void ich9pciResetDevice(PPCIDEVICE pDev)
         PCIDevSetCommand(pDev,
                          PCIDevGetCommand(pDev)
                          &
-                         ~(VBOX_PCI_COMMAND_IO |
-                           VBOX_PCI_COMMAND_MEMORY |
-                           VBOX_PCI_COMMAND_MASTER));
+                         ~(VBOX_PCI_COMMAND_IO | VBOX_PCI_COMMAND_MEMORY |
+                           VBOX_PCI_COMMAND_MASTER | VBOX_PCI_COMMAND_SPECIAL |
+                           VBOX_PCI_COMMAND_PARITY | VBOX_PCI_COMMAND_SERR |
+                           VBOX_PCI_COMMAND_FAST_BACK | VBOX_PCI_COMMAND_INTX_DISABLE));
 
         /* Bridge device reset handlers processed later */
         if (!pciDevIsPci2PciBridge(pDev))
         {
             PCIDevSetByte(pDev, VBOX_PCI_CACHE_LINE_SIZE, 0x0);
             PCIDevSetInterruptLine(pDev, 0x0);
+        }
+
+        /* Reset MSI message control. */
+        if (pciDevIsMsiCapable(pDev))
+        {
+            /* Extracted from MsiPciConfigWrite(). */
+            pDev->config[pDev->Int.s.u8MsiCapOffset + VBOX_MSI_CAP_MESSAGE_CONTROL] &= 0x8e;
+        }
+
+        /* Reset MSI-X message control. */
+        if (pciDevIsMsixCapable(pDev))
+        {
+            /* Extracted from MsixPciConfigWrite(); no side effects. */
+            pDev->config[pDev->Int.s.u8MsixCapOffset + VBOX_MSIX_CAP_MESSAGE_CONTROL + 1] &= 0x3f;
         }
     }
 }
@@ -2705,8 +2708,6 @@ static DECLCALLBACK(int)   ich9pcibridgeConstruct(PPDMDEVINS pDevIns,
     PciBusReg.pfnIORegionRegisterR3   = ich9pciIORegionRegister;
     PciBusReg.pfnSetConfigCallbacksR3 = ich9pciSetConfigCallbacks;
     PciBusReg.pfnSetIrqR3             = ich9pcibridgeSetIrq;
-    PciBusReg.pfnSaveExecR3           = ich9pciGenericSaveExec;
-    PciBusReg.pfnLoadExecR3           = ich9pciGenericLoadExec;
     PciBusReg.pfnFakePCIBIOSR3        = NULL; /* Only needed for the first bus. */
     PciBusReg.pszSetIrqRC             = fGCEnabled ? "ich9pcibridgeSetIrq" : NULL;
     PciBusReg.pszSetIrqR0             = fR0Enabled ? "ich9pcibridgeSetIrq" : NULL;
@@ -2850,7 +2851,7 @@ const PDMDEVREG g_DevicePciIch9 =
     NULL,
     /* pfnRelocate */
     ich9pciRelocate,
-    /* pfnIOCtl */
+    /* pfnMemSetup */
     NULL,
     /* pfnPowerOn */
     NULL,
@@ -2906,7 +2907,7 @@ const PDMDEVREG g_DevicePciIch9Bridge =
     NULL,
     /* pfnRelocate */
     ich9pcibridgeRelocate,
-    /* pfnIOCtl */
+    /* pfnMemSetup */
     NULL,
     /* pfnPowerOn */
     NULL,

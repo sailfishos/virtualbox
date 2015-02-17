@@ -1,4 +1,4 @@
-/* $Revision: 83687 $ */
+/* $Revision: 98021 $ */
 /** @file
  * VirtualBox Support Driver - IOCtl definitions.
  */
@@ -57,6 +57,23 @@
 # define SUP_CTL_CODE_FAST(Function)            CTL_CODE(FILE_DEVICE_UNKNOWN, (Function) | SUP_IOCTL_FLAG, METHOD_NEITHER,  FILE_WRITE_ACCESS)
 # define SUP_CTL_CODE_NO_SIZE(uIOCtl)           (uIOCtl)
 
+# define SUP_NT_STATUS_BASE                     UINT32_C(0xe9860000) /**< STATUS_SEVERITY_ERROR + C-bit + facility 0x986. */
+# define SUP_NT_STATUS_IS_VBOX(a_rcNt)          ( ((uint32_t)(a_rcNt) & 0xffff0000) == SUP_NT_STATUS_BASE )
+# define SUP_NT_STATUS_TO_VBOX(a_rcNt)          ( (int)((uint32_t)(a_rcNt) | UINT32_C(0xffff0000)) )
+
+/** NT device name for system access. */
+# define SUPDRV_NT_DEVICE_NAME_SYS              L"\\Device\\VBoxDrv"
+/** NT device name for user access. */
+# define SUPDRV_NT_DEVICE_NAME_USR              L"\\Device\\VBoxDrvU"
+# ifdef VBOX_WITH_HARDENING
+/** NT device name for hardened stub access. */
+#  define SUPDRV_NT_DEVICE_NAME_STUB            L"\\Device\\VBoxDrvStub"
+/** NT device name for getting error information for failed VBoxDrv or
+ * VBoxDrvStub open. */
+#  define SUPDRV_NT_DEVICE_NAME_ERROR_INFO      L"\\Device\\VBoxDrvErrorInfo"
+# endif
+
+
 #elif defined(RT_OS_SOLARIS)
   /* No automatic buffering, size limited to 255 bytes. */
 # include <sys/ioccom.h>
@@ -100,8 +117,8 @@
 
 /** Fast path IOCtl: VMMR0_DO_RAW_RUN */
 #define SUP_IOCTL_FAST_DO_RAW_RUN               SUP_CTL_CODE_FAST(64)
-/** Fast path IOCtl: VMMR0_DO_HWACC_RUN */
-#define SUP_IOCTL_FAST_DO_HWACC_RUN             SUP_CTL_CODE_FAST(65)
+/** Fast path IOCtl: VMMR0_DO_HM_RUN */
+#define SUP_IOCTL_FAST_DO_HM_RUN             SUP_CTL_CODE_FAST(65)
 /** Just a NOP call for profiling the latency of a fast ioctl call to VMMR0. */
 #define SUP_IOCTL_FAST_DO_NOP                   SUP_CTL_CODE_FAST(66)
 
@@ -193,7 +210,7 @@ typedef SUPREQHDR *PSUPREQHDR;
  * @todo Pending work on next major version change:
  *          - Remove RTSpinlockReleaseNoInts.
  */
-#define SUPDRV_IOC_VERSION                              0x001a0004
+#define SUPDRV_IOC_VERSION                              0x001a0009
 
 /** SUP_IOCTL_COOKIE. */
 typedef struct SUPCOOKIE
@@ -455,6 +472,17 @@ typedef struct SUPLDRFREE
         } In;
     } u;
 } SUPLDRFREE, *PSUPLDRFREE;
+/** @} */
+
+
+/** @name SUP_IOCTL_LDR_LOCK_DOWN
+ * Lock down the image loader interface.
+ * @{
+ */
+#define SUP_IOCTL_LDR_LOCK_DOWN                         SUP_CTL_CODE_SIZE(38, SUP_IOCTL_LDR_LOCK_DOWN_SIZE)
+#define SUP_IOCTL_LDR_LOCK_DOWN_SIZE                    sizeof(SUPREQHDR)
+#define SUP_IOCTL_LDR_LOCK_DOWN_SIZE_IN                 sizeof(SUPREQHDR)
+#define SUP_IOCTL_LDR_LOCK_DOWN_SIZE_OUT                sizeof(SUPREQHDR)
 /** @} */
 
 
@@ -1329,6 +1357,18 @@ typedef struct SUPTRACERUMODFIREPROBE
         SUPDRVTRACERUSRCTX  In;
     } u;
 } SUPTRACERUMODFIREPROBE, *PSUPTRACERUMODFIREPROBE;
+/** @} */
+
+
+/** @name SUP_IOCTL_RESUME_SUSPENDED_KBDS
+ * Resume suspended keyboard devices if any found in the system.
+ *
+ * @{
+ */
+#define SUP_IOCTL_RESUME_SUSPENDED_KBDS                 SUP_CTL_CODE_SIZE(35, SUP_IOCTL_RESUME_SUSPENDED_KBDS_SIZE)
+#define SUP_IOCTL_RESUME_SUSPENDED_KBDS_SIZE            sizeof(SUPREQHDR)
+#define SUP_IOCTL_RESUME_SUSPENDED_KBDS_SIZE_IN         sizeof(SUPREQHDR)
+#define SUP_IOCTL_RESUME_SUSPENDED_KBDS_SIZE_OUT        sizeof(SUPREQHDR)
 /** @} */
 
 

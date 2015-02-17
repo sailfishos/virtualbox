@@ -46,9 +46,26 @@ const char* UIDefs::GUI_LastItemSelected = "GUI/LastItemSelected";
 const char* UIDefs::GUI_GroupDefinitions = "GUI/GroupDefinitions";
 const char* UIDefs::GUI_HideFromManager = "GUI/HideFromManager";
 const char* UIDefs::GUI_PreventReconfiguration = "GUI/PreventReconfiguration";
+const char* UIDefs::GUI_PreventSnapshotOperations = "GUI/PreventSnapshotOperations";
 const char* UIDefs::GUI_HideDetails = "GUI/HideDetails";
 
 /* Machine-window definitions: */
+#ifndef Q_WS_MAC
+const char* UIDefs::GUI_MachineWindowIcons = "GUI/MachineWindowIcons";
+const char* UIDefs::GUI_MachineWindowNamePostfix = "GUI/MachineWindowNamePostfix";
+#endif /* !Q_WS_MAC */
+const char* UIDefs::GUI_RestrictedRuntimeMenus = "GUI/RestrictedRuntimeMenus";
+#ifdef Q_WS_MAC
+const char* UIDefs::GUI_RestrictedRuntimeApplicationMenuActions = "GUI/RestrictedRuntimeApplicationMenuActions";
+#endif /* Q_WS_MAC */
+const char* UIDefs::GUI_RestrictedRuntimeMachineMenuActions = "GUI/RestrictedRuntimeMachineMenuActions";
+const char* UIDefs::GUI_RestrictedRuntimeViewMenuActions = "GUI/RestrictedRuntimeViewMenuActions";
+const char* UIDefs::GUI_RestrictedRuntimeDevicesMenuActions = "GUI/RestrictedRuntimeDevicesMenuActions";
+#ifdef VBOX_WITH_DEBUGGER_GUI
+const char* UIDefs::GUI_RestrictedRuntimeDebuggerMenuActions = "GUI/RestrictedRuntimeDebuggerMenuActions";
+#endif /* VBOX_WITH_DEBUGGER_GUI */
+const char* UIDefs::GUI_RestrictedRuntimeHelpMenuActions = "GUI/RestrictedRuntimeHelpMenuActions";
+const char* UIDefs::GUI_RestrictedVisualStates = "GUI/RestrictedVisualStates";
 const char* UIDefs::GUI_Input_MachineShortcuts = "GUI/Input/MachineShortcuts";
 const char* UIDefs::GUI_LastNormalWindowPosition = "GUI/LastNormalWindowPosition";
 const char* UIDefs::GUI_LastScaleWindowPosition = "GUI/LastScaleWindowPosition";
@@ -58,10 +75,27 @@ const char* UIDefs::GUI_LastGuestSizeHintWasFullscreen = "GUI/LastGuestSizeHintW
 const char* UIDefs::GUI_Fullscreen = "GUI/Fullscreen";
 const char* UIDefs::GUI_Seamless = "GUI/Seamless";
 const char* UIDefs::GUI_Scale = "GUI/Scale";
+#ifdef Q_WS_X11
+const char* UIDefs::GUI_Fullscreen_LegacyMode = "GUI/Fullscreen/LegacyMode";
+#endif /* Q_WS_X11 */
 const char* UIDefs::GUI_VirtualScreenToHostScreen = "GUI/VirtualScreenToHostScreen";
 const char* UIDefs::GUI_AutoresizeGuest = "GUI/AutoresizeGuest";
+const char* UIDefs::GUI_AutomountGuestScreens = "GUI/AutomountGuestScreens";
 const char* UIDefs::GUI_SaveMountedAtRuntime = "GUI/SaveMountedAtRuntime";
 const char* UIDefs::GUI_PassCAD = "GUI/PassCAD";
+const char* UIDefs::GUI_DefaultCloseAction = "GUI/DefaultCloseAction";
+const char* UIDefs::GUI_RestrictedStatusBarIndicators = "GUI/RestrictedStatusBarIndicators";
+const char* UIDefs::GUI_HidLedsSync = "GUI/HidLedsSync";
+const char* UIDefs::GUI_MouseCapturePolicy = "GUI/MouseCapturePolicy";
+const char* UIDefs::GUI_GuruMeditationHandler = "GUI/GuruMeditationHandler";
+const char* UIDefs::GUI_HiDPIOptimization = "GUI/HiDPI/Optimization";
+
+/* Settings dialogs stuff: */
+const char* UIDefs::GUI_RestrictedGlobalSettingsPages = "GUI/RestrictedGlobalSettingsPages";
+const char* UIDefs::GUI_RestrictedMachineSettingsPages = "GUI/RestrictedMachineSettingsPages";
+
+/* Settings dialogs: Display page stuff: */
+const char* UIDefs::GUI_ActivateHoveredMachineWindow = "GUI/ActivateHoveredMachineWindow";
 
 /* Mini tool-bar definitions: */
 const char* UIDefs::GUI_ShowMiniToolBar = "GUI/ShowMiniToolBar";
@@ -85,13 +119,12 @@ const char* UIDefs::GUI_Export_Bucket = "GUI/Export/Bucket";
 const char* UIDefs::GUI_SuppressMessages = "GUI/SuppressMessages";
 const char* UIDefs::GUI_InvertMessageOption = "GUI/InvertMessageOption";
 
-/* Registration dialog definitions: */
-const char* UIDefs::GUI_RegistrationDlgWinID = "GUI/RegistrationDlgWinID";
-const char* UIDefs::GUI_RegistrationData = "GUI/SUNOnlineData";
-
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
 /* Update manager definitions: */
+const char* UIDefs::GUI_PreventApplicationUpdate = "GUI/PreventApplicationUpdate";
 const char* UIDefs::GUI_UpdateDate = "GUI/UpdateDate";
 const char* UIDefs::GUI_UpdateCheckCount = "GUI/UpdateCheckCount";
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
 
 /* Information dialog definitions: */
 const char* UIDefs::GUI_InfoDlgState = "GUI/InfoDlgState";
@@ -122,13 +155,6 @@ const char* UIDefs::GUI_Accelerate2D_PixformatUYVY = "GUI/Accelerate2D/Pixformat
 const char* UIDefs::GUI_Accelerate2D_PixformatYUY2 = "GUI/Accelerate2D/PixformatYUY2";
 const char* UIDefs::GUI_Accelerate2D_PixformatAYUV = "GUI/Accelerate2D/PixformatAYUV";
 #endif /* VBOX_WITH_VIDEOHWACCEL */
-
-#ifdef VBOX_GUI_WITH_SYSTRAY
-/* Tray icon declarations: */
-const char* UIDefs::GUI_TrayIconWinID = "GUI/TrayIcon/WinID";
-const char* UIDefs::GUI_TrayIconEnabled = "GUI/TrayIcon/Enabled";
-const char* UIDefs::GUI_MainWindowCount = "GUI/MainWindowCount";
-#endif /* VBOX_GUI_WITH_SYSTRAY */
 
 /* File extensions definitions: */
 QStringList UIDefs::VBoxFileExts = QStringList() << "xml" << "vbox";

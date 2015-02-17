@@ -1,10 +1,10 @@
-# $Id: VCC80AMD64.kmk 2557 2011-12-13 12:48:32Z bird $
+# $Id: VCC80AMD64.kmk 2726 2014-02-26 23:23:54Z bird $
 ## @file
 # kBuild Tool Config - Visual C++ 8.0 (aka Visual .NET 2005, or MSC v14), targeting AMD64.
 #
 
 #
-# Copyright (c) 2004-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,7 +35,7 @@ TOOL_VCC80AMD64 := Visual C++ 8.0 (aka Visual .NET 2005, or MSC v14), targeting 
 
 # Tool Specific Properties
 ifndef PATH_TOOL_VCC80AMD64
- PATH_TOOL_VCC80AMD64 := $(wildcard $(PATH_DEVTOOLS)/win.x86/vcc/v8*)
+ PATH_TOOL_VCC80AMD64 := $(wildcard $(KBUILD_DEVTOOLS)/win.x86/vcc/v8*)
  ifeq ($(PATH_TOOL_VCC80AMD64),)
   PATH_TOOL_VCC80AMD64 := $(PATH_TOOL_VCC80)
  endif
@@ -43,13 +43,13 @@ ifndef PATH_TOOL_VCC80AMD64
   PATH_TOOL_VCC80AMD64 := $(PATH_TOOL_VCC80X86)
  endif
  ifeq ($(PATH_TOOL_VCC80AMD64),)
-  PATH_TOOL_VCC80AMD64 := $(wildcard $(PATH_DEVTOOLS)/win.x86/vcc/v8*)
+  PATH_TOOL_VCC80AMD64 := $(wildcard $(KBUILD_DEVTOOLS)/win.x86/vcc/v8*)
  endif
  ifneq ($(PATH_TOOL_VCC80AMD64),)
   PATH_TOOL_VCC80AMD64 := $(lastword $(sort $(PATH_TOOL_VCC80AMD64)))
  else
   $(warning kBuild: PATH_TOOL_VCC80AMD64 cannot be determined!)
-  PATH_TOOL_VCC80AMD64 := $(PATH_DEVTOOLS)/win.x86/vcc/v8
+  PATH_TOOL_VCC80AMD64 := $(KBUILD_DEVTOOLS)/win.x86/vcc/v8
  endif
 else
  # Resolve any fancy stuff once and for all.

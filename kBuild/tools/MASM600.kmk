@@ -1,10 +1,10 @@
-# $Id: MASM600.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: MASM600.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - MASM v6.00
 #
 
 #
-# Copyright (c) 2008-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2008-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,12 +35,12 @@ TOOL_MASM600 := Microsoft Macro Assembler v6.00
 
 # Tool Specific Properties
 ifndef TOOL_MASM600_AS
- TOOL_MASM600_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS_BLD)/masm/v6.00*/binp/ml$(HOSTSUFF_EXE))))
+ TOOL_MASM600_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS_HST)/masm/v6.00*/binp/ml$(HOSTSUFF_EXE))))
  ifeq ($(TOOL_MASM600_AS),)
-  TOOL_MASM600_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS_TRG)/masm/v6.00*/binp/ml$(HOSTSUFF_EXE))))
+  TOOL_MASM600_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS_TRG)/masm/v6.00*/binp/ml$(HOSTSUFF_EXE))))
  endif
  ifeq ($(TOOL_MASM600_AS),)
-  TOOL_MASM600_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS)/os2.x86/ddk/*/toolkits/masm60/binp/ml$(HOSTSUFF_EXE))))
+  TOOL_MASM600_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS)/os2.x86/ddk/*/toolkits/masm60/binp/ml$(HOSTSUFF_EXE))))
  endif
  ifeq ($(TOOL_MASM600_AS),)
   if1of ($(USER) $(USERNAME) $(LOGNAME), bird)

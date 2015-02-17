@@ -1,10 +1,10 @@
-# $Id: yacc.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: yacc.kmk 2726 2014-02-26 23:23:54Z bird $
 ## @file
 # yacc/bison unit.
 #
 
 #
-# Copyright (c) 2008-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2008-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #

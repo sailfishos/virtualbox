@@ -54,6 +54,17 @@
 
 #include "VBoxDispIf.h"
 
+#ifdef DEBUG_misha
+#define WARN(_m) do { \
+            Assert(0); \
+            Log(_m); \
+        } while (0)
+#else
+#define WARN(_m) do { \
+            Log(_m); \
+        } while (0)
+#endif
+
 /*
  * Windows messsages.
  */
@@ -62,14 +73,6 @@
  * General VBoxTray messages.
  */
 #define WM_VBOXTRAY_TRAY_ICON                   WM_APP + 40
-/**
- * VM/VMMDev related messsages.
- */
-#define WM_VBOXTRAY_VM_RESTORED                 WM_APP + 100
-/**
- * VRDP messages.
- */
-#define WM_VBOXTRAY_VRDP_CHECK                  WM_APP + 301
 
 
 /* The tray icon's ID. */
@@ -80,6 +83,9 @@
  * Timer IDs.
  */
 #define TIMERID_VBOXTRAY_CHECK_HOSTVERSION      1000
+#define TIMERID_VBOXTRAY_CAPS_TIMER             1001
+#define TIMERID_VBOXTRAY_DT_TIMER               1002
+#define TIMERID_VBOXTRAY_ST_DELAYED_INIT_TIMER  1003
 
 /* The environment information for services. */
 typedef struct _VBOXSERVICEENV
@@ -97,6 +103,7 @@ typedef struct _VBOXSERVICEINFO
     char     *pszName;
     int      (* pfnInit)             (const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread);
     unsigned (__stdcall * pfnThread) (void *pInstance);
+    void     (* pfnStop)             (const VBOXSERVICEENV *pEnv, void *pInstance);
     void     (* pfnDestroy)          (const VBOXSERVICEENV *pEnv, void *pInstance);
 
     /* Variables. */

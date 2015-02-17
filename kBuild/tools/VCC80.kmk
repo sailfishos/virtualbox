@@ -1,10 +1,10 @@
-# $Id: VCC80.kmk 2557 2011-12-13 12:48:32Z bird $
+# $Id: VCC80.kmk 2726 2014-02-26 23:23:54Z bird $
 ## @file
 # kBuild Tool Config - Visual C++ 8.0 (aka Visual .NET 2005, or MSC v14), targeting $(KBUILD_TARGET).
 #
 
 #
-# Copyright (c) 2004-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,15 +35,15 @@ TOOL_VCC80 := Visual C++ 8.0 (aka Visual .NET 2005, or MSC v14), targeting $(KBU
 
 # Tool Specific Properties
 ifndef PATH_TOOL_VCC80
- PATH_TOOL_VCC80 := $(wildcard $(PATH_DEVTOOLS_TRG)/vcc/v8*)
+ PATH_TOOL_VCC80 := $(wildcard $(KBUILD_DEVTOOLS_TRG)/vcc/v8*)
  ifeq ($(PATH_TOOL_VCC80),)
-  PATH_TOOL_VCC80 := $(wildcard $(PATH_DEVTOOLS)/win.x86/vcc/v8*)
+  PATH_TOOL_VCC80 := $(wildcard $(KBUILD_DEVTOOLS)/win.x86/vcc/v8*)
  endif
  ifeq ($(PATH_TOOL_VCC80),)
-  PATH_TOOL_VCC80 := $(wildcard $(PATH_DEVTOOLS)/x86.win32/vcc/v8*)
+  PATH_TOOL_VCC80 := $(wildcard $(KBUILD_DEVTOOLS)/x86.win32/vcc/v8*)
  endif
  ifeq ($(PATH_TOOL_VCC80),)
-  PATH_TOOL_VCC80 := $(wildcard $(PATH_DEVTOOLS)/win.amd64/vcc/v8*)
+  PATH_TOOL_VCC80 := $(wildcard $(KBUILD_DEVTOOLS)/win.amd64/vcc/v8*)
  endif
  ifeq ($(PATH_TOOL_VCC80),)
   PATH_TOOL_VCC80 := $(lastword $(sort $(PATH_TOOL_VCC80)))

@@ -1,10 +1,10 @@
-# $Id: MSLINK510.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: MSLINK510.kmk 2726 2014-02-26 23:23:54Z bird $
 ## @file
 # kBuild Tool Config - Microsoft Link v5.10
 #
 
 #
-# Copyright (c) 2008-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2008-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,15 +35,15 @@ TOOL_MSLINK510 := Microsoft Segmented-Executable Linker  Version 5.10
 
 # Tool Specific Properties
 ifndef TOOL_MSLINK510_LD
- TOOL_MSLINK510_LD := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS)/os2.x86/ddk/*/base/tools/link$(HOSTSUFF_EXE))))
+ TOOL_MSLINK510_LD := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS)/os2.x86/ddk/*/base/tools/link$(HOSTSUFF_EXE))))
  ifeq ($(TOOL_MSLINK510_LD),)
   TOOL_MSLINK510_LD := $(firstword $(rsort $(wildcard \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/video/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/bin/link$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/print/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/wpshell/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/mme/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/video/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/bin/link$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/print/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/wpshell/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/mme/tools/os2.386/lx.386/bin/link$(HOSTSUFF_EXE) \
 	)))
  endif
  ifneq ($(TOOL_MSLINK510_LD),)

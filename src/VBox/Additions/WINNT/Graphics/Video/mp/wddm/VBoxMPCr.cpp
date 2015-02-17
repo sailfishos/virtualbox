@@ -15,16 +15,27 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
+#ifdef VBOX_WITH_CROGL
 
 #include "VBoxMPWddm.h"
 #include "VBoxMPCr.h"
 
 #include <VBox/HostServices/VBoxCrOpenGLSvc.h>
 
-#ifdef VBOX_WITH_CROGL
 #include <cr_protocol.h>
 
-# ifdef VBOX_WDDM_WITH_CRCMD
+CR_CAPS_INFO g_VBoxMpCrHostCapsInfo;
+static uint32_t g_VBoxMpCr3DSupported = 0;
+
+uint32_t VBoxMpCrGetHostCaps()
+{
+    return g_VBoxMpCrHostCapsInfo.u32Caps;
+}
+
+bool VBoxMpCrCtlConIs3DSupported()
+{
+    return !!g_VBoxMpCr3DSupported;
+}
 
 static void* vboxMpCrShgsmiBufferAlloc(PVBOXMP_DEVEXT pDevExt, HGSMISIZE cbData)
 {
@@ -187,15 +198,6 @@ void VBoxMpCrShgsmiTransportTerm(PVBOXMP_CRSHGSMITRANSPORT pCon)
 //    vboxMpCrShgsmiBufCacheTerm(pCon, &pCon->CmdDrCache);
 }
 
-//typedef struct VBOXMP_CRHGSMICMD_HDR
-//{
-//    union
-//    {
-//        PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEREADASYNC_COMPLETION pfnWriteReadCompletion;
-//        PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION pfnWriteCompletion;
-//    };
-//} VBOXMP_CRHGSMICMD_HDR, *PVBOXMP_CRHGSMICMD_HDR;
-
 typedef struct VBOXMP_CRHGSMICMD_BASE
 {
 //    VBOXMP_CRHGSMICMD_HDR Hdr;
@@ -219,6 +221,15 @@ typedef struct VBOXMP_CRHGSMICMD_WRITE
 //    VBOXMP_CRHGSMICMD_HDR Hdr;
     CRVBOXHGSMIWRITE Cmd;
 } VBOXMP_CRHGSMICMD_WRITE, *PVBOXMP_CRHGSMICMD_WRITE;
+
+
+#define VBOXMP_CRSHGSMICON_CMD_CMDBUF_OFFSET(_cBuffers) VBOXWDDM_ROUNDBOUND(RT_OFFSETOF(VBOXVDMACMD_CHROMIUM_CMD, aBuffers[_cBuffers]), 8)
+#define VBOXMP_CRSHGSMICON_CMD_CMDCTX_OFFSET(_cBuffers, _cbCmdBuf) ( VBOXMP_CRSHGSMICON_CMD_CMDBUF_OFFSET(_cBuffers) + VBOXWDDM_ROUNDBOUND(_cbCmdBuf, 8))
+#define VBOXMP_CRSHGSMICON_CMD_GET_CMDBUF(_pCmd, _cBuffers, _type) ((_type*)(((uint8_t*)(_pCmd)) + VBOXMP_CRSHGSMICON_CMD_CMDBUF_OFFSET(_cBuffers)))
+#define VBOXMP_CRSHGSMICON_CMD_GET_CMDCTX(_pCmd, _cBuffers, _cbCmdBuf, _type) ((_type*)(((uint8_t*)(_pCmd)) +  VBOXMP_CRSHGSMICON_CMD_CMDCTX_OFFSET(_cBuffers, _cbCmdBuf)))
+#define VBOXMP_CRSHGSMICON_CMD_GET_FROM_CMDCTX(_pCtx, _cBuffers, _cbCmdBuf, _type) ((_type*)(((uint8_t*)(_pCtx)) -  VBOXMP_CRSHGSMICON_CMD_CMDCTX_OFFSET(_cBuffers, _cbCmdBuf)))
+#define VBOXMP_CRSHGSMICON_CMD_SIZE(_cBuffers, _cbCmdBuf, _cbCtx) (VBOXMP_CRSHGSMICON_CMD_CMDCTX_OFFSET(_cBuffers, _cbCmdBuf) + (_cbCtx))
+
 
 #define VBOXMP_CRSHGSMICON_DR_CMDBUF_OFFSET(_cBuffers) VBOXWDDM_ROUNDBOUND((VBOXVDMACMD_SIZE_FROMBODYSIZE(RT_OFFSETOF(VBOXVDMACMD_CHROMIUM_CMD, aBuffers[_cBuffers]))), 8)
 #define VBOXMP_CRSHGSMICON_DR_CMDCTX_OFFSET(_cBuffers, _cbCmdBuf) ( VBOXMP_CRSHGSMICON_DR_CMDBUF_OFFSET(_cBuffers) + VBOXWDDM_ROUNDBOUND(_cbCmdBuf, 8))
@@ -464,7 +475,7 @@ static DECLCALLBACK(VOID) vboxMpCrShgsmiTransportSendWriteReadAsyncCompletion(PV
         vboxMpCrShgsmiBufCacheFree(pCon, &pCon->WbDrCache, pWbDr);
 }
 
-static DECLCALLBACK(VOID) vboxMpCrShgsmiTransportSendWriteAsyncCompletion(PVBOXMP_DEVEXT pDevExt, PVBOXVDMADDI_CMD pDdiCmd, PVOID pvContext)
+static DECLCALLBACK(VOID) vboxMpCrShgsmiTransportVdmaSendWriteAsyncCompletion(PVBOXMP_DEVEXT pDevExt, PVBOXVDMADDI_CMD pDdiCmd, PVOID pvContext)
 {
     /* we should be called from our DPC routine */
     Assert(KeGetCurrentIrql() == DISPATCH_LEVEL);
@@ -479,13 +490,12 @@ static DECLCALLBACK(VOID) vboxMpCrShgsmiTransportSendWriteAsyncCompletion(PVBOXM
     CRVBOXHGSMIWRITE *pCmd = &pWrData->Cmd;
     VBOXVDMACMD_CHROMIUM_BUFFER *pBufCmd = &pBody->aBuffers[0];
     Assert(pBufCmd->cbBuffer == sizeof (CRVBOXHGSMIWRITE));
-    CRVBOXHGSMIWRITE * pWr = (CRVBOXHGSMIWRITE*)vboxMpCrShgsmiTransportBufFromOffset(pCon, pBufCmd->offBuffer);
     PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION pfnCompletion = (PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION)pBufCmd->u64GuestData;
 
     int rc = pDr->rc;
     if (RT_SUCCESS(rc))
     {
-        rc = pWr->hdr.result;
+        rc = pCmd->hdr.result;
         if (!RT_SUCCESS(rc))
         {
             WARN(("CRVBOXHGSMIWRITE failed, rc %d", rc));
@@ -501,6 +511,28 @@ static DECLCALLBACK(VOID) vboxMpCrShgsmiTransportSendWriteAsyncCompletion(PVBOXM
         void *pvCtx = VBOXMP_CRSHGSMICON_DR_GET_CMDCTX(pHdr, cBuffers, sizeof (VBOXMP_CRHGSMICMD_WRITE), void);
         pfnCompletion(pCon, rc, pvCtx);
     }
+}
+
+static DECLCALLBACK(VOID) vboxMpCrShgsmiTransportVbvaSendWriteAsyncCompletion(PVBOXSHGSMI pHeap, void *pvCmd, void *pvContext)
+{
+    /* we should be called from our DPC routine */
+    Assert(KeGetCurrentIrql() == DISPATCH_LEVEL);
+
+    PVBOXMP_CRSHGSMITRANSPORT pCon = (PVBOXMP_CRSHGSMITRANSPORT)pvContext;
+    PVBOXMP_DEVEXT pDevExt = pCon->pDevExt;
+    VBOXCMDVBVA_CRCMD_CMD *pCmd;
+    int rc = VBoxCmdVbvaConCmdCompletionData(pvCmd, &pCmd);
+    const UINT cBuffers = 2;
+    Assert(pCmd->cBuffers == cBuffers);
+    PVBOXMP_CRHGSMICMD_WRITE pWrData = VBOXMP_CRSHGSMICON_CMD_GET_CMDBUF(pCmd, cBuffers, VBOXMP_CRHGSMICMD_WRITE);
+    uint64_t*pu64Completion = VBOXMP_CRSHGSMICON_CMD_GET_CMDCTX(pCmd, cBuffers, sizeof (VBOXMP_CRHGSMICMD_WRITE), uint64_t);
+    PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION pfnCompletion = (PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION)(*pu64Completion);
+
+    if (!RT_SUCCESS(rc))
+        WARN(("CRVBOXHGSMIWRITE failed, rc %d", rc));
+
+    if (pfnCompletion)
+        pfnCompletion(pCon, rc, (void*)(pu64Completion+1));
 }
 
 void* VBoxMpCrShgsmiTransportCmdCreateWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, uint32_t u32ClientID, void *pvBuffer, uint32_t cbBuffer,
@@ -529,10 +561,11 @@ void* VBoxMpCrShgsmiTransportCmdCreateWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT p
     PVBOXMP_CRHGSMICMD_WRITEREAD pWrData = VBOXMP_CRSHGSMICON_DR_GET_CMDBUF(pHdr, cBuffers, VBOXMP_CRHGSMICMD_WRITEREAD);
     CRVBOXHGSMIWRITEREAD *pCmd = &pWrData->Cmd;
 
-    pDr->fFlags = VBOXVDMACBUF_FLAG_BUF_VRAM_OFFSET;
+    pDr->fFlags = VBOXVDMACBUF_FLAG_BUF_FOLLOWS_DR;
     pDr->cbBuf = cbCmd;
     pDr->rc = VERR_NOT_IMPLEMENTED;
-    pDr->Location.offVramBuf = vboxMpCrShgsmiTransportBufOffset(pCon, pCmd);
+//    pDr->Location.offVramBuf = vboxMpCrShgsmiTransportBufOffset(pCon, pCmd);
+
 
     pHdr->enmType = VBOXVDMACMD_TYPE_CHROMIUM_CMD;
     pHdr->u32CmdSpecific = 0;
@@ -548,7 +581,7 @@ void* VBoxMpCrShgsmiTransportCmdCreateWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT p
     pCmd->cbWriteback = 0;
 
     VBOXVDMACMD_CHROMIUM_BUFFER *pBufCmd = &pBody->aBuffers[0];
-    pBufCmd->offBuffer = vboxMpCrShgsmiTransportBufOffset(pCon, pCmd);
+    pBufCmd->offBuffer = vboxVdmaCBufDrPtrOffset(&pDevExt->u.primary.Vdma, pCmd);
     pBufCmd->cbBuffer = sizeof (*pCmd);
     pBufCmd->u32GuestData = 0;
     pBufCmd->u64GuestData = (uint64_t)pfnCompletion;
@@ -568,13 +601,46 @@ void* VBoxMpCrShgsmiTransportCmdCreateWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT p
     return VBOXMP_CRSHGSMICON_DR_GET_CMDCTX(pHdr, cBuffers, sizeof (VBOXMP_CRHGSMICMD_WRITEREAD), void);
 }
 
-void* VBoxMpCrShgsmiTransportCmdCreateWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, uint32_t u32ClientID, void *pvBuffer, uint32_t cbBuffer,
+static void * vboxMpCrShgsmiTransportCmdVbvaCreateWriteAsync(PVBOXMP_DEVEXT pDevExt, uint32_t u32ClientID, void *pvBuffer, uint32_t cbBuffer, PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION pfnCompletion, uint32_t cbContextData)
+{
+    const uint32_t cBuffers = 2;
+    const uint32_t cbCmd = VBOXMP_CRSHGSMICON_CMD_SIZE(cBuffers, sizeof (VBOXMP_CRHGSMICMD_WRITE) + 8, cbContextData);
+    VBOXCMDVBVA_CRCMD_CMD* pCmd = VBoxCmdVbvaConCmdAlloc(pDevExt, cbCmd);
+    if (!pCmd)
+    {
+        WARN(("VBoxCmdVbvaConCmdAlloc failed"));
+        return NULL;
+    }
+
+    pCmd->cBuffers = cBuffers;
+
+    PVBOXMP_CRHGSMICMD_WRITE pWrData = VBOXMP_CRSHGSMICON_CMD_GET_CMDBUF(pCmd, cBuffers, VBOXMP_CRHGSMICMD_WRITE);
+    CRVBOXHGSMIWRITE *pCmdWrite = &pWrData->Cmd;
+
+    pCmdWrite->hdr.result      = VERR_WRONG_ORDER;
+    pCmdWrite->hdr.u32ClientID = u32ClientID;
+    pCmdWrite->hdr.u32Function = SHCRGL_GUEST_FN_WRITE;
+    //    pCmdWrite->hdr.u32Reserved = 0;
+    pCmdWrite->iBuffer = 1;
+
+    VBOXCMDVBVA_CRCMD_BUFFER *pBufCmd = &pCmd->aBuffers[0];
+    pBufCmd->offBuffer = (VBOXCMDVBVAOFFSET)vboxMpCrShgsmiBufferOffset(pDevExt, pCmdWrite);
+    pBufCmd->cbBuffer = sizeof (*pCmdWrite);
+
+    pBufCmd = &pCmd->aBuffers[1];
+    pBufCmd->offBuffer = (VBOXCMDVBVAOFFSET)vboxMpCrShgsmiBufferOffset(pDevExt, pvBuffer);
+    pBufCmd->cbBuffer = cbBuffer;
+
+    uint64_t*pu64Completion = VBOXMP_CRSHGSMICON_CMD_GET_CMDCTX(pCmd, cBuffers, sizeof (VBOXMP_CRHGSMICMD_WRITE), uint64_t);
+    *pu64Completion = (uint64_t)pfnCompletion;
+    return (void*)(pu64Completion+1);
+}
+
+void* vboxMpCrShgsmiTransportCmdVdmaCreateWriteAsync(PVBOXMP_DEVEXT pDevExt, uint32_t u32ClientID, void *pvBuffer, uint32_t cbBuffer,
         PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION pfnCompletion, uint32_t cbContextData)
 {
-
     const uint32_t cBuffers = 2;
     const uint32_t cbCmd = VBOXMP_CRSHGSMICON_DR_SIZE(cBuffers, sizeof (VBOXMP_CRHGSMICMD_WRITE), cbContextData);
-    PVBOXMP_DEVEXT pDevExt = pCon->pDevExt;
     PVBOXVDMACBUF_DR pDr = vboxVdmaCBufDrCreate(&pDevExt->u.primary.Vdma, cbCmd);
     if (!pDr)
     {
@@ -587,10 +653,10 @@ void* VBoxMpCrShgsmiTransportCmdCreateWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon,
     PVBOXMP_CRHGSMICMD_WRITE pWrData = VBOXMP_CRSHGSMICON_DR_GET_CMDBUF(pHdr, cBuffers, VBOXMP_CRHGSMICMD_WRITE);
     CRVBOXHGSMIWRITE *pCmd = &pWrData->Cmd;
 
-    pDr->fFlags = VBOXVDMACBUF_FLAG_BUF_VRAM_OFFSET;
+    pDr->fFlags = VBOXVDMACBUF_FLAG_BUF_FOLLOWS_DR;
     pDr->cbBuf = cbCmd;
     pDr->rc = VERR_NOT_IMPLEMENTED;
-    pDr->Location.offVramBuf = vboxMpCrShgsmiTransportBufOffset(pCon, pCmd);
+//    pDr->Location.offVramBuf = vboxMpCrShgsmiTransportBufOffset(pCon, pCmd);
 
     pHdr->enmType = VBOXVDMACMD_TYPE_CHROMIUM_CMD;
     pHdr->u32CmdSpecific = 0;
@@ -599,23 +665,32 @@ void* VBoxMpCrShgsmiTransportCmdCreateWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon,
 
     pCmd->hdr.result      = VERR_WRONG_ORDER;
     pCmd->hdr.u32ClientID = u32ClientID;
-    pCmd->hdr.u32Function = SHCRGL_GUEST_FN_WRITE_READ;
+    pCmd->hdr.u32Function = SHCRGL_GUEST_FN_WRITE;
     //    pCmd->hdr.u32Reserved = 0;
     pCmd->iBuffer = 1;
 
     VBOXVDMACMD_CHROMIUM_BUFFER *pBufCmd = &pBody->aBuffers[0];
-    pBufCmd->offBuffer = vboxMpCrShgsmiTransportBufOffset(pCon, pCmd);
+    pBufCmd->offBuffer = vboxVdmaCBufDrPtrOffset(&pDevExt->u.primary.Vdma, pCmd);
     pBufCmd->cbBuffer = sizeof (*pCmd);
     pBufCmd->u32GuestData = 0;
     pBufCmd->u64GuestData = (uint64_t)pfnCompletion;
 
     pBufCmd = &pBody->aBuffers[1];
-    pBufCmd->offBuffer = vboxMpCrShgsmiTransportBufOffset(pCon, pvBuffer);
+    pBufCmd->offBuffer = vboxMpCrShgsmiBufferOffset(pDevExt, pvBuffer);
     pBufCmd->cbBuffer = cbBuffer;
     pBufCmd->u32GuestData = 0;
     pBufCmd->u64GuestData = 0;
 
     return VBOXMP_CRSHGSMICON_DR_GET_CMDCTX(pHdr, cBuffers, sizeof (VBOXMP_CRHGSMICMD_WRITE), void);
+}
+
+void* VBoxMpCrShgsmiTransportCmdCreateWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, uint32_t u32ClientID, void *pvBuffer, uint32_t cbBuffer,
+        PFNVBOXMP_CRSHGSMITRANSPORT_SENDWRITEASYNC_COMPLETION pfnCompletion, uint32_t cbContextData)
+{
+    PVBOXMP_DEVEXT pDevExt = pCon->pDevExt;
+    if (pDevExt->fCmdVbvaEnabled)
+        return vboxMpCrShgsmiTransportCmdVbvaCreateWriteAsync(pDevExt, u32ClientID, pvBuffer, cbBuffer, pfnCompletion, cbContextData);
+    return vboxMpCrShgsmiTransportCmdVdmaCreateWriteAsync(pDevExt, u32ClientID, pvBuffer, cbBuffer, pfnCompletion, cbContextData);
 }
 
 int VBoxMpCrShgsmiTransportCmdSubmitWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
@@ -624,10 +699,24 @@ int VBoxMpCrShgsmiTransportCmdSubmitWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT pCo
     return vboxMpCrShgsmiTransportCmdSubmitDmaCmd(pCon, pHdr, vboxMpCrShgsmiTransportSendWriteReadAsyncCompletion);
 }
 
-int VBoxMpCrShgsmiTransportCmdSubmitWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
+static int vboxMpCrShgsmiTransportCmdVdmaSubmitWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
 {
     VBOXVDMACMD* pHdr = VBOXMP_CRSHGSMICON_DR_GET_FROM_CMDCTX(pvContext, 2, sizeof (VBOXMP_CRHGSMICMD_WRITE));
-    return vboxMpCrShgsmiTransportCmdSubmitDmaCmd(pCon, pHdr, vboxMpCrShgsmiTransportSendWriteAsyncCompletion);
+    return vboxMpCrShgsmiTransportCmdSubmitDmaCmd(pCon, pHdr, vboxMpCrShgsmiTransportVdmaSendWriteAsyncCompletion);
+}
+
+static int vboxMpCrShgsmiTransportCmdVbvaSubmitWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
+{
+    PVBOXMP_DEVEXT pDevExt = pCon->pDevExt;
+    VBOXCMDVBVA_CRCMD_CMD* pCmd = VBOXMP_CRSHGSMICON_CMD_GET_FROM_CMDCTX(pvContext, 2, sizeof (VBOXMP_CRHGSMICMD_WRITE) + 8, VBOXCMDVBVA_CRCMD_CMD);
+    return VBoxCmdVbvaConCmdSubmitAsync(pDevExt, pCmd, vboxMpCrShgsmiTransportVbvaSendWriteAsyncCompletion, pCon);
+}
+
+int VBoxMpCrShgsmiTransportCmdSubmitWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
+{
+    if (pCon->pDevExt->fCmdVbvaEnabled)
+        return vboxMpCrShgsmiTransportCmdVbvaSubmitWriteAsync(pCon, pvContext);
+    return vboxMpCrShgsmiTransportCmdVdmaSubmitWriteAsync(pCon, pvContext);
 }
 
 void VBoxMpCrShgsmiTransportCmdTermWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
@@ -636,14 +725,25 @@ void VBoxMpCrShgsmiTransportCmdTermWriteReadAsync(PVBOXMP_CRSHGSMITRANSPORT pCon
     vboxMpCrShgsmiTransportCmdTermDmaCmd(pCon, pHdr);
 }
 
-void VBoxMpCrShgsmiTransportCmdTermWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
+static void vboxMpCrShgsmiTransportCmdVbvaTermWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
+{
+    VBOXCMDVBVA_CRCMD_CMD* pCmd = VBOXMP_CRSHGSMICON_CMD_GET_FROM_CMDCTX(pvContext, 2, sizeof (VBOXMP_CRHGSMICMD_WRITE) + 8, VBOXCMDVBVA_CRCMD_CMD);
+    VBoxCmdVbvaConCmdFree(pCon->pDevExt, pCmd);
+}
+
+static void vboxMpCrShgsmiTransportCmdVdmaTermWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
 {
     VBOXVDMACMD* pHdr = VBOXMP_CRSHGSMICON_DR_GET_FROM_CMDCTX(pvContext, 2, sizeof (VBOXMP_CRHGSMICMD_WRITE));
     vboxMpCrShgsmiTransportCmdTermDmaCmd(pCon, pHdr);
 }
 
-# endif
-#endif
+void VBoxMpCrShgsmiTransportCmdTermWriteAsync(PVBOXMP_CRSHGSMITRANSPORT pCon, void *pvContext)
+{
+    if (pCon->pDevExt->fCmdVbvaEnabled)
+        vboxMpCrShgsmiTransportCmdVbvaTermWriteAsync(pCon, pvContext);
+    else
+        vboxMpCrShgsmiTransportCmdVdmaTermWriteAsync(pCon, pvContext);
+}
 
 static int vboxMpCrCtlAddRef(PVBOXMP_CRCTLCON pCrCtlCon)
 {
@@ -714,6 +814,84 @@ static int vboxMpCrCtlConSetVersion(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32Clie
     return VINF_SUCCESS;
 }
 
+static int vboxMpCrCtlConGetCapsLegacy(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID, uint32_t *pu32Caps)
+{
+    CRVBOXHGCMGETCAPS parms;
+    int rc;
+
+    parms.hdr.result      = VERR_WRONG_ORDER;
+    parms.hdr.u32ClientID = u32ClientID;
+    parms.hdr.u32Function = SHCRGL_GUEST_FN_GET_CAPS_LEGACY;
+    parms.hdr.cParms      = SHCRGL_CPARMS_GET_CAPS_LEGACY;
+
+    parms.Caps.type      = VMMDevHGCMParmType_32bit;
+    parms.Caps.u.value32 = 0;
+
+    *pu32Caps = 0;
+
+    rc = vboxCrCtlConCall(pCrCtlCon->hCrCtl, &parms.hdr, sizeof (parms));
+    if (RT_FAILURE(rc))
+    {
+        WARN(("vboxCrCtlConCall failed, rc (%d)", rc));
+        return rc;
+    }
+
+    if (RT_FAILURE(parms.hdr.result))
+    {
+        WARN(("SHCRGL_GUEST_FN_GET_CAPS_LEGACY failed, rc (%d)", parms.hdr.result));
+        return parms.hdr.result;
+    }
+
+    /* if host reports it supports CR_VBOX_CAP_CMDVBVA, clean it up,
+     * we only support CR_VBOX_CAP_CMDVBVA of the proper version reported by SHCRGL_GUEST_FN_GET_CAPS_NEW */
+    parms.Caps.u.value32 &= ~CR_VBOX_CAP_CMDVBVA;
+
+    *pu32Caps = parms.Caps.u.value32;
+
+    return VINF_SUCCESS;
+}
+
+static int vboxMpCrCtlConGetCapsNew(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID, CR_CAPS_INFO *pCapsInfo)
+{
+    pCapsInfo->u32Caps = CR_VBOX_CAPS_ALL;
+    pCapsInfo->u32CmdVbvaVersion = CR_CMDVBVA_VERSION;
+
+    CRVBOXHGCMGETCAPS parms;
+    int rc;
+
+    parms.hdr.result      = VERR_WRONG_ORDER;
+    parms.hdr.u32ClientID = u32ClientID;
+    parms.hdr.u32Function = SHCRGL_GUEST_FN_GET_CAPS_NEW;
+    parms.hdr.cParms      = SHCRGL_CPARMS_GET_CAPS_NEW;
+
+    parms.Caps.type      = VMMDevHGCMParmType_LinAddr;
+    parms.Caps.u.Pointer.u.linearAddr = (uintptr_t)pCapsInfo;
+    parms.Caps.u.Pointer.size = sizeof (*pCapsInfo);
+
+    rc = vboxCrCtlConCall(pCrCtlCon->hCrCtl, &parms.hdr, sizeof (parms));
+    if (RT_FAILURE(rc))
+    {
+        WARN(("vboxCrCtlConCall failed, rc (%d)", rc));
+        return rc;
+    }
+
+    if (RT_FAILURE(parms.hdr.result))
+    {
+        WARN(("SHCRGL_GUEST_FN_GET_CAPS_NEW failed, rc (%d)", parms.hdr.result));
+        return parms.hdr.result;
+    }
+
+    if (pCapsInfo->u32CmdVbvaVersion != CR_CMDVBVA_VERSION)
+    {
+        WARN(("CmdVbva version mismatch (%d), expected(%d)", pCapsInfo->u32CmdVbvaVersion, CR_CMDVBVA_VERSION));
+        pCapsInfo->u32Caps &= ~CR_VBOX_CAP_CMDVBVA;
+    }
+
+    pCapsInfo->u32Caps &= CR_VBOX_CAPS_ALL;
+
+    return VINF_SUCCESS;
+}
+
 static int vboxMpCrCtlConSetPID(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID)
 {
     CRVBOXHGCMSETPID parms;
@@ -744,7 +922,7 @@ static int vboxMpCrCtlConSetPID(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID
     return VINF_SUCCESS;
 }
 
-int VBoxMpCrCtlConConnect(PVBOXMP_CRCTLCON pCrCtlCon,
+int VBoxMpCrCtlConConnectHgcm(PVBOXMP_CRCTLCON pCrCtlCon,
         uint32_t crVersionMajor, uint32_t crVersionMinor,
         uint32_t *pu32ClientID)
 {
@@ -791,7 +969,38 @@ int VBoxMpCrCtlConConnect(PVBOXMP_CRCTLCON pCrCtlCon,
     return rc;
 }
 
-int VBoxMpCrCtlConDisconnect(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID)
+int VBoxMpCrCtlConConnectVbva(PVBOXMP_DEVEXT pDevExt, PVBOXMP_CRCTLCON pCrCtlCon,
+        uint32_t crVersionMajor, uint32_t crVersionMinor,
+        uint32_t *pu32ClientID)
+{
+    if (pCrCtlCon->hCrCtl)
+    {
+        WARN(("pCrCtlCon is HGCM connection"));
+        return VERR_INVALID_STATE;
+    }
+
+    Assert(!pCrCtlCon->cCrCtlRefs);
+    return VBoxCmdVbvaConConnect(pDevExt, &pDevExt->CmdVbva,
+            crVersionMajor, crVersionMinor,
+            pu32ClientID);
+}
+
+int VBoxMpCrCtlConConnect(PVBOXMP_DEVEXT pDevExt, PVBOXMP_CRCTLCON pCrCtlCon,
+        uint32_t crVersionMajor, uint32_t crVersionMinor,
+        uint32_t *pu32ClientID)
+{
+    if (pDevExt->fCmdVbvaEnabled)
+    {
+        return VBoxMpCrCtlConConnectVbva(pDevExt, pCrCtlCon,
+                crVersionMajor, crVersionMinor,
+                pu32ClientID);
+    }
+    return VBoxMpCrCtlConConnectHgcm(pCrCtlCon,
+            crVersionMajor, crVersionMinor,
+            pu32ClientID);
+}
+
+int VBoxMpCrCtlConDisconnectHgcm(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID)
 {
     int rc = vboxCrCtlConDisconnect(pCrCtlCon->hCrCtl, u32ClientID);
     if (RT_SUCCESS(rc))
@@ -804,6 +1013,20 @@ int VBoxMpCrCtlConDisconnect(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID)
         WARN(("vboxCrCtlConDisconnect failed, rc (%d)", rc));
     }
     return rc;
+}
+
+int VBoxMpCrCtlConDisconnectVbva(PVBOXMP_DEVEXT pDevExt, PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID)
+{
+    Assert(!pCrCtlCon->hCrCtl);
+    Assert(!pCrCtlCon->cCrCtlRefs);
+    return VBoxCmdVbvaConDisconnect(pDevExt, &pDevExt->CmdVbva, u32ClientID);
+}
+
+int VBoxMpCrCtlConDisconnect(PVBOXMP_DEVEXT pDevExt, PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID)
+{
+    if (!pCrCtlCon->hCrCtl)
+        return VBoxMpCrCtlConDisconnectVbva(pDevExt, pCrCtlCon, u32ClientID);
+    return VBoxMpCrCtlConDisconnectHgcm(pCrCtlCon, u32ClientID);
 }
 
 int VBoxMpCrCtlConCall(PVBOXMP_CRCTLCON pCrCtlCon, VBoxGuestHGCMCallInfo *pData, uint32_t cbData)
@@ -826,24 +1049,75 @@ int VBoxMpCrCtlConCallUserData(PVBOXMP_CRCTLCON pCrCtlCon, VBoxGuestHGCMCallInfo
     return rc;
 }
 
-bool VBoxMpCrCtlConIs3DSupported()
+void VBoxMpCrCtlConInit()
 {
-#ifdef VBOX_WITH_CROGL
+    g_VBoxMpCr3DSupported = 0;
+    memset(&g_VBoxMpCrHostCapsInfo, 0, sizeof (g_VBoxMpCrHostCapsInfo));
+
     VBOXMP_CRCTLCON CrCtlCon = {0};
     uint32_t u32ClientID = 0;
-    int rc = VBoxMpCrCtlConConnect(&CrCtlCon, CR_PROTOCOL_VERSION_MAJOR, CR_PROTOCOL_VERSION_MINOR, &u32ClientID);
+    int rc = VBoxMpCrCtlConConnectHgcm(&CrCtlCon, CR_PROTOCOL_VERSION_MAJOR, CR_PROTOCOL_VERSION_MINOR, &u32ClientID);
     if (RT_FAILURE(rc))
     {
-        LOGREL(("VBoxMpCrCtlConConnect failed with rc(%d), 3D not supported!"));
-        return false;
+        LOGREL(("VBoxMpCrCtlConConnectHgcm failed with rc(%d), 3D not supported!"));
+        return;
     }
 
-    rc = VBoxMpCrCtlConDisconnect(&CrCtlCon, u32ClientID);
-    if (RT_FAILURE(rc))
-        WARN(("VBoxMpCrCtlConDisconnect failed, ignoring.."));
+    g_VBoxMpCr3DSupported = 1;
 
-    return true;
-#else
-    return false;
+    rc = vboxMpCrCtlConGetCapsNew(&CrCtlCon, u32ClientID, &g_VBoxMpCrHostCapsInfo);
+    if (RT_FAILURE(rc))
+    {
+        WARN(("vboxMpCrCtlConGetCapsNew failed rc (%d), ignoring..", rc));
+        g_VBoxMpCrHostCapsInfo.u32CmdVbvaVersion = 0;
+        rc = vboxMpCrCtlConGetCapsLegacy(&CrCtlCon, u32ClientID, &g_VBoxMpCrHostCapsInfo.u32Caps);
+        if (RT_FAILURE(rc))
+        {
+            WARN(("vboxMpCrCtlConGetCapsLegacy failed rc (%d), ignoring..", rc));
+            g_VBoxMpCrHostCapsInfo.u32Caps = 0;
+        }
+    }
+
+#if 0 //ndef DEBUG_misha
+    g_VBoxMpCrHostCapsInfo.u32Caps &= ~CR_VBOX_CAP_CMDVBVA;
+    g_VBoxMpCrHostCapsInfo.u32CmdVbvaVersion = 0;
 #endif
+
+    rc = VBoxMpCrCtlConDisconnectHgcm(&CrCtlCon, u32ClientID);
+    if (RT_FAILURE(rc))
+        WARN(("VBoxMpCrCtlConDisconnectHgcm failed rc (%d), ignoring..", rc));
 }
+
+int VBoxMpCrCmdRxReadbackHandler(CRMessageReadback *pRx, uint32_t cbRx)
+{
+    if (cbRx < sizeof (*pRx))
+    {
+        WARN(("invalid rx size %d", cbRx));
+        return VERR_INVALID_PARAMETER;
+    }
+    void* pvData = VBoxMpCrCmdRxReadbackData(pRx);
+    uint32_t cbData = VBoxMpCrCmdRxReadbackDataSize(pRx, cbRx);
+    void *pvDataPtr = *((void**)&pRx->readback_ptr);
+    memcpy(pvDataPtr, pvData, cbData);
+    return VINF_SUCCESS;
+}
+
+int VBoxMpCrCmdRxHandler(CRMessageHeader *pRx, uint32_t cbRx)
+{
+    if (cbRx < sizeof (*pRx))
+    {
+        WARN(("invalid rx size %d", cbRx));
+        return VERR_INVALID_PARAMETER;
+    }
+    CRMessageHeader *pHdr = (CRMessageHeader*)pRx;
+    switch (pHdr->type)
+    {
+        case CR_MESSAGE_READBACK:
+            return VBoxMpCrCmdRxReadbackHandler((CRMessageReadback*)pRx, cbRx);
+        default:
+            WARN(("unsupported rx message type: %d", pHdr->type));
+            return VERR_INVALID_PARAMETER;
+    }
+}
+
+#endif

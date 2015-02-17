@@ -61,11 +61,7 @@ VBOXCRHGSMI_DECL(PVBOXUHGSMI) VBoxCrHgsmiCreate()
     PVBOXUHGSMI_PRIVATE_KMT pHgsmiGL = (PVBOXUHGSMI_PRIVATE_KMT)RTMemAllocZ(sizeof (*pHgsmiGL));
     if (pHgsmiGL)
     {
-#if 0
         HRESULT hr = vboxUhgsmiKmtCreate(pHgsmiGL, TRUE /* bD3D tmp for injection thread*/);
-#else
-        HRESULT hr = vboxUhgsmiKmtEscCreate(pHgsmiGL, TRUE /* bD3D tmp for injection thread*/);
-#endif
         Log(("CrHgsmi: faled to create KmtEsc VBOXUHGSMI instance, hr (0x%x)\n", hr));
         if (hr == S_OK)
         {
@@ -115,7 +111,18 @@ VBOXCRHGSMI_DECL(int) VBoxCrHgsmiCtlConGetClientID(PVBOXUHGSMI pHgsmi, uint32_t 
     int rc = vboxCrHgsmiPrivateCtlConGetClientID(pHgsmiPrivate, pu32ClientID);
     if (!RT_SUCCESS(rc))
     {
-        WARN(("VBoxCrHgsmiPrivateCtlConCall failed with rc (%d)", rc));
+        WARN(("vboxCrHgsmiPrivateCtlConGetClientID failed with rc (%d)", rc));
+    }
+    return rc;
+}
+
+VBOXCRHGSMI_DECL(int) VBoxCrHgsmiCtlConGetHostCaps(PVBOXUHGSMI pHgsmi, uint32_t *pu32HostCaps)
+{
+    PVBOXUHGSMI_PRIVATE_BASE pHgsmiPrivate = (PVBOXUHGSMI_PRIVATE_BASE)pHgsmi;
+    int rc = vboxCrHgsmiPrivateCtlConGetHostCaps(pHgsmiPrivate, pu32HostCaps);
+    if (!RT_SUCCESS(rc))
+    {
+        WARN(("vboxCrHgsmiPrivateCtlConGetHostCaps failed with rc (%d)", rc));
     }
     return rc;
 }

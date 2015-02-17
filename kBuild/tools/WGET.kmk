@@ -1,10 +1,10 @@
-# $Id: WGET.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: WGET.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - wget fetchers.
 #
 
 #
-# Copyright (c) 2006-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2006-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,9 +35,9 @@ TOOL_WGET := wget fetcher.
 
 # Tool Specific Properties
 ifndef TOOL_WGET_FETCH
- TOOL_WGET_FETCH := $(wildcard $(PATH_DEVTOOLS_BLD)/wget/v*/wget$(HOSTSUFF_EXE))
+ TOOL_WGET_FETCH := $(wildcard $(KBUILD_DEVTOOLS_HST)/wget/v*/wget$(HOSTSUFF_EXE))
  ifneq ($(TOOL_WGET_FETCH),)
-  TOOL_WGET_FETCH := $(wildcard $(PATH_DEVTOOLS_BLD)/bin/wget$(HOSTSUFF_EXE))
+  TOOL_WGET_FETCH := $(wildcard $(KBUILD_DEVTOOLS_HST)/bin/wget$(HOSTSUFF_EXE))
  endif
  ifneq ($(TOOL_WGET_FETCH),)
   TOOL_WGET_FETCH := $(lastword $(sort $(TOOL_WGET_FETCH)))
