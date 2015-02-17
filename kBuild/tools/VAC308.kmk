@@ -1,10 +1,10 @@
-# $Id: VAC308.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: VAC308.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - VisualAge for C++ v3.08.
 #
 
 #
-# Copyright (c) 2004-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,14 +35,14 @@ TOOL_VAC308 := VisualAge for C++ v3.08
 
 # Determin VAC308 location.
 ifndef PATH_TOOL_VAC308
- PATH_TOOL_VAC308 := $(wildcard $(PATH_DEVTOOLS_BLD)/vac/v3.0.8*)
+ PATH_TOOL_VAC308 := $(wildcard $(KBUILD_DEVTOOLS_HST)/vac/v3.0.8*)
  ifeq ($(PATH_TOOL_VAC308),)
-  PATH_TOOL_VAC308 := $(wildcard $(PATH_DEVTOOLS_BLD)/vac/v308*)
+  PATH_TOOL_VAC308 := $(wildcard $(KBUILD_DEVTOOLS_HST)/vac/v308*)
  endif
  ifeq ($(PATH_TOOL_VAC308),)
-  PATH_TOOL_VAC308 := $(wildcard $(PATH_DEVTOOLS_TRG)/vac/v3.0.8*)
+  PATH_TOOL_VAC308 := $(wildcard $(KBUILD_DEVTOOLS_TRG)/vac/v3.0.8*)
   ifeq ($(PATH_TOOL_VAC308),)
-   PATH_TOOL_VAC308 := $(wildcard $(PATH_DEVTOOLS_TRG)/vac/v308*)
+   PATH_TOOL_VAC308 := $(wildcard $(KBUILD_DEVTOOLS_TRG)/vac/v308*)
   endif
  endif
  ifeq ($(PATH_TOOL_VAC308),)

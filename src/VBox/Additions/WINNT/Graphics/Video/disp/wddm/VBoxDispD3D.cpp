@@ -38,7 +38,7 @@
 volatile uint32_t g_u32VBoxDispProfileFunctionLoggerIndex = 0;
 
 /* the number of frames to collect data before doing dump/reset */
-#define VBOXDISPPROFILE_DDI_DUMP_FRAME_COUNT 0xffffffff
+#define VBOXDISPPROFILE_DDI_DUMP_FRAME_COUNT 0x20
 
 struct VBOXDISPPROFILE_GLOBAL {
     VBoxDispProfileFpsCounter ProfileDdiFps;
@@ -266,7 +266,8 @@ typedef struct VBOXWDDMDISP_NSCADD
 static HRESULT vboxWddmNSCAddAlloc(PVBOXWDDMDISP_NSCADD pData, PVBOXWDDMDISP_ALLOCATION pAlloc)
 {
     HRESULT hr = S_OK;
-    if (pData->cAllocationList && pData->cPatchLocationList && pData->cbCommandBuffer > 4)
+    Assert(pAlloc->fEverWritten || pAlloc->pRc->RcDesc.fFlags.SharedResource);
+    if (pData->cAllocationList && pData->cPatchLocationList && pData->cbCommandBuffer >= 4)
     {
         memset(pData->pAllocationList, 0, sizeof (D3DDDI_ALLOCATIONLIST));
         pData->pAllocationList[0].hAllocation = pAlloc->hAllocation;
@@ -293,24 +294,28 @@ static HRESULT vboxWddmNSCAddAlloc(PVBOXWDDMDISP_NSCADD pData, PVBOXWDDMDISP_ALL
     return hr;
 }
 
-static BOOLEAN vboxWddmDalCheckRemove(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMDISP_ALLOCATION pAlloc)
+static VOID vboxWddmDalRemove(PVBOXWDDMDISP_ALLOCATION pAlloc)
 {
-    BOOLEAN fRemoved = FALSE;
-
-    if (pAlloc->DirtyAllocListEntry.pNext)
-    {
-        RTListNodeRemove(&pAlloc->DirtyAllocListEntry);
-        pAlloc->fDirtyWrite = FALSE;
-        fRemoved = TRUE;
-    }
-
-    return fRemoved;
+    RTListNodeRemove(&pAlloc->DirtyAllocListEntry);
+    pAlloc->fDirtyWrite = FALSE;
 }
+
+#ifdef DEBUG_misha
+typedef struct VBOXWDDM_DBG_ALLOC
+{
+    BOOLEAN fWrite;
+    PVBOXWDDMDISP_ALLOCATION pAlloc;
+} VBOXWDDM_DBG_ALLOC;
+#endif
 
 static HRESULT vboxWddmDalNotifyChange(PVBOXWDDMDISP_DEVICE pDevice)
 {
     VBOXWDDMDISP_NSCADD NscAdd;
     BOOL bReinitRenderData = TRUE;
+#ifdef DEBUG_misha
+    uint32_t cDbgAllocs = 0;
+    VBOXWDDM_DBG_ALLOC aDbgAllocs[128];
+#endif
 
     do
     {
@@ -332,16 +337,38 @@ static HRESULT vboxWddmDalNotifyChange(PVBOXWDDMDISP_DEVICE pDevice)
             NscAdd.pvCommandBuffer = (VOID*)(((uint8_t*)NscAdd.pvCommandBuffer) + sizeof (*pHdr));
             NscAdd.cbCommandBuffer -= sizeof (*pHdr);
             bReinitRenderData = FALSE;
+
+#ifdef DEBUG_misha
+            {
+                memset(aDbgAllocs, 0, sizeof (aDbgAllocs));
+                PVBOXWDDMDISP_ALLOCATION pAlloc;
+                uint32_t cAllocs = 0;
+                RTListForEach(&pDevice->DirtyAllocList, pAlloc, VBOXWDDMDISP_ALLOCATION, DirtyAllocListEntry)
+                {
+                    Assert(pAlloc->fEverWritten || pAlloc->pRc->RcDesc.fFlags.SharedResource);
+                    if (cAllocs < RT_ELEMENTS(aDbgAllocs))
+                    {
+                        aDbgAllocs[cAllocs].pAlloc = pAlloc;
+                        aDbgAllocs[cAllocs].fWrite = pAlloc->fDirtyWrite;
+                        ++cDbgAllocs;
+                    }
+                    ++cAllocs;
+                }
+            }
+#endif
         }
 
         PVBOXWDDMDISP_ALLOCATION pAlloc = RTListGetFirst(&pDevice->DirtyAllocList, VBOXWDDMDISP_ALLOCATION, DirtyAllocListEntry);
         if (pAlloc)
         {
             HRESULT tmpHr = vboxWddmNSCAddAlloc(&NscAdd, pAlloc);
+#ifdef DEBUG_misha
+            Assert(tmpHr == S_OK);
+#endif
             Assert(tmpHr == S_OK || tmpHr == S_FALSE);
             if (tmpHr == S_OK)
             {
-                vboxWddmDalCheckRemove(pDevice, pAlloc);
+                vboxWddmDalRemove(pAlloc);
                 continue;
             }
         }
@@ -384,31 +411,122 @@ static HRESULT vboxWddmDalNotifyChange(PVBOXWDDMDISP_DEVICE pDevice)
     return S_OK;
 }
 
-//#define VBOX_WDDM_SHRC_WO_NOTIFY
+#ifdef VBOXWDDMDISP_DAL_CHECK_LOCK
+static HRESULT vboxWddmDalCheckUnlock(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMDISP_ALLOCATION pAlloc)
+{
+    if (!pAlloc->fAllocLocked || pAlloc->LockInfo.cLocks)
+        return S_OK;
+
+    Assert(pAlloc->hAllocation);
+
+    D3DDDICB_UNLOCK Unlock;
+
+    Unlock.NumAllocations = 1;
+    Unlock.phAllocations = &pAlloc->hAllocation;
+
+    HRESULT hr = pDevice->RtCallbacks.pfnUnlockCb(pDevice->hDevice, &Unlock);
+    if(hr != S_OK)
+    {
+        WARN(("pfnUnlockCb failed, hr %#x", hr));
+    }
+
+    return hr;
+}
+
+static HRESULT vboxWddmDalCheckLock(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMDISP_ALLOCATION pAlloc, D3DDDI_LOCKFLAGS Flags)
+{
+    if (!pAlloc->hAllocation || pAlloc->fAllocLocked)
+        return S_OK;
+
+    HRESULT hr;
+
+    if (pAlloc->fDirtyWrite)
+    {
+        Assert(pAlloc->DirtyAllocListEntry.pNext);
+        hr = vboxWddmDalNotifyChange(pDevice);
+        if (hr == S_OK)
+        {
+            Assert(!pAlloc->DirtyAllocListEntry.pNext);
+        }
+        else
+        {
+            WARN(("vboxWddmDalNotifyChange failed %#x, ignoring", hr));
+        }
+    }
+
+    D3DDDICB_LOCK LockData;
+    LockData.hAllocation = pAlloc->hAllocation;
+    LockData.PrivateDriverData = 0;
+    LockData.NumPages = 0;
+    LockData.pPages = NULL;
+    LockData.pData = NULL; /* out */
+    LockData.Flags.Value = 0;
+    LockData.Flags.Discard = Flags.Discard;
+    LockData.Flags.DonotWait = Flags.DoNotWait;
+
+    hr = pDevice->RtCallbacks.pfnLockCb(pDevice->hDevice, &LockData);
+    if (hr == S_OK)
+    {
+        if (!Flags.ReadOnly)
+            pAlloc->fEverWritten = TRUE;
+        pAlloc->fAllocLocked = TRUE;
+        return S_OK;
+    }
+
+    WARN(("pfnLockCb failed %#x, Flags %#x", hr, Flags.Value));
+
+    return hr;
+}
+#endif
+
+static BOOLEAN vboxWddmDalCheckNotifyRemove(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMDISP_ALLOCATION pAlloc)
+{
+    if (pAlloc->DirtyAllocListEntry.pNext)
+    {
+        HRESULT hr = vboxWddmDalNotifyChange(pDevice);
+        if (hr == S_OK)
+        {
+            Assert(!pAlloc->DirtyAllocListEntry.pNext);
+        }
+        else
+        {
+            WARN(("vboxWddmDalNotifyChange failed %#x", hr));
+            if (pAlloc->DirtyAllocListEntry.pNext)
+                vboxWddmDalRemove(pAlloc);
+        }
+
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
 static BOOLEAN vboxWddmDalCheckAdd(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMDISP_ALLOCATION pAlloc, BOOLEAN fWrite)
 {
     if (!pAlloc->hAllocation /* only shared resources matter */
-#ifdef VBOX_WDDM_SHRC_WO_NOTIFY
-            || !fWrite /* only write op matter */
-#endif
+            || (/*!fWrite &&*/ !pAlloc->hSharedHandle)
             )
     {
-#ifdef VBOX_WDDM_SHRC_WO_NOTIFY
-        Assert(!pAlloc->DirtyAllocListEntry.pNext || (!fWrite && pAlloc->hSharedHandle && pAlloc->fDirtyWrite));
-#else
-        Assert(!pAlloc->DirtyAllocListEntry.pNext);
-#endif
+        Assert(!pAlloc->DirtyAllocListEntry.pNext || pAlloc->hSharedHandle /*|| pAlloc->fDirtyWrite*/);
+
         Assert(!pAlloc->hSharedHandle);
 
         return FALSE;
     }
+
+    Assert(fWrite || pAlloc->fEverWritten || pAlloc->pRc->RcDesc.fFlags.SharedResource);
 
     if (!pAlloc->DirtyAllocListEntry.pNext)
     {
         Assert(!pAlloc->fDirtyWrite);
         RTListAppend(&pDevice->DirtyAllocList, &pAlloc->DirtyAllocListEntry);
     }
+    else
+    {
+        Assert(pAlloc->fDirtyWrite == fWrite);
+    }
     pAlloc->fDirtyWrite |= fWrite;
+    pAlloc->fEverWritten |= fWrite;
 
     return TRUE;
 }
@@ -424,7 +542,13 @@ static DECLINLINE(BOOLEAN) vboxWddmDalCheckAddRc(PVBOXWDDMDISP_DEVICE pDevice, P
     return fChanged;
 }
 
-static VOID vboxWddmDalCheckAddRtsSamplers(PVBOXWDDMDISP_DEVICE pDevice)
+static VOID vboxWddmDalCheckAddDepthStencil(PVBOXWDDMDISP_DEVICE pDevice)
+{
+    if (pDevice->pDepthStencilRc)
+        vboxWddmDalCheckAddRc(pDevice, pDevice->pDepthStencilRc, TRUE);
+}
+
+static VOID vboxWddmDalCheckAddRTs(PVBOXWDDMDISP_DEVICE pDevice)
 {
     for (UINT i = 0; i < pDevice->cRTs; ++i)
     {
@@ -433,7 +557,10 @@ static VOID vboxWddmDalCheckAddRtsSamplers(PVBOXWDDMDISP_DEVICE pDevice)
             vboxWddmDalCheckAdd(pDevice, pDevice->apRTs[i], TRUE);
         }
     }
+}
 
+static VOID vboxWddmDalCheckAddSamplers(PVBOXWDDMDISP_DEVICE pDevice)
+{
     for (UINT i = 0, iSampler = 0; iSampler < pDevice->cSamplerTextures; ++i)
     {
         Assert(i < RT_ELEMENTS(pDevice->aSamplerTextures));
@@ -441,6 +568,20 @@ static VOID vboxWddmDalCheckAddRtsSamplers(PVBOXWDDMDISP_DEVICE pDevice)
         vboxWddmDalCheckAddRc(pDevice, pDevice->aSamplerTextures[i], FALSE);
         ++iSampler;
     }
+}
+
+static VOID vboxWddmDalCheckAddOnDraw(PVBOXWDDMDISP_DEVICE pDevice)
+{
+    vboxWddmDalCheckAddRTs(pDevice);
+
+    vboxWddmDalCheckAddDepthStencil(pDevice);
+
+    vboxWddmDalCheckAddSamplers(pDevice);
+}
+
+static BOOLEAN vboxWddmDalIsEmpty(PVBOXWDDMDISP_DEVICE pDevice)
+{
+    return RTListIsEmpty(&pDevice->DirtyAllocList);
 }
 
 #ifdef VBOX_WITH_VIDEOHWACCEL
@@ -597,6 +738,13 @@ static HRESULT vboxWddmSwapchainKmSynch(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMD
     Buf.SwapchainInfo.EscapeHdr.escapeCode = VBOXESC_SWAPCHAININFO;
     Buf.SwapchainInfo.SwapchainInfo.hSwapchainKm = pSwapchain->hSwapchainKm;
     Buf.SwapchainInfo.SwapchainInfo.hSwapchainUm = (VBOXDISP_UMHANDLE)pSwapchain;
+    HRESULT hr = pDevice->pAdapter->D3D.D3D.pfnVBoxWineExD3DSwapchain9GetHostWinID(pSwapchain->pSwapChainIf, &Buf.SwapchainInfo.SwapchainInfo.winHostID);
+    if (FAILED(hr))
+    {
+        WARN(("pfnVBoxWineExD3DSwapchain9GetHostWinID failed, hr 0x%x", hr));
+        return hr;
+    }
+    Assert(Buf.SwapchainInfo.SwapchainInfo.winHostID);
 //    Buf.SwapchainInfo.SwapchainInfo.Rect;
 //    Buf.SwapchainInfo.SwapchainInfo.u32Reserved;
     Buf.SwapchainInfo.SwapchainInfo.cAllocs = pSwapchain->cRTs;
@@ -610,7 +758,6 @@ static HRESULT vboxWddmSwapchainKmSynch(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMD
     }
 
     Assert(cAllocsKm == Buf.SwapchainInfo.SwapchainInfo.cAllocs || !cAllocsKm);
-    HRESULT hr = S_OK;
     if (cAllocsKm == Buf.SwapchainInfo.SwapchainInfo.cAllocs)
     {
         D3DDDICB_ESCAPE DdiEscape = {0};
@@ -679,7 +826,6 @@ DECLINLINE(VOID) vboxWddmSwapchainClear(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMD
 
     /* first do a Km destroy to ensure all km->um region submissions are completed */
     vboxWddmSwapchainKmDestroy(pDevice, pSwapchain);
-    vboxDispMpInternalCancel(&pDevice->DefaultContext, pSwapchain);
     vboxWddmSwapchainDestroyIf(pDevice, pSwapchain);
     vboxWddmSwapchainInit(pSwapchain);
 }
@@ -1057,7 +1203,7 @@ static HRESULT vboxWddmSwapchainRtSynch(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMD
         }
         else
         {
-            WARN(("GetFrontBufferData failed, hr (0x%x)", hr));
+            WARN(("GetFrontBufferData failed, hr (0x%x)", tmpHr));
         }
     }
 #endif
@@ -1332,7 +1478,11 @@ HRESULT vboxWddmSwapchainChkCreateIf(PVBOXWDDMDISP_DEVICE pDevice, PVBOXWDDMDISP
             //            params.FullScreen_PresentationInterval;
             if (!pDevice->pDevice9If)
             {
+#ifdef VBOX_WITH_CRHGSMI
                 Params.pHgsmi = &pDevice->Uhgsmi.BasePrivate.Base;
+#else
+                Params.pHgsmi = NULL;
+#endif
                 hr = pAdapter->D3D.pD3D9If->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, NULL, fFlags, &Params.Base, &pDevice9If);
                 Assert(hr == S_OK);
                 if (hr == S_OK)
@@ -1799,7 +1949,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstance,
 #ifdef VBOXWDDMDISP_DEBUG_VEHANDLER
             vboxVDbgVEHandlerRegister();
 #endif
-            int rc = RTR3InitDll(0);
+            int rc = RTR3InitDll(RTR3INIT_FLAGS_UNOBTRUSIVE);
             AssertRC(rc);
             if (RT_SUCCESS(rc))
             {
@@ -1811,14 +1961,9 @@ BOOL WINAPI DllMain(HINSTANCE hInstance,
                     Assert(hr == S_OK);
                     if (hr == S_OK)
                     {
-                        hr = vboxDispMpInternalInit();
-                        Assert(hr == S_OK);
-                        if (hr == S_OK)
-                        {
-                            VBoxDispD3DGlobalInit();
-                            vboxVDbgPrint(("VBoxDispD3D: DLL loaded OK\n"));
-                            return TRUE;
-                        }
+                        VBoxDispD3DGlobalInit();
+                        vboxVDbgPrint(("VBoxDispD3D: DLL loaded OK\n"));
+                        return TRUE;
                     }
 //                    VbglR3Term();
                 }
@@ -1835,19 +1980,14 @@ BOOL WINAPI DllMain(HINSTANCE hInstance,
 #ifdef VBOXWDDMDISP_DEBUG_VEHANDLER
             vboxVDbgVEHandlerUnregister();
 #endif
-            HRESULT hr = vboxDispMpInternalTerm();
+            HRESULT hr = vboxDispCmTerm();
             Assert(hr == S_OK);
             if (hr == S_OK)
             {
-                hr = vboxDispCmTerm();
-                Assert(hr == S_OK);
-                if (hr == S_OK)
-                {
 //                    VbglR3Term();
-                    /// @todo RTR3Term();
-                    VBoxDispD3DGlobalTerm();
-                    return TRUE;
-                }
+                /// @todo RTR3Term();
+                VBoxDispD3DGlobalTerm();
+                return TRUE;
             }
 
             break;
@@ -1861,7 +2001,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstance,
 
 static HRESULT APIENTRY vboxWddmDispGetCaps (HANDLE hAdapter, CONST D3DDDIARG_GETCAPS* pData)
 {
-	VBOXDISP_DDI_PROLOGUE_ADP(hAdapter);
+        VBOXDISP_DDI_PROLOGUE_ADP(hAdapter);
 
     vboxVDbgPrint(("==> "__FUNCTION__", hAdapter(0x%p), caps type(%d)\n", hAdapter, pData->Type));
 
@@ -2445,34 +2585,47 @@ static HRESULT APIENTRY vboxWddmDDevDrawPrimitive(HANDLE hDevice, CONST D3DDDIAR
 
     VBOXVDBG_DUMP_DRAWPRIM_ENTER(pDevice);
 
-    if (!pDevice->cStreamSources)
+    if (pDevice->cStreamSourcesUm)
     {
-        if (pDevice->aStreamSourceUm[0].pvBuffer)
-        {
 #ifdef DEBUG
-            for (UINT i = 1; i < RT_ELEMENTS(pDevice->aStreamSourceUm); ++i)
+        uint32_t cStreams = 0;
+        for (UINT i = 0; i < RT_ELEMENTS(pDevice->aStreamSourceUm); ++i)
+        {
+            if(pDevice->aStreamSourceUm[i].pvBuffer)
             {
-                Assert(!pDevice->aStreamSourceUm[i].pvBuffer);
+                ++cStreams;
             }
-#endif
-            hr = pDevice9If->DrawPrimitiveUP(pData->PrimitiveType,
-                                      pData->PrimitiveCount,
-                                      ((uint8_t*)pDevice->aStreamSourceUm[0].pvBuffer) + pData->VStart * pDevice->aStreamSourceUm[0].cbStride,
-                                      pDevice->aStreamSourceUm[0].cbStride);
-            Assert(hr == S_OK);
+        }
 
-//            vboxVDbgMpPrintF((pDevice, __FUNCTION__": DrawPrimitiveUP\n"));
+        Assert(cStreams);
+        Assert(cStreams == pDevice->cStreamSourcesUm);
+#endif
+        if (pDevice->cStreamSourcesUm == 1)
+        {
+            for (UINT i = 0; i < RT_ELEMENTS(pDevice->aStreamSourceUm); ++i)
+            {
+                if(pDevice->aStreamSourceUm[i].pvBuffer)
+                {
+                    hr = pDevice9If->DrawPrimitiveUP(pData->PrimitiveType,
+                                              pData->PrimitiveCount,
+                                              ((uint8_t*)pDevice->aStreamSourceUm[i].pvBuffer) + pData->VStart * pDevice->aStreamSourceUm[i].cbStride,
+                                              pDevice->aStreamSourceUm[i].cbStride);
+                    Assert(hr == S_OK);
+                    break;
+                }
+            }
         }
         else
         {
             /* todo: impl */
-            Assert(0);
+            WARN(("multiple user stream sources (%d) not implemented!!", pDevice->cStreamSourcesUm));
         }
     }
     else
     {
 
 #ifdef DEBUG
+        Assert(!pDevice->cStreamSourcesUm);
             for (UINT i = 0; i < RT_ELEMENTS(pDevice->aStreamSourceUm); ++i)
             {
                 Assert(!pDevice->aStreamSourceUm[i].pvBuffer);
@@ -2499,7 +2652,7 @@ static HRESULT APIENTRY vboxWddmDDevDrawPrimitive(HANDLE hDevice, CONST D3DDDIAR
 //        vboxVDbgMpPrintF((pDevice, __FUNCTION__": DrawPrimitive\n"));
     }
 
-    vboxWddmDalCheckAddRtsSamplers(pDevice);
+    vboxWddmDalCheckAddOnDraw(pDevice);
 
     VBOXVDBG_DUMP_DRAWPRIM_LEAVE(pDevice);
 
@@ -2630,7 +2783,7 @@ static HRESULT APIENTRY vboxWddmDDevDrawIndexedPrimitive(HANDLE hDevice, CONST D
         }
     }
 
-    vboxWddmDalCheckAddRtsSamplers(pDevice);
+    vboxWddmDalCheckAddOnDraw(pDevice);
 
     VBOXVDBG_DUMP_DRAWPRIM_LEAVE(pDevice);
 
@@ -2646,7 +2799,7 @@ static HRESULT APIENTRY vboxWddmDDevDrawRectPatch(HANDLE hDevice, CONST D3DDDIAR
     Assert(pDevice);
     VBOXDISPCRHGSMI_SCOPE_SET_DEV(pDevice);
     Assert(0);
-    vboxWddmDalCheckAddRtsSamplers(pDevice);
+    vboxWddmDalCheckAddOnDraw(pDevice);
     vboxVDbgPrintF(("==> "__FUNCTION__", hDevice(0x%p)\n", hDevice));
     return E_FAIL;
 }
@@ -2659,7 +2812,7 @@ static HRESULT APIENTRY vboxWddmDDevDrawTriPatch(HANDLE hDevice, CONST D3DDDIARG
     Assert(pDevice);
     VBOXDISPCRHGSMI_SCOPE_SET_DEV(pDevice);
     Assert(0);
-    vboxWddmDalCheckAddRtsSamplers(pDevice);
+    vboxWddmDalCheckAddOnDraw(pDevice);
     vboxVDbgPrintF(("==> "__FUNCTION__", hDevice(0x%p)\n", hDevice));
     return E_FAIL;
 }
@@ -2752,7 +2905,7 @@ static HRESULT APIENTRY vboxWddmDDevDrawPrimitive2(HANDLE hDevice, CONST D3DDDIA
 #endif
 #endif
 
-    vboxWddmDalCheckAddRtsSamplers(pDevice);
+    vboxWddmDalCheckAddOnDraw(pDevice);
 
     VBOXVDBG_DUMP_DRAWPRIM_LEAVE(pDevice);
 
@@ -2836,7 +2989,7 @@ static HRESULT APIENTRY vboxWddmDDevDrawIndexedPrimitive2(HANDLE hDevice, CONST 
         }
     }
 
-    vboxWddmDalCheckAddRtsSamplers(pDevice);
+    vboxWddmDalCheckAddOnDraw(pDevice);
     vboxVDbgPrintF(("<== "__FUNCTION__", hDevice(0x%p)\n", hDevice));
     return hr;
 }
@@ -3026,7 +3179,17 @@ static HRESULT APIENTRY vboxWddmDDevClear(HANDLE hDevice, CONST D3DDDIARG_CLEAR*
             pData->FillColor,
             pData->FillDepth,
             pData->FillStencil);
-    Assert(hr == S_OK);
+    if (SUCCEEDED(hr))
+    {
+        if (pData->Flags & D3DCLEAR_TARGET)
+            vboxWddmDalCheckAddRTs(pDevice);
+        if ((pData->Flags & D3DCLEAR_STENCIL)
+                || (pData->Flags & D3DCLEAR_ZBUFFER))
+            vboxWddmDalCheckAddDepthStencil(pDevice);
+    }
+    else
+        WARN(("Clear failed %#x", hr));
+
     vboxVDbgPrintF(("<== "__FUNCTION__", hDevice(0x%p), hr(0x%x)\n", hDevice, hr));
     return hr;
 }
@@ -3241,15 +3404,24 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
     Assert(pDevice);
     VBOXDISPCRHGSMI_SCOPE_SET_DEV(pDevice);
     PVBOXWDDMDISP_RESOURCE pRc = (PVBOXWDDMDISP_RESOURCE)pData->hResource;
-    Assert(pData->SubResourceIndex < pRc->cAllocations);
     if (pData->SubResourceIndex >= pRc->cAllocations)
         return E_INVALIDARG;
+    PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
+    Assert(pData->SubResourceIndex < pRc->cAllocations);
 
     HRESULT hr = S_OK;
 
     if (VBOXDISPMODE_IS_3D(pDevice->pAdapter))
     {
 //        Assert(pRc != pScreen->pRenderTargetRc || pScreen->iRenderTargetFrontBuf != pData->SubResourceIndex);
+#ifdef VBOXWDDMDISP_DAL_CHECK_LOCK
+        hr = vboxWddmDalCheckLock(pDevice, pAlloc, pData->Flags);
+        if (!SUCCEEDED(hr))
+        {
+            WARN(("vboxWddmDalCheckLock failed %#x", hr));
+            return hr;
+        }
+#endif
 
         if (pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_TEXTURE
             || pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_CUBE_TEXTURE
@@ -3257,7 +3429,6 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
         {
             PVBOXWDDMDISP_ALLOCATION pTexAlloc = &pRc->aAllocations[0];
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pLockAlloc = &pRc->aAllocations[pData->SubResourceIndex];
             IDirect3DTexture9 *pD3DIfTex = (IDirect3DTexture9*)pTexAlloc->pD3DIf;
             IDirect3DCubeTexture9 *pD3DIfCubeTex = (IDirect3DCubeTexture9*)pTexAlloc->pD3DIf;
             IDirect3DSurface9 *pD3DIfSurface = (IDirect3DSurface9*)pTexAlloc->pD3DIf;
@@ -3273,20 +3444,20 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
 
             /* else - we lock the entire texture, pRect == NULL */
 
-            if (pLockAlloc->LockInfo.cLocks)
+            if (pAlloc->LockInfo.cLocks)
             {
-                Assert(pLockAlloc->LockInfo.fFlags.AreaValid == pData->Flags.AreaValid);
-                if (pLockAlloc->LockInfo.fFlags.AreaValid && pData->Flags.AreaValid)
+                Assert(pAlloc->LockInfo.fFlags.AreaValid == pData->Flags.AreaValid);
+                if (pAlloc->LockInfo.fFlags.AreaValid && pData->Flags.AreaValid)
                 {
-                    Assert(pLockAlloc->LockInfo.Area.left == pData->Area.left);
-                    Assert(pLockAlloc->LockInfo.Area.top == pData->Area.top);
-                    Assert(pLockAlloc->LockInfo.Area.right == pData->Area.right);
-                    Assert(pLockAlloc->LockInfo.Area.bottom == pData->Area.bottom);
+                    Assert(pAlloc->LockInfo.Area.left == pData->Area.left);
+                    Assert(pAlloc->LockInfo.Area.top == pData->Area.top);
+                    Assert(pAlloc->LockInfo.Area.right == pData->Area.right);
+                    Assert(pAlloc->LockInfo.Area.bottom == pData->Area.bottom);
                 }
-                Assert(pLockAlloc->LockInfo.LockedRect.pBits);
-                Assert((pLockAlloc->LockInfo.fFlags.Value & ~1) == (pData->Flags.Value & ~1)); /* <- 1 is "ReadOnly" flag */
+                Assert(pAlloc->LockInfo.LockedRect.pBits);
+                Assert((pAlloc->LockInfo.fFlags.Value & ~1) == (pData->Flags.Value & ~1)); /* <- 1 is "ReadOnly" flag */
 
-                if (pLockAlloc->LockInfo.fFlags.ReadOnly && !pData->Flags.ReadOnly)
+                if (pAlloc->LockInfo.fFlags.ReadOnly && !pData->Flags.ReadOnly)
                 {
                     switch (pTexAlloc->enmD3DIfType)
                     {
@@ -3316,34 +3487,34 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
             {
                 VBOXVDBG_CHECK_SMSYNC(pRc);
 
-                pLockAlloc->LockInfo.fFlags = pData->Flags;
+                pAlloc->LockInfo.fFlags = pData->Flags;
                 if (pRect)
                 {
-                    pLockAlloc->LockInfo.Area = *pRect;
-                    Assert(pLockAlloc->LockInfo.fFlags.AreaValid == 1);
+                    pAlloc->LockInfo.Area = *pRect;
+                    Assert(pAlloc->LockInfo.fFlags.AreaValid == 1);
                 }
                 else
                 {
-                    Assert(pLockAlloc->LockInfo.fFlags.AreaValid == 0);
+                    Assert(pAlloc->LockInfo.fFlags.AreaValid == 0);
                 }
 
                 switch (pTexAlloc->enmD3DIfType)
                 {
                     case VBOXDISP_D3DIFTYPE_TEXTURE:
                         hr = pD3DIfTex->LockRect(pData->SubResourceIndex,
-                                &pLockAlloc->LockInfo.LockedRect,
+                                &pAlloc->LockInfo.LockedRect,
                                 pRect,
                                 vboxDDI2D3DLockFlags(pData->Flags));
                         break;
                     case VBOXDISP_D3DIFTYPE_CUBE_TEXTURE:
                         hr = pD3DIfCubeTex->LockRect(VBOXDISP_CUBEMAP_INDEX_TO_FACE(pRc, pData->SubResourceIndex),
                                 VBOXDISP_CUBEMAP_INDEX_TO_LEVEL(pRc, pData->SubResourceIndex),
-                                &pLockAlloc->LockInfo.LockedRect,
+                                &pAlloc->LockInfo.LockedRect,
                                 pRect,
                                 vboxDDI2D3DLockFlags(pData->Flags));
                         break;
                     case VBOXDISP_D3DIFTYPE_SURFACE:
-                        hr = pD3DIfSurface->LockRect(&pLockAlloc->LockInfo.LockedRect,
+                        hr = pD3DIfSurface->LockRect(&pAlloc->LockInfo.LockedRect,
                                 pRect,
                                 vboxDDI2D3DLockFlags(pData->Flags));
                         break;
@@ -3360,19 +3531,19 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
 
             if (SUCCEEDED(hr))
             {
-                ++pLockAlloc->LockInfo.cLocks;
+                ++pAlloc->LockInfo.cLocks;
 
                 if (!pData->Flags.NotifyOnly)
                 {
-                    pData->pSurfData = pLockAlloc->LockInfo.LockedRect.pBits;
-                    pData->Pitch = pLockAlloc->LockInfo.LockedRect.Pitch;
+                    pData->pSurfData = pAlloc->LockInfo.LockedRect.pBits;
+                    pData->Pitch = pAlloc->LockInfo.LockedRect.Pitch;
                     pData->SlicePitch = 0;
-                    Assert(pLockAlloc->SurfDesc.slicePitch == 0);
-                    Assert(!pLockAlloc->pvMem);
+                    Assert(pAlloc->SurfDesc.slicePitch == 0);
+                    Assert(!pAlloc->pvMem);
                 }
                 else
                 {
-                    Assert(pLockAlloc->pvMem);
+                    Assert(pAlloc->pvMem);
                     Assert(pRc->RcDesc.enmPool == D3DDDIPOOL_SYSTEMMEM);
                 }
 
@@ -3385,7 +3556,6 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
         {
             PVBOXWDDMDISP_ALLOCATION pTexAlloc = &pRc->aAllocations[0];
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pLockAlloc = &pRc->aAllocations[pData->SubResourceIndex];
             IDirect3DVolumeTexture9 *pD3DIfTex = (IDirect3DVolumeTexture9*)pTexAlloc->pD3DIf;
             Assert(pTexAlloc->pD3DIf);
             D3DDDIBOX *pBox = NULL;
@@ -3399,22 +3569,22 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
 
             /* else - we lock the entire texture, pBox == NULL */
 
-            if (pLockAlloc->LockInfo.cLocks)
+            if (pAlloc->LockInfo.cLocks)
             {
-                Assert(pLockAlloc->LockInfo.fFlags.BoxValid == pData->Flags.BoxValid);
-                if (pLockAlloc->LockInfo.fFlags.BoxValid && pData->Flags.BoxValid)
+                Assert(pAlloc->LockInfo.fFlags.BoxValid == pData->Flags.BoxValid);
+                if (pAlloc->LockInfo.fFlags.BoxValid && pData->Flags.BoxValid)
                 {
-                    Assert(pLockAlloc->LockInfo.Box.Left == pData->Box.Left);
-                    Assert(pLockAlloc->LockInfo.Box.Top == pData->Box.Top);
-                    Assert(pLockAlloc->LockInfo.Box.Right == pData->Box.Right);
-                    Assert(pLockAlloc->LockInfo.Box.Bottom == pData->Box.Bottom);
-                    Assert(pLockAlloc->LockInfo.Box.Front == pData->Box.Front);
-                    Assert(pLockAlloc->LockInfo.Box.Back == pData->Box.Back);
+                    Assert(pAlloc->LockInfo.Box.Left == pData->Box.Left);
+                    Assert(pAlloc->LockInfo.Box.Top == pData->Box.Top);
+                    Assert(pAlloc->LockInfo.Box.Right == pData->Box.Right);
+                    Assert(pAlloc->LockInfo.Box.Bottom == pData->Box.Bottom);
+                    Assert(pAlloc->LockInfo.Box.Front == pData->Box.Front);
+                    Assert(pAlloc->LockInfo.Box.Back == pData->Box.Back);
                 }
-                Assert(pLockAlloc->LockInfo.LockedBox.pBits);
-                Assert((pLockAlloc->LockInfo.fFlags.Value & ~1) == (pData->Flags.Value & ~1)); /* <- 1 is "ReadOnly" flag */
+                Assert(pAlloc->LockInfo.LockedBox.pBits);
+                Assert((pAlloc->LockInfo.fFlags.Value & ~1) == (pData->Flags.Value & ~1)); /* <- 1 is "ReadOnly" flag */
 
-                if (pLockAlloc->LockInfo.fFlags.ReadOnly && !pData->Flags.ReadOnly)
+                if (pAlloc->LockInfo.fFlags.ReadOnly && !pData->Flags.ReadOnly)
                 {
                     hr = pD3DIfTex->UnlockBox(pData->SubResourceIndex);
                     Assert(hr == S_OK);
@@ -3429,19 +3599,19 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
             {
                 VBOXVDBG_CHECK_SMSYNC(pRc);
 
-                pLockAlloc->LockInfo.fFlags = pData->Flags;
+                pAlloc->LockInfo.fFlags = pData->Flags;
                 if (pBox)
                 {
-                    pLockAlloc->LockInfo.Box = *pBox;
-                    Assert(pLockAlloc->LockInfo.fFlags.BoxValid == 1);
+                    pAlloc->LockInfo.Box = *pBox;
+                    Assert(pAlloc->LockInfo.fFlags.BoxValid == 1);
                 }
                 else
                 {
-                    Assert(pLockAlloc->LockInfo.fFlags.BoxValid == 0);
+                    Assert(pAlloc->LockInfo.fFlags.BoxValid == 0);
                 }
 
                 hr = pD3DIfTex->LockBox(pData->SubResourceIndex,
-                                &pLockAlloc->LockInfo.LockedBox,
+                                &pAlloc->LockInfo.LockedBox,
                                 (D3DBOX*)pBox,
                                 vboxDDI2D3DLockFlags(pData->Flags));
                 if (FAILED(hr))
@@ -3452,18 +3622,18 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
 
             if (SUCCEEDED(hr))
             {
-                ++pLockAlloc->LockInfo.cLocks;
+                ++pAlloc->LockInfo.cLocks;
 
                 if (!pData->Flags.NotifyOnly)
                 {
-                    pData->pSurfData = pLockAlloc->LockInfo.LockedBox.pBits;
-                    pData->Pitch = pLockAlloc->LockInfo.LockedBox.RowPitch;
-                    pData->SlicePitch = pLockAlloc->LockInfo.LockedBox.SlicePitch;
-                    Assert(!pLockAlloc->pvMem);
+                    pData->pSurfData = pAlloc->LockInfo.LockedBox.pBits;
+                    pData->Pitch = pAlloc->LockInfo.LockedBox.RowPitch;
+                    pData->SlicePitch = pAlloc->LockInfo.LockedBox.SlicePitch;
+                    Assert(!pAlloc->pvMem);
                 }
                 else
                 {
-                    Assert(pLockAlloc->pvMem);
+                    Assert(pAlloc->pvMem);
                     Assert(pRc->RcDesc.enmPool == D3DDDIPOOL_SYSTEMMEM);
                 }
 
@@ -3475,7 +3645,6 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
         else if (pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_VERTEXBUFFER)
         {
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
             IDirect3DVertexBuffer9 *pD3D9VBuf = (IDirect3DVertexBuffer9*)pAlloc->pD3DIf;
             BOOL bLocked = false;
             Assert(pD3D9VBuf);
@@ -3506,7 +3675,7 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
                 {
                     Assert(pAlloc->SurfDesc.pitch == pAlloc->SurfDesc.width);
                     pAlloc->LockInfo.LockedRect.Pitch = pAlloc->SurfDesc.pitch;
-//                    Assert(pLockAlloc->LockInfo.fFlags.Value == 0);
+//                    Assert(pAlloc->LockInfo.fFlags.Value == 0);
                     pAlloc->LockInfo.fFlags = pData->Flags;
                     if (pRange)
                     {
@@ -3569,7 +3738,6 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
         else if (pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_INDEXBUFFER)
         {
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
             IDirect3DIndexBuffer9 *pD3D9IBuf = (IDirect3DIndexBuffer9*)pAlloc->pD3DIf;
             BOOL bLocked = false;
             Assert(pD3D9IBuf);
@@ -3600,7 +3768,7 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
                 {
                     Assert(pAlloc->SurfDesc.pitch == pAlloc->SurfDesc.width);
                     pAlloc->LockInfo.LockedRect.Pitch = pAlloc->SurfDesc.pitch;
-//                    Assert(pLockAlloc->LockInfo.fFlags.Value == 0);
+//                    Assert(pAlloc->LockInfo.fFlags.Value == 0);
                     pAlloc->LockInfo.fFlags = pData->Flags;
                     if (pRange)
                     {
@@ -3662,12 +3830,19 @@ static HRESULT APIENTRY vboxWddmDDevLock(HANDLE hDevice, D3DDDIARG_LOCK* pData)
         }
         else
         {
-            Assert(0);
+            WARN(("not implemented %d", pRc->aAllocations[0].enmD3DIfType));
         }
+
+#ifdef VBOXWDDMDISP_DAL_CHECK_LOCK
+        if (!SUCCEEDED(hr))
+        {
+            WARN(("lock failed %#x", hr));
+            vboxWddmDalCheckUnlock(pDevice, pAlloc);
+        }
+#endif
     }
     else /* if !VBOXDISPMODE_IS_3D(pDevice->pAdapter) */
     {
-        PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
         if (pAlloc->hAllocation)
         {
             if (pRc->RcDesc.enmPool != D3DDDIPOOL_SYSTEMMEM)
@@ -3764,6 +3939,8 @@ static HRESULT APIENTRY vboxWddmDDevUnlock(HANDLE hDevice, CONST D3DDDIARG_UNLOC
     if (pData->SubResourceIndex >= pRc->cAllocations)
         return E_INVALIDARG;
 
+    PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
+
     if (VBOXDISPMODE_IS_3D(pDevice->pAdapter))
     {
         if (pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_TEXTURE
@@ -3771,13 +3948,12 @@ static HRESULT APIENTRY vboxWddmDDevUnlock(HANDLE hDevice, CONST D3DDDIARG_UNLOC
             || pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_SURFACE)
         {
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pLockAlloc = &pRc->aAllocations[pData->SubResourceIndex];
 
             VBOXVDBG_DUMP_UNLOCK_ST(pData);
 
-            --pLockAlloc->LockInfo.cLocks;
-            Assert(pLockAlloc->LockInfo.cLocks < UINT32_MAX);
-            if (!pLockAlloc->LockInfo.cLocks)
+            --pAlloc->LockInfo.cLocks;
+            Assert(pAlloc->LockInfo.cLocks < UINT32_MAX);
+            if (!pAlloc->LockInfo.cLocks)
             {
                 PVBOXWDDMDISP_ALLOCATION pTexAlloc = &pRc->aAllocations[0];
                 Assert(pTexAlloc->pD3DIf);
@@ -3814,13 +3990,12 @@ static HRESULT APIENTRY vboxWddmDDevUnlock(HANDLE hDevice, CONST D3DDDIARG_UNLOC
         else if (pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_VOLUME_TEXTURE)
         {
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pLockAlloc = &pRc->aAllocations[pData->SubResourceIndex];
 
             VBOXVDBG_DUMP_UNLOCK_ST(pData);
 
-            --pLockAlloc->LockInfo.cLocks;
-            Assert(pLockAlloc->LockInfo.cLocks < UINT32_MAX);
-            if (!pLockAlloc->LockInfo.cLocks)
+            --pAlloc->LockInfo.cLocks;
+            Assert(pAlloc->LockInfo.cLocks < UINT32_MAX);
+            if (!pAlloc->LockInfo.cLocks)
             {
                 PVBOXWDDMDISP_ALLOCATION pTexAlloc = &pRc->aAllocations[0];
                 Assert(pTexAlloc->pD3DIf);
@@ -3834,7 +4009,6 @@ static HRESULT APIENTRY vboxWddmDDevUnlock(HANDLE hDevice, CONST D3DDDIARG_UNLOC
         else if (pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_VERTEXBUFFER)
         {
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
 
             --pAlloc->LockInfo.cLocks;
             Assert(pAlloc->LockInfo.cLocks < UINT32_MAX);
@@ -3875,7 +4049,6 @@ static HRESULT APIENTRY vboxWddmDDevUnlock(HANDLE hDevice, CONST D3DDDIARG_UNLOC
         else if (pRc->aAllocations[0].enmD3DIfType == VBOXDISP_D3DIFTYPE_INDEXBUFFER)
         {
             Assert(pData->SubResourceIndex < pRc->cAllocations);
-            PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
 
             --pAlloc->LockInfo.cLocks;
             Assert(pAlloc->LockInfo.cLocks < UINT32_MAX);
@@ -3915,13 +4088,22 @@ static HRESULT APIENTRY vboxWddmDDevUnlock(HANDLE hDevice, CONST D3DDDIARG_UNLOC
         }
         else
         {
-            Assert(0);
+            WARN(("Unlock unsupported %d", pRc->aAllocations[0].enmD3DIfType));
         }
+
+#ifdef VBOXWDDMDISP_DAL_CHECK_LOCK
+        if (SUCCEEDED(hr))
+        {
+            hr = vboxWddmDalCheckUnlock(pDevice, pAlloc);
+            if (!SUCCEEDED(hr))
+                WARN(("vboxWddmDalCheckUnlock failed %#x", hr));
+        }
+        else
+            WARN(("unlock failed %#x", hr));
+#endif
     }
     else
     {
-        PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SubResourceIndex];
-
         if (pAlloc->hAllocation)
         {
             BOOL fDoUnlock = FALSE;
@@ -3966,18 +4148,12 @@ static HRESULT APIENTRY vboxWddmDDevUnlock(HANDLE hDevice, CONST D3DDDIARG_UNLOC
 
             if (fDoUnlock)
             {
-                struct
-                {
-                    D3DDDICB_UNLOCK Unlock;
-                    D3DKMT_HANDLE hAllocation;
-                } UnlockData;
+                D3DDDICB_UNLOCK Unlock;
 
+                Unlock.NumAllocations = 1;
+                Unlock.phAllocations = &pAlloc->hAllocation;
 
-                UnlockData.Unlock.NumAllocations = 1;
-                UnlockData.Unlock.phAllocations = &UnlockData.hAllocation;
-                UnlockData.hAllocation = pAlloc->hAllocation;
-
-                hr = pDevice->RtCallbacks.pfnUnlockCb(pDevice->hDevice, &UnlockData.Unlock);
+                hr = pDevice->RtCallbacks.pfnUnlockCb(pDevice->hDevice, &Unlock);
                 if(hr != S_OK)
                 {
                     WARN(("pfnUnlockCb failed, hr 0x%x", hr));
@@ -4090,6 +4266,7 @@ static HRESULT APIENTRY vboxWddmDDevCreateResource(HANDLE hDevice, D3DDDIARG_CRE
     }
     bool bIssueCreateResource = false;
     bool bCreateKMResource = false;
+    bool bSetHostID = false;
 
     pRc->hResource = pResource->hResource;
     pRc->hKMResource = NULL;
@@ -4168,9 +4345,10 @@ static HRESULT APIENTRY vboxWddmDDevCreateResource(HANDLE hDevice, D3DDDIARG_CRE
             bCreateKMResource = true;
         }
 
-        if (pRc->RcDesc.fFlags.RenderTarget)
+        if (pRc->RcDesc.fFlags.RenderTarget || pRc->RcDesc.fFlags.Primary)
         {
             bIssueCreateResource = true;
+            bSetHostID = true;
         }
 
         hr = VBoxD3DIfCreateForRc(pRc);
@@ -4222,92 +4400,121 @@ static HRESULT APIENTRY vboxWddmDDevCreateResource(HANDLE hDevice, D3DDDIARG_CRE
                 pAllocInfo->fFlags = pResource->Flags;
                 pAllocInfo->hSharedHandle = (uint64_t)pAllocation->hSharedHandle;
                 pAllocInfo->SurfDesc = pAllocation->SurfDesc;
+                if (bSetHostID)
+                {
+                    IDirect3DSurface9 *pSurfIf = NULL;
+                    hr = VBoxD3DIfSurfGet(pRc, i, &pSurfIf);
+                    if (SUCCEEDED(hr))
+                    {
+                        hr = pAdapter->D3D.D3D.pfnVBoxWineExD3DSurf9GetHostId(pSurfIf, &pAllocInfo->hostID);
+                        if (SUCCEEDED(hr))
+                        {
+                            Assert(pAllocInfo->hostID);
+                        }
+                        else
+                        {
+                            WARN(("pfnVBoxWineExD3DSurf9GetHostId failed, hr 0x%x", hr));
+                            break;
+                        }
+                        pSurfIf->Release();
+                    }
+                    else
+                    {
+                        WARN(("VBoxD3DIfSurfGet failed, hr 0x%x", hr));
+                        break;
+                    }
+                }
+                else
+                    pAllocInfo->hostID = 0;
             }
 
             Assert(!pRc->fFlags.Opened);
 //                Assert(!pRc->fFlags.KmResource);
             Assert(pRc->fFlags.Generic);
 
-            if (bCreateKMResource)
-            {
-                Assert(pRc->fFlags.KmResource);
-
-                hr = pDevice->RtCallbacks.pfnAllocateCb(pDevice->hDevice, pDdiAllocate);
-                Assert(hr == S_OK);
-                Assert(pDdiAllocate->hKMResource
-                        || pResource->Flags.SharedResource /* for some reason shared resources
-                                                            * are created with zero km resource handle on Win7+ */
-                        );
-            }
-            else
-            {
-                Assert(!pRc->fFlags.KmResource);
-
-                pDdiAllocate->hResource = NULL;
-                pDdiAllocate->NumAllocations = 1;
-                pDdiAllocate->PrivateDriverDataSize = 0;
-                pDdiAllocate->pPrivateDriverData = NULL;
-                D3DDDI_ALLOCATIONINFO *pDdiAllocIBase = pDdiAllocate->pAllocationInfo;
-
-                for (UINT i = 0; i < pResource->SurfCount; ++i)
-                {
-                    pDdiAllocate->pAllocationInfo = &pDdiAllocIBase[i];
-                    hr = pDevice->RtCallbacks.pfnAllocateCb(pDevice->hDevice, pDdiAllocate);
-                    Assert(hr == S_OK);
-                    Assert(!pDdiAllocate->hKMResource);
-                    if (SUCCEEDED(hr))
-                    {
-                        Assert(pDdiAllocate->pAllocationInfo->hAllocation);
-                    }
-                    else
-                    {
-                        for (UINT j = 0; i < j; ++j)
-                        {
-                            D3DDDI_ALLOCATIONINFO * pCur = &pDdiAllocIBase[i];
-                            D3DDDICB_DEALLOCATE Dealloc;
-                            Dealloc.hResource = 0;
-                            Dealloc.NumAllocations = 1;
-                            Dealloc.HandleList = &pCur->hAllocation;
-                            HRESULT tmpHr = pDevice->RtCallbacks.pfnDeallocateCb(pDevice->hDevice, &Dealloc);
-                            Assert(tmpHr == S_OK);
-                        }
-                        break;
-                    }
-                }
-
-                pDdiAllocate->pAllocationInfo = pDdiAllocIBase;
-            }
-
             if (SUCCEEDED(hr))
             {
-                pRc->hKMResource = pDdiAllocate->hKMResource;
-
-                for (UINT i = 0; i < pResource->SurfCount; ++i)
+                if (bCreateKMResource)
                 {
-                    PVBOXWDDMDISP_ALLOCATION pAllocation = &pRc->aAllocations[i];
-                    D3DDDI_ALLOCATIONINFO *pDdiAllocI = &pDdiAllocate->pAllocationInfo[i];
-                    PVBOXWDDM_ALLOCINFO pAllocInfo = (PVBOXWDDM_ALLOCINFO)pDdiAllocI->pPrivateDriverData;
-                    CONST D3DDDI_SURFACEINFO* pSurf = &pResource->pSurfList[i];
-                    pAllocation->hAllocation = pDdiAllocI->hAllocation;
-                    pAllocation->enmType = VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC;
-                    pAllocation->pvMem = (void*)pSurf->pSysMem;
-                    pAllocation->SurfDesc = pAllocInfo->SurfDesc;
+                    Assert(pRc->fFlags.KmResource);
 
-                    if (pResource->Flags.SharedResource)
+                    hr = pDevice->RtCallbacks.pfnAllocateCb(pDevice->hDevice, pDdiAllocate);
+                    Assert(hr == S_OK);
+                    Assert(pDdiAllocate->hKMResource
+                            || pResource->Flags.SharedResource /* for some reason shared resources
+                                                                * are created with zero km resource handle on Win7+ */
+                            );
+                }
+                else
+                {
+                    Assert(!pRc->fFlags.KmResource);
+
+                    pDdiAllocate->hResource = NULL;
+                    pDdiAllocate->NumAllocations = 1;
+                    pDdiAllocate->PrivateDriverDataSize = 0;
+                    pDdiAllocate->pPrivateDriverData = NULL;
+                    D3DDDI_ALLOCATIONINFO *pDdiAllocIBase = pDdiAllocate->pAllocationInfo;
+
+                    for (UINT i = 0; i < pResource->SurfCount; ++i)
                     {
-#ifdef VBOXWDDMDISP_DEBUG_PRINT_SHARED_CREATE
-                        Assert(VBOXWDDMDISP_IS_TEXTURE(pResource->Flags));
-                        vboxVDbgPrint(("\n\n********\n(0x%x:0n%d)Shared CREATED pAlloc(0x%p), hRc(0x%p), hAl(0x%p), "
-                                        "Handle(0x%x), (0n%d) \n***********\n\n",
-                                    GetCurrentProcessId(), GetCurrentProcessId(),
-                                    pAllocation, pRc->hKMResource, pAllocation->hAllocation,
-                                    pAllocation->hSharedHandle, pAllocation->hSharedHandle
-                                    ));
-#endif
+                        pDdiAllocate->pAllocationInfo = &pDdiAllocIBase[i];
+                        hr = pDevice->RtCallbacks.pfnAllocateCb(pDevice->hDevice, pDdiAllocate);
+                        Assert(hr == S_OK);
+                        Assert(!pDdiAllocate->hKMResource);
+                        if (SUCCEEDED(hr))
+                        {
+                            Assert(pDdiAllocate->pAllocationInfo->hAllocation);
+                        }
+                        else
+                        {
+                            for (UINT j = 0; j < i; ++j)
+                            {
+                                D3DDDI_ALLOCATIONINFO * pCur = &pDdiAllocIBase[i];
+                                D3DDDICB_DEALLOCATE Dealloc;
+                                Dealloc.hResource = 0;
+                                Dealloc.NumAllocations = 1;
+                                Dealloc.HandleList = &pCur->hAllocation;
+                                HRESULT tmpHr = pDevice->RtCallbacks.pfnDeallocateCb(pDevice->hDevice, &Dealloc);
+                                Assert(tmpHr == S_OK);
+                            }
+                            break;
+                        }
                     }
+
+                    pDdiAllocate->pAllocationInfo = pDdiAllocIBase;
                 }
 
-                VBOXVDBG_CREATE_CHECK_SWAPCHAIN();
+                if (SUCCEEDED(hr))
+                {
+                    pRc->hKMResource = pDdiAllocate->hKMResource;
+
+                    for (UINT i = 0; i < pResource->SurfCount; ++i)
+                    {
+                        PVBOXWDDMDISP_ALLOCATION pAllocation = &pRc->aAllocations[i];
+                        D3DDDI_ALLOCATIONINFO *pDdiAllocI = &pDdiAllocate->pAllocationInfo[i];
+                        PVBOXWDDM_ALLOCINFO pAllocInfo = (PVBOXWDDM_ALLOCINFO)pDdiAllocI->pPrivateDriverData;
+                        CONST D3DDDI_SURFACEINFO* pSurf = &pResource->pSurfList[i];
+                        pAllocation->hAllocation = pDdiAllocI->hAllocation;
+                        pAllocation->enmType = VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC;
+                        pAllocation->pvMem = (void*)pSurf->pSysMem;
+                        pAllocation->SurfDesc = pAllocInfo->SurfDesc;
+
+                        if (pResource->Flags.SharedResource)
+                        {
+#ifdef VBOXWDDMDISP_DEBUG_PRINT_SHARED_CREATE
+                            Assert(VBOXWDDMDISP_IS_TEXTURE(pResource->Flags));
+                            vboxVDbgPrint(("\n\n********\n(0x%x:0n%d)Shared CREATED pAlloc(0x%p), hRc(0x%p), hAl(0x%p), "
+                                            "Handle(0x%x), (0n%d) \n***********\n\n",
+                                        GetCurrentProcessId(), GetCurrentProcessId(),
+                                        pAllocation, pRc->hKMResource, pAllocation->hAllocation,
+                                        pAllocation->hSharedHandle, pAllocation->hSharedHandle
+                                        ));
+#endif
+                        }
+                    }
+
+                    VBOXVDBG_CREATE_CHECK_SWAPCHAIN();
+                }
             }
 
             vboxWddmRequestAllocFree(pDdiAllocate);
@@ -4377,7 +4584,7 @@ static HRESULT APIENTRY vboxWddmDDevDestroyResource(HANDLE hDevice, HANDLE hReso
                     vboxWddmSwapchainDestroy(pDevice, pSwapchain);
             }
 
-            vboxWddmDalCheckRemove(pDevice, pAlloc);
+            vboxWddmDalCheckNotifyRemove(pDevice, pAlloc);
         }
     }
 
@@ -4454,7 +4661,29 @@ static HRESULT APIENTRY vboxWddmDDevPresent(HANDLE hDevice, CONST D3DDDIARG_PRES
     Assert(pDevice);
     VBOXDISPCRHGSMI_SCOPE_SET_DEV(pDevice);
     HRESULT hr = S_OK;
-    if (VBOXDISPMODE_IS_3D(pDevice->pAdapter))
+    PVBOXWDDMDISP_ADAPTER pAdapter = pDevice->pAdapter;
+    PVBOXWDDMDISP_RESOURCE pSrcRc = NULL, pDstRc = NULL;
+    PVBOXWDDMDISP_ALLOCATION pSrcAlloc = NULL, pDstAlloc = NULL;
+
+    Assert(vboxWddmDalIsEmpty(pDevice));
+
+    if (pData->hSrcResource)
+    {
+        pSrcRc = (PVBOXWDDMDISP_RESOURCE)pData->hSrcResource;
+        Assert(pSrcRc->cAllocations > pData->SrcSubResourceIndex);
+        pSrcAlloc = &pSrcRc->aAllocations[pData->SrcSubResourceIndex];
+        Assert(pSrcAlloc->hAllocation);
+    }
+
+    if (pData->hDstResource)
+    {
+        pDstRc = (PVBOXWDDMDISP_RESOURCE)pData->hDstResource;
+        Assert(pDstRc->cAllocations > pData->DstSubResourceIndex);
+        pDstAlloc = &pDstRc->aAllocations[pData->DstSubResourceIndex];
+        Assert(pDstAlloc->hAllocation);
+    }
+
+    if (VBOXDISPMODE_IS_3D(pAdapter))
     {
 #ifdef VBOXWDDM_TEST_UHGSMI
         {
@@ -4465,55 +4694,67 @@ static HRESULT APIENTRY vboxWddmDDevPresent(HANDLE hDevice, CONST D3DDDIARG_PRES
             uint32_t cCPS = (((uint64_t)cCals) * 1000ULL)/TimeMs;
         }
 #endif
-        PVBOXWDDMDISP_RESOURCE pRc = (PVBOXWDDMDISP_RESOURCE)pData->hSrcResource;
-        Assert(pRc);
-        Assert(pRc->cAllocations > pData->SrcSubResourceIndex);
-        PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SrcSubResourceIndex];
-        hr = vboxWddmSwapchainPresent(pDevice, pAlloc);
-        Assert(hr == S_OK);
-    }
-
-    {
-        D3DDDICB_PRESENT DdiPresent = {0};
-        if (pData->hSrcResource)
+#ifdef VBOX_WITH_CROGL
+        if (pAdapter->u32VBox3DCaps & CR_VBOX_CAP_TEX_PRESENT)
         {
+            IDirect3DSurface9 *pSrcSurfIf = NULL;
+            hr = VBoxD3DIfSurfGet(pSrcRc, pData->SrcSubResourceIndex, &pSrcSurfIf);
+            if (SUCCEEDED(hr))
+            {
+                pAdapter->D3D.D3D.pfnVBoxWineExD3DSurf9SyncToHost(pSrcSurfIf);
+                pSrcSurfIf->Release();
+            }
+            else
+            {
+                WARN(("VBoxD3DIfSurfGet failed, hr = 0x%x", hr));
+                return hr;
+            }
+
+            pAdapter->D3D.D3D.pfnVBoxWineExD3DDev9FlushToHost((IDirect3DDevice9Ex*)pDevice->pDevice9If);
+        }
+        else
+#endif
+        {
+            pAdapter->D3D.D3D.pfnVBoxWineExD3DDev9FlushToHost((IDirect3DDevice9Ex*)pDevice->pDevice9If);
             PVBOXWDDMDISP_RESOURCE pRc = (PVBOXWDDMDISP_RESOURCE)pData->hSrcResource;
+            Assert(pRc);
             Assert(pRc->cAllocations > pData->SrcSubResourceIndex);
             PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->SrcSubResourceIndex];
-            Assert(pAlloc->hAllocation);
-            DdiPresent.hSrcAllocation = pAlloc->hAllocation;
+            hr = vboxWddmSwapchainPresent(pDevice, pAlloc);
+            Assert(hr == S_OK);
         }
-        if (pData->hDstResource)
-        {
-            PVBOXWDDMDISP_RESOURCE pRc = (PVBOXWDDMDISP_RESOURCE)pData->hDstResource;
-            Assert(pRc->cAllocations > pData->DstSubResourceIndex);
-            PVBOXWDDMDISP_ALLOCATION pAlloc = &pRc->aAllocations[pData->DstSubResourceIndex];
-            Assert(pAlloc->hAllocation);
-            DdiPresent.hDstAllocation = pAlloc->hAllocation;
-        }
-        DdiPresent.hContext = pDevice->DefaultContext.ContextInfo.hContext;
+    }
+
+    D3DDDICB_PRESENT DdiPresent = {0};
+    if (pSrcAlloc)
+        DdiPresent.hSrcAllocation = pSrcAlloc->hAllocation;
+
+    if (pDstAlloc)
+        DdiPresent.hDstAllocation = pDstAlloc->hAllocation;
+
+    DdiPresent.hContext = pDevice->DefaultContext.ContextInfo.hContext;
 
 #if 0 //def VBOX_WDDMDISP_WITH_PROFILE
-        VBoxDispProfileScopeLogger<VBoxDispProfileEntry> profilePresentCbLogger(pDevice->ProfileDdiPresentCb.alloc("pfnPresentCb"));
+    VBoxDispProfileScopeLogger<VBoxDispProfileEntry> profilePresentCbLogger(pDevice->ProfileDdiPresentCb.alloc("pfnPresentCb"));
 #endif
+
 #ifdef VBOXWDDMDISP_DEBUG_TIMER
-        HANDLE hTimer = NULL;
-        vboxVDbgTimerStart(pDevice->hTimerQueue, &hTimer, 1000);
+    HANDLE hTimer = NULL;
+    vboxVDbgTimerStart(pDevice->hTimerQueue, &hTimer, 1000);
 #endif
-        hr = pDevice->RtCallbacks.pfnPresentCb(pDevice->hDevice, &DdiPresent);
+    hr = pDevice->RtCallbacks.pfnPresentCb(pDevice->hDevice, &DdiPresent);
 #ifdef VBOXWDDMDISP_DEBUG_TIMER
-        vboxVDbgTimerStop(pDevice->hTimerQueue, hTimer);
+    vboxVDbgTimerStop(pDevice->hTimerQueue, hTimer);
 #endif
 #if 0 //def VBOX_WDDMDISP_WITH_PROFILE
-        profilePresentCbLogger.logAndDisable();
-        if (pDevice->ProfileDdiPresentCb.getNumEntries() == 64)
-        {
-            pDevice->ProfileDdiPresentCb.dump(pDevice);
-            pDevice->ProfileDdiPresentCb.reset();
-        }
-#endif
-        Assert(hr == S_OK);
+    profilePresentCbLogger.logAndDisable();
+    if (pDevice->ProfileDdiPresentCb.getNumEntries() == 64)
+    {
+        pDevice->ProfileDdiPresentCb.dump(pDevice);
+        pDevice->ProfileDdiPresentCb.reset();
     }
+#endif
+    Assert(hr == S_OK);
 
     vboxVDbgPrintF(("<== "__FUNCTION__", hDevice(0x%p), hr(0x%x)\n", hDevice, hr));
 
@@ -5083,7 +5324,10 @@ static HRESULT APIENTRY vboxWddmDDevSetDepthStencil(HANDLE hDevice, CONST D3DDDI
     {
         hr = pDevice9If->SetDepthStencilSurface(pD3D9Surf);
         if (SUCCEEDED(hr))
+        {
+            pDevice->pDepthStencilRc = pRc;
             hr = S_OK;
+        }
         else
             WARN(("VBoxD3DIfSurfGet failed, hr (0x%x)",hr));
 
@@ -5391,7 +5635,11 @@ static HRESULT APIENTRY vboxWddmDDevDestroyDevice(IN HANDLE hDevice)
     HRESULT hr = vboxDispCmCtxDestroy(pDevice, &pDevice->DefaultContext);
     Assert(hr == S_OK);
     if (hr == S_OK)
+    {
+        if (pDevice->hHgsmiTransportModule)
+            FreeLibrary(pDevice->hHgsmiTransportModule);
         RTMemFree(pDevice);
+    }
     vboxVDbgPrintF(("<== "__FUNCTION__", hDevice(0x%p)\n", hDevice));
     return hr;
 }
@@ -5676,7 +5924,8 @@ static HRESULT APIENTRY vboxWddmDDevOpenResource(HANDLE hDevice, D3DDDIARG_OPENR
             pRc->RcDesc.enmMultisampleType = D3DDDIMULTISAMPLE_NONE;
             pRc->RcDesc.MultisampleQuality = 0;
             pRc->RcDesc.MipLevels = 0;
-            pRc->RcDesc.Fvf;
+            /*pRc->RcDesc.Fvf;*/
+            pRc->RcDesc.fFlags.SharedResource = 1;
 
             if (pData->NumAllocations != 1)
             {
@@ -5941,7 +6190,7 @@ static HRESULT APIENTRY vboxWddmDispCreateDevice (IN HANDLE hAdapter, IN D3DDDIA
                     Assert(hr == S_OK);
                     if (hr == S_OK)
                     {
-    #ifdef VBOXDISP_EARLYCREATEDEVICE
+#ifdef VBOXDISP_EARLYCREATEDEVICE
                         PVBOXWDDMDISP_RESOURCE pRc = vboxResourceAlloc(2);
                         Assert(pRc);
                         if (pRc)
@@ -5977,13 +6226,13 @@ static HRESULT APIENTRY vboxWddmDispCreateDevice (IN HANDLE hAdapter, IN D3DDDIA
                         {
                             hr = E_OUTOFMEMORY;
                         }
-    #else
+#else
 //# define VBOXDISP_TEST_SWAPCHAIN
 # ifdef VBOXDISP_TEST_SWAPCHAIN
                         VBOXDISP_D3DEV(pDevice);
 # endif
                         break;
-    #endif
+#endif
 
                         HRESULT tmpHr = vboxDispCmCtxDestroy(pDevice, &pDevice->DefaultContext);
                         Assert(tmpHr == S_OK);
@@ -6005,6 +6254,22 @@ static HRESULT APIENTRY vboxWddmDispCreateDevice (IN HANDLE hAdapter, IN D3DDDIA
     {
         vboxVDbgPrintR((__FUNCTION__": RTMemAllocZ returned NULL\n"));
         hr = E_OUTOFMEMORY;
+    }
+
+    if (SUCCEEDED(hr))
+    {
+        if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                (LPCWSTR)pDevice->RtCallbacks.pfnAllocateCb,
+                                &pDevice->hHgsmiTransportModule))
+        {
+            Assert(pDevice->hHgsmiTransportModule);
+        }
+        else
+        {
+            DWORD winEr = GetLastError();
+            WARN(("GetModuleHandleEx failed winEr %d, ignoring", winEr));
+            pDevice->hHgsmiTransportModule = 0;
+        }
     }
 
     vboxVDbgPrint(("<== "__FUNCTION__", hAdapter(0x%p)\n", hAdapter));
@@ -6140,8 +6405,9 @@ HRESULT APIENTRY OpenAdapter(__inout D3DDDIARG_OPENADAPTER*  pOpenData)
         pAdapter->uRtVersion= pOpenData->Version;
         pAdapter->RtCallbacks = *pOpenData->pAdapterCallbacks;
 
-        pAdapter->cHeads = Query.cInfos;
+        pAdapter->u32VBox3DCaps = Query.u32VBox3DCaps;
 
+        pAdapter->cHeads = Query.cInfos;
 
         pOpenData->hAdapter = pAdapter;
         pOpenData->pAdapterFuncs->pfnGetCaps = vboxWddmDispGetCaps;

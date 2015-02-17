@@ -48,6 +48,7 @@ RTR3DECL(int)  RTErrConvertFromWin32(unsigned uNativeCode)
         case ERROR_PATH_NOT_FOUND:          return VERR_PATH_NOT_FOUND;
         case ERROR_TOO_MANY_OPEN_FILES:     return VERR_TOO_MANY_OPEN_FILES;
         case ERROR_ACCESS_DENIED:           return VERR_ACCESS_DENIED;
+        case ERROR_NOACCESS:                return VERR_ACCESS_DENIED;
 
         case ERROR_INVALID_HANDLE:
         case ERROR_DIRECT_ACCESS_HANDLE:    return VERR_INVALID_HANDLE;
@@ -410,6 +411,7 @@ RTR3DECL(int)  RTErrConvertFromWin32(unsigned uNativeCode)
 #endif
         case ERROR_NOT_A_REPARSE_POINT: return VERR_NOT_SYMLINK;
 
+        case NTE_BAD_ALGID:         return VERR_CR_PKIX_UNKNOWN_DIGEST_TYPE;
     }
 
     /* unknown error. */

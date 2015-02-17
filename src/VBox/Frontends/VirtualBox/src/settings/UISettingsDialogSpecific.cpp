@@ -35,12 +35,16 @@
 
 #include "UIGlobalSettingsGeneral.h"
 #include "UIGlobalSettingsInput.h"
-#include "UIGlobalSettingsUpdate.h"
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
+# include "UIGlobalSettingsUpdate.h"
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
 #include "UIGlobalSettingsLanguage.h"
 #include "UIGlobalSettingsDisplay.h"
 #include "UIGlobalSettingsNetwork.h"
 #include "UIGlobalSettingsExtension.h"
-#include "UIGlobalSettingsProxy.h"
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
+# include "UIGlobalSettingsProxy.h"
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
 
 #include "UIMachineSettingsGeneral.h"
 #include "UIMachineSettingsSystem.h"
@@ -203,7 +207,12 @@ protected slots:
         {
             /* If such page present we should fetch internal page cache: */
             if (m_pages.contains(iPageId))
-                m_pages[iPageId]->getFromCache();
+            {
+                UISettingsPage *pSettingsPage = m_pages[iPageId];
+                pSettingsPage->setValidatorBlocked(true);
+                pSettingsPage->getFromCache();
+                pSettingsPage->setValidatorBlocked(false);
+            }
         }
     }
 
@@ -216,6 +225,13 @@ protected slots:
             /* We should flag GUI thread to unlock itself: */
             if (!m_fSavingComplete)
                 m_fSavingComplete = true;
+        }
+        /* If serializer loads settings: */
+        else
+        {
+            /* We have to do initial validation finally: */
+            foreach (UISettingsPage *pPage, m_pages.values())
+                pPage->revalidate();
         }
     }
 
@@ -310,15 +326,22 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
     setDialogType(SettingsDialogType_Offline);
 
     /* Creating settings pages: */
-    for (int iPageIndex = GLSettingsPage_General; iPageIndex < GLSettingsPage_MAX; ++iPageIndex)
+    CVirtualBox vbox = vboxGlobal().virtualBox();
+    QList<GlobalSettingsPageType> restrictedGlobalSettingsPages = vboxGlobal().restrictedGlobalSettingsPages(vbox);
+    for (int iPageIndex = GlobalSettingsPageType_General; iPageIndex < GlobalSettingsPageType_Max; ++iPageIndex)
     {
+        /* Make sure page was not restricted: */
+        if (restrictedGlobalSettingsPages.contains(static_cast<GlobalSettingsPageType>(iPageIndex)))
+            continue;
+
+        /* Make sure page is available: */
         if (isPageAvailable(iPageIndex))
         {
             UISettingsPage *pSettingsPage = 0;
             switch (iPageIndex)
             {
                 /* General page: */
-                case GLSettingsPage_General:
+                case GlobalSettingsPageType_General:
                 {
                     pSettingsPage = new UIGlobalSettingsGeneral;
                     addItem(":/machine_32px.png", ":/machine_disabled_32px.png",
@@ -327,7 +350,7 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
                     break;
                 }
                 /* Input page: */
-                case GLSettingsPage_Input:
+                case GlobalSettingsPageType_Input:
                 {
                     pSettingsPage = new UIGlobalSettingsInput;
                     addItem(":/hostkey_32px.png", ":/hostkey_disabled_32px.png",
@@ -335,8 +358,9 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
                             iPageIndex, "#input", pSettingsPage);
                     break;
                 }
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
                 /* Update page: */
-                case GLSettingsPage_Update:
+                case GlobalSettingsPageType_Update:
                 {
                     pSettingsPage = new UIGlobalSettingsUpdate;
                     addItem(":/refresh_32px.png", ":/refresh_disabled_32px.png",
@@ -344,8 +368,9 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
                             iPageIndex, "#update", pSettingsPage);
                     break;
                 }
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
                 /* Language page: */
-                case GLSettingsPage_Language:
+                case GlobalSettingsPageType_Language:
                 {
                     pSettingsPage = new UIGlobalSettingsLanguage;
                     addItem(":/site_32px.png", ":/site_disabled_32px.png",
@@ -354,7 +379,7 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
                     break;
                 }
                 /* Display page: */
-                case GLSettingsPage_Display:
+                case GlobalSettingsPageType_Display:
                 {
                     pSettingsPage = new UIGlobalSettingsDisplay;
                     addItem(":/vrdp_32px.png", ":/vrdp_disabled_32px.png",
@@ -362,35 +387,27 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
                             iPageIndex, "#display", pSettingsPage);
                     break;
                 }
-                /* USB page: */
-                case GLSettingsPage_USB:
-                {
-                    pSettingsPage = new UIMachineSettingsUSB(UISettingsPageType_Global);
-                    addItem(":/usb_32px.png", ":/usb_disabled_32px.png",
-                            ":/usb_16px.png", ":/usb_disabled_16px.png",
-                            iPageIndex, "#usb", pSettingsPage);
-                    break;
-                }
                 /* Network page: */
-                case GLSettingsPage_Network:
+                case GlobalSettingsPageType_Network:
                 {
                     pSettingsPage = new UIGlobalSettingsNetwork;
                     addItem(":/nw_32px.png", ":/nw_disabled_32px.png",
                             ":/nw_16px.png", ":/nw_disabled_16px.png",
-                            iPageIndex, "#language", pSettingsPage);
+                            iPageIndex, "#network", pSettingsPage);
                     break;
                 }
-                /* Extension page: */
-                case GLSettingsPage_Extension:
+                /* Extensions page: */
+                case GlobalSettingsPageType_Extensions:
                 {
                     pSettingsPage = new UIGlobalSettingsExtension;
                     addItem(":/extension_pack_32px.png", ":/extension_pack_disabled_32px.png",
                             ":/extension_pack_16px.png", ":/extension_pack_disabled_16px.png",
-                            iPageIndex, "#extension", pSettingsPage);
+                            iPageIndex, "#extensions", pSettingsPage);
                     break;
                 }
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
                 /* Proxy page: */
-                case GLSettingsPage_Proxy:
+                case GlobalSettingsPageType_Proxy:
                 {
                     pSettingsPage = new UIGlobalSettingsProxy;
                     addItem(":/proxy_32px.png", ":/proxy_disabled_32px.png",
@@ -398,14 +415,12 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
                             iPageIndex, "#proxy", pSettingsPage);
                     break;
                 }
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
                 default:
                     break;
             }
             if (pSettingsPage)
-            {
                 pSettingsPage->setDialogType(dialogType());
-                pSettingsPage->setId(iPageIndex);
-            }
         }
     }
 
@@ -413,7 +428,7 @@ UISettingsDialogGlobal::UISettingsDialogGlobal(QWidget *pParent)
     retranslateUi();
 
     /* Choose first item by default: */
-    m_pSelector->selectById(0);
+    m_pSelector->selectById(GlobalSettingsPageType_General);
 }
 
 UISettingsDialogGlobal::~UISettingsDialogGlobal()
@@ -465,7 +480,7 @@ void UISettingsDialogGlobal::saveData()
     VBoxGlobalSettings newSettings = pGlobalSettingsSaver->data().value<UISettingsDataGlobal>().m_settings;
     /* If properties are not OK => show the error: */
     if (!newProperties.isOk())
-        msgCenter().cannotSetSystemProperties(newProperties);
+        msgCenter().cannotSetSystemProperties(newProperties, this);
     /* Else save the new settings if they were changed: */
     else if (!(newSettings == settings))
         vboxGlobal().setSettings(newSettings);
@@ -477,31 +492,32 @@ void UISettingsDialogGlobal::saveData()
 void UISettingsDialogGlobal::retranslateUi()
 {
     /* General page: */
-    m_pSelector->setItemText(GLSettingsPage_General, tr("General"));
+    m_pSelector->setItemText(GlobalSettingsPageType_General, tr("General"));
 
     /* Input page: */
-    m_pSelector->setItemText(GLSettingsPage_Input, tr("Input"));
+    m_pSelector->setItemText(GlobalSettingsPageType_Input, tr("Input"));
 
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
     /* Update page: */
-    m_pSelector->setItemText(GLSettingsPage_Update, tr("Update"));
+    m_pSelector->setItemText(GlobalSettingsPageType_Update, tr("Update"));
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
 
     /* Language page: */
-    m_pSelector->setItemText(GLSettingsPage_Language, tr("Language"));
+    m_pSelector->setItemText(GlobalSettingsPageType_Language, tr("Language"));
 
     /* Display page: */
-    m_pSelector->setItemText(GLSettingsPage_Display, tr("Display"));
-
-    /* USB page: */
-    m_pSelector->setItemText(GLSettingsPage_USB, tr("USB"));
+    m_pSelector->setItemText(GlobalSettingsPageType_Display, tr("Display"));
 
     /* Network page: */
-    m_pSelector->setItemText(GLSettingsPage_Network, tr("Network"));
+    m_pSelector->setItemText(GlobalSettingsPageType_Network, tr("Network"));
 
     /* Extension page: */
-    m_pSelector->setItemText(GLSettingsPage_Extension, tr("Extensions"));
+    m_pSelector->setItemText(GlobalSettingsPageType_Extensions, tr("Extensions"));
 
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
     /* Proxy page: */
-    m_pSelector->setItemText(GLSettingsPage_Proxy, tr("Proxy"));
+    m_pSelector->setItemText(GlobalSettingsPageType_Proxy, tr("Proxy"));
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
 
     /* Polish the selector: */
     m_pSelector->polish();
@@ -520,30 +536,9 @@ QString UISettingsDialogGlobal::title() const
 
 bool UISettingsDialogGlobal::isPageAvailable(int iPageId)
 {
-    /* Show the host error message for particular group if present.
-     * We don't use the generic cannotLoadGlobalConfig()
-     * call here because we want this message to be suppressible: */
     switch (iPageId)
     {
-        case GLSettingsPage_USB:
-        {
-#ifdef ENABLE_GLOBAL_USB
-            /* Get the host object: */
-            CHost host = vboxGlobal().host();
-            /* Show the host error message if any: */
-            if (!host.isReallyOk())
-                msgCenter().cannotAccessUSB(host);
-            /* Check if USB is implemented: */
-            CHostUSBDeviceFilterVector filters = host.GetUSBDeviceFilters();
-            Q_UNUSED(filters);
-            if (host.lastRC() == E_NOTIMPL)
-                return false;
-#else
-            return false;
-#endif
-            break;
-        }
-        case GLSettingsPage_Network:
+        case GlobalSettingsPageType_Network:
         {
 #ifndef VBOX_WITH_NETFLT
             return false;
@@ -565,11 +560,11 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
 {
     /* Window icon: */
 #ifndef Q_WS_MAC
-    setWindowIcon(QIcon(":/settings_16px.png"));
+    setWindowIcon(QIcon(":/vm_settings_16px.png"));
 #endif /* Q_WS_MAC */
 
     /* Allow to reset first-run flag just when medium enumeration was finished: */
-    connect(&vboxGlobal(), SIGNAL(mediumEnumFinished(const VBoxMediaList &)), this, SLOT(sltAllowResetFirstRunFlag()));
+    connect(&vboxGlobal(), SIGNAL(sigMediumEnumerationFinished()), this, SLOT(sltAllowResetFirstRunFlag()));
 
     /* Get corresponding machine (required to determine dialog type and page availability): */
     m_machine = vboxGlobal().virtualBox().FindMachine(m_strMachineId);
@@ -580,15 +575,21 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
     updateDialogType();
 
     /* Creating settings pages: */
-    for (int iPageIndex = VMSettingsPage_General; iPageIndex < VMSettingsPage_MAX; ++iPageIndex)
+    QList<MachineSettingsPageType> restrictedMachineSettingsPages = vboxGlobal().restrictedMachineSettingsPages(m_machine);
+    for (int iPageIndex = MachineSettingsPageType_General; iPageIndex < MachineSettingsPageType_Max; ++iPageIndex)
     {
+        /* Make sure page was not restricted: */
+        if (restrictedMachineSettingsPages.contains(static_cast<MachineSettingsPageType>(iPageIndex)))
+            continue;
+
+        /* Make sure page is available: */
         if (isPageAvailable(iPageIndex))
         {
             UISettingsPage *pSettingsPage = 0;
             switch (iPageIndex)
             {
                 /* General page: */
-                case VMSettingsPage_General:
+                case MachineSettingsPageType_General:
                 {
                     pSettingsPage = new UIMachineSettingsGeneral;
                     addItem(":/machine_32px.png", ":/machine_disabled_32px.png",
@@ -597,17 +598,16 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
                     break;
                 }
                 /* System page: */
-                case VMSettingsPage_System:
+                case MachineSettingsPageType_System:
                 {
                     pSettingsPage = new UIMachineSettingsSystem;
-                    connect(pSettingsPage, SIGNAL(tableChanged()), this, SLOT(sltResetFirstRunFlag()));
                     addItem(":/chipset_32px.png", ":/chipset_disabled_32px.png",
                             ":/chipset_16px.png", ":/chipset_disabled_16px.png",
                             iPageIndex, "#system", pSettingsPage);
                     break;
                 }
                 /* Display page: */
-                case VMSettingsPage_Display:
+                case MachineSettingsPageType_Display:
                 {
                     pSettingsPage = new UIMachineSettingsDisplay;
                     addItem(":/vrdp_32px.png", ":/vrdp_disabled_32px.png",
@@ -616,17 +616,17 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
                     break;
                 }
                 /* Storage page: */
-                case VMSettingsPage_Storage:
+                case MachineSettingsPageType_Storage:
                 {
                     pSettingsPage = new UIMachineSettingsStorage;
                     connect(pSettingsPage, SIGNAL(storageChanged()), this, SLOT(sltResetFirstRunFlag()));
                     addItem(":/hd_32px.png", ":/hd_disabled_32px.png",
-                            ":/attachment_16px.png", ":/attachment_disabled_16px.png",
+                            ":/hd_16px.png", ":/hd_disabled_16px.png",
                             iPageIndex, "#storage", pSettingsPage);
                     break;
                 }
                 /* Audio page: */
-                case VMSettingsPage_Audio:
+                case MachineSettingsPageType_Audio:
                 {
                     pSettingsPage = new UIMachineSettingsAudio;
                     addItem(":/sound_32px.png", ":/sound_disabled_32px.png",
@@ -635,7 +635,7 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
                     break;
                 }
                 /* Network page: */
-                case VMSettingsPage_Network:
+                case MachineSettingsPageType_Network:
                 {
                     pSettingsPage = new UIMachineSettingsNetworkPage;
                     addItem(":/nw_32px.png", ":/nw_disabled_32px.png",
@@ -644,7 +644,7 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
                     break;
                 }
                 /* Ports page: */
-                case VMSettingsPage_Ports:
+                case MachineSettingsPageType_Ports:
                 {
                     addItem(":/serial_port_32px.png", ":/serial_port_disabled_32px.png",
                             ":/serial_port_16px.png", ":/serial_port_disabled_16px.png",
@@ -652,38 +652,38 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
                     break;
                 }
                 /* Serial page: */
-                case VMSettingsPage_Serial:
+                case MachineSettingsPageType_Serial:
                 {
                     pSettingsPage = new UIMachineSettingsSerialPage;
                     addItem(":/serial_port_32px.png", ":/serial_port_disabled_32px.png",
                             ":/serial_port_16px.png", ":/serial_port_disabled_16px.png",
-                            iPageIndex, "#serialPorts", pSettingsPage, VMSettingsPage_Ports);
+                            iPageIndex, "#serialPorts", pSettingsPage, MachineSettingsPageType_Ports);
                     break;
                 }
                 /* Parallel page: */
-                case VMSettingsPage_Parallel:
+                case MachineSettingsPageType_Parallel:
                 {
                     pSettingsPage = new UIMachineSettingsParallelPage;
                     addItem(":/parallel_port_32px.png", ":/parallel_port_disabled_32px.png",
                             ":/parallel_port_16px.png", ":/parallel_port_disabled_16px.png",
-                            iPageIndex, "#parallelPorts", pSettingsPage, VMSettingsPage_Ports);
+                            iPageIndex, "#parallelPorts", pSettingsPage, MachineSettingsPageType_Ports);
                     break;
                 }
                 /* USB page: */
-                case VMSettingsPage_USB:
+                case MachineSettingsPageType_USB:
                 {
-                    pSettingsPage = new UIMachineSettingsUSB(UISettingsPageType_Machine);
+                    pSettingsPage = new UIMachineSettingsUSB;
                     addItem(":/usb_32px.png", ":/usb_disabled_32px.png",
                             ":/usb_16px.png", ":/usb_disabled_16px.png",
-                            iPageIndex, "#usb", pSettingsPage, VMSettingsPage_Ports);
+                            iPageIndex, "#usb", pSettingsPage, MachineSettingsPageType_Ports);
                     break;
                 }
                 /* Shared Folders page: */
-                case VMSettingsPage_SF:
+                case MachineSettingsPageType_SF:
                 {
                     pSettingsPage = new UIMachineSettingsSF;
-                    addItem(":/shared_folder_32px.png", ":/shared_folder_disabled_32px.png",
-                            ":/shared_folder_16px.png", ":/shared_folder_disabled_16px.png",
+                    addItem(":/sf_32px.png", ":/sf_disabled_32px.png",
+                            ":/sf_16px.png", ":/sf_disabled_16px.png",
                             iPageIndex, "#sharedFolders", pSettingsPage);
                     break;
                 }
@@ -691,17 +691,14 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
                     break;
             }
             if (pSettingsPage)
-            {
                 pSettingsPage->setDialogType(dialogType());
-                pSettingsPage->setId(iPageIndex);
-            }
         }
     }
 
     /* Retranslate UI: */
     retranslateUi();
 
-    /* Setup settings dialog: */
+    /* Setup settings window: */
     if (!strCategory.isNull())
     {
         m_pSelector->selectByLink(strCategory);
@@ -732,7 +729,7 @@ UISettingsDialogMachine::UISettingsDialogMachine(QWidget *pParent, const QString
     }
     /* First item as default: */
     else
-        m_pSelector->selectById(0);
+        m_pSelector->selectById(MachineSettingsPageType_General);
 }
 
 UISettingsDialogMachine::~UISettingsDialogMachine()
@@ -827,9 +824,9 @@ void UISettingsDialogMachine::saveData()
     {
         /* Guest OS type & VT-x/AMD-V option correlation auto-fix: */
         UIMachineSettingsGeneral *pGeneralPage =
-            qobject_cast<UIMachineSettingsGeneral*>(m_pSelector->idToPage(VMSettingsPage_General));
+            qobject_cast<UIMachineSettingsGeneral*>(m_pSelector->idToPage(MachineSettingsPageType_General));
         UIMachineSettingsSystem *pSystemPage =
-            qobject_cast<UIMachineSettingsSystem*>(m_pSelector->idToPage(VMSettingsPage_System));
+            qobject_cast<UIMachineSettingsSystem*>(m_pSelector->idToPage(MachineSettingsPageType_System));
         if (pGeneralPage && pSystemPage &&
             pGeneralPage->is64BitOSTypeSelected() && !pSystemPage->isHWVirtExEnabled())
             m_machine.SetHWVirtExProperty(KHWVirtExPropertyType_Enabled, true);
@@ -839,7 +836,7 @@ void UISettingsDialogMachine::saveData()
         if (pGeneralPage && !pGeneralPage->isWindowsOSTypeSelected())
         {
             UIMachineSettingsDisplay *pDisplayPage =
-                qobject_cast<UIMachineSettingsDisplay*>(m_pSelector->idToPage(VMSettingsPage_Display));
+                qobject_cast<UIMachineSettingsDisplay*>(m_pSelector->idToPage(MachineSettingsPageType_Display));
             if (pDisplayPage && pDisplayPage->isAcceleration2DVideoSelected())
                 m_machine.SetAccelerate2DVideoEnabled(false);
         }
@@ -848,9 +845,9 @@ void UISettingsDialogMachine::saveData()
         /* Enable OHCI controller if HID is enabled: */
         if (pSystemPage && pSystemPage->isHIDEnabled())
         {
-            CUSBController controller = m_machine.GetUSBController();
-            if (!controller.isNull())
-                controller.SetEnabled(true);
+            ULONG cOhciCtls = m_machine.GetUSBControllerCountByType(KUSBControllerType_OHCI);
+            if (!cOhciCtls)
+                m_machine.AddUSBController("OHCI", KUSBControllerType_OHCI);
         }
 
         /* Clear the "GUI_FirstRun" extra data key in case if
@@ -864,7 +861,7 @@ void UISettingsDialogMachine::saveData()
 
     /* If machine is NOT ok => show the error message: */
     if (!m_machine.isOk())
-        msgCenter().cannotSaveMachineSettings(m_machine);
+        msgCenter().cannotSaveMachineSettings(m_machine, this);
 
     /* Mark page processed: */
     sltMarkSaved();
@@ -876,45 +873,45 @@ void UISettingsDialogMachine::retranslateUi()
      * before they are revalidated. Cause: They do string comparing within
      * vboxGlobal which is retranslated at that point already: */
     QEvent event(QEvent::LanguageChange);
-    if (QWidget *pPage = m_pSelector->idToPage(VMSettingsPage_Network))
+    if (QWidget *pPage = m_pSelector->idToPage(MachineSettingsPageType_Network))
         qApp->sendEvent(pPage, &event);
-    if (QWidget *pPage = m_pSelector->idToPage(VMSettingsPage_Serial))
+    if (QWidget *pPage = m_pSelector->idToPage(MachineSettingsPageType_Serial))
         qApp->sendEvent(pPage, &event);
-    if (QWidget *pPage = m_pSelector->idToPage(VMSettingsPage_Parallel))
+    if (QWidget *pPage = m_pSelector->idToPage(MachineSettingsPageType_Parallel))
         qApp->sendEvent(pPage, &event);
 
     /* General page: */
-    m_pSelector->setItemText(VMSettingsPage_General, tr("General"));
+    m_pSelector->setItemText(MachineSettingsPageType_General, tr("General"));
 
     /* System page: */
-    m_pSelector->setItemText(VMSettingsPage_System, tr("System"));
+    m_pSelector->setItemText(MachineSettingsPageType_System, tr("System"));
 
     /* Display page: */
-    m_pSelector->setItemText(VMSettingsPage_Display, tr("Display"));
+    m_pSelector->setItemText(MachineSettingsPageType_Display, tr("Display"));
 
     /* Storage page: */
-    m_pSelector->setItemText(VMSettingsPage_Storage, tr("Storage"));
+    m_pSelector->setItemText(MachineSettingsPageType_Storage, tr("Storage"));
 
     /* Audio page: */
-    m_pSelector->setItemText(VMSettingsPage_Audio, tr("Audio"));
+    m_pSelector->setItemText(MachineSettingsPageType_Audio, tr("Audio"));
 
     /* Network page: */
-    m_pSelector->setItemText(VMSettingsPage_Network, tr("Network"));
+    m_pSelector->setItemText(MachineSettingsPageType_Network, tr("Network"));
 
     /* Ports page: */
-    m_pSelector->setItemText(VMSettingsPage_Ports, tr("Ports"));
+    m_pSelector->setItemText(MachineSettingsPageType_Ports, tr("Ports"));
 
     /* Serial page: */
-    m_pSelector->setItemText(VMSettingsPage_Serial, tr("Serial Ports"));
+    m_pSelector->setItemText(MachineSettingsPageType_Serial, tr("Serial Ports"));
 
     /* Parallel page: */
-    m_pSelector->setItemText(VMSettingsPage_Parallel, tr("Parallel Ports"));
+    m_pSelector->setItemText(MachineSettingsPageType_Parallel, tr("Parallel Ports"));
 
     /* USB page: */
-    m_pSelector->setItemText(VMSettingsPage_USB, tr("USB"));
+    m_pSelector->setItemText(MachineSettingsPageType_USB, tr("USB"));
 
     /* SFolders page: */
-    m_pSelector->setItemText(VMSettingsPage_SF, tr("Shared Folders"));
+    m_pSelector->setItemText(MachineSettingsPageType_SF, tr("Shared Folders"));
 
     /* Polish the selector: */
     m_pSelector->polish();
@@ -940,36 +937,40 @@ void UISettingsDialogMachine::recorrelate(UISettingsPage *pSettingsPage)
 {
     switch (pSettingsPage->id())
     {
-        case VMSettingsPage_General:
+        /* General page correlations: */
+        case MachineSettingsPageType_General:
         {
+            /* Make changes on 'general' page influent 'display' page: */
             UIMachineSettingsGeneral *pGeneralPage = qobject_cast<UIMachineSettingsGeneral*>(pSettingsPage);
-            UIMachineSettingsSystem *pSystemPage = qobject_cast<UIMachineSettingsSystem*>(m_pSelector->idToPage(VMSettingsPage_System));
-            if (pGeneralPage && pSystemPage)
-                pGeneralPage->setHWVirtExEnabled(pSystemPage->isHWVirtExEnabled());
-            break;
-        }
-        case VMSettingsPage_Display:
-        {
-            UIMachineSettingsDisplay *pDisplayPage = qobject_cast<UIMachineSettingsDisplay*>(pSettingsPage);
-            UIMachineSettingsGeneral *pGeneralPage = qobject_cast<UIMachineSettingsGeneral*>(m_pSelector->idToPage(VMSettingsPage_General));
-            if (pDisplayPage && pGeneralPage)
+            UIMachineSettingsDisplay *pDisplayPage = qobject_cast<UIMachineSettingsDisplay*>(m_pSelector->idToPage(MachineSettingsPageType_Display));
+            if (pGeneralPage && pDisplayPage)
                 pDisplayPage->setGuestOSType(pGeneralPage->guestOSType());
             break;
         }
-        case VMSettingsPage_System:
+        /* System page correlations: */
+        case MachineSettingsPageType_System:
         {
+            /* Make changes on 'system' page influent 'general' and 'storage' page: */
             UIMachineSettingsSystem *pSystemPage = qobject_cast<UIMachineSettingsSystem*>(pSettingsPage);
-            UIMachineSettingsUSB *pUsbPage = qobject_cast<UIMachineSettingsUSB*>(m_pSelector->idToPage(VMSettingsPage_USB));
-            if (pSystemPage && pUsbPage)
-                pSystemPage->setOHCIEnabled(pUsbPage->isOHCIEnabled());
+            UIMachineSettingsGeneral *pGeneralPage = qobject_cast<UIMachineSettingsGeneral*>(m_pSelector->idToPage(MachineSettingsPageType_General));
+            UIMachineSettingsStorage *pStoragePage = qobject_cast<UIMachineSettingsStorage*>(m_pSelector->idToPage(MachineSettingsPageType_Storage));
+            if (pSystemPage)
+            {
+                if (pGeneralPage)
+                    pGeneralPage->setHWVirtExEnabled(pSystemPage->isHWVirtExEnabled());
+                if (pStoragePage)
+                    pStoragePage->setChipsetType(pSystemPage->chipsetType());
+            }
             break;
         }
-        case VMSettingsPage_Storage:
+        /* USB page correlations: */
+        case MachineSettingsPageType_USB:
         {
-            UIMachineSettingsStorage *pStoragePage = qobject_cast<UIMachineSettingsStorage*>(pSettingsPage);
-            UIMachineSettingsSystem *pSystemPage = qobject_cast<UIMachineSettingsSystem*>(m_pSelector->idToPage(VMSettingsPage_System));
-            if (pStoragePage && pSystemPage)
-                pStoragePage->setChipsetType(pSystemPage->chipsetType());
+            /* Make changes on 'usb' page influent 'system' page: */
+            UIMachineSettingsUSB *pUsbPage = qobject_cast<UIMachineSettingsUSB*>(pSettingsPage);
+            UIMachineSettingsSystem *pSystemPage = qobject_cast<UIMachineSettingsSystem*>(m_pSelector->idToPage(MachineSettingsPageType_System));
+            if (pUsbPage && pSystemPage)
+                pSystemPage->setOHCIEnabled(pUsbPage->isOHCIEnabled());
             break;
         }
         default:
@@ -991,7 +992,7 @@ void UISettingsDialogMachine::sltMarkLoaded()
         m_console = CConsole();
     }
 
-    /* Make sure settings dialog will be updated on machine state/data changes: */
+    /* Make sure settings window will be updated on machine state/data changes: */
     connect(gVBoxEvents, SIGNAL(sigSessionStateChange(QString, KSessionState)),
             this, SLOT(sltSessionStateChanged(QString, KSessionState)));
     connect(gVBoxEvents, SIGNAL(sigMachineStateChange(QString, KMachineState)),
@@ -1056,7 +1057,7 @@ void UISettingsDialogMachine::sltMachineDataChanged(QString strMachineId)
         return;
 
     /* Check if user had changed something and warn him about he will loose settings on reloading: */
-    if (isSettingsChanged() && !msgCenter().confirmedSettingsReloading(this))
+    if (isSettingsChanged() && !msgCenter().confirmSettingsReloading(this))
         return;
 
     /* Reload data: */
@@ -1092,39 +1093,38 @@ bool UISettingsDialogMachine::isPageAvailable(int iPageId)
     if (m_machine.isNull())
         return false;
 
-    /* Show the machine error message for particular group if present.
-     * We don't use the generic cannotLoadMachineSettings()
-     * call here because we want this message to be suppressible. */
     switch (iPageId)
     {
-        case VMSettingsPage_Serial:
+        case MachineSettingsPageType_Serial:
         {
             /* Depends on ports availability: */
-            if (!isPageAvailable(VMSettingsPage_Ports))
+            if (!isPageAvailable(MachineSettingsPageType_Ports))
                 return false;
             break;
         }
-        case VMSettingsPage_Parallel:
+        case MachineSettingsPageType_Parallel:
         {
             /* Depends on ports availability: */
-            if (!isPageAvailable(VMSettingsPage_Ports))
+            if (!isPageAvailable(MachineSettingsPageType_Ports))
                 return false;
             /* But for now this page is always disabled: */
             return false;
         }
-        case VMSettingsPage_USB:
+        case MachineSettingsPageType_USB:
         {
             /* Depends on ports availability: */
-            if (!isPageAvailable(VMSettingsPage_Ports))
+            if (!isPageAvailable(MachineSettingsPageType_Ports))
+                return false;
+            /* Check if USB is implemented: */
+            if (!m_machine.GetUSBProxyAvailable())
                 return false;
             /* Get the USB controller object: */
-            CUSBController controller = m_machine.GetUSBController();
+            CUSBControllerVector controllerColl = m_machine.GetUSBControllers();
             /* Show the machine error message if any: */
-            if (!m_machine.isReallyOk() && !controller.isNull() && controller.GetEnabled())
-                msgCenter().cannotAccessUSB(m_machine);
-            /* Check if USB is implemented: */
-            if (controller.isNull() || !controller.GetProxyAvailable())
-                return false;
+            if (   !m_machine.isReallyOk()
+                && controllerColl.size() > 0
+                && m_machine.GetUSBControllerCountByType(KUSBControllerType_OHCI))
+                msgCenter().warnAboutUnaccessibleUSB(m_machine, parentWidget());
             break;
         }
         default:

@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2007-2012 Oracle Corporation
+# Copyright (C) 2007-2013 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -51,7 +51,10 @@ ifdef VBOX_WITH_MEMBALLOON
  VBoxService_DEFS        += VBOX_WITH_MEMBALLOON
 endif
 if1of ($(KBUILD_TARGET), win)
- VBoxService_DEFS        += VBOX_WITH_PAGE_SHARING
+ VBoxService_DEFS        += VBOXSERVICE_PAGE_SHARING
+ ifdef VBOX_WITH_MMR
+  VBoxService_DEFS       += VBOX_WITH_MMR
+ endif
 endif
 if1of ($(KBUILD_TARGET), linux)
  VBoxService_DEFS        += VBOXSERVICE_CPUHOTPLUG
@@ -73,7 +76,8 @@ VBoxService_SOURCES       = \
 ifdef VBOX_WITH_GUEST_CONTROL
  VBoxService_SOURCES    += \
  	VBoxServiceControl.cpp \
-	VBoxServiceControlThread.cpp
+	VBoxServiceControlProcess.cpp \
+	VBoxServiceControlSession.cpp
 endif
 
 ifdef VBOX_WITH_MEMBALLOON
@@ -114,6 +118,8 @@ VBoxService_SOURCES.win  += \
 VBoxService_SOURCES.os2   = \
 	VBoxService-os2.def \
 	VBoxServiceClipboard-os2.cpp
+
+VBoxService_LDFLAGS.darwin = -framework IOKit
 
 VBoxService_LIBS        += \
 	$(VBOX_LIB_IPRT_GUEST_R3) \

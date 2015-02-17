@@ -462,7 +462,7 @@ static void doPacketSniffing(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession, PINTNE
         PINTNETHDR pHdr;
         while ((pHdr = IntNetRingGetNextFrameToRead(pRingBuf)))
         {
-            if (pHdr->u16Type == INTNETHDR_TYPE_FRAME)
+            if (pHdr->u8Type == INTNETHDR_TYPE_FRAME)
             {
                 size_t      cbFrame = pHdr->cbFrame;
                 const void *pvFrame = IntNetHdrGetFramePtr(pHdr, pBuf);
@@ -539,7 +539,7 @@ static void doPacketSniffing(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession, PINTNE
                     }
                 }
             }
-            else if (pHdr->u16Type == INTNETHDR_TYPE_GSO)
+            else if (pHdr->u8Type == INTNETHDR_TYPE_GSO)
             {
                 PCPDMNETWORKGSO pGso    = IntNetHdrGetGsoContext(pHdr, pBuf);
                 size_t          cbFrame = pHdr->cbFrame;
@@ -567,9 +567,9 @@ static void doPacketSniffing(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession, PINTNE
                     g_cErrors++;
                 }
             }
-            else if (pHdr->u16Type != INTNETHDR_TYPE_PADDING)
+            else if (pHdr->u8Type != INTNETHDR_TYPE_PADDING)
             {
-                RTPrintf("tstIntNet-1: Unknown frame type %d\n", pHdr->u16Type);
+                RTPrintf("tstIntNet-1: Unknown frame type %d\n", pHdr->u8Type);
                 STAM_REL_COUNTER_INC(&pBuf->cStatBadFrames);
                 g_cErrors++;
             }
@@ -595,8 +595,59 @@ static void doPacketSniffing(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession, PINTNE
                  g_cOtherPkts, g_cArpPkts, g_cIpv4Pkts, g_cTcpPkts, g_cUdpPkts, g_cDhcpPkts);
 }
 
+#ifdef RT_OS_LINUX
+#include <stdio.h>
+#include <net/if.h>
+#include <net/route.h>
+/**
+ * Obtain the name of the interface used for default routing.
+ *
+ * NOTE: Copied from Main/src-server/linux/NetIf-linux.cpp
+ *
+ * @returns VBox status code.
+ *
+ * @param   pszName     The buffer of IFNAMSIZ+1 length where to put the name.
+ */
+static int getDefaultIfaceName(char *pszName)
+{
+    FILE *fp = fopen("/proc/net/route", "r");
+    char szBuf[1024];
+    char szIfName[17];
+    uint32_t uAddr;
+    uint32_t uGateway;
+    uint32_t uMask;
+    int  iTmp;
+    unsigned uFlags;
 
-int main(int argc, char **argv)
+    if (fp)
+    {
+        while (fgets(szBuf, sizeof(szBuf)-1, fp))
+        {
+            int n = sscanf(szBuf, "%16s %x %x %x %d %d %d %x %d %d %d\n",
+                           szIfName, &uAddr, &uGateway, &uFlags, &iTmp, &iTmp, &iTmp,
+                           &uMask, &iTmp, &iTmp, &iTmp);
+            if (n < 10 || !(uFlags & RTF_UP))
+                continue;
+
+            if (uAddr == 0 && uMask == 0)
+            {
+                fclose(fp);
+                strncpy(pszName, szIfName, 16);
+                pszName[16] = 0;
+                return VINF_SUCCESS;
+            }
+        }
+        fclose(fp);
+    }
+    return VERR_INTERNAL_ERROR;
+}
+#endif /* RT_OS_LINUX */
+
+
+/**
+ *  Entry point.
+ */
+extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
     /*
      * Init the runtime and parse the arguments.
@@ -624,7 +675,13 @@ int main(int argc, char **argv)
 #ifdef RT_OS_DARWIN
     const char *pszIf = "en0";
 #elif defined(RT_OS_LINUX)
-    const char *pszIf = "eth0";
+    char        szIf[IFNAMSIZ+1] = "eth0"; /* Reasonable default */
+    /*
+     * Try to update the default interface by consulting the routing table.
+     * If we fail we still have our reasonable default.
+     */
+    getDefaultIfaceName(szIf);
+    const char *pszIf = szIf;
 #elif defined(RT_OS_SOLARIS)
     const char* pszIf = "rge0";
 #else
@@ -749,7 +806,7 @@ int main(int argc, char **argv)
                 return 1;
 
             case 'V':
-                RTPrintf("$Revision: 83687 $\n");
+                RTPrintf("$Revision: 94787 $\n");
                 return 0;
 
             default:
@@ -891,14 +948,14 @@ int main(int argc, char **argv)
                         if (   fXmitTest
                             && !g_fDhcpReply)
                         {
-                            RTPrintf("tstIntNet-1: Error! The DHCP server didn't reply... (Perhaps you don't have one?)\n", rc);
+                            RTPrintf("tstIntNet-1: Error! The DHCP server didn't reply... (Perhaps you don't have one?)\n");
                             g_cErrors++;
                         }
 
                         if (   fPingTest
                             && !g_fPingReply)
                         {
-                            RTPrintf("tstIntNet-1: Error! No reply for ping request...\n", rc);
+                            RTPrintf("tstIntNet-1: Error! No reply for ping request...\n");
                             g_cErrors++;
                         }
                     }
@@ -947,4 +1004,15 @@ int main(int argc, char **argv)
 
     return !!g_cErrors;
 }
+
+
+#if !defined(VBOX_WITH_HARDENING) || !defined(RT_OS_WINDOWS)
+/**
+ * Main entry point.
+ */
+int main(int argc, char **argv, char **envp)
+{
+    return TrustedMain(argc, argv, envp);
+}
+#endif
 

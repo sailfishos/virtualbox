@@ -1,8 +1,10 @@
+/* $Id: VBoxHook.h $ */
 /** @file
- *
- * VBoxHook -- Global windows hook dll
- *
- * Copyright (C) 2006-2010 Oracle Corporation
+ * VBoxHook -- Global windows hook dll.
+ */
+
+/*
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,22 +14,27 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-#ifndef __VBoxHook_h__
-#define __VBoxHook_h__
+#ifndef ___winnt_include_VBoxHook_h
+#define ___winnt_include_VBoxHook_h
 
 /* custom messages as we must install the hook from the main thread */
-#define WM_VBOX_INSTALL_SEAMLESS_HOOK               0x2001
-#define WM_VBOX_REMOVE_SEAMLESS_HOOK                0x2002
+/** @todo r=andy Use WM_APP + n offsets here! */
+#define WM_VBOX_SEAMLESS_ENABLE                     0x2001
+#define WM_VBOX_SEAMLESS_DISABLE                    0x2002
 #define WM_VBOX_SEAMLESS_UPDATE                     0x2003
+#define WM_VBOX_GRAPHICS_SUPPORTED                  0x2004
+#define WM_VBOX_GRAPHICS_UNSUPPORTED                0x2005
 
 
-#define VBOXHOOK_DLL_NAME           "VBoxHook.dll"
-#define VBOXHOOK_GLOBAL_EVENT_NAME  "Local\\VBoxHookNotifyEvent"
+#define VBOXHOOK_DLL_NAME              "VBoxHook.dll"
+#define VBOXHOOK_GLOBAL_DT_EVENT_NAME  "Local\\VBoxHookDtNotifyEvent"
+#define VBOXHOOK_GLOBAL_WT_EVENT_NAME  "Local\\VBoxHookWtNotifyEvent"
 
-/* Install the global message hook */
-BOOL VBoxInstallHook(HMODULE hDll);
+BOOL VBoxHookInstallActiveDesktopTracker(HMODULE hDll);
+BOOL VBoxHookRemoveActiveDesktopTracker();
 
-/* Remove the global message hook */
-BOOL VBoxRemoveHook();
+BOOL VBoxHookInstallWindowTracker(HMODULE hDll);
+BOOL VBoxHookRemoveWindowTracker();
 
-#endif /* __VBoxHook_h__ */
+#endif
+

@@ -1,10 +1,10 @@
-# $Id: JWASM.kmk 2578 2012-06-07 00:08:22Z bird $
+# $Id: JWASM.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - JWasm
 #
 
 #
-# Copyright (c) 2012 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2012-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -36,9 +36,9 @@ TOOL_JWASM := JWasm - MASM clone based on the Open Watcom assembler.
 
 # Tool Specific Properties
 ifndef TOOL_JWASM_AS
- TOOL_JWASM_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS_BLD)/jwasm/*/jwasm$(HOSTSUFF_EXE))))
+ TOOL_JWASM_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS_HST)/jwasm/*/jwasm$(HOSTSUFF_EXE))))
  ifeq ($(TOOL_JWASM_AS),)
-  TOOL_JWASM_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS_TRG)/jwasm/*/jwasm$(HOSTSUFF_EXE))))
+  TOOL_JWASM_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS_TRG)/jwasm/*/jwasm$(HOSTSUFF_EXE))))
  endif
 endif
 ifeq ($(TOOL_JWASM_AS),)

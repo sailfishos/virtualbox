@@ -27,8 +27,10 @@
 #include "UIMultiScreenLayout.h"
 #include "UIActionPoolRuntime.h"
 #include "UIMachineLogic.h"
+#include "UIFrameBuffer.h"
 #include "UISession.h"
 #include "UIMessageCenter.h"
+#include "VBoxGlobal.h"
 
 /* COM includes: */
 #include "COMEnums.h"
@@ -62,6 +64,8 @@ void UIMultiScreenLayout::setViewMenu(QMenu *pViewMenu)
 
 void UIMultiScreenLayout::update()
 {
+    LogRelFlow(("UIMultiScreenLayout::update: Started...\n"));
+
     /* Clear screen-map initially: */
     m_screenMap.clear();
 
@@ -74,6 +78,9 @@ void UIMultiScreenLayout::update()
      * We have to make sure they are valid, which means there have to be unique combinations
      * and all guests screens need there own host screen. */
     CMachine machine = m_pMachineLogic->session().GetMachine();
+    CDisplay display = m_pMachineLogic->session().GetConsole().GetDisplay();
+    bool fShouldWeAutoMountGuestScreens = VBoxGlobal::shouldWeAutoMountGuestScreens(machine, false);
+    LogRel(("UIMultiScreenLayout::update: GUI/AutomountGuestScreens is %s.\n", fShouldWeAutoMountGuestScreens ? "enabled" : "disabled"));
     QDesktopWidget *pDW = QApplication::desktop();
     foreach (int iGuestScreen, m_guestScreens)
     {
@@ -134,14 +141,58 @@ void UIMultiScreenLayout::update()
             /* Remove it from the list of available host screens: */
             availableScreens.removeOne(iHostScreen);
         }
+        /* Do we have opinion about what to do with excessive guest-screen? */
+        else if (fShouldWeAutoMountGuestScreens)
+        {
+            /* Then we have to disable excessive guest-screen: */
+            LogRel(("UIMultiScreenLayout::update: Disabling excessive guest-screen %d.\n", iGuestScreen));
+            display.SetVideoModeHint(iGuestScreen, false, false, 0, 0, 0, 0, 0);
+        }
+    }
+
+    /* Are we still have available host-screens
+     * and have opinion about what to do with disabled guest-screens? */
+    if (!availableScreens.isEmpty() && fShouldWeAutoMountGuestScreens)
+    {
+        /* How many excessive host-screens do we have? */
+        int cExcessiveHostScreens = availableScreens.size();
+        /* How many disabled guest-screens do we have? */
+        int cDisabledGuestScreens = m_disabledGuestScreens.size();
+        /* We have to try to enable disabled guest-screens if any: */
+        int cGuestScreensToEnable = qMin(cExcessiveHostScreens, cDisabledGuestScreens);
+        UISession *pSession = m_pMachineLogic->uisession();
+        for (int iGuestScreenIndex = 0; iGuestScreenIndex < cGuestScreensToEnable; ++iGuestScreenIndex)
+        {
+            /* Defaults: */
+            ULONG uWidth = 800;
+            ULONG uHeight = 600;
+            /* Try to get previous guest-screen arguments: */
+            int iGuestScreen = m_disabledGuestScreens[iGuestScreenIndex];
+            if (UIFrameBuffer *pFrameBuffer = pSession->frameBuffer(iGuestScreen))
+            {
+                if (pFrameBuffer->width() > 0)
+                    uWidth = pFrameBuffer->width();
+                if (pFrameBuffer->height() > 0)
+                    uHeight = pFrameBuffer->height();
+                pFrameBuffer->setAutoEnabled(true);
+            }
+            /* Re-enable guest-screen with proper resolution: */
+            LogRel(("UIMultiScreenLayout::update: Enabling guest-screen %d with following resolution: %dx%d.\n",
+                    iGuestScreen, uWidth, uHeight));
+            display.SetVideoModeHint(iGuestScreen, true, false, 0, 0, uWidth, uHeight, 32);
+        }
     }
 
     /* Update menu actions: */
     updateMenuActions(false);
+
+    LogRelFlow(("UIMultiScreenLayout::update: Finished!\n"));
 }
 
 void UIMultiScreenLayout::rebuild()
 {
+    LogRelFlow(("UIMultiScreenLayout::rebuild: Started...\n"));
+
     /* Recalculate host/guest screen count: */
     calculateHostMonitorCount();
     calculateGuestScreenCount();
@@ -149,6 +200,8 @@ void UIMultiScreenLayout::rebuild()
     prepareViewMenu();
     /* Update layout: */
     update();
+
+    LogRelFlow(("UIMultiScreenLayout::rebuild: Finished!\n"));
 }
 
 int UIMultiScreenLayout::hostScreenCount() const
@@ -214,7 +267,7 @@ void UIMultiScreenLayout::sltScreenLayoutChanged(QAction *pAction)
     /* Check the memory requirements first: */
     bool fSuccess = true;
     CMachine machine = m_pMachineLogic->session().GetMachine();
-    if (m_pMachineLogic->uisession()->isGuestAdditionsActive())
+    if (m_pMachineLogic->uisession()->isGuestSupportsGraphics())
     {
         quint64 availBits = machine.GetVRAMSize() * _1M * 8;
         quint64 usedBits = memoryRequirements(tmpMap);
@@ -225,7 +278,7 @@ void UIMultiScreenLayout::sltScreenLayoutChanged(QAction *pAction)
             if (m_pMachineLogic->visualStateType() == UIVisualStateType_Seamless)
                 msgCenter().cannotSwitchScreenInSeamless((((usedBits + 7) / 8 + _1M - 1) / _1M) * _1M);
             else
-                fSuccess = msgCenter().cannotSwitchScreenInFullscreen((((usedBits + 7) / 8 + _1M - 1) / _1M) * _1M) != QIMessageBox::Cancel;
+                fSuccess = msgCenter().cannotSwitchScreenInFullscreen((((usedBits + 7) / 8 + _1M - 1) / _1M) * _1M);
         }
     }
     /* Make sure memory requirements matched: */
@@ -242,22 +295,21 @@ void UIMultiScreenLayout::sltScreenLayoutChanged(QAction *pAction)
 
 void UIMultiScreenLayout::calculateHostMonitorCount()
 {
-#if (QT_VERSION >= 0x040600)
     m_cHostScreens = QApplication::desktop()->screenCount();
-#else /* (QT_VERSION >= 0x040600) */
-    m_cHostScreens = QApplication::desktop()->numScreens();
-#endif /* !(QT_VERSION >= 0x040600) */
 }
 
 void UIMultiScreenLayout::calculateGuestScreenCount()
 {
     /* Get machine: */
     CMachine machine = m_pMachineLogic->session().GetMachine();
-    /* Enumerate all the visible guest screens: */
+    /* Enumerate all the guest screens: */
     m_guestScreens.clear();
+    m_disabledGuestScreens.clear();
     for (uint iGuestScreen = 0; iGuestScreen < machine.GetMonitorCount(); ++iGuestScreen)
         if (m_pMachineLogic->uisession()->isScreenVisible(iGuestScreen))
             m_guestScreens << iGuestScreen;
+        else
+            m_disabledGuestScreens << iGuestScreen;
 }
 
 void UIMultiScreenLayout::prepareViewMenu()
@@ -307,6 +359,10 @@ void UIMultiScreenLayout::cleanupViewMenu()
 
 void UIMultiScreenLayout::updateMenuActions(bool fWithSave)
 {
+    /* Make sure view-menu was set: */
+    if (!m_pViewMenu)
+        return;
+
     /* Get the list of all view-menu actions: */
     QList<QAction*> viewMenuActions = gActionPool->action(UIActionIndexRuntime_Menu_View)->menu()->actions();
     /* Get the list of all view related actions: */
@@ -342,6 +398,8 @@ quint64 UIMultiScreenLayout::memoryRequirements(const QMap<int, int> &screenLayo
     ULONG width = 0;
     ULONG height = 0;
     ULONG guestBpp = 0;
+    LONG xOrigin = 0;
+    LONG yOrigin = 0;
     quint64 usedBits = 0;
     CDisplay display = m_pMachineLogic->uisession()->session().GetConsole().GetDisplay();
     foreach (int iGuestScreen, m_guestScreens)
@@ -351,7 +409,7 @@ quint64 UIMultiScreenLayout::memoryRequirements(const QMap<int, int> &screenLayo
             screen = QApplication::desktop()->availableGeometry(screenLayout.value(iGuestScreen, 0));
         else
             screen = QApplication::desktop()->screenGeometry(screenLayout.value(iGuestScreen, 0));
-        display.GetScreenResolution(iGuestScreen, width, height, guestBpp);
+        display.GetScreenResolution(iGuestScreen, width, height, guestBpp, xOrigin, yOrigin);
         usedBits += screen.width() * /* display width */
                     screen.height() * /* display height */
                     guestBpp + /* guest bits per pixel */

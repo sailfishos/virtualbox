@@ -1,10 +1,10 @@
-# $Id: header.kmk 2624 2012-08-05 17:09:27Z bird $
+# $Id: header.kmk 2763 2015-01-28 18:25:31Z bird $
 ## @file
 # kBuild - File included at top of a makefile.
 #
 
 #
-# Copyright (c) 2004-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2015 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -79,7 +79,7 @@ endif
 # The revision in which this file was last modified.
 # This can be useful when using development versions of kBuild.
 #
-KMK_REVISION := $(patsubst %:,,  $Rev: 2624 $  )
+KMK_REVISION := $(patsubst %:,,  $Rev: 2763 $  )
 
 
 #
@@ -471,42 +471,55 @@ PATH_SYS = $(error kBuild: PATH_SYS is obsoleted in kBuild 0.1.2. Use PATH_STAGE
 PATH_DOC = $(error kBuild: PATH_DOC is obsoleted in kBuild 0.1.2. Use PATH_STAGE_DOC or PATH_INST_DOC instead)
 
 # Development tool tree.
-KBUILD_DEVTOOLS      = $(if $(PATH_DEVTOOLS),$(PATH_DEVTOOLS),$(PATH_ROOT)/tools)
-KBUILD_DEVTOOLS_TRG  = $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).$(KBUILD_TARGET_ARCH)
-KBUILD_DEVTOOLS_HST  = $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).$(KBUILD_HOST_ARCH)
+ifndef KBUILD_DEVTOOLS
+ ifeq ($(PATH_DEVTOOLS),)
+  KBUILD_DEVTOOLS    = $(PATH_ROOT)/tools
+ else  
+  KBUILD_DEVTOOLS   := $(PATH_DEVTOOLS)
+ endif 
+endif 
+KBUILD_DEVTOOLS_TRG ?= $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).$(KBUILD_TARGET_ARCH)
+KBUILD_DEVTOOLS_HST ?= $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).$(KBUILD_HOST_ARCH)
 
 if1of ($(KBUILD_TARGET_ARCH), amd64 hppa64 mips64 ppc64 s390x sparc64)
  ifeq ($(KBUILD_TARGET_ARCH),amd64)
-  KBUILD_DEVTOOLS_TRG_ALT = $(PATH_DEVTOOLS)/$(KBUILD_TARGET).x86
+  KBUILD_DEVTOOLS_TRG_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).x86
  else ifeq ($(KBUILD_TARGET_ARCH),hppa64)
-  KBUILD_DEVTOOLS_TRG_ALT = $(PATH_DEVTOOLS)/$(KBUILD_TARGET).hppa32
+  KBUILD_DEVTOOLS_TRG_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).hppa32
  else ifeq ($(KBUILD_TARGET_ARCH),mips64)
-  KBUILD_DEVTOOLS_TRG_ALT = $(PATH_DEVTOOLS)/$(KBUILD_TARGET).mips32
+  KBUILD_DEVTOOLS_TRG_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).mips32
  else ifeq ($(KBUILD_TARGET_ARCH),ppc64)
-  KBUILD_DEVTOOLS_TRG_ALT = $(PATH_DEVTOOLS)/$(KBUILD_TARGET).ppc32
+  KBUILD_DEVTOOLS_TRG_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).ppc32
  else ifeq ($(KBUILD_TARGET_ARCH),s390x)
-  KBUILD_DEVTOOLS_TRG_ALT = $(PATH_DEVTOOLS)/$(KBUILD_TARGET).s390
+  KBUILD_DEVTOOLS_TRG_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).s390
  else ifeq ($(KBUILD_TARGET_ARCH),sparc64)
-  KBUILD_DEVTOOLS_TRG_ALT = $(PATH_DEVTOOLS)/$(KBUILD_TARGET).sparc32
+  KBUILD_DEVTOOLS_TRG_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_TARGET).sparc32
  endif
 endif
 
 if1of ($(KBUILD_HOST_ARCH), amd64 hppa64 mips64 ppc64 s390x sparc64)
  ifeq ($(KBUILD_HOST_ARCH),amd64)
-  KBUILD_DEVTOOLS_HST_ALT = $(PATH_DEVTOOLS)/$(KBUILD_HOST).x86
+  KBUILD_DEVTOOLS_HST_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).x86
  else ifeq ($(KBUILD_HOST_ARCH),hppa64)
-  KBUILD_DEVTOOLS_HST_ALT = $(PATH_DEVTOOLS)/$(KBUILD_HOST).hppa32
+  KBUILD_DEVTOOLS_HST_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).hppa32
  else ifeq ($(KBUILD_HOST_ARCH),mips64)
-  KBUILD_DEVTOOLS_HST_ALT = $(PATH_DEVTOOLS)/$(KBUILD_HOST).mips32
+  KBUILD_DEVTOOLS_HST_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).mips32
  else ifeq ($(KBUILD_HOST_ARCH),ppc64)
-  KBUILD_DEVTOOLS_HST_ALT = $(PATH_DEVTOOLS)/$(KBUILD_HOST).ppc32
+  KBUILD_DEVTOOLS_HST_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).ppc32
  else ifeq ($(KBUILD_HOST_ARCH),s390x)
-  KBUILD_DEVTOOLS_HST_ALT = $(PATH_DEVTOOLS)/$(KBUILD_HOST).s390
+  KBUILD_DEVTOOLS_HST_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).s390
  else ifeq ($(KBUILD_HOST_ARCH),sparc64)
-  KBUILD_DEVTOOLS_HST_ALT = $(PATH_DEVTOOLS)/$(KBUILD_HOST).sparc32
+  KBUILD_DEVTOOLS_HST_ALT ?= $(KBUILD_DEVTOOLS)/$(KBUILD_HOST).sparc32
  endif
 endif
 
+# Deprecated legacy names.
+PATH_DEVTOOLS         ?= $(KBUILD_DEVTOOLS)
+PATH_DEVTOOLS_TRG     ?= $(KBUILD_DEVTOOLS_TRG)
+PATH_DEVTOOLS_BLD     ?= $(KBUILD_DEVTOOLS_TRG)
+PATH_DEVTOOLS_TRG_ALT ?= $(KBUILD_DEVTOOLS_TRG_ALT)
+PATH_DEVTOOLS_HST     ?= $(KBUILD_DEVTOOLS_HST)
+PATH_DEVTOOLS_HST_ALT ?= $(KBUILD_DEVTOOLS_HST_ALT)
 
 # KBUILD_PATH / PATH_KBUILD is determined by kmk.
 ifndef KBUILD_PATH
@@ -1276,10 +1289,17 @@ else if1of ($(KBUILD_TARGET), freebsd netbsd openbsd dragonfly)
  KBUILD_LIB_SEARCH_SUBS := lib/
 
 else ifeq ($(KBUILD_TARGET),linux)
- KBUILD_LIB_SEARCH_ROOTS := \
-	/ \
-	/usr/ \
-	/usr/local/
+ ifeq ($(realpath /bin),/usr/bin)
+  KBUILD_LIB_SEARCH_ROOTS := \
+  	/usr/ \
+  	/ \
+  	/usr/local/
+ else
+  KBUILD_LIB_SEARCH_ROOTS := \
+  	/ \
+  	/usr/ \
+  	/usr/local/
+ endif
  ifeq ($(KBUILD_TARGET_ARCH),amd64)
   KBUILD_LIB_SEARCH_SUBS := \
 	lib/x86_64-linux-gnu/ \
@@ -1391,6 +1411,14 @@ endif
 PATH_$(y)_$(x) := $(val)
 endef
 $(foreach y, INST STAGE, $(foreach x, $(KBUILD_INST_PATHS), $(evalcall def_kbuild_finalize_inst)))
+
+# No abspath for devtools since they might've been referenced already and we
+# don't want conflicting variable expansions.
+KBUILD_DEVTOOLS         := $(KBUILD_DEVTOOLS)
+KBUILD_DEVTOOLS_TRG     := $(KBUILD_DEVTOOLS_TRG)
+KBUILD_DEVTOOLS_TRG_ALT := $(KBUILD_DEVTOOLS_TRG_ALT)
+KBUILD_DEVTOOLS_HST     := $(KBUILD_DEVTOOLS_HST)
+KBUILD_DEVTOOLS_HST_ALT := $(KBUILD_DEVTOOLS_HST_ALT)
 
 
 #
@@ -1538,6 +1566,29 @@ endif
 
 
 #
+# An internal define used by subheader.kmk and subfooter.kmk.
+# We keep them here to avoid redefining them for each sub-makefile.
+#
+define def_subfooter_header_target_pass
+ ifndef $(target)_PATH
+  ifndef $(target)_DEFPATH
+   $(target)_DEFPATH := $(PATH_SUB_CURRENT)
+  endif
+  $(call KB_FN_ASSIGN_DEPRECATED,$(target)_PATH,$($(target)_DEFPATH), $(target)_DEFPATH)
+ else ifndef $(target)_DEFPATH
+  $(target)_DEFPATH := $($(target)_PATH)
+ endif
+ ifndef $(target)_MAKEFILE
+  $(target)_MAKEFILE := $(MAKEFILE_CURRENT)
+ endif
+ ifndef $(target)_0_OUTDIR
+  $(target)_0_OUTDIR := $(call TARGET_PATH,$(target))
+  $(call KB_FN_ASSIGN_DEPRECATED,PATH_$(target),$($(target)_0_OUTDIR), $(target)_0_OUTDIR)
+ endif
+endef
+
+
+#
 # Validate any KBUILD_BLD_TYPES additions and finally the KBUILD_TYPE.
 #
 if1of ($(KBUILD_BLD_TYPES), $(KBUILD_OSES))
@@ -1562,6 +1613,5 @@ endif
 
 # end-of-file-content
 __header_kmk__ := 1
-endif # __header_kmk__
-
+endif # !__header_kmk__
 

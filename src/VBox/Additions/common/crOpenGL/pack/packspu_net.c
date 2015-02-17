@@ -13,6 +13,8 @@
 #include "packspu.h"
 #include "packspu_proto.h"
 
+uint32_t g_u32VBoxHostCaps = 0;
+
 static void
 packspuWriteback( const CRMessageWriteback *wb )
 {
@@ -128,6 +130,9 @@ void packspuFlush(void *arg )
     buf = &(thread->buffer);
     CRASSERT(buf);
 
+    if (ctx && ctx->fCheckZerroVertAttr)
+        crStateCurrentRecoverNew(ctx->clientState, &thread->packer->current);
+
     /* We're done packing into the current buffer, unbind it */
     crPackReleaseBuffer( thread->packer );
 
@@ -241,6 +246,11 @@ static void packspuFirstConnectToServer( CRNetServer *server
                 , pHgsmi
 #endif
             );
+    if (server->conn)
+    {
+        g_u32VBoxHostCaps = crNetHostCapsGet();
+        crPackCapsSet(g_u32VBoxHostCaps);
+    }
 }
 
 void packspuConnectToServer( CRNetServer *server

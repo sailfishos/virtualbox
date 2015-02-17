@@ -39,6 +39,8 @@
 #include <iprt/uuid.h>
 #include <iprt/alloca.h>
 
+#include "../../darwin/VBoxNetSend.h"
+
 #include <sys/systm.h>
 RT_C_DECLS_BEGIN /* Buggy 10.4 headers, fixed in 10.5. */
 #include <sys/kpi_mbuf.h>
@@ -232,6 +234,7 @@ static errno_t vboxNetAdpDarwinBpfSend(ifnet_t pIface, u_int32_t uLinkType, mbuf
     return 0;
 }
 
+
 int vboxNetAdpOsCreate(PVBOXNETADP pThis, PCRTMAC pMACAddress)
 {
     int rc;
@@ -294,6 +297,7 @@ int vboxNetAdpOsCreate(PVBOXNETADP pThis, PCRTMAC pMACAddress)
             if (!err)
             {
                 ifnet_set_mtu(pThis->u.s.pIface, VBOXNETADP_MTU);
+                VBoxNetSendDummy(pThis->u.s.pIface);
                 return VINF_SUCCESS;
             }
             else

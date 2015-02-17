@@ -70,7 +70,8 @@ print "\t/* Chromium binding/glue functions */"
 for func_name in keys:
     if (func_name == "Writeback" or
         func_name == "BoundsInfoCR" or
-        func_name == "GetUniformsLocations"):
+        func_name == "GetUniformsLocations" or
+        func_name == "GetAttribsLocations"):
         continue
     if apiutil.Category(func_name) == "Chromium":
         print '\t{ "cr%s", (CR_PROC) cr%s },' % (func_name, func_name)
@@ -143,7 +144,7 @@ CR_PROC CR_APIENTRY crGetProcAddress( const char *name )
 
     if (!crStrcmp( name, "wglSwapIntervalEXT" )) return (CR_PROC) wglSwapIntervalEXT;
     
-    crWarning("Returning GetProcAddress:NULL for %s", name);
+    crDebug("Returning GetProcAddress:NULL for %s", name);
     return NULL;
 }
 

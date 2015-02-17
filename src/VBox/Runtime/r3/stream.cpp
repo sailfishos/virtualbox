@@ -311,6 +311,7 @@ RTR3DECL(int) RTStrmOpen(const char *pszFilename, const char *pszMode, PRTSTREAM
         pStream->i32Error = VINF_SUCCESS;
         pStream->fCurrentCodeSet = false;
         pStream->fBinary  = fBinary;
+        pStream->fRecheckMode = false;
 #ifndef HAVE_FWRITE_UNLOCKED
         pStream->pCritSect = NULL;
 #endif /* HAVE_FWRITE_UNLOCKED */
@@ -1087,6 +1088,19 @@ RTR3DECL(int) RTStrmPrintf(PRTSTREAM pStream, const char *pszFormat, ...)
     int rc = RTStrmPrintfV(pStream, pszFormat, args);
     va_end(args);
     return rc;
+}
+
+
+/**
+ * Dumper vprintf-like function outputting to a stream.
+ *
+ * @param   pvUser          The stream to print to.  NULL means standard output.
+ * @param   pszFormat       Runtime format string.
+ * @param   va              Arguments specified by pszFormat.
+ */
+RTDECL(void) RTStrmDumpPrintfV(void *pvUser, const char *pszFormat, va_list va)
+{
+    RTStrmPrintfV(pvUser ? (PRTSTREAM)pvUser : g_pStdOut, pszFormat, va);
 }
 
 

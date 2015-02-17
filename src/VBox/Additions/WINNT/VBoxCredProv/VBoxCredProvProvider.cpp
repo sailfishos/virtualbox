@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2014 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,7 +18,10 @@
 /*******************************************************************************
 *   Header Files                                                               *
 *******************************************************************************/
+#include <new> /* For bad_alloc. */
+
 #include <credentialprovider.h>
+
 #include <iprt/err.h>
 #include <VBox/VBoxGuestLib.h>
 
@@ -138,7 +141,7 @@ VBoxCredProvProvider::LoadConfiguration(void)
             && dwType == REG_DWORD
             && dwSize == sizeof(DWORD))
         {
-            m_fHandleRemoteSessions = true;
+            m_fHandleRemoteSessions = RT_BOOL(dwValue);
         }
 
         dwRet = RegQueryValueEx(hKey, L"LoggingEnabled", NULL, &dwType, (LPBYTE)&dwValue, &dwSize);
@@ -235,22 +238,35 @@ VBoxCredProvProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO enmUsa
 
             if (!m_pPoller)
             {
-                /** @todo try catch please. */
-                m_pPoller = new VBoxCredProvPoller();
-                AssertPtr(m_pPoller);
-                int rc = m_pPoller->Initialize(this);
-                if (RT_FAILURE(rc))
-                    VBoxCredProvVerbose(0, "VBoxCredProv::SetUsageScenario: Error initializing poller thread, rc=%Rrc\n", rc);
+                try
+                {
+                    m_pPoller = new VBoxCredProvPoller();
+                    AssertPtr(m_pPoller);
+                    int rc = m_pPoller->Initialize(this);
+                    if (RT_FAILURE(rc))
+                        VBoxCredProvVerbose(0, "VBoxCredProv::SetUsageScenario: Error initializing poller thread, rc=%Rrc\n", rc);
+                }
+                catch (std::bad_alloc &ex)
+                {
+                    NOREF(ex);
+                    hr = E_OUTOFMEMORY;
+                }
             }
 
-            if (!m_pCred)
+            if (   SUCCEEDED(hr)
+                && !m_pCred)
             {
-                /** @todo try catch please. */
-                m_pCred = new VBoxCredProvCredential();
-                if (m_pCred)
+                try
+                {
+                    m_pCred = new VBoxCredProvCredential();
+                    AssertPtr(m_pPoller);
                     hr = m_pCred->Initialize(m_enmUsageScenario);
-                else
+                }
+                catch (std::bad_alloc &ex)
+                {
+                    NOREF(ex);
                     hr = E_OUTOFMEMORY;
+                }
             }
             else
             {
@@ -269,9 +285,9 @@ VBoxCredProvProvider::SetUsageScenario(CREDENTIAL_PROVIDER_USAGE_SCENARIO enmUsa
             break;
         }
 
-        case CPUS_CHANGE_PASSWORD:
-        case CPUS_CREDUI:
-        case CPUS_PLAP:
+        case CPUS_CHANGE_PASSWORD: /* Asks us to provide a way to change the password. */
+        case CPUS_CREDUI:          /* Displays an own UI. We don't need that. */
+        case CPUS_PLAP:            /* See Pre-Logon-Access Provider. Not needed (yet). */
 
             hr = E_NOTIMPL;
             break;
@@ -523,15 +539,18 @@ VBoxCredProvProviderCreate(REFIID interfaceID, void **ppvInterface)
 {
     HRESULT hr;
 
-    /** @todo try-catch. */
-    VBoxCredProvProvider *pProvider = new VBoxCredProvProvider();
-    if (pProvider)
+    try
     {
+        VBoxCredProvProvider *pProvider = new VBoxCredProvProvider();
+        AssertPtr(pProvider);
         hr = pProvider->QueryInterface(interfaceID, ppvInterface);
         pProvider->Release();
     }
-    else
+    catch (std::bad_alloc &ex)
+    {
+        NOREF(ex);
         hr = E_OUTOFMEMORY;
+    }
 
     return hr;
 }

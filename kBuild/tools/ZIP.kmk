@@ -1,10 +1,10 @@
-# $Id: ZIP.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: ZIP.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - The zip/unzip packer/unpacker.
 #
 
 #
-# Copyright (c) 2006-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2006-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,12 +35,12 @@ TOOL_ZIP := The zip/unzip packer/unpacker.
 
 # Tool Specific Properties
 ifndef TOOL_ZIP_UNPACK
- TOOL_ZIP_UNPACK := $(wildcard $(PATH_DEVTOOLS_BLD)/unzip/v*/unzip$(HOSTSUFF_EXE))
+ TOOL_ZIP_UNPACK := $(wildcard $(KBUILD_DEVTOOLS_HST)/unzip/v*/unzip$(HOSTSUFF_EXE))
  ifeq ($(TOOL_ZIP_UNPACK),)
-  TOOL_ZIP_UNPACK := $(wildcard $(PATH_DEVTOOLS_BLD)/zip/v*/unzip$(HOSTSUFF_EXE))
+  TOOL_ZIP_UNPACK := $(wildcard $(KBUILD_DEVTOOLS_HST)/zip/v*/unzip$(HOSTSUFF_EXE))
  endif
  ifeq ($(TOOL_ZIP_UNPACK),)
-  TOOL_ZIP_UNPACK := $(wildcard $(PATH_DEVTOOLS_BLD)/bin/unzip$(HOSTSUFF_EXE))
+  TOOL_ZIP_UNPACK := $(wildcard $(KBUILD_DEVTOOLS_HST)/bin/unzip$(HOSTSUFF_EXE))
  endif
  ifneq ($(TOOL_ZIP_UNPACK),)
   TOOL_ZIP_UNPACK := $(lastword $(sort $(TOOL_ZIP_UNPACK)))
@@ -51,12 +51,12 @@ else
  TOOL_ZIP_UNPACK := $(TOOL_ZIP_UNPACK)
 endif
 #ifndef TOOL_ZIP_PACK
-# TOOL_ZIP_PACK := $(wildcard $(PATH_DEVTOOLS_BLD)/zip/v*/zip$(HOSTSUFF_EXE))
+# TOOL_ZIP_PACK := $(wildcard $(KBUILD_DEVTOOLS_HST)/zip/v*/zip$(HOSTSUFF_EXE))
 # ifeq ($(TOOL_ZIP_PACK),)
-#  TOOL_ZIP_PACK := $(wildcard $(PATH_DEVTOOLS_BLD)/unzip/v*/zip$(HOSTSUFF_EXE))
+#  TOOL_ZIP_PACK := $(wildcard $(KBUILD_DEVTOOLS_HST)/unzip/v*/zip$(HOSTSUFF_EXE))
 # endif
 # ifeq ($(TOOL_ZIP_PACK),)
-#  TOOL_ZIP_PACK := $(wildcard $(PATH_DEVTOOLS_BLD)/bin/zip$(HOSTSUFF_EXE))
+#  TOOL_ZIP_PACK := $(wildcard $(KBUILD_DEVTOOLS_HST)/bin/zip$(HOSTSUFF_EXE))
 # endif
 # ifneq ($(TOOL_ZIP_PACK),)
 #  TOOL_ZIP_PACK := $(lastword $(sort $(TOOL_ZIP_PACK)))

@@ -103,7 +103,7 @@ VBoxDrvFindAdapter(IN PVOID HwDeviceExtension, IN PVOID HwContext, IN PWSTR Argu
 
         VideoPortZeroMemory(tmpRanges, sizeof(tmpRanges));
 
-        if (VBoxQueryWinVersion() == WINNT4)
+        if (VBoxQueryWinVersion() == WINVERSION_NT4)
         {
             /* NT crashes if either of 'vendorId, 'deviceId' or 'slot' parameters is NULL,
              * and needs PCI ids for a successful VideoPortGetAccessRanges call.
@@ -147,6 +147,18 @@ VBoxDrvFindAdapter(IN PVOID HwDeviceExtension, IN PVOID HwContext, IN PWSTR Argu
      */
     VBoxSetupDisplaysHGSMI(&pExt->u.primary.commonInfo, phVRAM, ulApertureSize, cbVRAM, 0);
 
+    /* Check if the chip restricts horizontal resolution or not.
+     * Must be done after VBoxSetupDisplaysHGSMI, because it initializes the common structure.
+     */
+    VideoPortWritePortUshort((PUSHORT)VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ID);
+    VideoPortWritePortUshort((PUSHORT)VBE_DISPI_IOPORT_DATA, VBE_DISPI_ID_ANYX);
+    DispiId = VideoPortReadPortUshort((PUSHORT)VBE_DISPI_IOPORT_DATA);
+
+    if (DispiId == VBE_DISPI_ID_ANYX)
+        VBoxCommonFromDeviceExt(pExt)->fAnyX = TRUE;
+    else
+        VBoxCommonFromDeviceExt(pExt)->fAnyX = FALSE;
+
     if (pExt->u.primary.commonInfo.bHGSMI)
     {
         LOGREL(("using HGSMI"));
@@ -166,23 +178,12 @@ static BOOLEAN
 VBoxDrvInitialize(PVOID HwDeviceExtension)
 {
     PVBOXMP_DEVEXT pExt = (PVBOXMP_DEVEXT) HwDeviceExtension;
-    USHORT DispiId;
 
     PAGED_CODE();
     LOGF_ENTER();
 
     /* Initialize the request pointer. */
     pExt->u.primary.pvReqFlush = NULL;
-
-    /* Check if the chip restricts horizontal resolution or not. */
-    VideoPortWritePortUshort((PUSHORT)VBE_DISPI_IOPORT_INDEX, VBE_DISPI_INDEX_ID);
-    VideoPortWritePortUshort((PUSHORT)VBE_DISPI_IOPORT_DATA, VBE_DISPI_ID_ANYX);
-    DispiId = VideoPortReadPortUshort((PUSHORT)VBE_DISPI_IOPORT_DATA);
-
-    if (DispiId == VBE_DISPI_ID_ANYX)
-        pExt->fAnyX = TRUE;
-    else
-        pExt->fAnyX = FALSE;
 
     VBoxMPCmnInitCustomVideoModes(pExt);
 
@@ -308,7 +309,7 @@ VBoxDrvStartIO(PVOID HwDeviceExtension, PVIDEO_REQUEST_PACKET RequestPacket)
         {
             PVIDEO_MODE_INFORMATION pModes = (PVIDEO_MODE_INFORMATION) RequestPacket->OutputBuffer;
 
-            if (RequestPacket->OutputBufferLength < VBoxMPXpdmGetVideoModesCount()*sizeof(VIDEO_MODE_INFORMATION))
+            if (RequestPacket->OutputBufferLength < VBoxMPXpdmGetVideoModesCount(pExt)*sizeof(VIDEO_MODE_INFORMATION))
             {
                 pStatus->Status = ERROR_INSUFFICIENT_BUFFER;
                 break;
@@ -538,9 +539,26 @@ VBoxDrvStartIO(PVOID HwDeviceExtension, PVIDEO_REQUEST_PACKET RequestPacket)
         case IOCTL_VIDEO_VBOX_ISANYX:
         {
             STARTIO_OUT(uint32_t, pu32AnyX);
-            *pu32AnyX = pExt->fAnyX;
+            *pu32AnyX = VBoxCommonFromDeviceExt(pExt)->fAnyX;
             pStatus->Information = sizeof (uint32_t);
             bResult = TRUE;
+            break;
+        }
+
+        case IOCTL_VIDEO_QUERY_VBOXVIDEO_INFO:
+        {
+            STARTIO_IN(ULONG, pulInfoLevel);
+            if (*pulInfoLevel == VBOXVIDEO_INFO_LEVEL_REGISTRY_FLAGS)
+            {
+                STARTIO_OUT(ULONG, pulFlags);
+                bResult = VBoxMPQueryRegistryFlags(pExt, pulFlags, pStatus);
+            }
+            else
+            {
+                pStatus->Status = ERROR_INVALID_PARAMETER;
+                bResult = FALSE;
+            }
+
             break;
         }
 
@@ -739,12 +757,12 @@ ULONG DriverEntry(IN PVOID Context1, IN PVOID Context2)
      */
     switch (VBoxQueryWinVersion())
     {
-        case WINNT4:
-            LOG(("WINNT4"));
+        case WINVERSION_NT4:
+            LOG(("WINVERSION_NT4"));
             vhwData.HwInitDataSize = SIZE_OF_NT4_VIDEO_HW_INITIALIZATION_DATA;
             break;
-        case WIN2K:
-            LOG(("WIN2K"));
+        case WINVERSION_2K:
+            LOG(("WINVERSION_2K"));
             vhwData.HwInitDataSize = SIZE_OF_W2K_VIDEO_HW_INITIALIZATION_DATA;
             break;
         default:

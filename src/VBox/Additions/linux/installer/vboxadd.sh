@@ -1,6 +1,6 @@
 #! /bin/sh
 #
-# Linux Additions kernel module init script ($Revision: 83687 $)
+# Linux Additions kernel module init script ($Revision: 93574 $)
 #
 
 #
@@ -34,7 +34,7 @@ LOG="/var/log/vboxadd-install.log"
 MODPROBE=/sbin/modprobe
 OLDMODULES="vboxguest vboxadd vboxsf vboxvfs vboxvideo"
 
-if $MODPROBE -c | grep -q '^allow_unsupported_modules  *0'; then
+if $MODPROBE -c 2>/dev/null | grep -q '^allow_unsupported_modules  *0'; then
   MODPROBE="$MODPROBE --allow-unsupported-modules"
 fi
 
@@ -43,17 +43,19 @@ cpu=`uname -m`;
 case "$cpu" in
   i[3456789]86|x86)
     cpu="x86"
-    lib_path="/usr/lib"
+    lib_candidates="/usr/lib/i386-linux-gnu /usr/lib /lib"
     ;;
   x86_64|amd64)
     cpu="amd64"
-    if test -d "/usr/lib64"; then
-      lib_path="/usr/lib64"
-    else
-      lib_path="/usr/lib"
-    fi
+    lib_candidates="/usr/lib/x86_64-linux-gnu /usr/lib64 /usr/lib /lib64 /lib"
     ;;
 esac
+for i in $lib_candidates; do
+  if test -d "$i/VBoxGuestAdditions"; then
+    lib_path=$i
+    break
+  fi
+done
 
 if [ -f /etc/arch-release ]; then
     system=arch
@@ -284,7 +286,7 @@ do_vboxguest_non_udev()
 start()
 {
     begin "Starting the VirtualBox Guest Additions ";
-    uname -r | grep -q '^2\.6' 2>/dev/null &&
+    uname -r | grep -q -E '^2\.6|^3' 2>/dev/null &&
         ps -A -o comm | grep -q '/*udevd$' 2>/dev/null ||
         no_udev=1
     running_vboxguest || {
@@ -440,7 +442,7 @@ extra_setup()
     # Add a group "vboxsf" for Shared Folders access
     # All users which want to access the auto-mounted Shared Folders have to
     # be added to this group.
-    groupadd -f vboxsf >/dev/null 2>&1
+    groupadd -r -f vboxsf >/dev/null 2>&1
 
     # Create udev description file
     if [ -d /etc/udev/rules.d ]; then

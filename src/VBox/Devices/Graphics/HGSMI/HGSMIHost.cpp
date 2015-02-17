@@ -1039,18 +1039,11 @@ int HGSMIHostCommandProcessAndFreeAsynch (PHGSMIINSTANCE pIns,
 {
     LogFlowFunc(("pIns = %p, pvMem = %p\n", pIns, pvMem));
 
-    VM_ASSERT_OTHER_THREAD(pIns->pVM);
-
 #if 0
     void *pvContext = NULL;
 #endif
 
     HGSMIOFFSET offBuffer = HGSMIHeapBufferOffset (&pIns->hostHeap, pvMem);
-
-//    /* Have to forward to EMT because FIFO processing is there. */
-//    int rc = VMR3ReqCallVoid (pIns->pVM, &pReq, RT_INDEFINITE_WAIT,
-//                              (PFNRT) hgsmiHostCommandProcess,
-//                              3, pIns, offBuffer, &pvContext);
 
     int rc = hgsmiHostCommandProcess (pIns, offBuffer,
 #if 0
@@ -1319,6 +1312,8 @@ int HGSMIHostSaveStateExec (PHGSMIINSTANCE pIns, PSSMHANDLE pSSM)
 
     int rc;
 
+    SSMR3PutU32(pSSM, pIns->hostHeap.fOffsetBased ? HGSMI_HEAP_TYPE_OFFSET : HGSMI_HEAP_TYPE_POINTER);
+
     HGSMIOFFSET off = pIns->pHGFlags ? HGSMIPointerToOffset(&pIns->area, (const HGSMIBUFFERHEADER *)pIns->pHGFlags) : HGSMIOFFSET_VOID;
     SSMR3PutU32 (pSSM, off);
 
@@ -1329,7 +1324,7 @@ int HGSMIHostSaveStateExec (PHGSMIINSTANCE pIns, PSSMHANDLE pSSM)
         SSMR3PutU32 (pSSM, HGSMIHeapOffset(&pIns->hostHeap));
         SSMR3PutU32 (pSSM, HGSMIHeapSize(&pIns->hostHeap));
         /* need save mem pointer to calculate offset on restore */
-        SSMR3PutU64 (pSSM, (uint64_t)pIns->area.pu8Base);
+        SSMR3PutU64 (pSSM, (uint64_t)(uintptr_t)pIns->area.pu8Base);
         rc = hgsmiFIFOLock (pIns);
         if(RT_SUCCESS(rc))
         {
@@ -1358,6 +1353,14 @@ int HGSMIHostLoadStateExec (PHGSMIINSTANCE pIns, PSSMHANDLE pSSM, uint32_t u32Ve
 
     int rc;
     HGSMIOFFSET off;
+    uint32_t u32HeapType = HGSMI_HEAP_TYPE_NULL;
+
+    if (u32Version >= VGA_SAVEDSTATE_VERSION_HGSMIMA)
+    {
+        rc = SSMR3GetU32(pSSM, &u32HeapType);
+        AssertRCReturn(rc, rc);
+    }
+
     rc = SSMR3GetU32(pSSM, &off);
     AssertRCReturn(rc, rc);
     pIns->pHGFlags = (off != HGSMIOFFSET_VOID) ? (HGSMIHOSTFLAGS*)HGSMIOffsetToPointer (&pIns->area, off) : NULL;
@@ -1367,6 +1370,20 @@ int HGSMIHostLoadStateExec (PHGSMIINSTANCE pIns, PSSMHANDLE pSSM, uint32_t u32Ve
     AssertRCReturn(rc, rc);
     if(off != HGSMIOFFSET_VOID)
     {
+        /* There is a saved heap. */
+        if (u32HeapType == HGSMI_HEAP_TYPE_NULL)
+        {
+            u32HeapType = u32Version > VGA_SAVEDSTATE_VERSION_HOST_HEAP?
+                              HGSMI_HEAP_TYPE_OFFSET:
+                              HGSMI_HEAP_TYPE_POINTER;
+        }
+
+        if (u32HeapType == HGSMI_HEAP_TYPE_MA)
+        {
+            AssertMsgFailed(("MA heap not supported"));
+            return VERR_VERSION_MISMATCH;
+        }
+
         HGSMIOFFSET offHeap;
         SSMR3GetU32(pSSM, &offHeap);
         uint32_t cbHeap;
@@ -1387,7 +1404,7 @@ int HGSMIHostLoadStateExec (PHGSMIINSTANCE pIns, PSSMHANDLE pSSM, uint32_t u32Ve
                                    uintptr_t(pIns->area.pu8Base) - uintptr_t(oldMem),
                                    cbHeap,
                                    offHeap,
-                                   u32Version > VGA_SAVEDSTATE_VERSION_HOST_HEAP);
+                                   u32HeapType == HGSMI_HEAP_TYPE_OFFSET);
 
             hgsmiHostHeapUnlock (pIns);
         }
@@ -1807,6 +1824,12 @@ int hgsmiCompleteGuestCommand(PHGSMIINSTANCE pIns,
             /* Now guest can read the FIFO, the notification is informational. */
             hgsmiNotifyGuest (pIns);
         }
+#ifdef DEBUG_misha
+        else
+        {
+            Assert(0);
+        }
+#endif
     }
     return rc;
 }
@@ -1818,7 +1841,10 @@ int HGSMICompleteGuestCommand(PHGSMIINSTANCE pIns,
     LogFlowFunc(("pIns = %p, pvMem = %p\n", pIns, pvMem));
 
     int rc = VINF_SUCCESS;
-    HGSMIOFFSET offBuffer = HGSMIHeapBufferOffset (&pIns->hostHeap, pvMem);
+
+    HGSMIBUFFERHEADER *pHeader = HGSMIBufferHeaderFromData(pvMem);
+    HGSMIOFFSET offBuffer = HGSMIPointerToOffset(&pIns->area, pHeader);
+
     Assert(offBuffer != HGSMIOFFSET_VOID);
     if (offBuffer != HGSMIOFFSET_VOID)
     {

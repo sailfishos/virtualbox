@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,6 +29,7 @@
 #include <iprt/types.h>
 #include <iprt/message.h>
 #include <iprt/stream.h>
+#include <iprt/getopt.h>
 
 ////////////////////////////////////////////////////////////////////////////////
 //
@@ -101,8 +102,27 @@
 #define USAGE_BANDWIDTHCONTROL      RT_BIT_64(56)
 #define USAGE_GUESTSTATS            RT_BIT_64(57)
 #define USAGE_REPAIRHD              RT_BIT_64(58)
+#define USAGE_NATNETWORK            RT_BIT_64(59)
 #define USAGE_ALL                   (~(uint64_t)0)
 /** @} */
+
+#ifdef VBOX_WITH_GUEST_CONTROL
+# define USAGE_GSTCTRL_EXEC         RT_BIT(0)
+# define USAGE_GSTCTRL_COPYFROM     RT_BIT(1)
+# define USAGE_GSTCTRL_COPYTO       RT_BIT(2)
+# define USAGE_GSTCTRL_CREATEDIR    RT_BIT(3)
+# define USAGE_GSTCTRL_REMOVEDIR    RT_BIT(4)
+# define USAGE_GSTCTRL_REMOVEFILE   RT_BIT(5)
+# define USAGE_GSTCTRL_RENAME       RT_BIT(6)
+# define USAGE_GSTCTRL_CREATETEMP   RT_BIT(7)
+# define USAGE_GSTCTRL_LIST         RT_BIT(8)
+# define USAGE_GSTCTRL_PROCESS      RT_BIT(9)
+# define USAGE_GSTCTRL_KILL         RT_BIT(10)
+# define USAGE_GSTCTRL_SESSION      RT_BIT(11)
+# define USAGE_GSTCTRL_STAT         RT_BIT(12)
+# define USAGE_GSTCTRL_UPDATEADDS   RT_BIT(13)
+# define USAGE_GSTCTRL_WATCH        RT_BIT(14)
+#endif
 
 typedef uint64_t USAGECATEGORY;
 
@@ -146,12 +166,14 @@ extern bool g_fDetailedProgress;        // in VBoxManage.cpp
 ////////////////////////////////////////////////////////////////////////////////
 
 /* VBoxManageHelp.cpp */
-void printUsage(USAGECATEGORY u64Cmd, PRTSTREAM pStrm);
-RTEXITCODE errorSyntax(USAGECATEGORY u64Cmd, const char *pszFormat, ...);
-RTEXITCODE errorGetOpt(USAGECATEGORY u64Cmd, int rc, union RTGETOPTUNION const *pValueUnion);
+void printUsage(USAGECATEGORY fCategory, uint32_t fSubCategory, PRTSTREAM pStrm);
+RTEXITCODE errorSyntax(USAGECATEGORY fCategory, const char *pszFormat, ...);
+RTEXITCODE errorSyntaxEx(USAGECATEGORY fCategory, uint32_t fSubCategory, const char *pszFormat, ...);
+RTEXITCODE errorGetOpt(USAGECATEGORY fCategory, int rc, union RTGETOPTUNION const *pValueUnion);
+RTEXITCODE errorGetOptEx(USAGECATEGORY fCategory, uint32_t fSubCategory, int rc, union RTGETOPTUNION const *pValueUnion);
 RTEXITCODE errorArgument(const char *pszFormat, ...);
 
-void printUsageInternal(USAGECATEGORY u64Cmd, PRTSTREAM pStrm);
+void printUsageInternal(USAGECATEGORY fCategory, PRTSTREAM pStrm);
 
 #ifndef VBOX_ONLY_DOCS
 HRESULT showProgress(ComPtr<IProgress> progress);
@@ -185,7 +207,7 @@ int handleDebugVM(HandlerArg *a);
 extern void usageGuestProperty(PRTSTREAM pStrm, const char *pcszSep1, const char *pcszSep2);
 
 /* VBoxManageGuestCtrl.cpp */
-extern void usageGuestControl(PRTSTREAM pStrm, const char *pcszSep1, const char *pcszSep2);
+extern void usageGuestControl(PRTSTREAM pStrm, const char *pcszSep1, const char *pcszSep2, uint32_t fSubCategory);
 
 #ifndef VBOX_ONLY_DOCS
 /* VBoxManageGuestProp.cpp */
@@ -204,7 +226,7 @@ int handleShowVMInfo(HandlerArg *a);
 HRESULT showVMInfo(ComPtr<IVirtualBox> virtualBox,
                    ComPtr<IMachine> machine,
                    VMINFO_DETAILS details = VMINFO_NONE,
-                   ComPtr <IConsole> console = ComPtr<IConsole>());
+                   ComPtr<IConsole> console = ComPtr<IConsole>());
 const char *machineStateToName(MachineState_T machineState, bool fShort);
 HRESULT showBandwidthGroups(ComPtr<IBandwidthControl> &bwCtrl,
                             VMINFO_DETAILS details);
@@ -238,6 +260,10 @@ int handleCreateHardDisk(HandlerArg *a);
 int handleModifyHardDisk(HandlerArg *a);
 int handleCloneHardDisk(HandlerArg *a);
 RTEXITCODE handleConvertFromRaw(int argc, char *argv[]);
+HRESULT showMediumInfo(const ComPtr<IVirtualBox> &pVirtualBox,
+                       const ComPtr<IMedium> &pMedium,
+                       const char *pszParentUUID,
+                       bool fOptLong);
 int handleShowHardDiskInfo(HandlerArg *a);
 int handleCloseMedium(HandlerArg *a);
 int parseDiskType(const char *psz, MediumType_T *pDiskType);
@@ -260,8 +286,12 @@ int handleUSBFilter(HandlerArg *a);
 /* VBoxManageHostonly.cpp */
 int handleHostonlyIf(HandlerArg *a);
 
-/* VBoxManageHostonly.cpp */
+/* VBoxManageDHCPServer.cpp */
 int handleDHCPServer(HandlerArg *a);
+
+/* VBoxManageNATNetwork.cpp */
+int handleNATNetwork(HandlerArg *a);
+
 
 /* VBoxManageBandwidthControl.cpp */
 int handleBandwidthControl(HandlerArg *a);

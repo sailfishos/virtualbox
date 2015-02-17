@@ -1,11 +1,9 @@
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Global declarations and functions
+ * VBox Qt GUI - UIDefs namespace and other global declarations.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,8 +14,8 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef __UIDefs_h__
-#define __UIDefs_h__
+#ifndef ___UIDefs_h___
+#define ___UIDefs_h___
 
 /* Qt includes: */
 #include <QEvent>
@@ -58,24 +56,18 @@ namespace UIDefs
     enum RenderMode
     {
           InvalidRenderMode
-        , TimerMode
         , QImageMode
-        , SDLMode
-        , DDRAWMode
+#ifdef VBOX_GUI_USE_QUARTZ2D
         , Quartz2DMode
-#ifdef VBOX_GUI_USE_QGLFB
-        , QGLMode
-#endif /* VBOX_GUI_USE_QGLFB */
+#endif /* VBOX_GUI_USE_QUARTZ2D */
     };
 
     /* Additional Qt event types: */
     enum UIEventType
     {
           ResizeEventType = QEvent::User + 101
-        , RepaintEventType
         , SetRegionEventType
         , ModifierKeyChangeEventType
-        , MediaEnumEventType
 #ifdef Q_WS_WIN
         , ShellExecuteEventType
 #endif /* Q_WS_WIN */
@@ -123,9 +115,26 @@ namespace UIDefs
     extern const char* GUI_GroupDefinitions;
     extern const char* GUI_HideFromManager;
     extern const char* GUI_PreventReconfiguration;
+    extern const char* GUI_PreventSnapshotOperations;
     extern const char* GUI_HideDetails;
 
     /* Machine-window declarations: */
+#ifndef Q_WS_MAC
+    extern const char* GUI_MachineWindowIcons;
+    extern const char* GUI_MachineWindowNamePostfix;
+#endif /* !Q_WS_MAC */
+    extern const char* GUI_RestrictedRuntimeMenus;
+#ifdef Q_WS_MAC
+    extern const char* GUI_RestrictedRuntimeApplicationMenuActions;
+#endif /* Q_WS_MAC */
+    extern const char* GUI_RestrictedRuntimeMachineMenuActions;
+    extern const char* GUI_RestrictedRuntimeViewMenuActions;
+    extern const char* GUI_RestrictedRuntimeDevicesMenuActions;
+#ifdef VBOX_WITH_DEBUGGER_GUI
+    extern const char* GUI_RestrictedRuntimeDebuggerMenuActions;
+#endif /* VBOX_WITH_DEBUGGER_GUI */
+    extern const char* GUI_RestrictedRuntimeHelpMenuActions;
+    extern const char* GUI_RestrictedVisualStates;
     extern const char* GUI_Input_MachineShortcuts;
     extern const char* GUI_LastNormalWindowPosition;
     extern const char* GUI_LastScaleWindowPosition;
@@ -135,10 +144,27 @@ namespace UIDefs
     extern const char* GUI_Fullscreen;
     extern const char* GUI_Seamless;
     extern const char* GUI_Scale;
+#ifdef Q_WS_X11
+    extern const char* GUI_Fullscreen_LegacyMode;
+#endif /* Q_WS_X11 */
     extern const char* GUI_VirtualScreenToHostScreen;
     extern const char* GUI_AutoresizeGuest;
+    extern const char* GUI_AutomountGuestScreens;
     extern const char* GUI_SaveMountedAtRuntime;
     extern const char* GUI_PassCAD;
+    extern const char* GUI_DefaultCloseAction;
+    extern const char* GUI_RestrictedStatusBarIndicators;
+    extern const char* GUI_HidLedsSync;
+    extern const char* GUI_MouseCapturePolicy;
+    extern const char* GUI_GuruMeditationHandler;
+    extern const char* GUI_HiDPIOptimization;
+
+    /* Settings dialogs stuff: */
+    extern const char* GUI_RestrictedGlobalSettingsPages;
+    extern const char* GUI_RestrictedMachineSettingsPages;
+
+    /* Settings dialogs: Display page stuff: */
+    extern const char* GUI_ActivateHoveredMachineWindow;
 
     /* Mini tool-bar declarations: */
     extern const char* GUI_ShowMiniToolBar;
@@ -162,13 +188,12 @@ namespace UIDefs
     extern const char* GUI_SuppressMessages;
     extern const char* GUI_InvertMessageOption;
 
-    /* Registration dialog declarations: */
-    extern const char* GUI_RegistrationDlgWinID;
-    extern const char* GUI_RegistrationData;
-
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
     /* Update manager declarations: */
+    extern const char* GUI_PreventApplicationUpdate;
     extern const char* GUI_UpdateDate;
     extern const char* GUI_UpdateCheckCount;
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
 
     /* Information dialog declarations: */
     extern const char* GUI_InfoDlgState;
@@ -200,19 +225,25 @@ namespace UIDefs
     extern const char* GUI_Accelerate2D_PixformatAYUV;
 #endif /* VBOX_WITH_VIDEOHWACCEL */
 
-#ifdef VBOX_GUI_WITH_SYSTRAY
-    /* Tray icon declarations: */
-    extern const char* GUI_TrayIconWinID;
-    extern const char* GUI_TrayIconEnabled;
-    extern const char* GUI_MainWindowCount;
-#endif /* VBOX_GUI_WITH_SYSTRAY */
-
     /* File extensions declarations: */
     extern QStringList VBoxFileExts;
     extern QStringList VBoxExtPackFileExts;
     extern QStringList OVFFileExts;
 }
 using namespace UIDefs /* globally */;
+
+#ifdef Q_WS_MAC
+/** Known MacOS X releases. */
+enum MacOSXRelease
+{
+    MacOSXRelease_Unknown,
+    MacOSXRelease_SnowLeopard,
+    MacOSXRelease_Lion,
+    MacOSXRelease_MountainLion,
+    MacOSXRelease_Mavericks,
+    MacOSXRelease_Yosemite
+};
+#endif /* Q_WS_MAC */
 
 struct StorageSlot
 {
@@ -232,6 +263,136 @@ struct StorageSlot
     KStorageBus bus; LONG port; LONG device;
 };
 Q_DECLARE_METATYPE(StorageSlot);
+
+/* Common UI size suffixes: */
+enum SizeSuffix
+{
+    SizeSuffix_Byte = 0,
+    SizeSuffix_KiloByte,
+    SizeSuffix_MegaByte,
+    SizeSuffix_GigaByte,
+    SizeSuffix_TeraByte,
+    SizeSuffix_PetaByte,
+    SizeSuffix_Max
+};
+
+/* Runtime UI menu types: */
+enum RuntimeMenuType
+{
+    RuntimeMenuType_Invalid = 0,
+    RuntimeMenuType_Machine = RT_BIT(0),
+    RuntimeMenuType_View    = RT_BIT(1),
+    RuntimeMenuType_Devices = RT_BIT(2),
+    RuntimeMenuType_Debug   = RT_BIT(3),
+    RuntimeMenuType_Help    = RT_BIT(4),
+    RuntimeMenuType_All     = 0xFF
+};
+
+#ifdef Q_WS_MAC
+/** Runtime UI: Application menu: Action types. */
+enum RuntimeMenuApplicationActionType
+{
+    RuntimeMenuApplicationActionType_Invalid = 0,
+    RuntimeMenuApplicationActionType_About   = RT_BIT(0),
+    RuntimeMenuApplicationActionType_All     = 0xFFFF
+};
+#endif /* Q_WS_MAC */
+
+/** Runtime UI: Machine menu: Action types. */
+enum RuntimeMenuMachineActionType
+{
+    RuntimeMenuMachineActionType_Invalid           = 0,
+    RuntimeMenuMachineActionType_SettingsDialog    = RT_BIT(0),
+    RuntimeMenuMachineActionType_TakeSnapshot      = RT_BIT(1),
+    RuntimeMenuMachineActionType_TakeScreenshot    = RT_BIT(2),
+    RuntimeMenuMachineActionType_InformationDialog = RT_BIT(3),
+    RuntimeMenuMachineActionType_MouseIntegration  = RT_BIT(4),
+    RuntimeMenuMachineActionType_TypeCAD           = RT_BIT(5),
+#ifdef Q_WS_X11
+    RuntimeMenuMachineActionType_TypeCABS          = RT_BIT(6),
+#endif /* Q_WS_X11 */
+    RuntimeMenuMachineActionType_Pause             = RT_BIT(7),
+    RuntimeMenuMachineActionType_Reset             = RT_BIT(8),
+    RuntimeMenuMachineActionType_SaveState         = RT_BIT(9),
+    RuntimeMenuMachineActionType_Shutdown          = RT_BIT(10),
+    RuntimeMenuMachineActionType_PowerOff          = RT_BIT(11),
+#ifndef Q_WS_MAC
+    RuntimeMenuMachineActionType_Close             = RT_BIT(12),
+#endif /* !Q_WS_MAC */
+    RuntimeMenuMachineActionType_All               = 0xFFFF
+};
+
+/** Runtime UI: View menu: Action types. */
+enum RuntimeMenuViewActionType
+{
+    RuntimeMenuViewActionType_Invalid         = 0,
+    RuntimeMenuViewActionType_Fullscreen      = RT_BIT(0),
+    RuntimeMenuViewActionType_Seamless        = RT_BIT(1),
+    RuntimeMenuViewActionType_Scale           = RT_BIT(2),
+    RuntimeMenuViewActionType_GuestAutoresize = RT_BIT(3),
+    RuntimeMenuViewActionType_AdjustWindow    = RT_BIT(4),
+    RuntimeMenuViewActionType_Multiscreen     = RT_BIT(5),
+    RuntimeMenuViewActionType_All             = 0xFFFF
+};
+
+/** Runtime UI: Devices menu: Action types. */
+enum RuntimeMenuDevicesActionType
+{
+    RuntimeMenuDevicesActionType_Invalid               = 0,
+    RuntimeMenuDevicesActionType_OpticalDevices        = RT_BIT(0),
+    RuntimeMenuDevicesActionType_FloppyDevices         = RT_BIT(1),
+    RuntimeMenuDevicesActionType_USBDevices            = RT_BIT(2),
+    RuntimeMenuDevicesActionType_WebCams               = RT_BIT(3),
+    RuntimeMenuDevicesActionType_SharedClipboard       = RT_BIT(4),
+    RuntimeMenuDevicesActionType_DragAndDrop           = RT_BIT(5),
+    RuntimeMenuDevicesActionType_NetworkSettings       = RT_BIT(6),
+    RuntimeMenuDevicesActionType_SharedFoldersSettings = RT_BIT(7),
+    RuntimeMenuDevicesActionType_VRDEServer            = RT_BIT(8),
+    RuntimeMenuDevicesActionType_VideoCapture          = RT_BIT(9),
+    RuntimeMenuDevicesActionType_InstallGuestTools     = RT_BIT(10),
+    RuntimeMenuDevicesActionType_All                   = 0xFFFF
+};
+
+#ifdef VBOX_WITH_DEBUGGER_GUI
+/** Runtime UI: Debugger menu: Action types. */
+enum RuntimeMenuDebuggerActionType
+{
+    RuntimeMenuDebuggerActionType_Invalid     = 0,
+    RuntimeMenuDebuggerActionType_Statistics  = RT_BIT(0),
+    RuntimeMenuDebuggerActionType_CommandLine = RT_BIT(1),
+    RuntimeMenuDebuggerActionType_Logging     = RT_BIT(2),
+    RuntimeMenuDebuggerActionType_LogDialog   = RT_BIT(3),
+    RuntimeMenuDebuggerActionType_All         = 0xFFFF
+};
+#endif /* VBOX_WITH_DEBUGGER_GUI */
+
+/** Runtime UI: Help menu: Action types. */
+enum RuntimeMenuHelpActionType
+{
+    RuntimeMenuHelpActionType_Invalid              = 0,
+    RuntimeMenuHelpActionType_Contents             = RT_BIT(0),
+    RuntimeMenuHelpActionType_WebSite              = RT_BIT(1),
+    RuntimeMenuHelpActionType_ResetWarnings        = RT_BIT(2),
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
+    RuntimeMenuHelpActionType_NetworkAccessManager = RT_BIT(3),
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
+#ifndef Q_WS_MAC
+    RuntimeMenuHelpActionType_About                = RT_BIT(4),
+#endif /* !Q_WS_MAC */
+    RuntimeMenuHelpActionType_All                  = 0xFFFF
+};
+
+/* Runtime UI visual-state types: */
+enum UIVisualStateType
+{
+    UIVisualStateType_Invalid    = 0,
+    UIVisualStateType_Normal     = RT_BIT(0),
+    UIVisualStateType_Fullscreen = RT_BIT(1),
+    UIVisualStateType_Seamless   = RT_BIT(2),
+    UIVisualStateType_Scale      = RT_BIT(3),
+    UIVisualStateType_All        = 0xFF
+};
+Q_DECLARE_METATYPE(UIVisualStateType);
 
 /* Details element type: */
 enum DetailsElementType
@@ -253,5 +414,97 @@ enum DetailsElementType
 };
 Q_DECLARE_METATYPE(DetailsElementType);
 
-#endif // __UIDefs_h__
+/* Global settings page type: */
+enum GlobalSettingsPageType
+{
+    GlobalSettingsPageType_Invalid,
+    GlobalSettingsPageType_General,
+    GlobalSettingsPageType_Input,
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
+    GlobalSettingsPageType_Update,
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
+    GlobalSettingsPageType_Language,
+    GlobalSettingsPageType_Display,
+    GlobalSettingsPageType_Network,
+    GlobalSettingsPageType_Extensions,
+#ifdef VBOX_GUI_WITH_NETWORK_MANAGER
+    GlobalSettingsPageType_Proxy,
+#endif /* VBOX_GUI_WITH_NETWORK_MANAGER */
+    GlobalSettingsPageType_Max
+};
+Q_DECLARE_METATYPE(GlobalSettingsPageType);
+
+/* Machine settings page type: */
+enum MachineSettingsPageType
+{
+    MachineSettingsPageType_Invalid,
+    MachineSettingsPageType_General,
+    MachineSettingsPageType_System,
+    MachineSettingsPageType_Display,
+    MachineSettingsPageType_Storage,
+    MachineSettingsPageType_Audio,
+    MachineSettingsPageType_Network,
+    MachineSettingsPageType_Ports,
+    MachineSettingsPageType_Serial,
+    MachineSettingsPageType_Parallel,
+    MachineSettingsPageType_USB,
+    MachineSettingsPageType_SF,
+    MachineSettingsPageType_Max
+};
+Q_DECLARE_METATYPE(MachineSettingsPageType);
+
+/* Indicator type: */
+enum IndicatorType
+{
+    IndicatorType_Invalid,
+    IndicatorType_HardDisks,
+    IndicatorType_OpticalDisks,
+    IndicatorType_FloppyDisks,
+    IndicatorType_Network,
+    IndicatorType_USB,
+    IndicatorType_SharedFolders,
+    IndicatorType_VideoCapture,
+    IndicatorType_Features,
+    IndicatorType_Mouse,
+    IndicatorType_Keyboard,
+    IndicatorType_Max
+};
+Q_DECLARE_METATYPE(IndicatorType);
+
+/* Machine close action: */
+enum MachineCloseAction
+{
+    MachineCloseAction_Invalid                    = 0,
+    MachineCloseAction_SaveState                  = RT_BIT(0),
+    MachineCloseAction_Shutdown                   = RT_BIT(1),
+    MachineCloseAction_PowerOff                   = RT_BIT(2),
+    MachineCloseAction_PowerOff_RestoringSnapshot = RT_BIT(3),
+    MachineCloseAction_All                        = 0xFF
+};
+Q_DECLARE_METATYPE(MachineCloseAction);
+
+/** Mouse capture policy types. */
+enum MouseCapturePolicy
+{
+    MouseCapturePolicy_Default,
+    MouseCapturePolicy_HostComboOnly,
+    MouseCapturePolicy_Disabled
+};
+
+/** Guru Meditation handler types. */
+enum GuruMeditationHandlerType
+{
+    GuruMeditationHandlerType_Default,
+    GuruMeditationHandlerType_PowerOff,
+    GuruMeditationHandlerType_Ignore
+};
+
+/** Runtime UI: HiDPI optimization types. */
+enum HiDPIOptimizationType
+{
+    HiDPIOptimizationType_None,
+    HiDPIOptimizationType_Performance
+};
+
+#endif /* !___UIDefs_h___ */
 

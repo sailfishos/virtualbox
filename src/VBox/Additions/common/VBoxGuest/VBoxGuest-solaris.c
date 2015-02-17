@@ -335,7 +335,7 @@ static int VBoxGuestSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
                                                          VMMDEV_EVENT_MOUSE_POSITION_CHANGED);
                                 if (RT_SUCCESS(rc))
                                 {
-                                    rc = ddi_create_minor_node(pDip, DEVICE_NAME, S_IFCHR, instance, DDI_PSEUDO, 0);
+                                    rc = ddi_create_minor_node(pDip, DEVICE_NAME, S_IFCHR, instance, DDI_PSEUDO, 0 /* fFlags */);
                                     if (rc == DDI_SUCCESS)
                                     {
                                         g_pDip = pDip;
@@ -696,6 +696,8 @@ static int VBoxGuestSolarisIOCtl(dev_t Dev, int Cmd, intptr_t pArg, int Mode, cr
          * which are not really failures that require logging.
          */
         Log((DEVICE_NAME "::IOCtl: VBoxGuestCommonIOCtl failed. Cmd=%#x rc=%d\n", Cmd, rc));
+        if (rc == VERR_PERMISSION_DENIED)   /* RTErrConvertToErrno() below will ring-0 debug assert if we don't do this. */
+            rc = VERR_ACCESS_DENIED;
         rc = RTErrConvertToErrno(rc);
     }
     *pVal = rc;
@@ -778,13 +780,13 @@ static int VBoxGuestSolarisAddIRQ(dev_info_t *pDip)
                             if (rc == DDI_SUCCESS)
                             {
                                 /* Initialize the mutex. */
-                                mutex_init(&g_IrqMtx, NULL, MUTEX_DRIVER, DDI_INTR_PRI(uIntrPriority));
+                                mutex_init(&g_IrqMtx, NULL /* pszDesc */, MUTEX_DRIVER, DDI_INTR_PRI(uIntrPriority));
 
                                 /* Assign interrupt handler functions and enable interrupts. */
                                 for (int i = 0; i < IntrAllocated; i++)
                                 {
                                     rc = ddi_intr_add_handler(g_pIntr[i], (ddi_intr_handler_t *)VBoxGuestSolarisISR,
-                                                            NULL /* No Private Data */, NULL);
+                                                              NULL /* pvArg1 */, NULL /* pvArg2 */);
                                     if (rc == DDI_SUCCESS)
                                         rc = ddi_intr_enable(g_pIntr[i]);
                                     if (rc != DDI_SUCCESS)

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -292,6 +292,14 @@ static struct
     { "com",      sizeof("com"     ) - 1,  RTLOGDEST_COM },
     { "user",     sizeof("user"    ) - 1,  RTLOGDEST_USER },
 };
+
+/**
+ * Log rotation backoff table, important on Windows host, especially for
+ * VBoxSVC release logging. Only a medium term solution, until a proper fix
+ * for log file handling is available. 10 seconds total.
+ */
+static const uint32_t s_aLogBackoff[] =
+{ 10, 10, 10, 20, 50, 100, 200, 200, 200, 200, 500, 500, 500, 500, 1000, 1000, 1000, 1000, 1000, 1000, 1000 };
 
 
 /**
@@ -1492,6 +1500,7 @@ static unsigned rtlogGroupFlags(const char *psz)
                 }
             } /* strincmp */
         } /* for each flags */
+        AssertMsg(fFound, ("%.15s...", psz));
     }
 
     /*
@@ -2076,24 +2085,27 @@ RTDECL(int) RTLogGetDestinations(PRTLOGGER pLogger, char *pszBuf, size_t cchBuf)
         char szNum[32];
         if (pLogger->pInt->cHistory)
         {
-            RTStrPrintf(szNum, sizeof(szNum), fNotFirst ? "history=%u" : " history=%u", pLogger->pInt->cHistory);
+            RTStrPrintf(szNum, sizeof(szNum), fNotFirst ? " history=%u" : "history=%u", pLogger->pInt->cHistory);
             rc = RTStrCopyP(&pszBuf, &cchBuf, szNum);
             if (RT_FAILURE(rc))
                 return rc;
+            fNotFirst = true;
         }
         if (pLogger->pInt->cbHistoryFileMax != UINT64_MAX)
         {
-            RTStrPrintf(szNum, sizeof(szNum), fNotFirst ? "histsize=%llu" : " histsize=%llu", pLogger->pInt->cbHistoryFileMax);
+            RTStrPrintf(szNum, sizeof(szNum), fNotFirst ? " histsize=%llu" : "histsize=%llu", pLogger->pInt->cbHistoryFileMax);
             rc = RTStrCopyP(&pszBuf, &cchBuf, szNum);
             if (RT_FAILURE(rc))
                 return rc;
+            fNotFirst = true;
         }
         if (pLogger->pInt->cSecsHistoryTimeSlot != UINT32_MAX)
         {
-            RTStrPrintf(szNum, sizeof(szNum), fNotFirst ? "histtime=%llu" : " histtime=%llu", pLogger->pInt->cSecsHistoryTimeSlot);
+            RTStrPrintf(szNum, sizeof(szNum), fNotFirst ? " histtime=%llu" : "histtime=%llu", pLogger->pInt->cSecsHistoryTimeSlot);
             rc = RTStrCopyP(&pszBuf, &cchBuf, szNum);
             if (RT_FAILURE(rc))
                 return rc;
+            fNotFirst = true;
         }
     }
 # endif /* IN_RING3 */
@@ -2596,6 +2608,22 @@ RTDECL(void) RTLogPrintfV(const char *pszFormat, va_list args)
 }
 RT_EXPORT_SYMBOL(RTLogPrintfV);
 
+
+/**
+ * Dumper vprintf-like function outputting to a logger.
+ *
+ * @param   pvUser          Pointer to the logger instance to use, NULL for
+ *                          default instance.
+ * @param   pszFormat       Format string.
+ * @param   va              Format arguments.
+ */
+RTDECL(void) RTLogDumpPrintfV(void *pvUser, const char *pszFormat, va_list va)
+{
+    RTLogLoggerV((PRTLOGGER)pvUser, pszFormat, va);
+}
+RT_EXPORT_SYMBOL(RTLogDumpPrintfV);
+
+
 #ifdef IN_RING3
 
 /**
@@ -2608,7 +2636,7 @@ RT_EXPORT_SYMBOL(RTLogPrintfV);
  */
 static int rtlogFileOpen(PRTLOGGER pLogger, char *pszErrorMsg, size_t cchErrorMsg)
 {
-    uint32_t fOpen = RTFILE_O_WRITE | RTFILE_O_DENY_WRITE;
+    uint32_t fOpen = RTFILE_O_WRITE | RTFILE_O_DENY_NONE;
     if (pLogger->fFlags & RTLOGFLAGS_APPEND)
         fOpen |= RTFILE_O_OPEN_CREATE | RTFILE_O_APPEND;
     else
@@ -2616,7 +2644,20 @@ static int rtlogFileOpen(PRTLOGGER pLogger, char *pszErrorMsg, size_t cchErrorMs
     if (pLogger->fFlags & RTLOGFLAGS_WRITE_THROUGH)
         fOpen |= RTFILE_O_WRITE_THROUGH;
 
-    int rc = RTFileOpen(&pLogger->pInt->hFile, pLogger->pInt->szFilename, fOpen);
+    int rc;
+    unsigned cBackoff = 0;
+    do
+    {
+        rc = RTFileOpen(&pLogger->pInt->hFile, pLogger->pInt->szFilename, fOpen);
+        if (rc == VERR_SHARING_VIOLATION)
+        {
+            if (cBackoff >= RT_ELEMENTS(s_aLogBackoff))
+                break;
+            RTThreadSleep(s_aLogBackoff[cBackoff]);
+            cBackoff++;
+        }
+    }
+    while (rc == VERR_SHARING_VIOLATION);
     if (RT_FAILURE(rc))
     {
         pLogger->pInt->hFile = NIL_RTFILE;
@@ -2708,8 +2749,24 @@ static void rtlogRotate(PRTLOGGER pLogger, uint32_t uTimeSlot, bool fFirst)
 
             char szNewName[sizeof(pLogger->pInt->szFilename) + 32];
             RTStrPrintf(szNewName, sizeof(szNewName), "%s.%u", pLogger->pInt->szFilename, i + 1);
-            if (   RTFileRename(szOldName, szNewName, RTFILEMOVE_FLAGS_REPLACE)
-                == VERR_FILE_NOT_FOUND)
+
+
+
+            int rc;
+            unsigned cBackoff = 0;
+            do
+            {
+                rc = RTFileRename(szOldName, szNewName, RTFILEMOVE_FLAGS_REPLACE);
+                if (rc == VERR_SHARING_VIOLATION)
+                {
+                    if (cBackoff >= RT_ELEMENTS(s_aLogBackoff))
+                        break;
+                    RTThreadSleep(s_aLogBackoff[cBackoff]);
+                    cBackoff++;
+                }
+            }
+            while (rc == VERR_SHARING_VIOLATION);
+            if (rc == VERR_FILE_NOT_FOUND)
                 RTFileDelete(szNewName);
         }
 
@@ -2762,39 +2819,47 @@ static void rtlogRotate(PRTLOGGER pLogger, uint32_t uTimeSlot, bool fFirst)
  */
 static void rtlogFlush(PRTLOGGER pLogger)
 {
-    if (pLogger->offScratch == 0)
+    uint32_t const cchScratch = pLogger->offScratch;
+    if (cchScratch == 0)
         return; /* nothing to flush. */
+
+    /* Make sure the string is terminated.  On Windows, RTLogWriteDebugger
+       will get upset if it isn't. */
+    if (RT_LIKELY(cchScratch < sizeof(pLogger->achScratch)))
+        pLogger->achScratch[cchScratch] = '\0';
+    else
+        AssertFailed();
 
 #ifndef IN_RC
     if (pLogger->fDestFlags & RTLOGDEST_USER)
-        RTLogWriteUser(pLogger->achScratch, pLogger->offScratch);
+        RTLogWriteUser(pLogger->achScratch, cchScratch);
 
     if (pLogger->fDestFlags & RTLOGDEST_DEBUGGER)
-        RTLogWriteDebugger(pLogger->achScratch, pLogger->offScratch);
+        RTLogWriteDebugger(pLogger->achScratch, cchScratch);
 
 # ifdef IN_RING3
     if (pLogger->fDestFlags & RTLOGDEST_FILE)
     {
         if (pLogger->pInt->hFile != NIL_RTFILE)
         {
-            RTFileWrite(pLogger->pInt->hFile, pLogger->achScratch, pLogger->offScratch, NULL);
+            RTFileWrite(pLogger->pInt->hFile, pLogger->achScratch, cchScratch, NULL);
             if (pLogger->fFlags & RTLOGFLAGS_FLUSH)
                 RTFileFlush(pLogger->pInt->hFile);
         }
         if (pLogger->pInt->cHistory)
-            pLogger->pInt->cbHistoryFileWritten += pLogger->offScratch;
+            pLogger->pInt->cbHistoryFileWritten += cchScratch;
     }
 # endif
 
     if (pLogger->fDestFlags & RTLOGDEST_STDOUT)
-        RTLogWriteStdOut(pLogger->achScratch, pLogger->offScratch);
+        RTLogWriteStdOut(pLogger->achScratch, cchScratch);
 
     if (pLogger->fDestFlags & RTLOGDEST_STDERR)
-        RTLogWriteStdErr(pLogger->achScratch, pLogger->offScratch);
+        RTLogWriteStdErr(pLogger->achScratch, cchScratch);
 
 # if (defined(IN_RING0) || defined(IN_RC)) && !defined(LOG_NO_COM)
     if (pLogger->fDestFlags & RTLOGDEST_COM)
-        RTLogWriteCom(pLogger->achScratch, pLogger->offScratch);
+        RTLogWriteCom(pLogger->achScratch, cchScratch);
 # endif
 #endif /* !IN_RC */
 
@@ -3249,7 +3314,7 @@ static DECLCALLBACK(size_t) rtLogOutputPrefixed(void *pv, const char *pachChars,
 #define CCH_PREFIX_16   CCH_PREFIX_15 + 17
 
 #define CCH_PREFIX      ( CCH_PREFIX_16 )
-                AssertCompile(CCH_PREFIX < 256);
+                { AssertCompile(CCH_PREFIX < 256); }
 
                 /*
                  * Done, figure what we've used and advance the buffer and free size.

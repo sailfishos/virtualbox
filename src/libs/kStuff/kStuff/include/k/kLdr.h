@@ -1,4 +1,4 @@
-/* $Id: kLdr.h 41 2011-08-24 14:35:57Z bird $ */
+/* $Id: kLdr.h 54 2013-10-09 19:52:48Z bird $ */
 /** @file
  * kLdr - The Dynamic Loader.
  */
@@ -588,6 +588,14 @@ typedef FNKLDRENUMRSRC *PFNKLDRENUMRSRC;
 #define KLDR_LANG_ID_UI_CUSTOM_DEFAULT  ( ~(KU32)7 )
 /** @} */
 
+/** @name Module Open Flags
+ * @{ */
+/** Indicates that we won't be loading the module, we're just getting
+ *  information (like symbols and line numbers) out of it. */
+#define KLDRMOD_OPEN_FLAGS_FOR_INFO     K_BIT32(0)
+/** Mask of valid flags.    */
+#define KLDRMOD_OPEN_FLAGS_VALID_MASK   KU32_C(0x00000001)
+/** @} */
 
 int     kLdrModOpen(const char *pszFilename, KU32 fFlags, KCPUARCH enmCpuArch, PPKLDRMOD ppMod);
 int     kLdrModOpenFromRdr(PKRDR pRdr, KU32 fFlags, KCPUARCH enmCpuArch, PPKLDRMOD ppMod);
@@ -605,6 +613,7 @@ KI32    kLdrModNumberOfImports(PKLDRMOD pMod, const void *pvBits);
 int     kLdrModCanExecuteOn(PKLDRMOD pMod, const void *pvBits, KCPUARCH enmArch, KCPU enmCpu);
 int     kLdrModGetStackInfo(PKLDRMOD pMod, const void *pvBits, KLDRADDR BaseAddress, PKLDRSTACKINFO pStackInfo);
 int     kLdrModQueryMainEntrypoint(PKLDRMOD pMod, const void *pvBits, KLDRADDR BaseAddress, PKLDRADDR pMainEPAddress);
+int     kLdrModQueryImageUuid(PKLDRMOD pMod, const void *pvBits, void *pvUuid, KSIZE cbUuid);
 int     kLdrModQueryResource(PKLDRMOD pMod, const void *pvBits, KLDRADDR BaseAddress, KU32 idType, const char *pszType,
                              KU32 idName, const char *pszName, KU32 idLang, PKLDRADDR pAddrRsrc, KSIZE *pcbRsrc);
 int     kLdrModEnumResources(PKLDRMOD pMod, const void *pvBits, KLDRADDR BaseAddress, KU32 idType, const char *pszType,
@@ -690,6 +699,8 @@ typedef struct KLDRMODOPS
     int (* pfnGetStackInfo)(PKLDRMOD pMod, const void *pvBits, KLDRADDR BaseAddress, PKLDRSTACKINFO pStackInfo);
     /** @copydoc kLdrModQueryMainEntrypoint */
     int (* pfnQueryMainEntrypoint)(PKLDRMOD pMod, const void *pvBits, KLDRADDR BaseAddress, PKLDRADDR pMainEPAddress);
+    /** @copydoc kLdrModQueryImageUuid  */
+    int (* pfnQueryImageUuid)(PKLDRMOD pMod, const void *pvBits, void *pvUuid, KSIZE pcbUuid);
     /** @copydoc kLdrModQueryResource */
     int (* pfnQueryResource)(PKLDRMOD pMod, const void *pvBits, KLDRADDR BaseAddress, KU32 idType, const char *pszType,
                              KU32 idName, const char *pszName, KU32 idLang, PKLDRADDR pAddrRsrc, KSIZE *pcbRsrc);

@@ -48,6 +48,8 @@ RT_C_DECLS_BEGIN
 #define RTR3INIT_FLAGS_DLL          RT_BIT(1)
 /** We are sharing a process space, so we need to behave. */
 #define RTR3INIT_FLAGS_UNOBTRUSIVE  RT_BIT(2)
+/** The caller ensures that the argument bector is UTF-8. */
+#define RTR3INIT_FLAGS_UTF8_ARGV    RT_BIT(3)
 /** @} */
 
 /** @name RTR3InitEx version
@@ -106,7 +108,15 @@ RTR3DECL(int) RTR3InitEx(uint32_t iVersion, uint32_t fFlags, int cArgs, char ***
 RTR3DECL(void) RTR3Term(void);
 
 /**
+ * Is IPRT succesfully initialized?
+ *
+ * @returns true/false.
+ */
+RTR3DECL(bool) RTR3InitIsInitialized(void);
+
+/**
  * Are we running in unobtrusive mode?
+ * @returns true/false.
  */
 RTR3DECL(bool) RTR3InitIsUnobtrusive(void);
 #endif /* IN_RING3 */

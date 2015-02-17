@@ -1,4 +1,4 @@
-# $Id: WINPSDK.kmk 2602 2012-07-12 20:21:45Z bird $
+# $Id: WINPSDK.kmk 2735 2014-12-09 15:35:45Z bird $
 ## @file
 # kBuild SDK - The Windows Platform SDK, targeting (KBUILD_TARGET).
 #
@@ -91,7 +91,7 @@ SDK_WINPSDK_LIBS.x86 ?= \
 	$(PATH_SDK_WINPSDK_LIB.x86)/User32.Lib \
 	$(PATH_SDK_WINPSDK_LIB.x86)/Gdi32.Lib \
 	$(PATH_SDK_WINPSDK_LIB.x86)/AdvAPI32.Lib \
-	$(PATH_SDK_WINPSDK_LIB.x86)/Shell32.Lib \
+	$(PATH_SDK_WINPSDK_LIB.x86)/shell32.lib \
 	$(PATH_SDK_WINPSDK_LIB.x86)/ShLwApi.Lib \
 	$(PATH_SDK_WINPSDK_LIB.x86)/SetupAPI.Lib \
 	$(PATH_SDK_WINPSDK_LIB.x86)/Uuid.Lib \

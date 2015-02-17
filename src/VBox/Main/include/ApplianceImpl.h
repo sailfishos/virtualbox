@@ -1,12 +1,10 @@
 /* $Id: ApplianceImpl.h $ */
-
 /** @file
- *
  * VirtualBox COM class implementation
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,6 +24,12 @@
 /* Todo: This file needs massive cleanup. Split IAppliance in a public and
  * private classes. */
 #include <iprt/tar.h>
+#include <iprt/circbuf.h>
+#include <VBox/vd.h>
+#include <iprt/sha.h>
+
+#include "ovfreader.h"
+#include <set>
 
 /* VBox forward declarations */
 class Progress;
@@ -36,12 +40,15 @@ typedef struct VDINTERFACE   *PVDINTERFACE;
 typedef struct VDINTERFACEIO *PVDINTERFACEIO;
 typedef struct SHASTORAGE    *PSHASTORAGE;
 
+typedef enum applianceIOName { applianceIOTar, applianceIOFile, applianceIOSha } APPLIANCEIONAME;
+
 namespace ovf
 {
     struct HardDiskController;
     struct VirtualSystem;
     class OVFReader;
     struct DiskImage;
+    struct EnvelopeData;
 }
 
 namespace xml
@@ -72,13 +79,7 @@ public:
 
     DECLARE_EMPTY_CTOR_DTOR (Appliance)
 
-    enum OVFFormat
-    {
-        unspecified,
-        OVF_0_9,
-        OVF_1_0,
-        OVF_2_0
-    };
+
 
     // public initializer/uninitializer for internal purposes only
     HRESULT FinalConstruct() { return BaseFinalConstruct(); }
@@ -100,7 +101,7 @@ public:
     STDMETHOD(ImportMachines)(ComSafeArrayIn(ImportOptions_T, options), IProgress **aProgress);
     /* Export methods */
     STDMETHOD(CreateVFSExplorer)(IN_BSTR aURI, IVFSExplorer **aExplorer);
-    STDMETHOD(Write)(IN_BSTR format, BOOL fManifest, IN_BSTR path, IProgress **aProgress);
+    STDMETHOD(Write)(IN_BSTR format, ComSafeArrayIn(ExportOptions_T, options), IN_BSTR path, IProgress **aProgress);
 
     STDMETHOD(GetWarnings)(ComSafeArrayOut(BSTR, aWarnings));
 
@@ -141,6 +142,16 @@ private:
 
     static DECLCALLBACK(int) taskThreadImportOrExport(RTTHREAD aThread, void *pvUser);
 
+    HRESULT initSetOfSupportedStandardsURI();
+
+    Utf8Str typeOfVirtualDiskFormatFromURI(Utf8Str type) const;
+
+    std::set<Utf8Str> URIFromTypeOfVirtualDiskFormat(Utf8Str type);
+
+    HRESULT initApplianceIONameMap();
+
+    Utf8Str applianceIOName(APPLIANCEIONAME type) const;
+
     /*******************************************************************************
      * Read stuff
      ******************************************************************************/
@@ -164,8 +175,19 @@ private:
     HRESULT importFSOVA(TaskOVF *pTask, AutoWriteLockBase& writeLock);
     HRESULT importS3(TaskOVF *pTask);
 
-    HRESULT readManifestFile(const Utf8Str &strFile, void **ppvBuf, size_t *pcbSize, PVDINTERFACEIO pCallbacks, PSHASTORAGE pStorage);
-    HRESULT readTarManifestFile(RTTAR tar, const Utf8Str &strFile, void **ppvBuf, size_t *pcbSize, PVDINTERFACEIO pCallbacks, PSHASTORAGE pStorage);
+    HRESULT readFileToBuf(const Utf8Str &strFile,
+                             void **ppvBuf,
+                             size_t *pcbSize,
+                             bool fCreateDigest,
+                             PVDINTERFACEIO pCallbacks,
+                             PSHASTORAGE pStorage);
+    HRESULT readTarFileToBuf(RTTAR tar,
+                             const Utf8Str &strFile,
+                             void **ppvBuf,
+                             size_t *pcbSize,
+                             bool fCreateDigest,
+                             PVDINTERFACEIO pCallbacks,
+                             PSHASTORAGE pStorage);
     HRESULT verifyManifestFile(const Utf8Str &strFile, ImportStack &stack, void *pvBuf, size_t cbSize);
 
     void convertDiskAttachmentValues(const ovf::HardDiskController &hdc,
@@ -175,11 +197,12 @@ private:
                                      int32_t &lDevice);
 
     void importOneDiskImage(const ovf::DiskImage &di,
-                            const Utf8Str &strTargetPath,
+                            Utf8Str *strTargetPath,
                             ComObjPtr<Medium> &pTargetHD,
                             ImportStack &stack,
                             PVDINTERFACEIO pCallbacks,
                             PSHASTORAGE pStorage);
+
     void importMachineGeneric(const ovf::VirtualSystem &vsysThis,
                               ComObjPtr<VirtualSystemDescription> &vsdescThis,
                               ComPtr<IMachine> &pNewMachine,
@@ -199,7 +222,7 @@ private:
      * Write stuff
      ******************************************************************************/
 
-    HRESULT writeImpl(OVFFormat aFormat, const LocationInfo &aLocInfo, ComObjPtr<Progress> &aProgress);
+    HRESULT writeImpl(ovf::OVFVersion_T aFormat, const LocationInfo &aLocInfo, ComObjPtr<Progress> &aProgress);
 
     HRESULT writeFS(TaskOVF *pTask);
     HRESULT writeFSOVF(TaskOVF *pTask, AutoWriteLockBase& writeLock);
@@ -208,14 +231,21 @@ private:
     HRESULT writeS3(TaskOVF *pTask);
 
     struct XMLStack;
-    void buildXML(AutoWriteLockBase& writeLock, xml::Document &doc, XMLStack &stack, const Utf8Str &strPath, OVFFormat enFormat);
+
+    void buildXML(AutoWriteLockBase& writeLock,
+                  xml::Document &doc,
+                  XMLStack &stack,
+                  const Utf8Str &strPath,
+                  ovf::OVFVersion_T enFormat);
     void buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                                      xml::ElementNode &elmToAddVirtualSystemsTo,
                                      std::list<xml::ElementNode*> *pllElementsWithUuidAttributes,
                                      ComObjPtr<VirtualSystemDescription> &vsdescThis,
-                                     OVFFormat enFormat,
+                                     ovf::OVFVersion_T enFormat,
                                      XMLStack &stack);
 
+    HRESULT preCheckImageAvailability(PSHASTORAGE pSHAStorage,
+                                      RTCString &availableImage);
 
     friend class Machine;
 };
@@ -228,12 +258,13 @@ struct VirtualSystemDescriptionEntry
     VirtualSystemDescriptionType_T type;    // type of this entry
     Utf8Str strRef;                         // reference number (hard disk controllers only)
     Utf8Str strOvf;                         // original OVF value (type-dependent)
-    Utf8Str strVboxSuggested;               // configuration value (type-dependent); original value suggested by interpret()
-    Utf8Str strVboxCurrent;                 // configuration value (type-dependent); current value, either from interpret() or setFinalValue()
+    Utf8Str strVBoxSuggested;               // configuration value (type-dependent); original value suggested by interpret()
+    Utf8Str strVBoxCurrent;                 // configuration value (type-dependent); current value, either from interpret() or setFinalValue()
     Utf8Str strExtraConfigSuggested;        // extra configuration key=value strings (type-dependent); original value suggested by interpret()
     Utf8Str strExtraConfigCurrent;          // extra configuration key=value strings (type-dependent); current value, either from interpret() or setFinalValue()
 
     uint32_t ulSizeMB;                      // hard disk images only: a copy of ovf::DiskImage::ulSuggestedSizeMB
+    bool skipIt;                            ///< used during export to skip some parts if it's needed
 };
 
 class ATL_NO_VTABLE VirtualSystemDescription :
@@ -269,14 +300,14 @@ public:
     STDMETHOD(GetDescription)(ComSafeArrayOut(VirtualSystemDescriptionType_T, aTypes),
                               ComSafeArrayOut(BSTR, aRefs),
                               ComSafeArrayOut(BSTR, aOvfValues),
-                              ComSafeArrayOut(BSTR, aVboxValues),
+                              ComSafeArrayOut(BSTR, aVBoxValues),
                               ComSafeArrayOut(BSTR, aExtraConfigValues));
 
     STDMETHOD(GetDescriptionByType)(VirtualSystemDescriptionType_T aType,
                                     ComSafeArrayOut(VirtualSystemDescriptionType_T, aTypes),
                                     ComSafeArrayOut(BSTR, aRefs),
                                     ComSafeArrayOut(BSTR, aOvfValues),
-                                    ComSafeArrayOut(BSTR, aVboxValues),
+                                    ComSafeArrayOut(BSTR, aVBoxValues),
                                     ComSafeArrayOut(BSTR, aExtraConfigValues));
 
     STDMETHOD(GetValuesByType)(VirtualSystemDescriptionType_T aType,
@@ -284,27 +315,28 @@ public:
                                ComSafeArrayOut(BSTR, aValues));
 
     STDMETHOD(SetFinalValues)(ComSafeArrayIn(BOOL, aEnabled),
-                              ComSafeArrayIn(IN_BSTR, aVboxValues),
+                              ComSafeArrayIn(IN_BSTR, aVBoxValues),
                               ComSafeArrayIn(IN_BSTR, aExtraConfigValues));
 
     STDMETHOD(AddDescription)(VirtualSystemDescriptionType_T aType,
-                              IN_BSTR aVboxValue,
+                              IN_BSTR aVBoxValue,
                               IN_BSTR aExtraConfigValue);
 
     /* public methods only for internal purposes */
-
     void addEntry(VirtualSystemDescriptionType_T aType,
                   const Utf8Str &strRef,
                   const Utf8Str &aOvfValue,
-                  const Utf8Str &aVboxValue,
+                  const Utf8Str &aVBoxValue,
                   uint32_t ulSizeMB = 0,
                   const Utf8Str &strExtraConfig = "");
 
     std::list<VirtualSystemDescriptionEntry*> findByType(VirtualSystemDescriptionType_T aType);
     const VirtualSystemDescriptionEntry* findControllerFromID(uint32_t id);
 
-    void importVboxMachineXML(const xml::ElementNode &elmMachine);
+    void importVBoxMachineXML(const xml::ElementNode &elmMachine);
     const settings::MachineConfigFile* getMachineConfig() const;
+
+    void removeByType(VirtualSystemDescriptionType_T aType);
 
     /* private instance data */
 private:
@@ -314,5 +346,5 @@ private:
     friend class Machine;
 };
 
-#endif // ____H_APPLIANCEIMPL
+#endif // !____H_APPLIANCEIMPL
 /* vi: set tabstop=4 shiftwidth=4 expandtab: */

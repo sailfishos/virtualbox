@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2014 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -154,11 +154,11 @@ typedef struct VBOXHDDRAWPARTDESC
  * Auxiliary data structure for difference between GPT and MBR
  * disks.
  */
-enum PARTITIONING_TYPE
+typedef enum VBOXHDDPARTTYPE
 {
     MBR,
     GPT
-};
+} VBOXHDDPARTTYPE;
 
 /**
  * Auxiliary data structure for creating raw disks.
@@ -178,8 +178,8 @@ typedef struct VBOXHDDRAW
     unsigned        cPartDescs;
     /** Pointer to the partition descriptor array. */
     PVBOXHDDRAWPARTDESC pPartDescs;
-    /**partitioning type of the disk */
-    PARTITIONING_TYPE uPartitioningType;
+    /** Partitioning type of the disk */
+    VBOXHDDPARTTYPE uPartitioningType;
 
 } VBOXHDDRAW, *PVBOXHDDRAW;
 
@@ -423,6 +423,19 @@ typedef struct VDBACKENDINFO
     DECLR3CALLBACKMEMBER(int, pfnComposeName, (PVDINTERFACE pConfig, char **pszName));
 } VDBACKENDINFO, *PVDBACKENDINFO;
 
+/**
+ * Data structure for returning a list of filter capabilities.
+ */
+typedef struct VDFILTERINFO
+{
+    /** Name of the filter. Must be unique even with case insensitive comparison. */
+    const char *pszFilter;
+    /** Pointer to an array of structs describing each supported config key.
+     * Terminated by a NULL config key. Note that some filters do not support
+     * the configuration interface, so this pointer may just contain NULL. */
+    PCVDCONFIGINFO paConfigInfo;
+} VDFILTERINFO, *PVDFILTERINFO;
+
 
 /**
  * Request completion callback for the async read/write API.
@@ -472,6 +485,38 @@ VBOXDDU_DECL(int) VDInit(void);
 VBOXDDU_DECL(int) VDShutdown(void);
 
 /**
+ * Loads a single plugin given by filename.
+ *
+ * @returns VBox status code.
+ * @param   pszFilename     The plugin filename to load.
+ */
+VBOXDDU_DECL(int) VDPluginLoadFromFilename(const char *pszFilename);
+
+/**
+ * Load all plugins from a given path.
+ *
+ * @returns VBox statuse code.
+ * @param   pszPath         The path to load plugins from.
+ */
+VBOXDDU_DECL(int) VDPluginLoadFromPath(const char *pszPath);
+
+/**
+ * Unloads a single plugin given by filename.
+ *
+ * @returns VBox status code.
+ * @param   pszFilename     The plugin filename to unload.
+ */
+VBOXDDU_DECL(int) VDPluginUnloadFromFilename(const char *pszFilename);
+
+/**
+ * Unload all plugins from a given path.
+ *
+ * @returns VBox statuse code.
+ * @param   pszPath         The path to unload plugins from.
+ */
+VBOXDDU_DECL(int) VDPluginUnloadFromPath(const char *pszPath);
+
+/**
  * Lists all HDD backends and their capabilities in a caller-provided buffer.
  *
  * @return  VBox status code.
@@ -491,6 +536,27 @@ VBOXDDU_DECL(int) VDBackendInfo(unsigned cEntriesAlloc, PVDBACKENDINFO pEntries,
  * @param   pEntries        Pointer to an entry.
  */
 VBOXDDU_DECL(int) VDBackendInfoOne(const char *pszBackend, PVDBACKENDINFO pEntry);
+
+/**
+ * Lists all filters and their capabilities in a caller-provided buffer.
+ *
+ * @return  VBox status code.
+ *          VERR_BUFFER_OVERFLOW if not enough space is passed.
+ * @param   cEntriesAlloc   Number of list entries available.
+ * @param   pEntries        Pointer to array for the entries.
+ * @param   pcEntriesUsed   Number of entries returned.
+ */
+VBOXDDU_DECL(int) VDFilterInfo(unsigned cEntriesAlloc, PVDFILTERINFO pEntries,
+                               unsigned *pcEntriesUsed);
+
+/**
+ * Lists the capabilities of a filter identified by its name.
+ *
+ * @return  VBox status code.
+ * @param   pszFilter       The filter name (case insensitive).
+ * @param   pEntries        Pointer to an entry.
+ */
+VBOXDDU_DECL(int) VDFilterInfoOne(const char *pszFilter, PVDFILTERINFO pEntry);
 
 /**
  * Allocates and initializes an empty HDD container.
@@ -566,6 +632,17 @@ VBOXDDU_DECL(int) VDOpen(PVBOXHDD pDisk, const char *pszBackend,
 VBOXDDU_DECL(int) VDCacheOpen(PVBOXHDD pDisk, const char *pszBackend,
                               const char *pszFilename, unsigned uOpenFlags,
                               PVDINTERFACE pVDIfsCache);
+
+/**
+ * Adds a filter to the disk.
+ *
+ * @returns VBox status code.
+ * @param   pDisk           Pointer to the HDD container which should use the filter.
+ * @param   pszFilter       Name of the filter backend to use (case insensitive).
+ * @param   pVDIfsFilter    Pointer to the per-filter VD interface list.
+ */
+VBOXDDU_DECL(int) VDFilterAdd(PVBOXHDD pDisk, const char *pszFilter,
+                              PVDINTERFACE pVDIfsFilter);
 
 /**
  * Creates and opens a new base image file.
@@ -795,7 +872,9 @@ VBOXDDU_DECL(int) VDCompact(PVBOXHDD pDisk, unsigned nImage,
                             PVDINTERFACE pVDIfsOperation);
 
 /**
- * Resizes the given disk image to the given size.
+ * Resizes the given disk image to the given size. It is OK if there are
+ * multiple images open in the container. In this case the last disk image
+ * will be resized.
  *
  * @return  VBox status
  * @return  VERR_VD_IMAGE_READ_ONLY if image is not writable.
@@ -826,6 +905,15 @@ VBOXDDU_DECL(int) VDResize(PVBOXHDD pDisk, uint64_t cbSize,
 VBOXDDU_DECL(int) VDClose(PVBOXHDD pDisk, bool fDelete);
 
 /**
+ * Removes the last added filter in the HDD container.
+ *
+ * @return  VBox status code.
+ * @retval  VERR_VD_NOT_OPENED if no filter is present for the disk.
+ * @param   pDisk           Pointer to HDD container.
+ */
+VBOXDDU_DECL(int) VDFilterRemove(PVBOXHDD pDisk);
+
+/**
  * Closes the currently opened cache image file in HDD container.
  *
  * @return  VBox status code.
@@ -842,6 +930,14 @@ VBOXDDU_DECL(int) VDCacheClose(PVBOXHDD pDisk, bool fDelete);
  * @param   pDisk           Pointer to HDD container.
  */
 VBOXDDU_DECL(int) VDCloseAll(PVBOXHDD pDisk);
+
+/**
+ * Removes all filters of the given HDD container.
+ *
+ * @return  VBox status code.
+ * @param   pDisk           Pointer to HDD container.
+ */
+VBOXDDU_DECL(int) VDFilterRemoveAll(PVBOXHDD pDisk);
 
 /**
  * Read data from virtual HDD.
@@ -896,6 +992,16 @@ VBOXDDU_DECL(unsigned) VDGetCount(PVBOXHDD pDisk);
  * @param   pDisk           Pointer to HDD container.
  */
 VBOXDDU_DECL(bool) VDIsReadOnly(PVBOXHDD pDisk);
+
+/**
+ * Get sector size of an image in HDD container.
+ *
+ * @return  Virtual disk sector size in bytes.
+ * @return  0 if image with specified number was not opened.
+ * @param   pDisk           Pointer to HDD container.
+ * @param   nImage          Image number, counts from 0. 0 is always base image of container.
+ */
+VBOXDDU_DECL(uint32_t) VDGetSectorSize(PVBOXHDD pDisk, unsigned nImage);
 
 /**
  * Get total capacity of an image in HDD container.
@@ -1245,7 +1351,8 @@ VBOXDDU_DECL(int) VDRepair(PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
  * @return  VBox status code.
  * @param   pDisk           Pointer to HDD container.
  * @param   fFlags          Combination of the VD_VFSFILE_* flags.
- * @param   phVfsFile       Where to stoer the handle to the VFS file on success.
+ * @param   phVfsFile       Where to store the handle to the VFS file on
+ *                          success.
  */
 VBOXDDU_DECL(int) VDCreateVfsFileFromDisk(PVBOXHDD pDisk, uint32_t fFlags,
                                           PRTVFSFILE phVfsFile);

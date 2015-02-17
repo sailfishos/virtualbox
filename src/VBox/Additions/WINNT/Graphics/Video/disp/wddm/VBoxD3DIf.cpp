@@ -570,28 +570,30 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
             PVBOXWDDMDISP_ALLOCATION pAllocation = &pRc->aAllocations[i];
             HANDLE hSharedHandle = pAllocation->hSharedHandle;
             IDirect3DSurface9* pD3D9Surf;
-            switch (pAllocation->enmType)
-            {
-                case VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC:
-                {
-                    hr = pDevice9If->CreateRenderTarget(pAllocation->SurfDesc.width,
-                            pAllocation->SurfDesc.height,
-                            vboxDDI2D3DFormat(pRc->RcDesc.enmFormat),
-                            vboxDDI2D3DMultiSampleType(pRc->RcDesc.enmMultisampleType),
-                            pRc->RcDesc.MultisampleQuality,
-                            !pRc->RcDesc.fFlags.NotLockable /* BOOL Lockable */,
-                            &pD3D9Surf,
-#ifdef VBOXWDDMDISP_DEBUG_NOSHARED
-                            NULL
-#else
-                            pRc->RcDesc.fFlags.SharedResource ? &hSharedHandle : NULL
+            if (
+#ifdef VBOX_WITH_CROGL
+                    (pDevice->pAdapter->u32VBox3DCaps & CR_VBOX_CAP_TEX_PRESENT) ||
 #endif
-                    );
-                    Assert(hr == S_OK);
-                    break;
-                }
-                case VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE:
-                {
+                    pAllocation->enmType == VBOXWDDM_ALLOC_TYPE_UMD_RC_GENERIC)
+            {
+                hr = pDevice9If->CreateRenderTarget(pAllocation->SurfDesc.width,
+                        pAllocation->SurfDesc.height,
+                        vboxDDI2D3DFormat(pRc->RcDesc.enmFormat),
+                        vboxDDI2D3DMultiSampleType(pRc->RcDesc.enmMultisampleType),
+                        pRc->RcDesc.MultisampleQuality,
+                        !pRc->RcDesc.fFlags.NotLockable /* BOOL Lockable */,
+                        &pD3D9Surf,
+#ifdef VBOXWDDMDISP_DEBUG_NOSHARED
+                        NULL
+#else
+                        pRc->RcDesc.fFlags.SharedResource ? &hSharedHandle : NULL
+#endif
+                );
+                Assert(hr == S_OK);
+            }
+            else if (pAllocation->enmType == VBOXWDDM_ALLOC_TYPE_STD_SHAREDPRIMARYSURFACE)
+            {
+                do {
                     BOOL bNeedPresent;
                     if (pRc->cAllocations != 1)
                     {
@@ -622,13 +624,12 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
                     Assert(pAllocation->pD3DIf);
                     pD3D9Surf = (IDirect3DSurface9*)pAllocation->pD3DIf;
                     break;
-                }
-                default:
-                {
-                    WARN(("unexpected alloc type %d", pAllocation->enmType));
-                    hr = E_FAIL;
-                    break;
-                }
+                } while (0);
+            }
+            else
+            {
+                WARN(("unexpected alloc type %d", pAllocation->enmType));
+                hr = E_FAIL;
             }
 
             if (SUCCEEDED(hr))
@@ -709,7 +710,11 @@ HRESULT VBoxD3DIfCreateForRc(struct VBOXWDDMDISP_RESOURCE *pRc)
             PVBOXWDDMDISP_ALLOCATION pAllocation = &pRc->aAllocations[i];
             IDirect3DVertexBuffer9  *pD3D9VBuf;
             hr = pDevice9If->CreateVertexBuffer(pAllocation->SurfDesc.width,
-                    vboxDDI2D3DUsage(pRc->RcDesc.fFlags),
+                    vboxDDI2D3DUsage(pRc->RcDesc.fFlags)
+#ifdef VBOX_WITH_NEW_WINE
+                    & (~D3DUSAGE_DYNAMIC) /* <- avoid using dynamic to ensure wine does not switch do user buffer */
+#endif
+                    ,
                     pRc->RcDesc.Fvf,
                     vboxDDI2D3DPool(pRc->RcDesc.enmPool),
                     &pD3D9VBuf,
@@ -823,19 +828,167 @@ HRESULT VBoxD3DIfDeviceCreateDummy(PVBOXWDDMDISP_DEVICE pDevice)
     Assert(!pDevice->pDevice9If);
     VBOXWINEEX_D3DPRESENT_PARAMETERS Params;
     VBoxD3DIfFillPresentParams(&Params.Base, &Rc, 2);
+#ifdef VBOX_WITH_CRHGSMI
     Params.pHgsmi = &pDevice->Uhgsmi.BasePrivate.Base;
+#else
+    Params.pHgsmi = NULL;
+#endif
     DWORD fFlags = D3DCREATE_HARDWARE_VERTEXPROCESSING;
     PVBOXWDDMDISP_ADAPTER pAdapter = pDevice->pAdapter;
     IDirect3DDevice9 * pDevice9If = NULL;
 
     HRESULT hr = pAdapter->D3D.pD3D9If->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, NULL, fFlags, &Params.Base, &pDevice9If);
-    if (!SUCCEEDED(hr))
+    if (SUCCEEDED(hr))
     {
-        WARN(("CreateDevice failed hr 0x%x", hr));
-        return hr;
-    }
+        int32_t hostId = 0;
+        hr = pAdapter->D3D.D3D.pfnVBoxWineExD3DDev9GetHostId((IDirect3DDevice9Ex*)pDevice9If, &hostId);
+        if (SUCCEEDED(hr))
+        {
+            Assert(hostId);
 
-    pDevice->pDevice9If = pDevice9If;
-    return S_OK;
+            VBOXDISPIFESCAPE Data;
+            Data.escapeCode = VBOXESC_SETCTXHOSTID;
+            Data.u32CmdSpecific = (uint32_t)hostId;
+            D3DDDICB_ESCAPE DdiEscape = {0};
+            DdiEscape.hContext = pDevice->DefaultContext.ContextInfo.hContext;
+            DdiEscape.hDevice = pDevice->hDevice;
+        //    DdiEscape.Flags.Value = 0;
+            DdiEscape.pPrivateDriverData = &Data;
+            DdiEscape.PrivateDriverDataSize = sizeof (Data);
+            hr = pDevice->RtCallbacks.pfnEscapeCb(pDevice->pAdapter->hAdapter, &DdiEscape);
+            if (SUCCEEDED(hr))
+            {
+                pDevice->pDevice9If = pDevice9If;
+                return S_OK;
+            }
+            else
+                WARN(("pfnEscapeCb VBOXESC_SETCTXHOSTID failed hr 0x%x", hr));
+        }
+        else
+            WARN(("pfnVBoxWineExD3DDev9GetHostId failed hr 0x%x", hr));
+
+        pDevice->pAdapter->D3D.D3D.pfnVBoxWineExD3DDev9Term((IDirect3DDevice9Ex *)pDevice9If);
+    }
+    else
+        WARN(("CreateDevice failed hr 0x%x", hr));
+
+    return hr;
 }
 
+int vboxD3DIfSetHostId(PVBOXWDDMDISP_ALLOCATION pAlloc, uint32_t hostID, uint32_t *pHostID)
+{
+    struct VBOXWDDMDISP_RESOURCE *pRc = pAlloc->pRc;
+    PVBOXWDDMDISP_DEVICE pDevice = pRc->pDevice;
+
+    VBOXDISPIFESCAPE_SETALLOCHOSTID SetHostID = {0};
+    SetHostID.EscapeHdr.escapeCode = VBOXESC_SETALLOCHOSTID;
+    SetHostID.hostID = hostID;
+    SetHostID.hAlloc = pAlloc->hAllocation;
+
+    D3DDDICB_ESCAPE DdiEscape = {0};
+    DdiEscape.hContext = pDevice->DefaultContext.ContextInfo.hContext;
+    DdiEscape.hDevice = pDevice->hDevice;
+    DdiEscape.Flags.Value = 0;
+    DdiEscape.Flags.HardwareAccess = 1;
+    DdiEscape.pPrivateDriverData = &SetHostID;
+    DdiEscape.PrivateDriverDataSize = sizeof (SetHostID);
+    HRESULT hr = pDevice->RtCallbacks.pfnEscapeCb(pDevice->pAdapter->hAdapter, &DdiEscape);
+    if (SUCCEEDED(hr))
+    {
+        if (pHostID)
+            *pHostID = SetHostID.EscapeHdr.u32CmdSpecific;
+
+        return SetHostID.rc;
+    }
+    else
+        WARN(("pfnEscapeCb VBOXESC_SETALLOCHOSTID failed hr 0x%x", hr));
+
+    return VERR_GENERAL_FAILURE;
+}
+
+IUnknown* vboxD3DIfCreateSharedPrimary(PVBOXWDDMDISP_ALLOCATION pAlloc)
+{
+    IDirect3DSurface9 *pSurfIf;
+    struct VBOXWDDMDISP_RESOURCE *pRc = pAlloc->pRc;
+    PVBOXWDDMDISP_DEVICE pDevice = pRc->pDevice;
+
+    HRESULT hr = VBoxD3DIfCreateForRc(pRc);
+    if (!SUCCEEDED(hr))
+    {
+        WARN(("VBoxD3DIfCreateForRc failed, hr 0x%x", hr));
+        return NULL;
+    }
+
+    Assert(pAlloc->pD3DIf);
+    Assert(pAlloc->enmD3DIfType == VBOXDISP_D3DIFTYPE_SURFACE);
+    Assert(pAlloc->pRc->RcDesc.fFlags.SharedResource);
+
+    hr = VBoxD3DIfSurfGet(pRc, pAlloc->iAlloc, &pSurfIf);
+    if (!SUCCEEDED(hr))
+    {
+        WARN(("VBoxD3DIfSurfGet failed hr %#x", hr));
+        return NULL;
+    }
+
+    uint32_t hostID, usedHostId;
+    hr = pDevice->pAdapter->D3D.D3D.pfnVBoxWineExD3DSurf9GetHostId(pSurfIf, &hostID);
+    if (SUCCEEDED(hr))
+    {
+        Assert(hostID);
+        int rc = vboxD3DIfSetHostId(pAlloc, hostID, &usedHostId);
+        if (!RT_SUCCESS(rc))
+        {
+            if (rc == VERR_NOT_EQUAL)
+            {
+                WARN(("another hostId % is in use, using it instead", usedHostId));
+                Assert(hostID != usedHostId);
+                Assert(usedHostId);
+                pSurfIf->Release();
+                pSurfIf = NULL;
+                for (UINT i = 0; i < pRc->cAllocations; ++i)
+                {
+                    PVBOXWDDMDISP_ALLOCATION pCurAlloc = &pRc->aAllocations[i];
+                    if (pCurAlloc->pD3DIf)
+                    {
+                        pCurAlloc->pD3DIf->Release();
+                        pCurAlloc->pD3DIf = NULL;
+                    }
+                }
+
+                pAlloc->hSharedHandle = (HANDLE)usedHostId;
+
+                hr = VBoxD3DIfCreateForRc(pRc);
+                if (!SUCCEEDED(hr))
+                {
+                    WARN(("VBoxD3DIfCreateForRc failed, hr 0x%x", hr));
+                    return NULL;
+                }
+
+                hr = VBoxD3DIfSurfGet(pRc, pAlloc->iAlloc, &pSurfIf);
+                if (!SUCCEEDED(hr))
+                {
+                    WARN(("VBoxD3DIfSurfGet failed hr %#x", hr));
+                    return NULL;
+                }
+            }
+            else
+            {
+                WARN(("vboxD3DIfSetHostId failed %#x, ignoring", hr));
+                hr = S_OK;
+                hostID = 0;
+                usedHostId = 0;
+            }
+        }
+        else
+        {
+            Assert(hostID == usedHostId);
+        }
+    }
+    else
+        WARN(("pfnVBoxWineExD3DSurf9GetHostId failed, hr 0x%x", hr));
+
+    pSurfIf->Release();
+    pSurfIf = NULL;
+
+    return pAlloc->pD3DIf;
+}

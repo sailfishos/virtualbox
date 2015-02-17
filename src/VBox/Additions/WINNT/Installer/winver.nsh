@@ -65,7 +65,17 @@ Function ${un}GetWindowsVersion
   StrCmp $R1 '5.2' lbl_winnt_2003
   StrCmp $R1 '6.0' lbl_winnt_vista
   StrCmp $R1 '6.1' lbl_winnt_7
-  StrCmp $R1 '6.2' lbl_winnt_8 lbl_error
+  StrCmp $R1 '6.2' lbl_winnt_8
+
+  ; Windows 10 preview 9926 has CurrentVersion == 6.3
+  ; Check Windows 10 registry values
+  ReadRegDWORD $R0 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" "CurrentMajorVersionNumber"
+  ${If} $R0 == "10"
+    Goto lbl_winnt_10
+  ${EndIf}
+
+  StrCmp $R1 '6.3' lbl_winnt_8_1
+  StrCmp $R1 '6.4' lbl_winnt_10 lbl_error
 
   lbl_winnt_x:
     StrCpy $R0 "NT $R0" 6
@@ -93,6 +103,14 @@ Function ${un}GetWindowsVersion
 
   lbl_winnt_8:
     Strcpy $R0 '8'
+  Goto lbl_done
+
+  lbl_winnt_8_1: ; Also includes Windows Server 2012 R2
+    Strcpy $R0 '8_1'
+  Goto lbl_done
+
+  lbl_winnt_10:
+    Strcpy $R0 '10'
   Goto lbl_done
 
   lbl_error:

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2014 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,7 +24,6 @@
 #include <VBox/com/Guid.h>
 #include <VBox/com/ErrorInfo.h>
 #include <VBox/com/errorprint.h>
-#include <VBox/com/EventQueue.h>
 
 #include <VBox/com/VirtualBox.h>
 
@@ -368,11 +367,6 @@ int main(int argc, char *argv[])
 //        getchar();
     }
 #endif
-
-    // create the event queue
-    // (here it is necessary only to process remaining XPCOM/IPC events
-    // after the session is closed)
-    EventQueue eventQ;
 
 #if 0
     // the simplest COM API test
@@ -1157,7 +1151,7 @@ int main(int argc, char *argv[])
     RTPrintf("\n");
 #endif
 
-#if 0
+#if 1
     do {
         // Get host
         ComPtr<IHost> host;
@@ -1211,6 +1205,35 @@ int main(int argc, char *argv[])
         }
     } while (0);
 #endif
+
+#if 0
+    // DNS & Co.
+    ///////////////////////////////////////////////////////////////////////////
+    /* XXX: Note it's endless loop */
+    do
+    {
+        ComPtr<IHost> host;
+        CHECK_ERROR_BREAK(virtualBox, COMGETTER(Host)(host.asOutParam()));
+
+        {
+            Bstr domainName;
+            CHECK_ERROR_BREAK(host,COMGETTER(DomainName)(domainName.asOutParam()));
+            RTPrintf("Domain name: %ls\n", domainName.raw());
+        }
+
+        com::SafeArray<BSTR> strs;
+        CHECK_ERROR_BREAK(host, COMGETTER(NameServers)(ComSafeArrayAsOutParam(strs)));
+
+        unsigned int i;
+        for (i = 0; i < strs.size(); ++i)
+            RTPrintf("Name server[%d]:%s\n", i, com::Utf8Str(strs[i]).c_str());
+
+        RTThreadSleep(1000);
+    }
+    while (1);
+    RTPrintf("\n");
+#endif
+
 
 #if 0 && defined(VBOX_WITH_RESOURCE_USAGE_API)
     do {
@@ -1495,7 +1518,7 @@ int main(int argc, char *argv[])
             /* get the mutable session machine */
             session->COMGETTER(Machine)(machine.asOutParam());
             CHECK_ERROR_BREAK(machine, COMGETTER(BandwidthControl)(bwCtrl.asOutParam()));
-            
+
             RTPrintf("Creating bandwidth group named '%ls'...\n", grpName.raw());
             CHECK_ERROR_BREAK(bwCtrl, CreateBandwidthGroup(grpName.raw(), BandwidthGroupType_Network, 123));
 

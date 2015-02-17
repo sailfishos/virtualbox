@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2004-2012 Oracle Corporation
+ * Copyright (C) 2004-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -56,7 +56,7 @@ public:
 };
 
 const DWORD dwTimeOut = 5000; /* time for EXE to be idle before shutting down */
-const DWORD dwPause = 1000; /* time to wait for threads to finish up */
+const DWORD dwPause = 100; /* time to wait for threads to finish up */
 
 /* Passed to CreateThread to monitor the shutdown event */
 static DWORD WINAPI MonitorProc(void* pv)
@@ -327,19 +327,26 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/, LPSTR /*lpC
      * registering/unregistering or calling the helper functionality. */
     if (fRun)
     {
+        /** @todo Merge this code with server.cpp (use Logging.cpp?). */
+        char szLogFile[RTPATH_MAX];
         if (!pszLogFile)
         {
-            char szLogFile[RTPATH_MAX];
             vrc = com::GetVBoxUserHomeDirectory(szLogFile, sizeof(szLogFile));
             if (RT_SUCCESS(vrc))
                 vrc = RTPathAppend(szLogFile, sizeof(szLogFile), "VBoxSVC.log");
-            if (RT_SUCCESS(vrc))
-                pszLogFile = RTStrDup(szLogFile);
         }
+        else
+        {
+            if (!RTStrPrintf(szLogFile, sizeof(szLogFile), "%s", pszLogFile))
+                vrc = VERR_NO_MEMORY;
+        }
+        if (RT_FAILURE(vrc))
+            return RTMsgErrorExit(RTEXITCODE_FAILURE, "failed to create logging file name, rc=%Rrc", vrc);
+
         char szError[RTPATH_MAX + 128];
-        vrc = com::VBoxLogRelCreate("COM Server", pszLogFile,
+        vrc = com::VBoxLogRelCreate("COM Server", szLogFile,
                                     RTLOGFLAGS_PREFIX_THREAD | RTLOGFLAGS_PREFIX_TIME_PROG,
-                                    "all", "VBOXSVC_RELEASE_LOG",
+                                    VBOXSVC_LOG_DEFAULT, "VBOXSVC_RELEASE_LOG",
                                     RTLOGDEST_FILE, UINT32_MAX /* cMaxEntriesPerGroup */,
                                     cHistory, uHistoryFileTime, uHistoryFileSize,
                                     szError, sizeof(szError));

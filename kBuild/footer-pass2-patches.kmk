@@ -1,10 +1,10 @@
-# $Id: footer-pass2-patches.kmk 2521 2011-07-26 18:18:19Z bird $
+# $Id: footer-pass2-patches.kmk 2726 2014-02-26 23:23:54Z bird $
 ## @file
 # kBuild - Footer - Target lists - Pass 2 - Patches.
 #
 
 #
-# Copyright (c) 2004-2011 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #

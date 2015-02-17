@@ -1,10 +1,10 @@
-# $Id: footer-pass2-compiling-targets.kmk 2551 2011-11-09 13:28:02Z bird $
+# $Id: footer-pass2-compiling-targets.kmk 2762 2015-01-28 18:17:54Z bird $
 ## @file
 # kBuild - Footer - Target lists - Pass 2 - Compiling Targets.
 #
 
 #
-# Copyright (c) 2004-2011 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -270,7 +270,7 @@ $(foreach source,\
 	$($(target)_SOURCES.$(bld_trg_arch))\
 	$($(target)_SOURCES.$(bld_trg_cpu))\
 	$($(target)_SOURCES.$(bld_type))\
-	,$(evalval def_src_handler_one) )
+	,$(evalvalctx def_src_handler_one) )
 
 $(foreach source,\
 	$($(target)_GEN_SOURCES_)\
@@ -281,7 +281,7 @@ $(foreach source,\
 	$($(target)_GEN_SOURCES_.$(bld_trg_arch))\
 	$($(target)_GEN_SOURCES_.$(bld_trg_cpu))\
 	$($(target)_GEN_SOURCES_.$(bld_type))\
-	,$(evalval def_src_handler_one) )
+	,$(evalvalctx def_src_handler_one) )
 endef # def_target_sources
 $(eval-opt-var def_target_sources)
 
@@ -406,18 +406,18 @@ if  (   defined($(target)_2_OUTPUT_DEBUG_DIRS) \
   local debug_inst_path   := $(PATH_INS)
   local debug_install_cmd := $(INSTALL)
   local debug_var         := INSTALL
-  $(foreach debug_inst, $($(target)_1_DEBUG_INST), $(evalval def_target_install_only_debug))
+  $(foreach debug_inst, $($(target)_1_DEBUG_INST), $(evalvalctx def_target_install_only_debug))
  endif
 
  local debug_inst_path    := $(PATH_STAGE)
  local debug_install_cmd  := $(INSTALL_STAGING)
  local debug_var          := STAGE
  if1of ($($(target)_1_DEBUG_INSTTYPE), stage both)
-  $(foreach debug_inst, $($(target)_1_DEBUG_STAGE), $(evalval def_target_install_only_debug))
+  $(foreach debug_inst, $($(target)_1_DEBUG_STAGE), $(evalvalctx def_target_install_only_debug))
  endif
  if1of ($($(target)_1_INSTTYPE), stage both)
   ifndef debug_nostage
-   $(foreach debug_inst,$($(target)_1_STAGE), $(evalval def_target_install_only_debug))
+   $(foreach debug_inst,$($(target)_1_STAGE), $(evalvalctx def_target_install_only_debug))
   endif
  endif
 
@@ -488,7 +488,7 @@ local units       := \
 	$($(target)_USES.$(bld_trg))\
 	$($(target)_USES.$(bld_type))\
 	$($(target)_USES)
-$(foreach unit,$(units),$(evalval def_unit_$(unit)_target_pre))
+$(foreach unit,$(units),$(evalvalctx def_unit_$(unit)_target_pre))
 
 # source -> object
 $(evalval def_target_sources)
@@ -628,7 +628,7 @@ $(eval-opt-var def_lib)
 typevar := _LIBS
 tool_do := LINK_LIBRARY
 mode := 0644
-$(foreach target, $(_ALL_LIBRARIES), $(evalval def_lib))
+$(foreach target, $(_ALL_LIBRARIES), $(evalvalctx def_lib))
 
 ifdef KBUILD_PROFILE_SELF
  $(evalcall def_profile_self, done library targets)
@@ -691,7 +691,7 @@ local units       := \
 	$($(target)_USES.$(bld_trg))\
 	$($(target)_USES.$(bld_type))\
 	$($(target)_USES)
-$(foreach unit,$(units),$(evalval def_unit_$(unit)_target_pre))
+$(foreach unit,$(units),$(evalvalctx def_unit_$(unit)_target_pre))
 
 # source -> object
 $(evalval def_target_sources)
@@ -967,7 +967,7 @@ tool_do := LINK_PROGRAM
 typevar := _BLDPROGS
 mode    := 0755
 bld_trg_base_var := PLATFORM
-$(foreach target, $(_ALL_BLDPROGS), $(evalval def_link_common))
+$(foreach target, $(_ALL_BLDPROGS), $(evalvalctx def_link_common))
 
 ifdef KBUILD_PROFILE_SELF
  $(evalcall def_profile_self, done build program targets)
@@ -985,7 +985,7 @@ tool_do := LINK_DLL
 typevar := _DLLS
 mode    := 0644
 bld_trg_base_var := TARGET
-$(foreach target, $(_ALL_DLLS), $(evalval def_link_common))
+$(foreach target, $(_ALL_DLLS), $(evalvalctx def_link_common))
 
 ifdef KBUILD_PROFILE_SELF
  $(evalcall def_profile_self, done dll targets)
@@ -1005,11 +1005,11 @@ bld_trg_base_var := TARGET
 ifeq ($(filter-out nt os2 win win64 win32,$(KBUILD_TARGET)),)
  EXT     := LIB
  tool_do := LINK_LIBRARY
- $(foreach target, $(_ALL_IMPORT_LIBS), $(evalval def_lib))
+ $(foreach target, $(_ALL_IMPORT_LIBS), $(evalvalctx def_lib))
 else
  EXT     := DLL
  tool_do := LINK_DLL
- $(foreach target, $(_ALL_IMPORT_LIBS), $(evalval def_link_common))
+ $(foreach target, $(_ALL_IMPORT_LIBS), $(evalvalctx def_link_common))
 endif
 
 ifdef KBUILD_PROFILE_SELF
@@ -1028,7 +1028,7 @@ tool_do := LINK_PROGRAM
 typevar := _PROGRAMS
 mode    := 0755
 bld_trg_base_var := TARGET
-$(foreach target, $(_ALL_PROGRAMS), $(evalval def_link_common))
+$(foreach target, $(_ALL_PROGRAMS), $(evalvalctx def_link_common))
 
 ifdef KBUILD_PROFILE_SELF
  $(evalcall def_profile_self, done program targets)
@@ -1046,7 +1046,7 @@ tool_do := LINK_SYSMOD
 typevar := _SYSMODS
 mode    := 0644
 bld_trg_base_var := TARGET
-$(foreach target, $(_ALL_SYSMODS), $(evalval def_link_common))
+$(foreach target, $(_ALL_SYSMODS), $(evalvalctx def_link_common))
 
 ifdef KBUILD_PROFILE_SELF
  $(evalcall def_profile_self, done sysmod targets)
@@ -1064,7 +1064,7 @@ tool_do := LINK_MISCBIN
 typevar := _MISCBINS
 mode    := 0644
 bld_trg_base_var := TARGET
-$(foreach target, $(_ALL_MISCBINS), $(evalval def_link_common))
+$(foreach target, $(_ALL_MISCBINS), $(evalvalctx def_link_common))
 
 ifdef KBUILD_PROFILE_SELF
  $(evalcall def_profile_self, done misc binary targets)

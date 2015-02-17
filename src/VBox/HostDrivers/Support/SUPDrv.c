@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -59,8 +59,8 @@
 #include <VBox/param.h>
 #include <VBox/log.h>
 #include <VBox/err.h>
-#include <VBox/vmm/hwacc_svm.h>
-#include <VBox/vmm/hwacc_vmx.h>
+#include <VBox/vmm/hm_svm.h>
+#include <VBox/vmm/hm_vmx.h>
 
 #if defined(RT_OS_SOLARIS) || defined(RT_OS_DARWIN)
 # include "dtrace/SUPDrv.h"
@@ -114,6 +114,7 @@ static int                  supdrvMemRelease(PSUPDRVSESSION pSession, RTHCUINTPT
 static int                  supdrvIOCtl_LdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPLDROPEN pReq);
 static int                  supdrvIOCtl_LdrLoad(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPLDRLOAD pReq);
 static int                  supdrvIOCtl_LdrFree(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPLDRFREE pReq);
+static int                  supdrvIOCtl_LdrLockDown(PSUPDRVDEVEXT pDevExt);
 static int                  supdrvIOCtl_LdrGetSymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPLDRGETSYMBOL pReq);
 static int                  supdrvIDC_LdrGetSymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPDRVIDCREQGETSYM pReq);
 static int                  supdrvLdrSetVMMR0EPs(PSUPDRVDEVEXT pDevExt, void *pvVMMR0, void *pvVMMR0EntryInt, void *pvVMMR0EntryFast, void *pvVMMR0EntryEx);
@@ -130,19 +131,23 @@ static DECLCALLBACK(void)   supdrvGipSyncTimer(PRTTIMER pTimer, void *pvUser, ui
 static DECLCALLBACK(void)   supdrvGipAsyncTimer(PRTTIMER pTimer, void *pvUser, uint64_t iTick);
 static DECLCALLBACK(void)   supdrvGipMpEvent(RTMPEVENT enmEvent, RTCPUID idCpu, void *pvUser);
 static void                 supdrvGipInit(PSUPDRVDEVEXT pDevExt, PSUPGLOBALINFOPAGE pGip, RTHCPHYS HCPhys,
-                                          uint64_t u64NanoTS, unsigned uUpdateHz, unsigned cCpus);
+                                          uint64_t u64NanoTS, unsigned uUpdateHz, unsigned uUpdateIntervalNS, unsigned cCpus);
 static DECLCALLBACK(void)   supdrvGipInitOnCpu(RTCPUID idCpu, void *pvUser1, void *pvUser2);
 static void                 supdrvGipTerm(PSUPGLOBALINFOPAGE pGip);
 static void                 supdrvGipUpdate(PSUPDRVDEVEXT pDevExt, uint64_t u64NanoTS, uint64_t u64TSC, RTCPUID idCpu, uint64_t iTick);
 static void                 supdrvGipUpdatePerCpu(PSUPDRVDEVEXT pDevExt, uint64_t u64NanoTS, uint64_t u64TSC,
                                                   RTCPUID idCpu, uint8_t idApic, uint64_t iTick);
 static void                 supdrvGipInitCpu(PSUPGLOBALINFOPAGE pGip, PSUPGIPCPU pCpu, uint64_t u64NanoTS);
+static int                  supdrvIOCtl_ResumeSuspendedKbds(void);
 
 
 /*******************************************************************************
 *   Global Variables                                                           *
 *******************************************************************************/
 DECLEXPORT(PSUPGLOBALINFOPAGE) g_pSUPGlobalInfoPage = NULL;
+
+/** Whether the host system has an invariant TSC or not */
+static bool g_fIsInvariantTsc;
 
 /**
  * Array of the R0 SUP API.
@@ -172,7 +177,10 @@ static SUPFUNC g_aFunctions[] =
     { "SUPR0ContAlloc",                         (void *)SUPR0ContAlloc },
     { "SUPR0ContFree",                          (void *)SUPR0ContFree },
     { "SUPR0EnableVTx",                         (void *)SUPR0EnableVTx },
+    { "SUPR0SuspendVTxOnCpu",                   (void *)SUPR0SuspendVTxOnCpu },
+    { "SUPR0ResumeVTxOnCpu",                    (void *)SUPR0ResumeVTxOnCpu },
     { "SUPR0GetPagingMode",                     (void *)SUPR0GetPagingMode },
+    { "SUPR0GetKernelFeatures",                 (void *)SUPR0GetKernelFeatures },
     { "SUPR0LockMem",                           (void *)SUPR0LockMem },
     { "SUPR0LowAlloc",                          (void *)SUPR0LowAlloc },
     { "SUPR0LowFree",                           (void *)SUPR0LowFree },
@@ -233,6 +241,7 @@ static SUPFUNC g_aFunctions[] =
     { "RTHandleTableFreeWithCtx",               (void *)RTHandleTableFreeWithCtx },
     { "RTHandleTableLookupWithCtx",             (void *)RTHandleTableLookupWithCtx },
     { "RTLogDefaultInstance",                   (void *)RTLogDefaultInstance },
+    { "RTLogGetDefaultInstance",                (void *)RTLogGetDefaultInstance },
     { "RTLogLoggerExV",                         (void *)RTLogLoggerExV },
     { "RTLogPrintfV",                           (void *)RTLogPrintfV },
     { "RTLogRelDefaultInstance",                (void *)RTLogRelDefaultInstance },
@@ -363,6 +372,12 @@ static SUPFUNC g_aFunctions[] =
     { "RTStrPrintfExV",                         (void *)RTStrPrintfExV },
     { "RTStrPrintfV",                           (void *)RTStrPrintfV },
     { "RTThreadCreate",                         (void *)RTThreadCreate },
+    { "RTThreadCtxHooksAreRegistered",          (void *)RTThreadCtxHooksAreRegistered },
+    { "RTThreadCtxHooksCreate",                 (void *)RTThreadCtxHooksCreate },
+    { "RTThreadCtxHooksDeregister",             (void *)RTThreadCtxHooksDeregister },
+    { "RTThreadCtxHooksRegister",               (void *)RTThreadCtxHooksRegister },
+    { "RTThreadCtxHooksRelease",                (void *)RTThreadCtxHooksRelease },
+    { "RTThreadCtxHooksRetain",                 (void *)RTThreadCtxHooksRetain },
     { "RTThreadGetName",                        (void *)RTThreadGetName },
     { "RTThreadGetNative",                      (void *)RTThreadGetNative },
     { "RTThreadGetType",                        (void *)RTThreadGetType },
@@ -452,124 +467,130 @@ int VBOXCALL supdrvInitDevExt(PSUPDRVDEVEXT pDevExt, size_t cbSession)
     /*
      * Initialize it.
      */
-    memset(pDevExt, 0, sizeof(*pDevExt));
-    rc = RTSpinlockCreate(&pDevExt->Spinlock, RTSPINLOCK_FLAGS_INTERRUPT_UNSAFE, "SUPDrvDevExt");
+    memset(pDevExt, 0, sizeof(*pDevExt)); /* Does not wipe OS specific tail section of the structure. */
+    pDevExt->Spinlock = NIL_RTSPINLOCK;
+    pDevExt->hGipSpinlock = NIL_RTSPINLOCK;
+    pDevExt->hSessionHashTabSpinlock = NIL_RTSPINLOCK;
+    rc = RTSpinlockCreate(&pDevExt->Spinlock, RTSPINLOCK_FLAGS_INTERRUPT_SAFE, "SUPDrvDevExt");
+    if (RT_SUCCESS(rc))
+        rc = RTSpinlockCreate(&pDevExt->hGipSpinlock, RTSPINLOCK_FLAGS_INTERRUPT_SAFE, "SUPDrvGip");
+    if (RT_SUCCESS(rc))
+        rc = RTSpinlockCreate(&pDevExt->hSessionHashTabSpinlock, RTSPINLOCK_FLAGS_INTERRUPT_SAFE, "SUPDrvSession");
+
+    if (RT_SUCCESS(rc))
+#ifdef SUPDRV_USE_MUTEX_FOR_LDR
+        rc = RTSemMutexCreate(&pDevExt->mtxLdr);
+#else
+        rc = RTSemFastMutexCreate(&pDevExt->mtxLdr);
+#endif
     if (RT_SUCCESS(rc))
     {
-        rc = RTSpinlockCreate(&pDevExt->hGipSpinlock, RTSPINLOCK_FLAGS_INTERRUPT_SAFE, "SUPDrvGip");
+        rc = RTSemFastMutexCreate(&pDevExt->mtxComponentFactory);
         if (RT_SUCCESS(rc))
         {
 #ifdef SUPDRV_USE_MUTEX_FOR_LDR
-            rc = RTSemMutexCreate(&pDevExt->mtxLdr);
+            rc = RTSemMutexCreate(&pDevExt->mtxGip);
 #else
-            rc = RTSemFastMutexCreate(&pDevExt->mtxLdr);
+            rc = RTSemFastMutexCreate(&pDevExt->mtxGip);
 #endif
             if (RT_SUCCESS(rc))
             {
-                rc = RTSemFastMutexCreate(&pDevExt->mtxComponentFactory);
+                rc = supdrvGipCreate(pDevExt);
                 if (RT_SUCCESS(rc))
                 {
-#ifdef SUPDRV_USE_MUTEX_FOR_LDR
-                    rc = RTSemMutexCreate(&pDevExt->mtxGip);
-#else
-                    rc = RTSemFastMutexCreate(&pDevExt->mtxGip);
-#endif
+                    rc = supdrvTracerInit(pDevExt);
                     if (RT_SUCCESS(rc))
                     {
-                        rc = supdrvGipCreate(pDevExt);
-                        if (RT_SUCCESS(rc))
-                        {
-                            rc = supdrvTracerInit(pDevExt);
-                            if (RT_SUCCESS(rc))
-                            {
-                                pDevExt->pLdrInitImage  = NULL;
-                                pDevExt->hLdrInitThread = NIL_RTNATIVETHREAD;
-                                pDevExt->u32Cookie      = BIRD;  /** @todo make this random? */
-                                pDevExt->cbSession      = (uint32_t)cbSession;
+                        pDevExt->pLdrInitImage  = NULL;
+                        pDevExt->hLdrInitThread = NIL_RTNATIVETHREAD;
+                        pDevExt->u32Cookie      = BIRD;  /** @todo make this random? */
+                        pDevExt->cbSession      = (uint32_t)cbSession;
 
-                                /*
-                                 * Fixup the absolute symbols.
-                                 *
-                                 * Because of the table indexing assumptions we'll have a little #ifdef orgy
-                                 * here rather than distributing this to OS specific files. At least for now.
-                                 */
+                        /*
+                         * Fixup the absolute symbols.
+                         *
+                         * Because of the table indexing assumptions we'll have a little #ifdef orgy
+                         * here rather than distributing this to OS specific files. At least for now.
+                         */
 #ifdef RT_OS_DARWIN
 # if ARCH_BITS == 32
-                                if (SUPR0GetPagingMode() >= SUPPAGINGMODE_AMD64)
-                                {
-                                    g_aFunctions[0].pfn = (void *)1;                    /* SUPR0AbsIs64bit */
-                                    g_aFunctions[1].pfn = (void *)0x80;                 /* SUPR0Abs64bitKernelCS - KERNEL64_CS, seg.h */
-                                    g_aFunctions[2].pfn = (void *)0x88;                 /* SUPR0Abs64bitKernelSS - KERNEL64_SS, seg.h */
-                                    g_aFunctions[3].pfn = (void *)0x88;                 /* SUPR0Abs64bitKernelDS - KERNEL64_SS, seg.h */
-                                }
-                                else
-                                    g_aFunctions[0].pfn = g_aFunctions[1].pfn = g_aFunctions[2].pfn = g_aFunctions[4].pfn = (void *)0;
-                                g_aFunctions[4].pfn = (void *)0x08;                     /* SUPR0AbsKernelCS - KERNEL_CS, seg.h */
-                                g_aFunctions[5].pfn = (void *)0x10;                     /* SUPR0AbsKernelSS - KERNEL_DS, seg.h */
-                                g_aFunctions[6].pfn = (void *)0x10;                     /* SUPR0AbsKernelDS - KERNEL_DS, seg.h */
-                                g_aFunctions[7].pfn = (void *)0x10;                     /* SUPR0AbsKernelES - KERNEL_DS, seg.h */
-                                g_aFunctions[8].pfn = (void *)0x10;                     /* SUPR0AbsKernelFS - KERNEL_DS, seg.h */
-                                g_aFunctions[9].pfn = (void *)0x48;                     /* SUPR0AbsKernelGS - CPU_DATA_GS, seg.h */
+                        if (SUPR0GetPagingMode() >= SUPPAGINGMODE_AMD64)
+                        {
+                            g_aFunctions[0].pfn = (void *)1;                    /* SUPR0AbsIs64bit */
+                            g_aFunctions[1].pfn = (void *)0x80;                 /* SUPR0Abs64bitKernelCS - KERNEL64_CS, seg.h */
+                            g_aFunctions[2].pfn = (void *)0x88;                 /* SUPR0Abs64bitKernelSS - KERNEL64_SS, seg.h */
+                            g_aFunctions[3].pfn = (void *)0x88;                 /* SUPR0Abs64bitKernelDS - KERNEL64_SS, seg.h */
+                        }
+                        else
+                            g_aFunctions[0].pfn = g_aFunctions[1].pfn = g_aFunctions[2].pfn = g_aFunctions[4].pfn = (void *)0;
+                        g_aFunctions[4].pfn = (void *)0x08;                     /* SUPR0AbsKernelCS - KERNEL_CS, seg.h */
+                        g_aFunctions[5].pfn = (void *)0x10;                     /* SUPR0AbsKernelSS - KERNEL_DS, seg.h */
+                        g_aFunctions[6].pfn = (void *)0x10;                     /* SUPR0AbsKernelDS - KERNEL_DS, seg.h */
+                        g_aFunctions[7].pfn = (void *)0x10;                     /* SUPR0AbsKernelES - KERNEL_DS, seg.h */
+                        g_aFunctions[8].pfn = (void *)0x10;                     /* SUPR0AbsKernelFS - KERNEL_DS, seg.h */
+                        g_aFunctions[9].pfn = (void *)0x48;                     /* SUPR0AbsKernelGS - CPU_DATA_GS, seg.h */
 # else /* 64-bit darwin: */
-                                g_aFunctions[0].pfn = (void *)1;                        /* SUPR0AbsIs64bit */
-                                g_aFunctions[1].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0Abs64bitKernelCS */
-                                g_aFunctions[2].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0Abs64bitKernelSS */
-                                g_aFunctions[3].pfn = (void *)0;                        /* SUPR0Abs64bitKernelDS */
-                                g_aFunctions[4].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0AbsKernelCS */
-                                g_aFunctions[5].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0AbsKernelSS */
-                                g_aFunctions[6].pfn = (void *)0;                        /* SUPR0AbsKernelDS */
-                                g_aFunctions[7].pfn = (void *)0;                        /* SUPR0AbsKernelES */
-                                g_aFunctions[8].pfn = (void *)0;                        /* SUPR0AbsKernelFS */
-                                g_aFunctions[9].pfn = (void *)0;                        /* SUPR0AbsKernelGS */
+                        g_aFunctions[0].pfn = (void *)1;                        /* SUPR0AbsIs64bit */
+                        g_aFunctions[1].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0Abs64bitKernelCS */
+                        g_aFunctions[2].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0Abs64bitKernelSS */
+                        g_aFunctions[3].pfn = (void *)0;                        /* SUPR0Abs64bitKernelDS */
+                        g_aFunctions[4].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0AbsKernelCS */
+                        g_aFunctions[5].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0AbsKernelSS */
+                        g_aFunctions[6].pfn = (void *)0;                        /* SUPR0AbsKernelDS */
+                        g_aFunctions[7].pfn = (void *)0;                        /* SUPR0AbsKernelES */
+                        g_aFunctions[8].pfn = (void *)0;                        /* SUPR0AbsKernelFS */
+                        g_aFunctions[9].pfn = (void *)0;                        /* SUPR0AbsKernelGS */
 
 # endif
 #else  /* !RT_OS_DARWIN */
 # if ARCH_BITS == 64
-                                g_aFunctions[0].pfn = (void *)1;                        /* SUPR0AbsIs64bit */
-                                g_aFunctions[1].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0Abs64bitKernelCS */
-                                g_aFunctions[2].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0Abs64bitKernelSS */
-                                g_aFunctions[3].pfn = (void *)(uintptr_t)ASMGetDS();    /* SUPR0Abs64bitKernelDS */
+                        g_aFunctions[0].pfn = (void *)1;                        /* SUPR0AbsIs64bit */
+                        g_aFunctions[1].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0Abs64bitKernelCS */
+                        g_aFunctions[2].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0Abs64bitKernelSS */
+                        g_aFunctions[3].pfn = (void *)(uintptr_t)ASMGetDS();    /* SUPR0Abs64bitKernelDS */
 # else
-                                g_aFunctions[0].pfn = g_aFunctions[1].pfn = g_aFunctions[2].pfn = g_aFunctions[4].pfn = (void *)0;
+                        g_aFunctions[0].pfn = g_aFunctions[1].pfn = g_aFunctions[2].pfn = g_aFunctions[4].pfn = (void *)0;
 # endif
-                                g_aFunctions[4].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0AbsKernelCS */
-                                g_aFunctions[5].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0AbsKernelSS */
-                                g_aFunctions[6].pfn = (void *)(uintptr_t)ASMGetDS();    /* SUPR0AbsKernelDS */
-                                g_aFunctions[7].pfn = (void *)(uintptr_t)ASMGetES();    /* SUPR0AbsKernelES */
-                                g_aFunctions[8].pfn = (void *)(uintptr_t)ASMGetFS();    /* SUPR0AbsKernelFS */
-                                g_aFunctions[9].pfn = (void *)(uintptr_t)ASMGetGS();    /* SUPR0AbsKernelGS */
+                        g_aFunctions[4].pfn = (void *)(uintptr_t)ASMGetCS();    /* SUPR0AbsKernelCS */
+                        g_aFunctions[5].pfn = (void *)(uintptr_t)ASMGetSS();    /* SUPR0AbsKernelSS */
+                        g_aFunctions[6].pfn = (void *)(uintptr_t)ASMGetDS();    /* SUPR0AbsKernelDS */
+                        g_aFunctions[7].pfn = (void *)(uintptr_t)ASMGetES();    /* SUPR0AbsKernelES */
+                        g_aFunctions[8].pfn = (void *)(uintptr_t)ASMGetFS();    /* SUPR0AbsKernelFS */
+                        g_aFunctions[9].pfn = (void *)(uintptr_t)ASMGetGS();    /* SUPR0AbsKernelGS */
 #endif /* !RT_OS_DARWIN */
-                                return VINF_SUCCESS;
-                            }
+                        return VINF_SUCCESS;
+                    }
 
-                            supdrvGipDestroy(pDevExt);
-                        }
+                    supdrvGipDestroy(pDevExt);
+                }
 
 #ifdef SUPDRV_USE_MUTEX_FOR_GIP
-                        RTSemMutexDestroy(pDevExt->mtxGip);
-                        pDevExt->mtxGip = NIL_RTSEMMUTEX;
+                RTSemMutexDestroy(pDevExt->mtxGip);
+                pDevExt->mtxGip = NIL_RTSEMMUTEX;
 #else
-                        RTSemFastMutexDestroy(pDevExt->mtxGip);
-                        pDevExt->mtxGip = NIL_RTSEMFASTMUTEX;
-#endif
-                    }
-                    RTSemFastMutexDestroy(pDevExt->mtxComponentFactory);
-                    pDevExt->mtxComponentFactory = NIL_RTSEMFASTMUTEX;
-                }
-#ifdef SUPDRV_USE_MUTEX_FOR_LDR
-                RTSemMutexDestroy(pDevExt->mtxLdr);
-                pDevExt->mtxLdr = NIL_RTSEMMUTEX;
-#else
-                RTSemFastMutexDestroy(pDevExt->mtxLdr);
-                pDevExt->mtxLdr = NIL_RTSEMFASTMUTEX;
+                RTSemFastMutexDestroy(pDevExt->mtxGip);
+                pDevExt->mtxGip = NIL_RTSEMFASTMUTEX;
 #endif
             }
-            RTSpinlockDestroy(pDevExt->hGipSpinlock);
-            pDevExt->hGipSpinlock = NIL_RTSPINLOCK;
+            RTSemFastMutexDestroy(pDevExt->mtxComponentFactory);
+            pDevExt->mtxComponentFactory = NIL_RTSEMFASTMUTEX;
         }
-        RTSpinlockDestroy(pDevExt->Spinlock);
-        pDevExt->Spinlock = NIL_RTSPINLOCK;
+#ifdef SUPDRV_USE_MUTEX_FOR_LDR
+        RTSemMutexDestroy(pDevExt->mtxLdr);
+        pDevExt->mtxLdr = NIL_RTSEMMUTEX;
+#else
+        RTSemFastMutexDestroy(pDevExt->mtxLdr);
+        pDevExt->mtxLdr = NIL_RTSEMFASTMUTEX;
+#endif
     }
+
+    RTSpinlockDestroy(pDevExt->Spinlock);
+    pDevExt->Spinlock = NIL_RTSPINLOCK;
+    RTSpinlockDestroy(pDevExt->hGipSpinlock);
+    pDevExt->hGipSpinlock = NIL_RTSPINLOCK;
+    RTSpinlockDestroy(pDevExt->hSessionHashTabSpinlock);
+    pDevExt->hSessionHashTabSpinlock = NIL_RTSPINLOCK;
+
 #ifdef SUPDRV_WITH_RELEASE_LOGGER
     RTLogDestroy(RTLogRelSetDefaultInstance(NULL));
     RTLogDestroy(RTLogSetDefaultInstance(NULL));
@@ -610,6 +631,8 @@ void VBOXCALL supdrvDeleteDevExt(PSUPDRVDEVEXT pDevExt)
     pDevExt->Spinlock = NIL_RTSPINLOCK;
     RTSemFastMutexDestroy(pDevExt->mtxComponentFactory);
     pDevExt->mtxComponentFactory = NIL_RTSEMFASTMUTEX;
+    RTSpinlockDestroy(pDevExt->hSessionHashTabSpinlock);
+    pDevExt->hSessionHashTabSpinlock = NIL_RTSPINLOCK;
 
     /*
      * Free lists.
@@ -654,17 +677,25 @@ void VBOXCALL supdrvDeleteDevExt(PSUPDRVDEVEXT pDevExt)
  * Create session.
  *
  * @returns IPRT status code.
- * @param   pDevExt     Device extension.
- * @param   fUser       Flag indicating whether this is a user or kernel session.
- * @param   ppSession   Where to store the pointer to the session data.
+ * @param   pDevExt         Device extension.
+ * @param   fUser           Flag indicating whether this is a user or kernel
+ *                          session.
+ * @param   fUnrestricted   Unrestricted access (system) or restricted access
+ *                          (user)?
+ * @param   ppSession       Where to store the pointer to the session data.
  */
-int VBOXCALL supdrvCreateSession(PSUPDRVDEVEXT pDevExt, bool fUser, PSUPDRVSESSION *ppSession)
+int VBOXCALL supdrvCreateSession(PSUPDRVDEVEXT pDevExt, bool fUser, bool fUnrestricted, PSUPDRVSESSION *ppSession)
 {
+    int             rc;
+    PSUPDRVSESSION  pSession;
+
+    if (!SUP_IS_DEVEXT_VALID(pDevExt))
+        return VERR_INVALID_PARAMETER;
+
     /*
      * Allocate memory for the session data.
      */
-    int             rc;
-    PSUPDRVSESSION  pSession = *ppSession = (PSUPDRVSESSION)RTMemAllocZ(pDevExt->cbSession);
+    pSession = *ppSession = (PSUPDRVSESSION)RTMemAllocZ(pDevExt->cbSession);
     if (pSession)
     {
         /* Initialize session data. */
@@ -672,21 +703,18 @@ int VBOXCALL supdrvCreateSession(PSUPDRVDEVEXT pDevExt, bool fUser, PSUPDRVSESSI
         if (!rc)
         {
             rc = RTHandleTableCreateEx(&pSession->hHandleTable,
-                                       RTHANDLETABLE_FLAGS_LOCKED | RTHANDLETABLE_FLAGS_CONTEXT,
+                                       RTHANDLETABLE_FLAGS_LOCKED_IRQ_SAFE | RTHANDLETABLE_FLAGS_CONTEXT,
                                        1 /*uBase*/, 32768 /*cMax*/, supdrvSessionObjHandleRetain, pSession);
             if (RT_SUCCESS(rc))
             {
                 Assert(pSession->Spinlock != NIL_RTSPINLOCK);
                 pSession->pDevExt           = pDevExt;
                 pSession->u32Cookie         = BIRD_INV;
-                /*pSession->pLdrUsage         = NULL;
-                pSession->pVM               = NULL;
-                pSession->pUsage            = NULL;
-                pSession->pGip              = NULL;
-                pSession->fGipReferenced    = false;
-                pSession->Bundle.cUsed      = 0; */
-                pSession->Uid               = NIL_RTUID;
-                pSession->Gid               = NIL_RTGID;
+                pSession->fUnrestricted     = fUnrestricted;
+                /*pSession->fInHashTable      = false; */
+                pSession->cRefs             = 1;
+                /*pSession->pCommonNextHash   = NULL;
+                pSession->ppOsSessionPtr    = NULL; */
                 if (fUser)
                 {
                     pSession->Process       = RTProcSelf();
@@ -697,6 +725,14 @@ int VBOXCALL supdrvCreateSession(PSUPDRVDEVEXT pDevExt, bool fUser, PSUPDRVSESSI
                     pSession->Process       = NIL_RTPROCESS;
                     pSession->R0Process     = NIL_RTR0PROCESS;
                 }
+                /*pSession->pLdrUsage         = NULL;
+                pSession->pVM               = NULL;
+                pSession->pUsage            = NULL;
+                pSession->pGip              = NULL;
+                pSession->fGipReferenced    = false;
+                pSession->Bundle.cUsed      = 0; */
+                pSession->Uid               = NIL_RTUID;
+                pSession->Gid               = NIL_RTGID;
                 /*pSession->uTracerData       = 0;*/
                 pSession->hTracerCaller     = NIL_RTNATIVETHREAD;
                 RTListInit(&pSession->TpProviders);
@@ -724,47 +760,27 @@ int VBOXCALL supdrvCreateSession(PSUPDRVDEVEXT pDevExt, bool fUser, PSUPDRVSESSI
 
 
 /**
- * Shared code for cleaning up a session.
+ * Cleans up the session in the context of the process to which it belongs, the
+ * caller will free the session and the session spinlock.
  *
- * @param   pDevExt     Device extension.
+ * This should normally occur when the session is closed or as the process
+ * exits.  Careful reference counting in the OS specfic code makes sure that
+ * there cannot be any races between process/handle cleanup callbacks and
+ * threads doing I/O control calls.
+ *
+ * @param   pDevExt     The device extension.
  * @param   pSession    Session data.
- *                      This data will be freed by this routine.
  */
-void VBOXCALL supdrvCloseSession(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession)
-{
-    VBOXDRV_SESSION_CLOSE(pSession);
-
-    /*
-     * Cleanup the session first.
-     */
-    supdrvCleanupSession(pDevExt, pSession);
-
-    /*
-     * Free the rest of the session stuff.
-     */
-    RTSpinlockDestroy(pSession->Spinlock);
-    pSession->Spinlock = NIL_RTSPINLOCK;
-    pSession->pDevExt = NULL;
-    RTMemFree(pSession);
-    LogFlow(("supdrvCloseSession: returns\n"));
-}
-
-
-/**
- * Shared code for cleaning up a session (but not quite freeing it).
- *
- * This is primarily intended for MAC OS X where we have to clean up the memory
- * stuff before the file handle is closed.
- *
- * @param   pDevExt     Device extension.
- * @param   pSession    Session data.
- *                      This data will be freed by this routine.
- */
-void VBOXCALL supdrvCleanupSession(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession)
+static void supdrvCleanupSession(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession)
 {
     int                 rc;
     PSUPDRVBUNDLE       pBundle;
     LogFlow(("supdrvCleanupSession: pSession=%p\n", pSession));
+
+    Assert(!pSession->fInHashTable);
+    Assert(!pSession->ppOsSessionPtr);
+    AssertReleaseMsg(pSession->R0Process == RTR0ProcHandleSelf() || pSession->R0Process == NIL_RTR0PROCESS,
+                     ("R0Process=%p cur=%p; Process=%u curpid=%u\n", RTR0ProcHandleSelf(), RTProcSelf()));
 
     /*
      * Remove logger instances related to this session.
@@ -969,6 +985,327 @@ void VBOXCALL supdrvCleanupSession(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSessio
 
 
 /**
+ * Common code for freeing a session when the reference count reaches zero.
+ *
+ * @param   pDevExt     Device extension.
+ * @param   pSession    Session data.
+ *                      This data will be freed by this routine.
+ */
+static void supdrvDestroySession(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession)
+{
+    VBOXDRV_SESSION_CLOSE(pSession);
+
+    /*
+     * Cleanup the session first.
+     */
+    supdrvCleanupSession(pDevExt, pSession);
+    supdrvOSCleanupSession(pDevExt, pSession);
+
+    /*
+     * Free the rest of the session stuff.
+     */
+    RTSpinlockDestroy(pSession->Spinlock);
+    pSession->Spinlock = NIL_RTSPINLOCK;
+    pSession->pDevExt = NULL;
+    RTMemFree(pSession);
+    LogFlow(("supdrvDestroySession: returns\n"));
+}
+
+
+/**
+ * Inserts the session into the global hash table.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_WRONG_ORDER if the session was already inserted (asserted).
+ * @retval  VERR_INVALID_PARAMETER if the session handle is invalid or a ring-0
+ *          session (asserted).
+ * @retval  VERR_DUPLICATE if there is already a session for that pid.
+ *
+ * @param   pDevExt         The device extension.
+ * @param   pSession        The session.
+ * @param   ppOsSessionPtr  Pointer to the OS session pointer, if any is
+ *                          available and used.  This will set to point to the
+ *                          session while under the protection of the session
+ *                          hash table spinlock.  It will also be kept in
+ *                          PSUPDRVSESSION::ppOsSessionPtr for lookup and
+ *                          cleanup use.
+ * @param   pvUser          Argument for supdrvOSSessionHashTabInserted.
+ */
+int VBOXCALL supdrvSessionHashTabInsert(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPDRVSESSION *ppOsSessionPtr,
+                                        void *pvUser)
+{
+    PSUPDRVSESSION  pCur;
+    unsigned        iHash;
+
+    /*
+     * Validate input.
+     */
+    AssertReturn(SUP_IS_SESSION_VALID(pSession), VERR_INVALID_PARAMETER);
+    AssertReturn(pSession->R0Process != NIL_RTR0PROCESS, VERR_INVALID_PARAMETER);
+
+    /*
+     * Calculate the hash table index and acquire the spinlock.
+     */
+    iHash = SUPDRV_SESSION_HASH(pSession->Process);
+
+    RTSpinlockAcquire(pDevExt->hSessionHashTabSpinlock);
+
+    /*
+     * If there are a collisions, we need to carefully check if we got a
+     * duplicate.  There can only be one open session per process.
+     */
+    pCur = pDevExt->apSessionHashTab[iHash];
+    if (pCur)
+    {
+        while (pCur && pCur->Process != pSession->Process)
+            pCur = pCur->pCommonNextHash;
+
+        if (pCur)
+        {
+            RTSpinlockRelease(pDevExt->hSessionHashTabSpinlock);
+            if (pCur == pSession)
+            {
+                Assert(pSession->fInHashTable);
+                AssertFailed();
+                return VERR_WRONG_ORDER;
+            }
+            Assert(!pSession->fInHashTable);
+            if (pCur->R0Process == pSession->R0Process)
+                return VERR_RESOURCE_IN_USE;
+            return VERR_DUPLICATE;
+        }
+    }
+    Assert(!pSession->fInHashTable);
+    Assert(!pSession->ppOsSessionPtr);
+
+    /*
+     * Insert it, doing a callout to the OS specific code in case it has
+     * anything it wishes to do while we're holding the spinlock.
+     */
+    pSession->pCommonNextHash = pDevExt->apSessionHashTab[iHash];
+    pDevExt->apSessionHashTab[iHash] = pSession;
+    pSession->fInHashTable    = true;
+    ASMAtomicIncS32(&pDevExt->cSessions);
+
+    pSession->ppOsSessionPtr = ppOsSessionPtr;
+    if (ppOsSessionPtr)
+        ASMAtomicWritePtr(ppOsSessionPtr, pSession);
+
+    supdrvOSSessionHashTabInserted(pDevExt, pSession, pvUser);
+
+    /*
+     * Retain a reference for the pointer in the session table.
+     */
+    ASMAtomicIncU32(&pSession->cRefs);
+
+    RTSpinlockRelease(pDevExt->hSessionHashTabSpinlock);
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * Removes the session from the global hash table.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_NOT_FOUND if the session was already removed (asserted).
+ * @retval  VERR_INVALID_PARAMETER if the session handle is invalid or a ring-0
+ *          session (asserted).
+ *
+ * @param   pDevExt     The device extension.
+ * @param   pSession    The session. The caller is expected to have a reference
+ *                      to this so it won't croak on us when we release the hash
+ *                      table reference.
+ * @param   pvUser      OS specific context value for the
+ *                      supdrvOSSessionHashTabInserted callback.
+ */
+int VBOXCALL supdrvSessionHashTabRemove(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, void *pvUser)
+{
+    PSUPDRVSESSION  pCur;
+    unsigned        iHash;
+    int32_t         cRefs;
+
+    /*
+     * Validate input.
+     */
+    AssertReturn(SUP_IS_SESSION_VALID(pSession), VERR_INVALID_PARAMETER);
+    AssertReturn(pSession->R0Process != NIL_RTR0PROCESS, VERR_INVALID_PARAMETER);
+
+    /*
+     * Calculate the hash table index and acquire the spinlock.
+     */
+    iHash = SUPDRV_SESSION_HASH(pSession->Process);
+
+    RTSpinlockAcquire(pDevExt->hSessionHashTabSpinlock);
+
+    /*
+     * Unlink it.
+     */
+    pCur = pDevExt->apSessionHashTab[iHash];
+    if (pCur == pSession)
+        pDevExt->apSessionHashTab[iHash] = pSession->pCommonNextHash;
+    else
+    {
+        PSUPDRVSESSION pPrev = pCur;
+        while (pCur && pCur != pSession)
+        {
+            pPrev = pCur;
+            pCur  = pCur->pCommonNextHash;
+        }
+        if (pCur)
+            pPrev->pCommonNextHash = pCur->pCommonNextHash;
+        else
+        {
+            Assert(!pSession->fInHashTable);
+            RTSpinlockRelease(pDevExt->hSessionHashTabSpinlock);
+            return VERR_NOT_FOUND;
+        }
+    }
+
+    pSession->pCommonNextHash = NULL;
+    pSession->fInHashTable    = false;
+
+    ASMAtomicDecU32(&pDevExt->cSessions);
+
+    /*
+     * Clear OS specific session pointer if available and do the OS callback.
+     */
+    if (pSession->ppOsSessionPtr)
+    {
+        ASMAtomicCmpXchgPtr(pSession->ppOsSessionPtr, NULL, pSession);
+        pSession->ppOsSessionPtr = NULL;
+    }
+
+    supdrvOSSessionHashTabRemoved(pDevExt, pSession, pvUser);
+
+    RTSpinlockRelease(pDevExt->hSessionHashTabSpinlock);
+
+    /*
+     * Drop the reference the hash table had to the session.  This shouldn't
+     * be the last reference!
+     */
+    cRefs = ASMAtomicDecU32(&pSession->cRefs);
+    Assert(cRefs > 0 && cRefs < _1M);
+    if (cRefs == 0)
+        supdrvDestroySession(pDevExt, pSession);
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * Looks up the session for the current process in the global hash table or in
+ * OS specific pointer.
+ *
+ * @returns Pointer to the session with a reference that the caller must
+ *          release.  If no valid session was found, NULL is returned.
+ *
+ * @param   pDevExt         The device extension.
+ * @param   Process         The process ID.
+ * @param   R0Process       The ring-0 process handle.
+ * @param   ppOsSessionPtr  The OS session pointer if available.  If not NULL,
+ *                          this is used instead of the hash table.  For
+ *                          additional safety it must then be equal to the
+ *                          SUPDRVSESSION::ppOsSessionPtr member.
+ *                          This can be NULL even if the OS has a session
+ *                          pointer.
+ */
+PSUPDRVSESSION VBOXCALL supdrvSessionHashTabLookup(PSUPDRVDEVEXT pDevExt, RTPROCESS Process, RTR0PROCESS R0Process,
+                                                   PSUPDRVSESSION *ppOsSessionPtr)
+{
+    PSUPDRVSESSION  pCur;
+    unsigned        iHash;
+
+    /*
+     * Validate input.
+     */
+    AssertReturn(R0Process != NIL_RTR0PROCESS, NULL);
+
+    /*
+     * Calculate the hash table index and acquire the spinlock.
+     */
+    iHash = SUPDRV_SESSION_HASH(Process);
+
+    RTSpinlockAcquire(pDevExt->hSessionHashTabSpinlock);
+
+    /*
+     * If an OS session pointer is provided, always use it.
+     */
+    if (ppOsSessionPtr)
+    {
+        pCur = *ppOsSessionPtr;
+        if (   pCur
+            && (   pCur->ppOsSessionPtr != ppOsSessionPtr
+                || pCur->Process        != Process
+                || pCur->R0Process      != R0Process) )
+            pCur = NULL;
+    }
+    else
+    {
+        /*
+         * Otherwise, do the hash table lookup.
+         */
+        pCur = pDevExt->apSessionHashTab[iHash];
+        while (   pCur
+               && (   pCur->Process   != Process
+                   || pCur->R0Process != R0Process) )
+            pCur = pCur->pCommonNextHash;
+    }
+
+    /*
+     * Retain the session.
+     */
+    if (pCur)
+    {
+        uint32_t cRefs = ASMAtomicIncU32(&pCur->cRefs);
+        NOREF(cRefs);
+        Assert(cRefs > 1 && cRefs < _1M);
+    }
+
+    RTSpinlockRelease(pDevExt->hSessionHashTabSpinlock);
+
+    return pCur;
+}
+
+
+/**
+ * Retain a session to make sure it doesn't go away while it is in use.
+ *
+ * @returns New reference count on success, UINT32_MAX on failure.
+ * @param   pSession    Session data.
+ */
+uint32_t VBOXCALL supdrvSessionRetain(PSUPDRVSESSION pSession)
+{
+    uint32_t cRefs;
+    AssertPtrReturn(pSession, UINT32_MAX);
+    AssertReturn(SUP_IS_SESSION_VALID(pSession), UINT32_MAX);
+
+    cRefs = ASMAtomicIncU32(&pSession->cRefs);
+    AssertMsg(cRefs > 1 && cRefs < _1M, ("%#x %p\n", cRefs, pSession));
+    return cRefs;
+}
+
+
+/**
+ * Releases a given session.
+ *
+ * @returns New reference count on success (0 if closed), UINT32_MAX on failure.
+ * @param   pSession    Session data.
+ */
+uint32_t VBOXCALL supdrvSessionRelease(PSUPDRVSESSION pSession)
+{
+    uint32_t cRefs;
+    AssertPtrReturn(pSession, UINT32_MAX);
+    AssertReturn(SUP_IS_SESSION_VALID(pSession), UINT32_MAX);
+
+    cRefs = ASMAtomicDecU32(&pSession->cRefs);
+    AssertMsg(cRefs < _1M, ("%#x %p\n", cRefs, pSession));
+    if (cRefs == 0)
+        supdrvDestroySession(pSession->pDevExt, pSession);
+    return cRefs;
+}
+
+
+/**
  * RTHandleTableDestroy callback used by supdrvCleanupSession.
  *
  * @returns IPRT status code, see SUPR0ObjAddRef.
@@ -1026,8 +1363,8 @@ int VBOXCALL supdrvIOCtlFast(uintptr_t uIOCtl, VMCPUID idCpu, PSUPDRVDEVEXT pDev
             case SUP_IOCTL_FAST_DO_RAW_RUN:
                 pDevExt->pfnVMMR0EntryFast(pSession->pVM, idCpu, SUP_VMMR0_DO_RAW_RUN);
                 break;
-            case SUP_IOCTL_FAST_DO_HWACC_RUN:
-                pDevExt->pfnVMMR0EntryFast(pSession->pVM, idCpu, SUP_VMMR0_DO_HWACC_RUN);
+            case SUP_IOCTL_FAST_DO_HM_RUN:
+                pDevExt->pfnVMMR0EntryFast(pSession->pVM, idCpu, SUP_VMMR0_DO_HM_RUN);
                 break;
             case SUP_IOCTL_FAST_DO_NOP:
                 pDevExt->pfnVMMR0EntryFast(pSession->pVM, idCpu, SUP_VMMR0_DO_NOP);
@@ -1078,7 +1415,7 @@ static int supdrvCheckInvalidChar(const char *pszStr, const char *pszChars)
  * @param   pSession    Session data.
  * @param   pReqHdr     The request header.
  */
-static int supdrvIOCtlInner(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPREQHDR pReqHdr)
+static int supdrvIOCtlInnerUnrestricted(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPREQHDR pReqHdr)
 {
     /*
      * Validation macros
@@ -1334,6 +1671,16 @@ static int supdrvIOCtlInner(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESS
 
             /* execute */
             pReq->Hdr.rc = supdrvIOCtl_LdrFree(pDevExt, pSession, pReq);
+            return 0;
+        }
+
+        case SUP_CTL_CODE_NO_SIZE(SUP_IOCTL_LDR_LOCK_DOWN):
+        {
+            /* validate */
+            REQ_CHECK_SIZES(SUP_IOCTL_LDR_LOCK_DOWN);
+
+            /* execute */
+            pReqHdr->rc = supdrvIOCtl_LdrLockDown(pDevExt);
             return 0;
         }
 
@@ -1755,7 +2102,6 @@ static int supdrvIOCtlInner(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESS
             /* validate */
             PSUPVTCAPS pReq = (PSUPVTCAPS)pReqHdr;
             REQ_CHECK_SIZES(SUP_IOCTL_VT_CAPS);
-            REQ_CHECK_EXPR(SUP_IOCTL_VT_CAPS, pReq->Hdr.cbIn <= SUP_IOCTL_VT_CAPS_SIZE_IN);
 
             /* execute */
             pReq->Hdr.rc = SUPR0QueryVTCaps(pSession, &pReq->u.Out.Caps);
@@ -1834,6 +2180,100 @@ static int supdrvIOCtlInner(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESS
             return 0;
         }
 
+        case SUP_CTL_CODE_NO_SIZE(SUP_IOCTL_RESUME_SUSPENDED_KBDS):
+        {
+            /* validate */
+            REQ_CHECK_SIZES(SUP_IOCTL_RESUME_SUSPENDED_KBDS);
+
+            pReqHdr->rc = supdrvIOCtl_ResumeSuspendedKbds();
+            return 0;
+        }
+
+        default:
+            Log(("Unknown IOCTL %#lx\n", (long)uIOCtl));
+            break;
+    }
+    return VERR_GENERAL_FAILURE;
+}
+
+
+/**
+ * I/O Control inner worker for the restricted operations.
+ *
+ * @returns IPRT status code.
+ * @retval  VERR_INVALID_PARAMETER if the request is invalid.
+ *
+ * @param   uIOCtl      Function number.
+ * @param   pDevExt     Device extention.
+ * @param   pSession    Session data.
+ * @param   pReqHdr     The request header.
+ */
+static int supdrvIOCtlInnerRestricted(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPREQHDR pReqHdr)
+{
+    /*
+     * The switch.
+     */
+    switch (SUP_CTL_CODE_NO_SIZE(uIOCtl))
+    {
+        case SUP_CTL_CODE_NO_SIZE(SUP_IOCTL_COOKIE):
+        {
+            PSUPCOOKIE pReq = (PSUPCOOKIE)pReqHdr;
+            REQ_CHECK_SIZES(SUP_IOCTL_COOKIE);
+            if (strncmp(pReq->u.In.szMagic, SUPCOOKIE_MAGIC, sizeof(pReq->u.In.szMagic)))
+            {
+                OSDBGPRINT(("SUP_IOCTL_COOKIE: invalid magic %.16s\n", pReq->u.In.szMagic));
+                pReq->Hdr.rc = VERR_INVALID_MAGIC;
+                return 0;
+            }
+
+            /*
+             * Match the version.
+             * The current logic is very simple, match the major interface version.
+             */
+            if (    pReq->u.In.u32MinVersion > SUPDRV_IOC_VERSION
+                ||  (pReq->u.In.u32MinVersion & 0xffff0000) != (SUPDRV_IOC_VERSION & 0xffff0000))
+            {
+                OSDBGPRINT(("SUP_IOCTL_COOKIE: Version mismatch. Requested: %#x  Min: %#x  Current: %#x\n",
+                            pReq->u.In.u32ReqVersion, pReq->u.In.u32MinVersion, SUPDRV_IOC_VERSION));
+                pReq->u.Out.u32Cookie         = 0xffffffff;
+                pReq->u.Out.u32SessionCookie  = 0xffffffff;
+                pReq->u.Out.u32SessionVersion = 0xffffffff;
+                pReq->u.Out.u32DriverVersion  = SUPDRV_IOC_VERSION;
+                pReq->u.Out.pSession          = NULL;
+                pReq->u.Out.cFunctions        = 0;
+                pReq->Hdr.rc = VERR_VERSION_MISMATCH;
+                return 0;
+            }
+
+            /*
+             * Fill in return data and be gone.
+             * N.B. The first one to change SUPDRV_IOC_VERSION shall makes sure that
+             *      u32SessionVersion <= u32ReqVersion!
+             */
+            /** @todo Somehow validate the client and negotiate a secure cookie... */
+            pReq->u.Out.u32Cookie         = pDevExt->u32Cookie;
+            pReq->u.Out.u32SessionCookie  = pSession->u32Cookie;
+            pReq->u.Out.u32SessionVersion = SUPDRV_IOC_VERSION;
+            pReq->u.Out.u32DriverVersion  = SUPDRV_IOC_VERSION;
+            pReq->u.Out.pSession          = pSession;
+            pReq->u.Out.cFunctions        = 0;
+            pReq->Hdr.rc = VINF_SUCCESS;
+            return 0;
+        }
+
+        case SUP_CTL_CODE_NO_SIZE(SUP_IOCTL_VT_CAPS):
+        {
+            /* validate */
+            PSUPVTCAPS pReq = (PSUPVTCAPS)pReqHdr;
+            REQ_CHECK_SIZES(SUP_IOCTL_VT_CAPS);
+
+            /* execute */
+            pReq->Hdr.rc = SUPR0QueryVTCaps(pSession, &pReq->u.Out.Caps);
+            if (RT_FAILURE(pReq->Hdr.rc))
+                pReq->Hdr.cbOut = sizeof(pReq->Hdr);
+            return 0;
+        }
+
         default:
             Log(("Unknown IOCTL %#lx\n", (long)uIOCtl));
             break;
@@ -1853,7 +2293,7 @@ static int supdrvIOCtlInner(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESS
  * @param   pSession    Session data.
  * @param   pReqHdr     The request header.
  */
-int VBOXCALL supdrvIOCtl(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPREQHDR pReqHdr)
+int VBOXCALL supdrvIOCtl(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPREQHDR pReqHdr, size_t cbReq)
 {
     int rc;
     VBOXDRV_IOCTL_ENTRY(pSession, uIOCtl, pReqHdr);
@@ -1861,10 +2301,17 @@ int VBOXCALL supdrvIOCtl(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION
     /*
      * Validate the request.
      */
-    /* this first check could probably be omitted as its also done by the OS specific code... */
+    if (RT_UNLIKELY(cbReq < sizeof(*pReqHdr)))
+    {
+        OSDBGPRINT(("vboxdrv: Bad ioctl request size; cbReq=%#lx\n", (long)cbReq));
+        VBOXDRV_IOCTL_RETURN(pSession, uIOCtl, pReqHdr, VERR_INVALID_PARAMETER, VINF_SUCCESS);
+        return VERR_INVALID_PARAMETER;
+    }
     if (RT_UNLIKELY(   (pReqHdr->fFlags & SUPREQHDR_FLAGS_MAGIC_MASK) != SUPREQHDR_FLAGS_MAGIC
                     || pReqHdr->cbIn < sizeof(*pReqHdr)
-                    || pReqHdr->cbOut < sizeof(*pReqHdr)))
+                    || pReqHdr->cbIn > cbReq
+                    || pReqHdr->cbOut < sizeof(*pReqHdr)
+                    || pReqHdr->cbOut > cbReq))
     {
         OSDBGPRINT(("vboxdrv: Bad ioctl request header; cbIn=%#lx cbOut=%#lx fFlags=%#lx\n",
                     (long)pReqHdr->cbIn, (long)pReqHdr->cbOut, (long)pReqHdr->fFlags));
@@ -1895,9 +2342,12 @@ int VBOXCALL supdrvIOCtl(uintptr_t uIOCtl, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION
     }
 
     /*
-     * Hand it to an inner function to avoid lots of unnecessary return tracepoints
+     * Hand it to an inner function to avoid lots of unnecessary return tracepoints.
      */
-    rc = supdrvIOCtlInner(uIOCtl, pDevExt, pSession, pReqHdr);
+    if (pSession->fUnrestricted)
+        rc = supdrvIOCtlInnerUnrestricted(uIOCtl, pDevExt, pSession, pReqHdr);
+    else
+        rc = supdrvIOCtlInnerRestricted(uIOCtl, pDevExt, pSession, pReqHdr);
 
     VBOXDRV_IOCTL_RETURN(pSession, uIOCtl, pReqHdr, pReqHdr->rc, rc);
     return rc;
@@ -1999,7 +2449,7 @@ int VBOXCALL supdrvIDC(uintptr_t uReq, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSe
             pReq->u.Out.uDriverVersion  = SUPDRV_IDC_VERSION;
             pReq->u.Out.uDriverRevision = VBOX_SVN_REV;
 
-            pReq->Hdr.rc = supdrvCreateSession(pDevExt, false /* fUser */, &pSession);
+            pReq->Hdr.rc = supdrvCreateSession(pDevExt, false /* fUser */, true /*fUnrestricted*/, &pSession);
             if (RT_FAILURE(pReq->Hdr.rc))
             {
                 OSDBGPRINT(("SUPDRV_IDC_REQ_CONNECT: failed to create session, rc=%d\n", pReq->Hdr.rc));
@@ -2016,7 +2466,7 @@ int VBOXCALL supdrvIDC(uintptr_t uReq, PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSe
         {
             REQ_CHECK_IDC_SIZE(SUPDRV_IDC_REQ_DISCONNECT, sizeof(*pReqHdr));
 
-            supdrvCloseSession(pDevExt, pSession);
+            supdrvSessionRelease(pSession);
             return pReqHdr->rc = VINF_SUCCESS;
         }
 
@@ -3187,9 +3637,61 @@ SUPR0DECL(int) SUPR0EnableVTx(bool fEnable)
 }
 
 
-/** @todo document me */
+/**
+ * Suspends hardware virtualization extensions using the native OS API.
+ *
+ * This is called prior to entering raw-mode context.
+ *
+ * @returns @c true if suspended, @c false if not.
+ */
+SUPR0DECL(bool) SUPR0SuspendVTxOnCpu(void)
+{
+#ifdef RT_OS_DARWIN
+    return supdrvOSSuspendVTxOnCpu();
+#else
+    return false;
+#endif
+}
+
+
+/**
+ * Resumes hardware virtualization extensions using the native OS API.
+ *
+ * This is called after to entering raw-mode context.
+ *
+ * @param   fSuspended      The return value of SUPR0SuspendVTxOnCpu.
+ */
+SUPR0DECL(void) SUPR0ResumeVTxOnCpu(bool fSuspended)
+{
+#ifdef RT_OS_DARWIN
+    supdrvOSResumeVTxOnCpu(fSuspended);
+#else
+    Assert(!fSuspended);
+#endif
+}
+
+
+/**
+ * Queries the AMD-V and VT-x capabilities of the calling CPU.
+ *
+ * @returns VBox status code.
+ * @retval  VERR_VMX_NO_VMX
+ * @retval  VERR_VMX_MSR_SMX_VMXON_DISABLED
+ * @retval  VERR_VMX_MSR_VMXON_DISABLED
+ * @retval  VERR_VMX_MSR_LOCKING_FAILED
+ * @retval  VERR_SVM_NO_SVM
+ * @retval  VERR_SVM_DISABLED
+ * @retval  VERR_UNSUPPORTED_CPU if not identifiable as an AMD, Intel or VIA
+ *          (centaur) CPU.
+ *
+ * @param   pSession        The session handle.
+ * @param   pfCaps          Where to store the capabilities.
+ */
 SUPR0DECL(int) SUPR0QueryVTCaps(PSUPDRVSESSION pSession, uint32_t *pfCaps)
 {
+    int rc = VERR_UNSUPPORTED_CPU;
+    RTTHREADPREEMPTSTATE PreemptState = RTTHREADPREEMPTSTATE_INITIALIZER;
+
     /*
      * Input validation.
      */
@@ -3197,39 +3699,72 @@ SUPR0DECL(int) SUPR0QueryVTCaps(PSUPDRVSESSION pSession, uint32_t *pfCaps)
     AssertPtrReturn(pfCaps, VERR_INVALID_POINTER);
 
     *pfCaps = 0;
-
+    /* We may modify MSRs and re-read them, disable preemption so we make sure we don't migrate CPUs. */
+    RTThreadPreemptDisable(&PreemptState);
     if (ASMHasCpuId())
     {
-        uint32_t u32FeaturesECX;
-        uint32_t u32Dummy;
-        uint32_t u32FeaturesEDX;
-        uint32_t u32VendorEBX, u32VendorECX, u32VendorEDX, u32AMDFeatureEDX, u32AMDFeatureECX;
-        uint64_t val;
+        uint32_t fFeaturesECX, fFeaturesEDX, uDummy;
+        uint32_t uMaxId, uVendorEBX, uVendorECX, uVendorEDX;
+        uint64_t u64FeatMsr;
 
-        ASMCpuId(0, &u32Dummy, &u32VendorEBX, &u32VendorECX, &u32VendorEDX);
-        ASMCpuId(1, &u32Dummy, &u32Dummy, &u32FeaturesECX, &u32FeaturesEDX);
-        /* Query AMD features. */
-        ASMCpuId(0x80000001, &u32Dummy, &u32Dummy, &u32AMDFeatureECX, &u32AMDFeatureEDX);
+        ASMCpuId(0, &uMaxId, &uVendorEBX, &uVendorECX, &uVendorEDX);
+        ASMCpuId(1, &uDummy, &uDummy, &fFeaturesECX, &fFeaturesEDX);
 
-        if (    u32VendorEBX == X86_CPUID_VENDOR_INTEL_EBX
-            &&  u32VendorECX == X86_CPUID_VENDOR_INTEL_ECX
-            &&  u32VendorEDX == X86_CPUID_VENDOR_INTEL_EDX
+        if (   ASMIsValidStdRange(uMaxId)
+            && (   ASMIsIntelCpuEx(     uVendorEBX, uVendorECX, uVendorEDX)
+                || ASMIsViaCentaurCpuEx(uVendorEBX, uVendorECX, uVendorEDX) )
            )
         {
-            if (    (u32FeaturesECX & X86_CPUID_FEATURE_ECX_VMX)
-                 && (u32FeaturesEDX & X86_CPUID_FEATURE_EDX_MSR)
-                 && (u32FeaturesEDX & X86_CPUID_FEATURE_EDX_FXSR)
+            if (    (fFeaturesECX & X86_CPUID_FEATURE_ECX_VMX)
+                 && (fFeaturesEDX & X86_CPUID_FEATURE_EDX_MSR)
+                 && (fFeaturesEDX & X86_CPUID_FEATURE_EDX_FXSR)
                )
             {
-                val = ASMRdMsr(MSR_IA32_FEATURE_CONTROL);
-                /*
-                 * Both the LOCK and VMXON bit must be set; otherwise VMXON will generate a #GP.
-                 * Once the lock bit is set, this MSR can no longer be modified.
-                 */
-                if (       (val & (MSR_IA32_FEATURE_CONTROL_VMXON|MSR_IA32_FEATURE_CONTROL_LOCK))
-                        ==        (MSR_IA32_FEATURE_CONTROL_VMXON|MSR_IA32_FEATURE_CONTROL_LOCK) /* enabled and locked */
-                    ||  !(val & MSR_IA32_FEATURE_CONTROL_LOCK) /* not enabled, but not locked either */
-                   )
+                /** @todo Unify code with hmR0InitIntelCpu(). */
+                uint64_t   u64FeatMsr     = ASMRdMsr(MSR_IA32_FEATURE_CONTROL);
+                bool const fInSmxMode     = RT_BOOL(ASMGetCR4() & X86_CR4_SMXE);
+                bool       fMsrLocked     = RT_BOOL(u64FeatMsr & MSR_IA32_FEATURE_CONTROL_LOCK);
+                bool       fSmxVmxAllowed = RT_BOOL(u64FeatMsr & MSR_IA32_FEATURE_CONTROL_SMX_VMXON);
+                bool       fVmxAllowed    = RT_BOOL(u64FeatMsr & MSR_IA32_FEATURE_CONTROL_VMXON);
+
+                /* Check if the LOCK bit is set but excludes the required VMXON bit. */
+                if (fMsrLocked)
+                {
+                    if (fInSmxMode && !fSmxVmxAllowed)
+                        rc = VERR_VMX_MSR_SMX_VMXON_DISABLED;
+                    else if (!fInSmxMode && !fVmxAllowed)
+                        rc = VERR_VMX_MSR_VMXON_DISABLED;
+                    else
+                        rc = VINF_SUCCESS;
+                }
+                else
+                {
+                    /*
+                     * MSR is not yet locked; we can change it ourselves here.
+                     * Once the lock bit is set, this MSR can no longer be modified.
+                     */
+                    bool fAllowed;
+                    u64FeatMsr |= MSR_IA32_FEATURE_CONTROL_LOCK;
+                    if (fInSmxMode)
+                        u64FeatMsr |= MSR_IA32_FEATURE_CONTROL_SMX_VMXON;
+                    else
+                        u64FeatMsr |= MSR_IA32_FEATURE_CONTROL_VMXON;
+
+                    ASMWrMsr(MSR_IA32_FEATURE_CONTROL, u64FeatMsr);
+
+                    /* Verify. */
+                    u64FeatMsr     = ASMRdMsr(MSR_IA32_FEATURE_CONTROL);
+                    fMsrLocked     = RT_BOOL(u64FeatMsr & MSR_IA32_FEATURE_CONTROL_LOCK);
+                    fSmxVmxAllowed = fMsrLocked && RT_BOOL(u64FeatMsr & MSR_IA32_FEATURE_CONTROL_SMX_VMXON);
+                    fVmxAllowed    = fMsrLocked && RT_BOOL(u64FeatMsr & MSR_IA32_FEATURE_CONTROL_VMXON);
+                    fAllowed       = fInSmxMode ? fSmxVmxAllowed : fVmxAllowed;
+                    if (fAllowed)
+                        rc = VINF_SUCCESS;
+                    else
+                        rc = VERR_VMX_MSR_LOCKING_FAILED;
+                }
+
+                if (rc == VINF_SUCCESS)
                 {
                     VMX_CAPABILITY vtCaps;
 
@@ -3242,44 +3777,48 @@ SUPR0DECL(int) SUPR0QueryVTCaps(PSUPDRVSESSION pSession, uint32_t *pfCaps)
                         if (vtCaps.n.allowed1 & VMX_VMCS_CTRL_PROC_EXEC2_EPT)
                             *pfCaps |= SUPVTCAPS_NESTED_PAGING;
                     }
-                    return VINF_SUCCESS;
                 }
-                return VERR_VMX_MSR_LOCKED_OR_DISABLED;
             }
-            return VERR_VMX_NO_VMX;
+            else
+                rc = VERR_VMX_NO_VMX;
         }
-
-        if (    u32VendorEBX == X86_CPUID_VENDOR_AMD_EBX
-            &&  u32VendorECX == X86_CPUID_VENDOR_AMD_ECX
-            &&  u32VendorEDX == X86_CPUID_VENDOR_AMD_EDX
-           )
+        else if (   ASMIsAmdCpuEx(uVendorEBX, uVendorECX, uVendorEDX)
+                 && ASMIsValidStdRange(uMaxId))
         {
-            if (   (u32AMDFeatureECX & X86_CPUID_AMD_FEATURE_ECX_SVM)
-                && (u32FeaturesEDX & X86_CPUID_FEATURE_EDX_MSR)
-                && (u32FeaturesEDX & X86_CPUID_FEATURE_EDX_FXSR)
+            uint32_t fExtFeaturesEcx, uExtMaxId;
+            ASMCpuId(0x80000000, &uExtMaxId, &uDummy, &uDummy, &uDummy);
+            ASMCpuId(0x80000001, &uDummy, &uDummy, &fExtFeaturesEcx, &uDummy);
+            if (   ASMIsValidExtRange(uExtMaxId)
+                && uExtMaxId >= 0x8000000a
+                && (fExtFeaturesEcx & X86_CPUID_AMD_FEATURE_ECX_SVM)
+                && (fFeaturesEDX    & X86_CPUID_FEATURE_EDX_MSR)
+                && (fFeaturesEDX    & X86_CPUID_FEATURE_EDX_FXSR)
                )
             {
                 /* Check if SVM is disabled */
-                val = ASMRdMsr(MSR_K8_VM_CR);
-                if (!(val & MSR_K8_VM_CR_SVM_DISABLE))
+                u64FeatMsr = ASMRdMsr(MSR_K8_VM_CR);
+                if (!(u64FeatMsr & MSR_K8_VM_CR_SVM_DISABLE))
                 {
+                    uint32_t fSvmFeatures;
                     *pfCaps |= SUPVTCAPS_AMD_V;
 
-                    /* Query AMD features. */
-                    ASMCpuId(0x8000000A, &u32Dummy, &u32Dummy, &u32Dummy, &u32FeaturesEDX);
-
-                    if (u32FeaturesEDX & AMD_CPUID_SVM_FEATURE_EDX_NESTED_PAGING)
+                    /* Query AMD-V features. */
+                    ASMCpuId(0x8000000a, &uDummy, &uDummy, &uDummy, &fSvmFeatures);
+                    if (fSvmFeatures & AMD_CPUID_SVM_FEATURE_EDX_NESTED_PAGING)
                         *pfCaps |= SUPVTCAPS_NESTED_PAGING;
 
-                    return VINF_SUCCESS;
+                    rc = VINF_SUCCESS;
                 }
-                return VERR_SVM_DISABLED;
+                else
+                    rc = VERR_SVM_DISABLED;
             }
-            return VERR_SVM_NO_SVM;
+            else
+                rc = VERR_SVM_NO_SVM;
         }
     }
 
-    return VERR_UNSUPPORTED_CPU;
+    RTThreadPreemptRestore(&PreemptState);
+    return rc;
 }
 
 
@@ -3314,6 +3853,49 @@ static DECLCALLBACK(void) supdrvGipReInitCpuCallback(RTCPUID idCpu, void *pvUser
 
     NOREF(pvUser2);
     NOREF(idCpu);
+}
+
+
+/**
+ * Increase the timer freqency on hosts where this is possible (NT).
+ *
+ * The idea is that more interrupts is better for us... Also, it's better than
+ * we increase the timer frequence, because we might end up getting inaccuract
+ * callbacks if someone else does it.
+ *
+ * @param   pDevExt   Sets u32SystemTimerGranularityGrant if increased.
+ */
+static void supdrvGipRequestHigherTimerFrequencyFromSystem(PSUPDRVDEVEXT pDevExt)
+{
+    if (pDevExt->u32SystemTimerGranularityGrant == 0)
+    {
+        uint32_t u32SystemResolution;
+        if (   RT_SUCCESS_NP(RTTimerRequestSystemGranularity(  976563 /* 1024 HZ */, &u32SystemResolution))
+            || RT_SUCCESS_NP(RTTimerRequestSystemGranularity( 1000000 /* 1000 HZ */, &u32SystemResolution))
+            || RT_SUCCESS_NP(RTTimerRequestSystemGranularity( 1953125 /*  512 HZ */, &u32SystemResolution))
+            || RT_SUCCESS_NP(RTTimerRequestSystemGranularity( 2000000 /*  500 HZ */, &u32SystemResolution))
+           )
+        {
+            Assert(RTTimerGetSystemGranularity() <= u32SystemResolution);
+            pDevExt->u32SystemTimerGranularityGrant = u32SystemResolution;
+        }
+    }
+}
+
+
+/**
+ * Undoes supdrvGipRequestHigherTimerFrequencyFromSystem.
+ *
+ * @param   pDevExt     Clears u32SystemTimerGranularityGrant.
+ */
+static void supdrvGipReleaseHigherTimerFrequencyFromSystem(PSUPDRVDEVEXT pDevExt)
+{
+    if (pDevExt->u32SystemTimerGranularityGrant)
+    {
+        int rc2 = RTTimerReleaseSystemGranularity(pDevExt->u32SystemTimerGranularityGrant);
+        AssertRC(rc2);
+        pDevExt->u32SystemTimerGranularityGrant = 0;
+    }
 }
 
 
@@ -3381,27 +3963,14 @@ SUPR0DECL(int) SUPR0GipMap(PSUPDRVSESSION pSession, PRTR3PTR ppGipR3, PRTHCPHYS 
             {
                 PSUPGLOBALINFOPAGE pGipR0 = pDevExt->pGip;
                 uint64_t u64NanoTS;
-                uint32_t u32SystemResolution;
-                unsigned i;
 
                 LogFlow(("SUPR0GipMap: Resumes GIP updating\n"));
 
-                /*
-                 * Try bump up the system timer resolution.
-                 * The more interrupts the better...
-                 */
-                if (   RT_SUCCESS_NP(RTTimerRequestSystemGranularity(  976563 /* 1024 HZ */, &u32SystemResolution))
-                    || RT_SUCCESS_NP(RTTimerRequestSystemGranularity( 1000000 /* 1000 HZ */, &u32SystemResolution))
-                    || RT_SUCCESS_NP(RTTimerRequestSystemGranularity( 1953125 /*  512 HZ */, &u32SystemResolution))
-                    || RT_SUCCESS_NP(RTTimerRequestSystemGranularity( 2000000 /*  500 HZ */, &u32SystemResolution))
-                   )
-                {
-                    Assert(RTTimerGetSystemGranularity() <= u32SystemResolution);
-                    pDevExt->u32SystemTimerGranularityGrant = u32SystemResolution;
-                }
+                supdrvGipRequestHigherTimerFrequencyFromSystem(pDevExt);
 
                 if (pGipR0->aCPUs[0].u32TransactionId != 2 /* not the first time */)
                 {
+                    unsigned i;
                     for (i = 0; i < RT_ELEMENTS(pGipR0->aCPUs); i++)
                         ASMAtomicUoWriteU32(&pGipR0->aCPUs[i].u32TransactionId,
                                             (pGipR0->aCPUs[i].u32TransactionId + GIP_UPDATEHZ_RECALC_FREQ * 2)
@@ -3502,13 +4071,7 @@ SUPR0DECL(int) SUPR0GipUnmap(PSUPDRVSESSION pSession)
 #ifndef DO_NOT_START_GIP
             rc = RTTimerStop(pDevExt->pGipTimer); AssertRC(rc); rc = VINF_SUCCESS;
 #endif
-
-            if (pDevExt->u32SystemTimerGranularityGrant)
-            {
-                int rc2 = RTTimerReleaseSystemGranularity(pDevExt->u32SystemTimerGranularityGrant);
-                AssertRC(rc2);
-                pDevExt->u32SystemTimerGranularityGrant = 0;
-            }
+            supdrvGipReleaseHigherTimerFrequencyFromSystem(pDevExt);
         }
     }
 
@@ -3900,17 +4463,31 @@ static int supdrvIOCtl_LdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, P
         if (    pImage->szName[cchName] == '\0'
             &&  !memcmp(pImage->szName, pReq->u.In.szName, cchName))
         {
-            /** @todo check cbImageBits and cbImageWithTabs here, if they differs that indicates that the images are different. */
-            pImage->cUsage++;
-            pReq->u.Out.pvImageBase   = pImage->pvImage;
-            pReq->u.Out.fNeedsLoading = pImage->uState == SUP_IOCTL_LDR_OPEN;
-            pReq->u.Out.fNativeLoader = pImage->fNative;
-            supdrvLdrAddUsage(pSession, pImage);
+            if (RT_LIKELY(pImage->cUsage < UINT32_MAX / 2U))
+            {
+                /** @todo check cbImageBits and cbImageWithTabs here, if they differs that indicates that the images are different. */
+                pImage->cUsage++;
+                pReq->u.Out.pvImageBase   = pImage->pvImage;
+                pReq->u.Out.fNeedsLoading = pImage->uState == SUP_IOCTL_LDR_OPEN;
+                pReq->u.Out.fNativeLoader = pImage->fNative;
+                supdrvLdrAddUsage(pSession, pImage);
+                supdrvLdrUnlock(pDevExt);
+                return VINF_SUCCESS;
+            }
             supdrvLdrUnlock(pDevExt);
-            return VINF_SUCCESS;
+            Log(("supdrvIOCtl_LdrOpen: To many existing references to '%s'!\n", pReq->u.In.szName));
+            return VERR_INTERNAL_ERROR_3; /** @todo add VERR_TOO_MANY_REFERENCES */
         }
     }
     /* (not found - add it!) */
+
+    /* If the loader interface is locked down, make userland fail early */
+    if (pDevExt->fLdrLockedDown)
+    {
+        supdrvLdrUnlock(pDevExt);
+        Log(("supdrvIOCtl_LdrOpen: Not adding '%s' to image list, loader interface is locked down!\n", pReq->u.In.szName));
+        return VERR_PERMISSION_DENIED;
+    }
 
     /*
      * Allocate memory.
@@ -4075,6 +4652,14 @@ static int supdrvIOCtl_LdrLoad(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, P
         if (uState != SUP_IOCTL_LDR_LOAD)
             AssertMsgFailed(("SUP_IOCTL_LDR_LOAD: invalid image state %d (%#x)!\n", uState, uState));
         return VERR_ALREADY_LOADED;
+    }
+
+    /* If the loader interface is locked down, don't load new images */
+    if (pDevExt->fLdrLockedDown)
+    {
+        supdrvLdrUnlock(pDevExt);
+        Log(("SUP_IOCTL_LDR_LOAD: Not loading '%s' image bits, loader interface is locked down!\n", pImage->szName));
+        return VERR_PERMISSION_DENIED;
     }
 
     switch (pReq->u.In.eEPType)
@@ -4334,6 +4919,28 @@ static int supdrvIOCtl_LdrFree(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, P
 
     supdrvLdrUnlock(pDevExt);
     return rc;
+}
+
+
+/**
+ * Lock down the image loader interface.
+ *
+ * @returns IPRT status code.
+ * @param   pDevExt     Device globals.
+ */
+static int supdrvIOCtl_LdrLockDown(PSUPDRVDEVEXT pDevExt)
+{
+    LogFlow(("supdrvIOCtl_LdrLockDown:\n"));
+
+    supdrvLdrLock(pDevExt);
+    if (!pDevExt->fLdrLockedDown)
+    {
+        pDevExt->fLdrLockedDown = true;
+        Log(("supdrvIOCtl_LdrLockDown: Image loader interface locked down\n"));
+    }
+    supdrvLdrUnlock(pDevExt);
+
+    return VINF_SUCCESS;
 }
 
 
@@ -4607,6 +5214,13 @@ static void supdrvLdrFree(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
     PSUPDRVLDRIMAGE pImagePrev;
     LogFlow(("supdrvLdrFree: pImage=%p\n", pImage));
 
+    /*
+     * Warn if we're releasing images while the image loader interface is
+     * locked down -- we won't be able to reload them!
+     */
+    if (pDevExt->fLdrLockedDown)
+        Log(("supdrvLdrFree: Warning: unloading '%s' image, while loader interface is locked down!\n", pImage->szName));
+
     /* find it - arg. should've used doubly linked list. */
     Assert(pDevExt->pLdrImages);
     pImagePrev = NULL;
@@ -4719,7 +5333,7 @@ DECLINLINE(int) supdrvLdrUnlock(PSUPDRVDEVEXT pDevExt)
  */
 static int supdrvIOCtl_CallServiceModule(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSession, PSUPCALLSERVICE pReq)
 {
-#if !defined(RT_OS_WINDOWS) || defined(DEBUG)
+#if !defined(RT_OS_WINDOWS) || defined(RT_ARCH_AMD64) || defined(DEBUG)
     int rc;
 
     /*
@@ -4764,9 +5378,9 @@ static int supdrvIOCtl_CallServiceModule(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION p
         Log4(("SUP_IOCTL_CALL_SERVICE: rc=%Rrc op=%u out=%u arg=%RX64 p/t=%RTproc/%RTthrd\n",
               rc, pReq->u.In.uOperation, pReq->Hdr.cbOut, pReq->u.In.u64Arg, RTProcSelf(), RTThreadNativeSelf()));
     return rc;
-#else  /* RT_OS_WINDOWS && !DEBUG */
+#else  /* RT_OS_WINDOWS && !RT_ARCH_AMD64 && !DEBUG */
     return VERR_NOT_IMPLEMENTED;
-#endif /* RT_OS_WINDOWS && !DEBUG */
+#endif /* RT_OS_WINDOWS && !RT_ARCH_AMD64 && !DEBUG */
 }
 
 
@@ -4905,6 +5519,28 @@ static int supdrvIOCtl_LoggerSettings(PSUPDRVDEVEXT pDevExt, PSUPDRVSESSION pSes
 
 
 /**
+ * Determines whether the host system has an invariant TSC.
+ *
+ * @remarks Once, called use g_fIsInvariantTsc. It is not
+ *          expected to change at runtime.
+ */
+static void supdrvDetermineInvariantTsc(void)
+{
+    if (ASMHasCpuId())
+    {
+        uint32_t uEax, uEbx, uEcx, uEdx;
+        ASMCpuId(0x80000000, &uEax, &uEbx, &uEcx, &uEdx);
+        if (uEax >= 0x80000007)
+        {
+            ASMCpuId(0x80000007, &uEax, &uEbx, &uEcx, &uEdx);
+            if (uEdx & X86_CPUID_AMD_ADVPOWER_EDX_TSCINVAR)
+                g_fIsInvariantTsc = true;
+        }
+    }
+}
+
+
+/**
  * Creates the GIP.
  *
  * @returns VBox status code.
@@ -4950,14 +5586,17 @@ static int supdrvGipCreate(PSUPDRVDEVEXT pDevExt)
     pGip = (PSUPGLOBALINFOPAGE)RTR0MemObjAddress(pDevExt->GipMemObj); AssertPtr(pGip);
     HCPhysGip = RTR0MemObjGetPagePhysAddr(pDevExt->GipMemObj, 0); Assert(HCPhysGip != NIL_RTHCPHYS);
 
+    supdrvDetermineInvariantTsc();
+
     /*
      * Find a reasonable update interval and initialize the structure.
      */
+    supdrvGipRequestHigherTimerFrequencyFromSystem(pDevExt);
     u32Interval = u32SystemResolution = RTTimerGetSystemGranularity();
     while (u32Interval < 10000000 /* 10 ms */)
         u32Interval += u32SystemResolution;
 
-    supdrvGipInit(pDevExt, pGip, HCPhysGip, RTTimeSystemNanoTS(), 1000000000 / u32Interval /*=Hz*/, cCpus);
+    supdrvGipInit(pDevExt, pGip, HCPhysGip, RTTimeSystemNanoTS(), RT_NS_1SEC / u32Interval /*=Hz*/, u32Interval, cCpus);
 
     /*
      * Create the timer.
@@ -4973,7 +5612,7 @@ static int supdrvGipCreate(PSUPDRVDEVEXT pDevExt)
         }
     }
     if (pGip->u32Mode != SUPGIPMODE_ASYNC_TSC)
-        rc = RTTimerCreateEx(&pDevExt->pGipTimer, u32Interval, 0, supdrvGipSyncTimer, pDevExt);
+        rc = RTTimerCreateEx(&pDevExt->pGipTimer, u32Interval, 0 /* fFlags */, supdrvGipSyncTimer, pDevExt);
     if (RT_SUCCESS(rc))
     {
         rc = RTMpNotificationRegister(supdrvGipMpEvent, pDevExt);
@@ -4986,6 +5625,8 @@ static int supdrvGipCreate(PSUPDRVDEVEXT pDevExt)
                  * We're good.
                  */
                 Log(("supdrvGipCreate: %u ns interval.\n", u32Interval));
+                supdrvGipReleaseHigherTimerFrequencyFromSystem(pDevExt);
+
                 g_pSUPGlobalInfoPage = pGip;
                 return VINF_SUCCESS;
             }
@@ -5002,7 +5643,7 @@ static int supdrvGipCreate(PSUPDRVDEVEXT pDevExt)
         OSDBGPRINT(("supdrvGipCreate: failed create GIP timer at %u ns interval. rc=%Rrc\n", u32Interval, rc));
         Assert(!pDevExt->pGipTimer);
     }
-    supdrvGipDestroy(pDevExt);
+    supdrvGipDestroy(pDevExt); /* Releases timer frequency increase too. */
     return rc;
 }
 
@@ -5050,11 +5691,7 @@ static void supdrvGipDestroy(PSUPDRVDEVEXT pDevExt)
      * Finally, make sure we've release the system timer resolution request
      * if one actually succeeded and is still pending.
      */
-    if (pDevExt->u32SystemTimerGranularityGrant)
-    {
-        rc = RTTimerReleaseSystemGranularity(pDevExt->u32SystemTimerGranularityGrant); AssertRC(rc);
-        pDevExt->u32SystemTimerGranularityGrant = 0;
-    }
+    supdrvGipReleaseHigherTimerFrequencyFromSystem(pDevExt);
 }
 
 
@@ -5065,10 +5702,14 @@ static void supdrvGipDestroy(PSUPDRVDEVEXT pDevExt)
  */
 static DECLCALLBACK(void) supdrvGipSyncTimer(PRTTIMER pTimer, void *pvUser, uint64_t iTick)
 {
-    RTCCUINTREG     fOldFlags = ASMIntDisableFlags(); /* No interruptions please (real problem on S10). */
-    PSUPDRVDEVEXT   pDevExt   = (PSUPDRVDEVEXT)pvUser;
-    uint64_t        u64TSC    = ASMReadTSC();
-    uint64_t        NanoTS    = RTTimeSystemNanoTS();
+    RTCCUINTREG     fOldFlags;
+    uint64_t        u64TSC;
+    uint64_t        NanoTS;
+    PSUPDRVDEVEXT   pDevExt = (PSUPDRVDEVEXT)pvUser;
+
+    fOldFlags = ASMIntDisableFlags(); /* No interruptions please (real problem on S10). */
+    u64TSC    = ASMReadTSC();
+    NanoTS    = RTTimeSystemNanoTS();
 
     supdrvGipUpdate(pDevExt, NanoTS, u64TSC, NIL_RTCPUID, iTick);
 
@@ -5440,10 +6081,8 @@ static SUPGIPMODE supdrvGipDeterminTscMode(PSUPDRVDEVEXT pDevExt)
          */
         /* Check for "AuthenticAMD" */
         ASMCpuId(0, &uEAX, &uEBX, &uECX, &uEDX);
-        if (    uEAX >= 1
-            &&  uEBX == X86_CPUID_VENDOR_AMD_EBX
-            &&  uECX == X86_CPUID_VENDOR_AMD_ECX
-            &&  uEDX == X86_CPUID_VENDOR_AMD_EDX)
+        if (   uEAX >= 1
+            && ASMIsAmdCpuEx(uEBX, uECX, uEDX))
         {
             /* Check for APM support and that TscInvariant is cleared. */
             ASMCpuId(0x80000000, &uEAX, &uEBX, &uECX, &uEDX);
@@ -5500,15 +6139,16 @@ static void supdrvGipInitCpu(PSUPGLOBALINFOPAGE pGip, PSUPGIPCPU pCpu, uint64_t 
 /**
  * Initializes the GIP data.
  *
- * @param   pDevExt     Pointer to the device instance data.
- * @param   pGip        Pointer to the read-write kernel mapping of the GIP.
- * @param   HCPhys      The physical address of the GIP.
- * @param   u64NanoTS   The current nanosecond timestamp.
- * @param   uUpdateHz   The update frequency.
- * @param   cCpus       The CPU count.
+ * @param   pDevExt             Pointer to the device instance data.
+ * @param   pGip                Pointer to the read-write kernel mapping of the GIP.
+ * @param   HCPhys              The physical address of the GIP.
+ * @param   u64NanoTS           The current nanosecond timestamp.
+ * @param   uUpdateHz           The update frequency.
+ * @param   uUpdateIntervalNS   The update interval in nanoseconds.
+ * @param   cCpus               The CPU count.
  */
 static void supdrvGipInit(PSUPDRVDEVEXT pDevExt, PSUPGLOBALINFOPAGE pGip, RTHCPHYS HCPhys,
-                          uint64_t u64NanoTS, unsigned uUpdateHz, unsigned cCpus)
+                          uint64_t u64NanoTS, unsigned uUpdateHz, unsigned uUpdateIntervalNS, unsigned cCpus)
 {
     size_t const    cbGip = RT_ALIGN_Z(RT_OFFSETOF(SUPGLOBALINFOPAGE, aCPUs[cCpus]), PAGE_SIZE);
     unsigned        i;
@@ -5528,8 +6168,8 @@ static void supdrvGipInit(PSUPDRVDEVEXT pDevExt, PSUPGLOBALINFOPAGE pGip, RTHCPH
     pGip->cCpus                 = (uint16_t)cCpus;
     pGip->cPages                = (uint16_t)(cbGip / PAGE_SIZE);
     pGip->u32UpdateHz           = uUpdateHz;
-    pGip->u32UpdateIntervalNS   = 1000000000 / uUpdateHz;
-    pGip->u64NanoTSLastUpdateHz = u64NanoTS;
+    pGip->u32UpdateIntervalNS   = uUpdateIntervalNS;
+    pGip->u64NanoTSLastUpdateHz = 0;
     RTCpuSetEmpty(&pGip->OnlineCpuSet);
     RTCpuSetEmpty(&pGip->PresentCpuSet);
     RTMpGetSet(&pGip->PossibleCpuSet);
@@ -5620,7 +6260,6 @@ static void supdrvGipDoUpdateCpu(PSUPDRVDEVEXT pDevExt, PSUPGIPCPU pGipCpu, uint
     /*
      * Calc TSC delta.
      */
-    /** @todo validate the NanoTS delta, don't trust the OS to call us when it should... */
     u64TSCDelta = u64TSC - pGipCpu->u64TSC;
     ASMAtomicWriteU64(&pGipCpu->u64TSC, u64TSC);
 
@@ -5645,6 +6284,36 @@ static void supdrvGipDoUpdateCpu(PSUPDRVDEVEXT pDevExt, PSUPGIPCPU pGipCpu, uint
         unsigned i;
         for (i = 0; i < RT_ELEMENTS(pGipCpu->au32TSCHistory); i++)
             ASMAtomicUoWriteU32(&pGipCpu->au32TSCHistory[i], (uint32_t)u64TSCDelta);
+    }
+
+    /*
+     * Validate the NanoTS deltas between timer fires with an arbitrary threshold of 0.5%.
+     * Wait until we have at least one full history since the above history reset. The
+     * assumption is that the majority of the previous history values will be tolerable.
+     * See @bugref{6710} comment #67.
+     */
+    if (   u32TransactionId > 23 /* 7 + (8 * 2) */
+        && g_fIsInvariantTsc
+        && pGip->u32Mode == SUPGIPMODE_SYNC_TSC)
+    {
+        uint32_t uNanoTsThreshold = pGip->u32UpdateIntervalNS / 200;
+        if (   pGipCpu->u32PrevUpdateIntervalNS > pGip->u32UpdateIntervalNS + uNanoTsThreshold
+            || pGipCpu->u32PrevUpdateIntervalNS < pGip->u32UpdateIntervalNS - uNanoTsThreshold)
+        {
+            uint32_t u32;
+            u32  = pGipCpu->au32TSCHistory[0];
+            u32 += pGipCpu->au32TSCHistory[1];
+            u32 += pGipCpu->au32TSCHistory[2];
+            u32 += pGipCpu->au32TSCHistory[3];
+            u32 >>= 2;
+            u64TSCDelta  = pGipCpu->au32TSCHistory[4];
+            u64TSCDelta += pGipCpu->au32TSCHistory[5];
+            u64TSCDelta += pGipCpu->au32TSCHistory[6];
+            u64TSCDelta += pGipCpu->au32TSCHistory[7];
+            u64TSCDelta >>= 2;
+            u64TSCDelta += u32;
+            u64TSCDelta >>= 1;
+        }
     }
 
     /*
@@ -5698,7 +6367,8 @@ static void supdrvGipDoUpdateCpu(PSUPDRVDEVEXT pDevExt, PSUPGIPCPU pGipCpu, uint
     /*
      * CpuHz.
      */
-    u64CpuHz = ASMMult2xU32RetU64(u32UpdateIntervalTSC, pGip->u32UpdateHz);
+    u64CpuHz = ASMMult2xU32RetU64(u32UpdateIntervalTSC, RT_NS_1SEC);
+    u64CpuHz /= pGip->u32UpdateIntervalNS;
     ASMAtomicWriteU64(&pGipCpu->u64CpuHz, u64CpuHz);
 }
 
@@ -5754,15 +6424,16 @@ static void supdrvGipUpdate(PSUPDRVDEVEXT pDevExt, uint64_t u64NanoTS, uint64_t 
         {
 #ifdef RT_ARCH_AMD64 /** @todo fix 64-bit div here to work on x86 linux. */
             uint64_t u64Delta = u64NanoTS - pGip->u64NanoTSLastUpdateHz;
-            uint32_t u32UpdateHz = (uint32_t)((UINT64_C(1000000000) * GIP_UPDATEHZ_RECALC_FREQ) / u64Delta);
+            uint32_t u32UpdateHz = (uint32_t)((RT_NS_1SEC_64 * GIP_UPDATEHZ_RECALC_FREQ) / u64Delta);
             if (u32UpdateHz <= 2000 && u32UpdateHz >= 30)
             {
+                uint64_t u64Interval = u64Delta / GIP_UPDATEHZ_RECALC_FREQ;
                 ASMAtomicWriteU32(&pGip->u32UpdateHz, u32UpdateHz);
-                ASMAtomicWriteU32(&pGip->u32UpdateIntervalNS, 1000000000 / u32UpdateHz);
+                ASMAtomicWriteU32(&pGip->u32UpdateIntervalNS, (uint32_t)u64Interval);
             }
 #endif
         }
-        ASMAtomicWriteU64(&pGip->u64NanoTSLastUpdateHz, u64NanoTS);
+        ASMAtomicWriteU64(&pGip->u64NanoTSLastUpdateHz, u64NanoTS | 1);
     }
 
     /*
@@ -5833,5 +6504,20 @@ static void supdrvGipUpdatePerCpu(PSUPDRVDEVEXT pDevExt, uint64_t u64NanoTS, uin
             ASMAtomicIncU32(&pGipCpu->u32TransactionId);
         }
     }
+}
+
+/**
+ * Resume built-in keyboard on MacBook Air and Pro hosts.
+ * If there is no built-in keyboard device, return success anyway.
+ *
+ * @returns 0 on Mac OS X platform, VERR_NOT_IMPLEMENTED on the other ones.
+ */
+static int supdrvIOCtl_ResumeSuspendedKbds(void)
+{
+#if defined(RT_OS_DARWIN)
+    return supdrvDarwinResumeSuspendedKbds();
+#else
+    return VERR_NOT_IMPLEMENTED;
+#endif
 }
 

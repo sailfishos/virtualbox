@@ -344,7 +344,7 @@ static void ahci_cmd_data(bio_dsk_t __far *bios_dsk, uint8_t cmd)
 
     /* Lock memory needed for DMA. */
     ahci->edds.num_avail = NUM_EDDS_SG;
-    DBG_AHCI("AHCI: S/G list for %lu bytes (skip %u)\n", 
+    DBG_AHCI("AHCI: S/G list for %lu bytes (skip %u)\n",
              (uint32_t)n_sect * sectsz, bios_dsk->drqp.skip_a);
     vds_build_sg_list(&ahci->edds, bios_dsk->drqp.buffer, (uint32_t)n_sect * sectsz);
 
@@ -483,7 +483,7 @@ static void ahci_port_init(ahci_t __far *ahci, uint8_t u8Port)
  * Read sectors from an attached AHCI device.
  *
  * @returns status code.
- * @param   bios_dsk    Pointer to disk request packet (in the 
+ * @param   bios_dsk    Pointer to disk request packet (in the
  *                      EBDA).
  */
 int ahci_read_sectors(bio_dsk_t __far *bios_dsk)
@@ -514,7 +514,7 @@ int ahci_read_sectors(bio_dsk_t __far *bios_dsk)
  * Write sectors to an attached AHCI device.
  *
  * @returns status code.
- * @param   bios_dsk    Pointer to disk request packet (in the 
+ * @param   bios_dsk    Pointer to disk request packet (in the
  *                      EBDA).
  */
 int ahci_write_sectors(bio_dsk_t __far *bios_dsk)
@@ -543,7 +543,7 @@ int ahci_write_sectors(bio_dsk_t __far *bios_dsk)
 #define ATA_DATA_IN      0x01
 #define ATA_DATA_OUT     0x02
 
-uint16_t ahci_cmd_packet(uint16_t device_id, uint8_t cmdlen, char __far *cmdbuf, 
+uint16_t ahci_cmd_packet(uint16_t device_id, uint8_t cmdlen, char __far *cmdbuf,
                          uint16_t skip_b, uint32_t length, uint8_t inout, char __far *buffer)
 {
     bio_dsk_t __far *bios_dsk = read_word(0x0040, 0x000E) :> &EbdaData->bdisk;
@@ -565,7 +565,7 @@ uint16_t ahci_cmd_packet(uint16_t device_id, uint8_t cmdlen, char __far *cmdbuf,
     device_id = VBOX_GET_AHCI_DEVICE(device_id);
 
     DBG_AHCI("%s: reading %lu bytes, skip %u/%u, device %d, port %d\n", __func__,
-             length, bios_dsk->drqp.skip_b, bios_dsk->drqp.skip_a, 
+             length, bios_dsk->drqp.skip_b, bios_dsk->drqp.skip_a,
              device_id, bios_dsk->ahcidev[device_id].port);
     DBG_AHCI("%s: reading %u %u-byte sectors\n", __func__,
              bios_dsk->drqp.nsect, bios_dsk->drqp.sect_sz);
@@ -607,7 +607,7 @@ uint16_t ahci_cmd_packet(uint16_t device_id, uint8_t cmdlen, char __far *cmdbuf,
 //    return 0;   //@todo!!
 }
 
-static void ahci_port_detect_device(ahci_t __far *ahci, uint8_t u8Port)
+void ahci_port_detect_device(ahci_t __far *ahci, uint8_t u8Port)
 {
     uint32_t            val;
     bio_dsk_t __far     *bios_dsk;
@@ -626,12 +626,23 @@ static void ahci_port_detect_device(ahci_t __far *ahci, uint8_t u8Port)
 
     /* Check if there is a device on the port. */
     VBOXAHCI_PORT_READ_REG(ahci->iobase, u8Port, AHCI_REG_PORT_SSTS, val);
+    if (ahci_ctrl_extract_bits(val, 0xfL, 0) == 0)
+        return; /* No device detected. */
+
+    do
+    {
+        VBOXAHCI_PORT_READ_REG(ahci->iobase, u8Port, AHCI_REG_PORT_SSTS, val);
+    } while (ahci_ctrl_extract_bits(val, 0xfL, 0) == 0x1);
+
     if (ahci_ctrl_extract_bits(val, 0xfL, 0) == 0x3)
     {
         uint8_t     abBuffer[0x0200];
         uint8_t     hdcount, devcount_ahci, hd_index;
         uint8_t     cdcount;
         uint8_t     removable;
+
+        /* Clear all errors after the reset. */
+        VBOXAHCI_PORT_WRITE_REG(ahci->iobase, u8Port, AHCI_REG_PORT_SERR, 0xffffffff);
 
         devcount_ahci = bios_dsk->ahci_devcnt;
 
@@ -650,7 +661,7 @@ static void ahci_port_detect_device(ahci_t __far *ahci, uint8_t u8Port)
             {
                 uint32_t    sectors;
                 uint16_t    cylinders, heads, spt;
-                uint16_t    lcylinders, lheads, lspt;
+                chs_t       lgeo;
                 uint8_t     idxCmosChsBase;
 
                 DBG_AHCI("AHCI: Detected hard disk\n");
@@ -710,23 +721,17 @@ static void ahci_port_detect_device(ahci_t __far *ahci, uint8_t u8Port)
                 }
                 if (idxCmosChsBase && inb_cmos(idxCmosChsBase+7))
                 {
-                    lcylinders = inb_cmos(idxCmosChsBase + 0) + (inb_cmos(idxCmosChsBase + 1) << 8);
-                    lheads     = inb_cmos(idxCmosChsBase + 2);
-                    lspt       = inb_cmos(idxCmosChsBase + 7);
+                    lgeo.cylinders = inb_cmos(idxCmosChsBase + 0) + (inb_cmos(idxCmosChsBase + 1) << 8);
+                    lgeo.heads     = inb_cmos(idxCmosChsBase + 2);
+                    lgeo.spt       = inb_cmos(idxCmosChsBase + 7);
                 }
                 else
-                {
-                    //@todo: What should we really do if logical geometry isn't in the CMOS?
-                    lcylinders = cylinders;
-                    lheads     = heads;
-                    lspt       = spt;
-                }
-                BX_INFO("AHCI %d-P#%d: PCHS=%u/%d/%d LCHS=%u/%u/%u %ld sectors\n", devcount_ahci,
-                        u8Port, cylinders, heads, spt, lcylinders, lheads, lspt, sectors);
+                    set_geom_lba(&lgeo, sectors);   /* Default EDD-style translated LBA geometry. */
 
-                bios_dsk->devices[hd_index].lchs.heads     = lheads;
-                bios_dsk->devices[hd_index].lchs.cylinders = lcylinders;
-                bios_dsk->devices[hd_index].lchs.spt       = lspt;
+                BX_INFO("AHCI %d-P#%d: PCHS=%u/%u/%u LCHS=%u/%u/%u %lu sectors\n", devcount_ahci,
+                        u8Port, cylinders, heads, spt, lgeo.cylinders, lgeo.heads, lgeo.spt, sectors);
+
+                bios_dsk->devices[hd_index].lchs = lgeo;
 
                 /* Store the ID of the disk in the BIOS hdidmap. */
                 hdcount = bios_dsk->hdcount;
@@ -737,7 +742,7 @@ static void ahci_port_detect_device(ahci_t __far *ahci, uint8_t u8Port)
                 /* Update hdcount in the BDA. */
                 hdcount = read_byte(0x40, 0x75);
                 hdcount++;
-                write_byte(0x40, 0x75, hdcount);                
+                write_byte(0x40, 0x75, hdcount);
             }
             else if (val == 0xeb140101)
             {
@@ -812,7 +817,7 @@ static int ahci_hba_init(uint16_t io_base)
     uint16_t            ahci_seg;
     bio_dsk_t __far     *bios_dsk;
     ahci_t __far        *ahci;
-    
+
 
     ebda_seg = read_word(0x0040, 0x000E);
     bios_dsk = ebda_seg :> &EbdaData->bdisk;
@@ -829,7 +834,7 @@ static int ahci_hba_init(uint16_t io_base)
         DBG_AHCI("AHCI: Could not allocate 1K of memory, can't boot from controller\n");
         return 0;
     }
-    DBG_AHCI("AHCI: ahci_seg=%04x, size=%04x, pointer at EBDA:%04x (EBDA size=%04x)\n", 
+    DBG_AHCI("AHCI: ahci_seg=%04x, size=%04x, pointer at EBDA:%04x (EBDA size=%04x)\n",
              ahci_seg, sizeof(ahci_t), (uint16_t)&EbdaData->bdisk.ahci_seg, sizeof(ebda_data_t));
 
     bios_dsk->ahci_seg    = ahci_seg;
