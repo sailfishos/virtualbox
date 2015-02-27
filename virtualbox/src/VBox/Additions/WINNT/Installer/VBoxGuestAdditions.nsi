@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2012-2013 Oracle Corporation
+; Copyright (C) 2012-2014 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -213,7 +213,7 @@ Var g_strAddVerBuild                    ; Installed Guest Additions: Build numbe
 Var g_strAddVerRev                      ; Installed Guest Additions: SVN revision
 Var g_strWinVersion                     ; Current Windows version we're running on
 Var g_bLogEnable                        ; Do logging when installing? "true" or "false"
-Var g_bWithWDDM                         ; Install the WDDM driver instead of the XPDM one
+Var g_bWithWDDM                         ; Install the WDDM graphics driver instead of the XPDM one
 Var g_bCapDllCache                      ; Capability: Does the (Windows) guest have have a DLL cache which needs to be taken care of?
 Var g_bCapWDDM                          ; Capability: Is the guest able to handle/use our WDDM driver?
 
@@ -241,6 +241,7 @@ Var g_bPostInstallStatus                ; Cmd line: Post the overall installatio
 
 ; Platform parts of this installer
 !include "VBoxGuestAdditionsLog.nsh"
+!include "VBoxGuestAdditionsExternal.nsh"
 !include "VBoxGuestAdditionsCommon.nsh"
 !if $%BUILD_TARGET_ARCH% == "x86"       ; 32-bit only
   !include "VBoxGuestAdditionsNT4.nsh"
@@ -367,11 +368,11 @@ Function HandleCommandLine
         StrCpy $g_iSfOrder $5
         ${Break}
 
-    !ifdef WHQL_FAKE
+!ifdef WHQL_FAKE
       ${Case} '/unsig_drv'
         StrCpy $g_bFakeWHQL "true"
       ${Break}
-    !endif
+!endif
 
       ${Case} '/uninstall'
         StrCpy $g_bUninstall "true"
@@ -387,12 +388,18 @@ Function HandleCommandLine
         ${Break}
 !endif
 
-    !if $%VBOX_WITH_CROGL% == "1"
+!if $%VBOX_WITH_CROGL% == "1"
       ${Case} '/with_d3d'
       ${Case} '/with_direct3d'
         StrCpy $g_bWithD3D "true"
         ${Break}
-    !endif
+!endif
+
+!if $%VBOX_WITH_WDDM% == "1"
+      ${Case} '/with_wddm'
+        StrCpy $g_bWithWDDM "true"
+        ${Break}
+!endif
 
       ${Case} '/xres'
       ${Case} 'xres'
@@ -407,7 +414,7 @@ Function HandleCommandLine
       ${Default} ; Unknown parameter, print usage message
         ; Prevent popping up usage message on (yet) unknown parameters
         ; in silent mode, just skip
-        IfSilent 0 +2
+        IfSilent +1 +2
           ${Break}
         goto usage
         ${Break}
@@ -437,7 +444,8 @@ usage:
                     /uninstall$\t$\tJust uninstalls the Guest Additions and exits$\r$\n \
                     /with_autologon$\tInstalls auto-logon support$\r$\n \
                     /with_d3d$\tInstalls D3D support$\r$\n \
-                    /with_vboxmmr$\tInstalls multimedia redirection support$\r$\n \
+                    /with_vboxmmr$\tInstalls multimedia redirection (MMR) support$\r$\n \
+                    /with_wddm$\tInstalls the WDDM instead of the XPDM graphics driver$\r$\n \
                     /xres=X$\t$\tSets the guest's display resolution (width in pixels)$\r$\n \
                     /yres=Y$\t$\tSets the guest's display resolution (height in pixels)$\r$\n \
                     $\r$\n \
@@ -478,6 +486,8 @@ Function CheckForOldGuestAdditions
   Push $2
 
 begin:
+
+  ${LogVerbose} "Checking for old Guest Additions ..."
 
 sun_check:
 
@@ -607,6 +617,13 @@ Section $(VBOX_COMPONENT_MAIN) SEC01
     ${LogToVBoxTray} "0" "${PRODUCT_NAME} update started, please wait ..."
   ${EndIf}
 
+  IfSilent +1 +2
+    StrCpy $g_bLogEnable "true" ; Force logging in silent mode
+
+  ${LogEnable} "$g_bLogEnable"
+  IfSilent +1 +2 ; NSIS will expand ${LogVerbose} before doing relative jumps!
+    LogText "Installer runs in silent mode"
+
   SetOutPath "$INSTDIR"
   SetOverwrite on
 
@@ -618,7 +635,7 @@ Section $(VBOX_COMPONENT_MAIN) SEC01
   ${If} $g_strAddVerMaj != ""
     ${LogVerbose} "Previous version: $g_strAddVerMaj.$g_strAddVerMin.$g_strAddVerBuild (Rev $g_strAddVerRev)"
   ${Else}
-    ${LogVerbose} "No previous version of ${PRODUCT_NAME} detected."
+    ${LogVerbose} "No previous version of ${PRODUCT_NAME} detected"
   ${EndIf}
 !if $%BUILD_TARGET_ARCH% == "amd64"
   ${LogVerbose} "Detected OS: Windows $g_strWinVersion (64-bit)"
@@ -636,6 +653,7 @@ Section $(VBOX_COMPONENT_MAIN) SEC01
   ;
 
   ; Which OS are we using?
+  ; @todo Use logic lib here
 !if $%BUILD_TARGET_ARCH% == "x86"       ; 32-bit
   StrCmp $g_strWinVersion "NT4" nt4     ; Windows NT 4.0
 !endif
@@ -645,6 +663,8 @@ Section $(VBOX_COMPONENT_MAIN) SEC01
   StrCmp $g_strWinVersion "Vista" vista ; Windows Vista
   StrCmp $g_strWinVersion "7" vista     ; Windows 7
   StrCmp $g_strWinVersion "8" vista     ; Windows 8
+  StrCmp $g_strWinVersion "8_1" vista   ; Windows 8.1 / Windows 2012 Server R2
+  StrCmp $g_strWinVersion "10" vista    ; Windows 10
 
   ${If} $g_bForceInstall == "true"
     Goto vista ; Assume newer OS than we know of ...
@@ -680,7 +700,7 @@ w2k: ; Windows 2000 and XP ...
   Call W2K_Main
   goto success
 
-vista: ; Windows Vista / Windows 7 / Windows 8
+vista: ; Windows Vista / Windows 7 / Windows 8(.1)
 
   ; Check requirments; this function can abort the installation if necessary!
   Call Vista_CheckForRequirements
@@ -741,6 +761,8 @@ install:
   ${If}   $R0 == 'Vista' ; Windows Vista.
   ${OrIf} $R0 == '7'     ; Windows 7.
   ${OrIf} $R0 == '8'     ; Windows 8.
+  ${OrIf} $R0 == '8_1'   ; Windows 8.1 / Windows Server 2012 R2.
+  ${OrIf} $R0 == '10'    ; Windows 10.
     ; Use VBoxCredProv on Vista and up.
     ${LogVerbose} "Installing VirtualBox credential provider ..."
     !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxCredProv.dll" "$g_strSystemDir\VBoxCredProv.dll" "$INSTDIR"
@@ -766,53 +788,22 @@ exit:
 
 SectionEnd
 
-; Prepares the access rights for replacing
-; a WRP (Windows Resource Protection) protected file
-Function PrepareWRPFile
-
-  Pop $0
-
-  ${IfNot} ${FileExists} "$0"
-    ${LogVerbose} "WRP: File $0 does not exist, skipping"
-    Return
-  ${EndIf}
-
-  ${If} ${FileExists} "$g_strSystemDir\takeown.exe"
-    nsExec::ExecToLog '"$g_strSystemDir\takeown.exe" /F "$0"'
-    Pop $1 ; Ret value
-    ${LogVerbose} "WRP: Taking ownership for $0 returned: $1"
-  ${Else}
-    ${LogVerbose} "WRP: Warning: takeown.exe not found, skipping"
-  ${EndIf}
-
-  AccessControl::SetFileOwner "$0" "(S-1-5-32-545)"
-  Pop $1
-  ${LogVerbose} "WRP: Setting file owner for $0 returned: $1"
-
-  AccessControl::GrantOnFile "$0" "(S-1-5-32-545)" "FullAccess"
-  Pop $1
-  ${LogVerbose} "WRP: Setting access rights for $0 returned: $1"
-
-!if $%VBOX_WITH_GUEST_INSTALL_HELPER% == "1"
-  !ifdef WFP_FILE_EXCEPTION
-    VBoxGuestInstallHelper::DisableWFP "$0"
-    Pop $1 ; Get return value (ignored for now)
-    ${LogVerbose} "WRP: Setting WFP exception for $0 returned: $1"
-  !endif
-!endif
-
-FunctionEnd
-
 ; Direct3D support
 Section /o $(VBOX_COMPONENT_D3D) SEC03
 
 !if $%VBOX_WITH_WDDM% == "1"
   ${If} $g_bWithWDDM == "true"
-    ; All D3D components are installed with WDDM driver package, nothing to be done here
+    ${LogVerbose} "Installing WDDM Direct3D support ..."
+
+    ; Do we need to restore the original d3d8.dll/d3d9.dll files because the guest
+    ; installation was upgraded from XPDM to WDDM driver? In a XPDM installation
+    ; those DLLs were replaced by our own stub files.
+    Call RestoreFilesDirect3D
     Return
   ${EndIf}
 !endif
 
+  Call SetAppMode64
   SetOverwrite on
 
   ${If} $g_strSystemDir == ''
@@ -820,7 +811,7 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
   ${EndIf}
 
   SetOutPath $g_strSystemDir
-  ${LogVerbose} "Installing Direct3D support ..."
+  ${LogVerbose} "Installing XPDM Direct3D support ..."
   FILE "$%PATH_OUT%\bin\additions\VBoxD3D8.dll"
   FILE "$%PATH_OUT%\bin\additions\VBoxD3D9.dll"
   FILE "$%PATH_OUT%\bin\additions\wined3d.dll"
@@ -834,14 +825,10 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
       ${CopyFileEx} "" "$g_strSystemDir\dllcache\d3d8.dll" "$g_strSystemDir\dllcache\msd3d8.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
       ${CopyFileEx} "" "$g_strSystemDir\dllcache\d3d9.dll" "$g_strSystemDir\dllcache\msd3d9.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
 
-      Push "$g_strSystemDir\dllcache\d3d8.dll"
-      Call PrepareWRPFile
-
-      Push "$g_strSystemDir\dllcache\d3d9.dll"
-      Call PrepareWRPFile
-
       ; Exchange DLLs
+      ${PrepareWRPFileEx} "" "$g_strSystemDir\dllcache\d3d8.dll"
       ${InstallFileEx} "" "$%PATH_OUT%\bin\additions\d3d8.dll" "$g_strSystemDir\dllcache\d3d8.dll" "$TEMP"
+      ${PrepareWRPFileEx} "" "$g_strSystemDir\dllcache\d3d9.dll"
       ${InstallFileEx} "" "$%PATH_OUT%\bin\additions\d3d9.dll" "$g_strSystemDir\dllcache\d3d9.dll" "$TEMP"
     ${Else}
         ${LogVerbose} "DLL cache does not exist, skipping"
@@ -855,14 +842,10 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
   ${CopyFileEx} "" "$g_strSystemDir\d3d8.dll" "$g_strSystemDir\msd3d8.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
   ${CopyFileEx} "" "$g_strSystemDir\d3d9.dll" "$g_strSystemDir\msd3d9.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
 
-  Push "$g_strSystemDir\d3d8.dll"
-  Call PrepareWRPFile
-
-  Push "$g_strSystemDir\d3d9.dll"
-  Call PrepareWRPFile
-
   ; Exchange DLLs
+  ${PrepareWRPFileEx} "" "$g_strSystemDir\d3d8.dll"
   ${InstallFileEx} "" "$%PATH_OUT%\bin\additions\d3d8.dll" "$g_strSystemDir\d3d8.dll" "$TEMP"
+  ${PrepareWRPFileEx} "" "$g_strSystemDir\d3d9.dll"
   ${InstallFileEx} "" "$%PATH_OUT%\bin\additions\d3d9.dll" "$g_strSystemDir\d3d9.dll" "$TEMP"
 
 !if $%BUILD_TARGET_ARCH% == "amd64"
@@ -883,14 +866,10 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
         ${CopyFileEx} "" "$g_strSysWow64\dllcache\d3d8.dll" "$g_strSysWow64\dllcache\msd3d8.dll" "Microsoft Corporation" "x86"
         ${CopyFileEx} "" "$g_strSysWow64\dllcache\d3d9.dll" "$g_strSysWow64\dllcache\msd3d9.dll" "Microsoft Corporation" "x86"
 
-        Push "$g_strSysWow64\dllcache\d3d8.dll"
-        Call PrepareWRPFile
-
-        Push "$g_strSysWow64\dllcache\d3d9.dll"
-        Call PrepareWRPFile
-
         ; Exchange DLLs
+        ${PrepareWRPFileEx} "" "$g_strSysWow64\dllcache\d3d8.dll"
         ${InstallFileEx} "" "$%VBOX_PATH_ADDITIONS_WIN_X86%\d3d8.dll" "$g_strSysWow64\dllcache\d3d8.dll" "$TEMP"
+        ${PrepareWRPFileEx} "" "$g_strSysWow64\dllcache\d3d9.dll"
         ${InstallFileEx} "" "$%VBOX_PATH_ADDITIONS_WIN_X86%\d3d9.dll" "$g_strSysWow64\dllcache\d3d9.dll" "$TEMP"
       ${Else}
         ${LogVerbose} "DLL cache does not exist, skipping"
@@ -905,14 +884,9 @@ Section /o $(VBOX_COMPONENT_D3D) SEC03
     ${CopyFileEx} "" "$g_strSysWow64\d3d8.dll" "$g_strSysWow64\msd3d8.dll" "Microsoft Corporation" "x86"
     ${CopyFileEx} "" "$g_strSysWow64\d3d9.dll" "$g_strSysWow64\msd3d9.dll" "Microsoft Corporation" "x86"
 
-    Push "$g_strSysWow64\d3d8.dll"
-    Call PrepareWRPFile
-
-    Push "$g_strSysWow64\d3d9.dll"
-    Call PrepareWRPFile
-
-    ; Exchange DLLs
+    ${PrepareWRPFileEx} "" "$g_strSysWow64\d3d8.dll"
     ${InstallFileEx} "" "$%VBOX_PATH_ADDITIONS_WIN_X86%\d3d8.dll" "$g_strSysWow64\d3d8.dll" "$TEMP"
+    ${PrepareWRPFileEx} "" "$g_strSysWow64\d3d9.dll"
     ${InstallFileEx} "" "$%VBOX_PATH_ADDITIONS_WIN_X86%\d3d9.dll" "$g_strSysWow64\d3d9.dll" "$TEMP"
 
 !endif ; amd64
@@ -1051,7 +1025,9 @@ d3d_install:
 
   ${Else} ; D3D unselected again
 
-    ${If} $g_strWinVersion != "8" ; On Windows 8 WDDM is mandatory
+    ${If}   $g_strWinVersion != "8"   ; On Windows 8 WDDM is mandatory
+    ${AndIf} $g_strWinVersion != "8_1" ; ... also on Windows 8.1 / Windows 2012 Server R2
+    ${AndIf} $g_strWinVersion != "10" ; ... also on Windows 10
       StrCpy $g_bWithWDDM "false"
     ${EndIf}
 
@@ -1071,9 +1047,11 @@ exit:
 
 FunctionEnd
 
-; This function is called when a critical error occurred
+; This function is called when a critical error occurred, caused by
+; the Abort command
 Function .onInstFailed
 
+  ${LogVerbose} "$(VBOX_ERROR_INST_FAILED)"
   MessageBox MB_ICONSTOP $(VBOX_ERROR_INST_FAILED) /SD IDOK
 
   ${If} $g_bPostInstallStatus == "true"
@@ -1088,9 +1066,13 @@ FunctionEnd
 ; This function is called when installation was successful!
 Function .onInstSuccess
 
+  ${LogVerbose} "${PRODUCT_NAME} successfully installed"
+
   ${If} $g_bPostInstallStatus == "true"
     ${LogToVBoxTray} "0" "${PRODUCT_NAME} successfully updated!"
   ${EndIf}
+
+  SetErrorLevel 0
 
 FunctionEnd
 
@@ -1131,9 +1113,6 @@ Function .onInit
   StrCpy $g_bCapWDDM "false"
   StrCpy $g_bPostInstallStatus "false"
 
-  ; Set system directory
-  StrCpy $g_strSystemDir "$SYSDIR"
-
   ; We need a special directory set to SysWOW64 because some
   ; shell operations don't support file redirection (yet)
   StrCpy $g_strSysWow64 "$WINDIR\SysWOW64"
@@ -1165,15 +1144,9 @@ Function .onInit
     Quit
   ${EndIf}
 
-  IfSilent +1 +2
-    StrCpy $g_bLogEnable "true" ; Force logging in silent mode
-
-  ${LogEnable} "$g_bLogEnable"
-  IfSilent +1 +2
-    LogText "Installer runs in silent mode"
-
   ; Retrieve Windows version and store result in $g_strWinVersion
-  Call GetWindowsVer
+  Call GetWindowsVersionEx
+  Pop $g_strWinVersion
 
   ; Retrieve capabilities
   Call CheckForCapabilities
@@ -1181,7 +1154,7 @@ Function .onInit
   ; Get user Name
   AccessControl::GetCurrentUserName
   Pop $g_strCurUser
-  ${LogVerbose} "Current user is: $g_strCurUser"
+  ${LogVerbose} "Current user: $g_strCurUser"
 
   ; Only extract files? This action can be called even from non-Admin users
   ; and non-compatible architectures
@@ -1200,7 +1173,7 @@ Function .onInit
 !else
     MessageBox MB_ICONSTOP $(VBOX_NOTICE_ARCH_X86) /SD IDOK
 !endif
-    Abort
+    Abort "$(VBOX_NOTICE_ARCH_AMD64)"
   ${EndIf}
 
   ; Has the user who calls us admin rights?
@@ -1230,9 +1203,14 @@ Function .onInit
     !insertmacro SelectSection ${SEC03}
   ${EndIf}
 !endif
-  ; On Windows 8 we always select the 3D section and
-  ; disable it so that it cannot be deselected again
-  ${If} $g_strWinVersion == "8"
+  ${If} $g_bWithWDDM == "true" ; D3D / WDDM support
+    !insertmacro SelectSection ${SEC03}
+  ${EndIf}
+  ; On Windows 8 / 8.1 / Windows Server 2012 R2 and newer we always select the 3D
+  ; section and disable it so that it cannot be deselected again
+  ${If}   $g_strWinVersion == "8"
+  ${OrIf} $g_strWinVersion == "8_1"
+  ${OrIf} $g_strWinVersion == "10"
     IntOp $0 ${SF_SELECTED} | ${SF_RO}
     SectionSetFlags ${SEC03} $0
   ${EndIf}
@@ -1300,7 +1278,8 @@ proceed:
   StrCpy $g_strSysWow64 "$WINDIR\SysWOW64"
 
   ; Retrieve Windows version we're running on and store it in $g_strWinVersion
-  Call un.GetWindowsVer
+  Call un.GetWindowsVersionEx
+  Pop $g_strWinVersion
 
   ; Retrieve capabilities
   Call un.CheckForCapabilities

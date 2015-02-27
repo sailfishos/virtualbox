@@ -18,6 +18,8 @@
 #ifndef ___VBoxMPCr_h__
 #define ___VBoxMPCr_h__
 
+#ifdef VBOX_WITH_CROGL
+
 #include <VBox/VBoxGuestLib.h>
 #include <VBoxGuestR0LibCrOgl.h>
 
@@ -27,50 +29,18 @@ typedef struct VBOXMP_CRCTLCON
     uint32_t cCrCtlRefs;
 } VBOXMP_CRCTLCON, *PVBOXMP_CRCTLCON;
 
+void VBoxMpCrCtlConInit();
+
 bool VBoxMpCrCtlConIs3DSupported();
 
-int VBoxMpCrCtlConConnect(PVBOXMP_CRCTLCON pCrCtlCon,
+int VBoxMpCrCtlConConnect(PVBOXMP_DEVEXT pDevExt, PVBOXMP_CRCTLCON pCrCtlCon,
         uint32_t crVersionMajor, uint32_t crVersionMinor,
         uint32_t *pu32ClientID);
-int VBoxMpCrCtlConDisconnect(PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID);
+int VBoxMpCrCtlConDisconnect(PVBOXMP_DEVEXT pDevExt, PVBOXMP_CRCTLCON pCrCtlCon, uint32_t u32ClientID);
 int VBoxMpCrCtlConCall(PVBOXMP_CRCTLCON pCrCtlCon, struct VBoxGuestHGCMCallInfo *pData, uint32_t cbData);
 int VBoxMpCrCtlConCallUserData(PVBOXMP_CRCTLCON pCrCtlCon, struct VBoxGuestHGCMCallInfo *pData, uint32_t cbData);
 
-#ifdef VBOX_WDDM_WITH_CRCMD
 # include <cr_pack.h>
-
-typedef struct VBOXMP_CRDATACON
-{
-    PVBOXMP_CRCTLCON pCtl;
-    uint32_t u32ClientID;
-} VBOXMP_CRDATACON, *PVBOXMP_CRDATACON;
-
-DECLINLINE(int) VBoxMpCrDataConCreate(PVBOXMP_CRDATACON pDataCon, PVBOXMP_CRCTLCON pCtlCon)
-{
-    int rc = VBoxMpCrCtlConConnect(pCtlCon, CR_PROTOCOL_VERSION_MAJOR, CR_PROTOCOL_VERSION_MINOR, &pDataCon->u32ClientID);
-    if (RT_SUCCESS(rc))
-    {
-        Assert(pDataCon->u32ClientID);
-        pDataCon->pCtl = pCtlCon;
-        return VINF_SUCCESS;
-    }
-    WARN(("VBoxMpCrCtlConConnect failed, rc %d", rc));
-    return rc;
-}
-
-DECLINLINE(int) VBoxMpCrDataConDestroy(PVBOXMP_CRDATACON pDataCon)
-{
-    int rc = VBoxMpCrCtlConDisconnect(pDataCon->pCtl, pDataCon->u32ClientID);
-    if (RT_SUCCESS(rc))
-    {
-        /* sanity */
-        pDataCon->pCtl = NULL;
-        pDataCon->u32ClientID = 0;
-        return VINF_SUCCESS;
-    }
-    WARN(("VBoxMpCrCtlConDisconnect failed, rc %d", rc));
-    return rc;
-}
 
 typedef struct VBOXMP_CRSHGSMICON_BUFDR
 {
@@ -218,8 +188,35 @@ DECLINLINE(int) VBoxMpCrUnpackerRxBufferProcess(void *pvBuffer, uint32_t cbBuffe
     }
 }
 
-#define VBOXMP_CRCMD_SIZE_WINDOWPOSITION 20
-#define VBOXMP_CRCMD_SIZE_WINDOWVISIBLEREGIONS(_cRects) (16 + _cRects * 4 * sizeof(GLint))
+DECLINLINE(void*) VBoxMpCrCmdRxReadbackData(CRMessageReadback *pRx)
+{
+    return (void*)(pRx+1);
+}
 
-#endif
+DECLINLINE(uint32_t) VBoxMpCrCmdRxReadbackDataSize(CRMessageReadback *pRx, uint32_t cbRx)
+{
+    return cbRx - sizeof (*pRx);
+}
+int VBoxMpCrCmdRxReadbackHandler(CRMessageReadback *pRx, uint32_t cbRx);
+int VBoxMpCrCmdRxHandler(CRMessageHeader *pRx, uint32_t cbRx);
+
+/* must be called after calling VBoxMpCrCtlConIs3DSupported only */
+uint32_t VBoxMpCrGetHostCaps();
+
+#define VBOXMP_CRCMD_HEADER_SIZE sizeof (CRMessageOpcodes)
+/* last +4 below is 4-aligned command opcode size (i.e. ((1 + 3) & ~3)) */
+#define VBOXMP_CRCMD_SIZE_WINDOWPOSITION (20 + 4)
+#define VBOXMP_CRCMD_SIZE_WINDOWVISIBLEREGIONS(_cRects) (16 + (_cRects) * 4 * sizeof (GLint) + 4)
+#define VBOXMP_CRCMD_SIZE_VBOXTEXPRESENT(_cRects) (28 + (_cRects) * 4 * sizeof (GLint) + 4)
+#define VBOXMP_CRCMD_SIZE_WINDOWSHOW (16 + 4)
+#define VBOXMP_CRCMD_SIZE_WINDOWSIZE (20 + 4)
+#define VBOXMP_CRCMD_SIZE_GETCHROMIUMPARAMETERVCR (36 + 4)
+#define VBOXMP_CRCMD_SIZE_CHROMIUMPARAMETERICR (16 + 4)
+#define VBOXMP_CRCMD_SIZE_WINDOWCREATE (256 + 28 + 4)
+#define VBOXMP_CRCMD_SIZE_WINDOWDESTROY (12 + 4)
+#define VBOXMP_CRCMD_SIZE_CREATECONTEXT (256 + 32 + 4)
+#define VBOXMP_CRCMD_SIZE_DESTROYCONTEXT (12 + 4)
+
+#endif /* #ifdef VBOX_WITH_CROGL */
+
 #endif /* #ifndef ___VBoxMPCr_h__ */

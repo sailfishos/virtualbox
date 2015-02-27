@@ -1,8 +1,6 @@
 /* $Id: UIMachineLogicSeamless.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineLogicSeamless class implementation
+ * VBox Qt GUI - UIMachineLogicSeamless class implementation.
  */
 
 /*
@@ -23,6 +21,7 @@
 /* GUI includes: */
 #include "VBoxGlobal.h"
 #include "UIMessageCenter.h"
+#include "UIPopupCenter.h"
 #include "UISession.h"
 #include "UIActionPoolRuntime.h"
 #include "UIMachineLogicSeamless.h"
@@ -50,19 +49,8 @@ bool UIMachineLogicSeamless::checkAvailability()
     /* Temporary get a machine object: */
     const CMachine &machine = uisession()->session().GetMachine();
 
-#if 0
-    /* Check that there are enough physical screens are connected: */
-    int cHostScreens = m_pScreenLayout->hostScreenCount();
-    int cGuestScreens = m_pScreenLayout->guestScreenCount();
-    if (cHostScreens < cGuestScreens)
-    {
-        msgCenter().cannotEnterSeamlessMode();
-        return false;
-    }
-#endif
-
     /* Check if there is enough physical memory to enter seamless: */
-    if (uisession()->isGuestAdditionsActive())
+    if (uisession()->isGuestSupportsSeamless())
     {
         quint64 availBits = machine.GetVRAMSize() /* VRAM */ * _1M /* MiB to bytes */ * 8 /* to bits */;
         quint64 usedBits = m_pScreenLayout->memoryRequirements();
@@ -88,6 +76,18 @@ bool UIMachineLogicSeamless::checkAvailability()
     return true;
 }
 
+void UIMachineLogicSeamless::adjustMachineWindowsGeometry()
+{
+    LogRel(("UIMachineLogicSeamless::adjustMachineWindowsGeometry\n"));
+
+    /* Rebuild multi-screen layout: */
+    m_pScreenLayout->rebuild();
+
+    /* Make sure all machine-window(s) have proper geometry: */
+    foreach (UIMachineWindow *pMachineWindow, machineWindows())
+        pMachineWindow->showInNecessaryMode();
+}
+
 int UIMachineLogicSeamless::hostScreenForGuestScreen(int iScreenId) const
 {
     return m_pScreenLayout->hostScreenForGuestScreen(iScreenId);
@@ -98,24 +98,85 @@ bool UIMachineLogicSeamless::hasHostScreenForGuestScreen(int iScreenId) const
     return m_pScreenLayout->hasHostScreenForGuestScreen(iScreenId);
 }
 
+void UIMachineLogicSeamless::notifyAbout3DOverlayVisibilityChange(bool)
+{
+    /* If active machine-window is defined now: */
+    if (activeMachineWindow())
+    {
+        /* Reinstall corresponding popup-stack and make sure it has proper type: */
+        popupCenter().hidePopupStack(activeMachineWindow());
+        popupCenter().setPopupStackType(activeMachineWindow(), UIPopupStackType_Separate);
+        popupCenter().showPopupStack(activeMachineWindow());
+    }
+}
+
+void UIMachineLogicSeamless::sltCheckForRequestedVisualStateType()
+{
+    LogRel(("UIMachineLogicSeamless::sltCheckForRequestedVisualStateType: Requested-state=%d, Machine-state=%d\n",
+            uisession()->requestedVisualState(), uisession()->machineState()));
+
+    /* Do not try to change visual-state type if machine was not started yet: */
+    if (!uisession()->isRunning() && !uisession()->isPaused())
+        return;
+
+    /* If 'seamless' visual-state type is no more supported: */
+    if (!uisession()->isGuestSupportsSeamless())
+    {
+        LogRel(("UIMachineLogicSeamless::sltCheckForRequestedVisualStateType: "
+                "Leaving 'seamless' as it is no more supported...\n"));
+        uisession()->setRequestedVisualState(UIVisualStateType_Seamless);
+        uisession()->changeVisualState(UIVisualStateType_Normal);
+    }
+}
+
+void UIMachineLogicSeamless::sltMachineStateChanged()
+{
+    /* Call to base-class: */
+    UIMachineLogic::sltMachineStateChanged();
+
+    /* If machine-state changed from 'paused' to 'running': */
+    if (uisession()->isRunning() && uisession()->wasPaused())
+    {
+        LogRel(("UIMachineLogicSeamless::sltMachineStateChanged:"
+                "Machine-state changed from 'paused' to 'running': "
+                "Adjust machine-window geometry...\n"));
+
+        /* Make sure further code will be called just once: */
+        uisession()->forgetPreviousMachineState();
+        /* Adjust machine-window geometry if necessary: */
+        adjustMachineWindowsGeometry();
+    }
+}
+
+void UIMachineLogicSeamless::sltScreenLayoutChanged()
+{
+    LogRel(("UIMachineLogicSeamless::sltScreenLayoutChanged: Multi-screen layout changed.\n"));
+
+    /* Make sure all machine-window(s) have proper geometry: */
+    foreach (UIMachineWindow *pMachineWindow, machineWindows())
+        pMachineWindow->showInNecessaryMode();
+}
+
 void UIMachineLogicSeamless::sltGuestMonitorChange(KGuestMonitorChangedEventType changeType, ulong uScreenId, QRect screenGeo)
 {
-    /* Update multi-screen layout before any window update: */
-    if (changeType == KGuestMonitorChangedEventType_Enabled ||
-        changeType == KGuestMonitorChangedEventType_Disabled)
-        m_pScreenLayout->rebuild();
+    LogRel(("UIMachineLogicSeamless: Guest-screen count changed.\n"));
+
+    /* Rebuild multi-screen layout: */
+    m_pScreenLayout->rebuild();
 
     /* Call to base-class: */
     UIMachineLogic::sltGuestMonitorChange(changeType, uScreenId, screenGeo);
 }
 
-void UIMachineLogicSeamless::sltHostScreenCountChanged(int cScreenCount)
+void UIMachineLogicSeamless::sltHostScreenCountChange()
 {
-    /* Update multi-screen layout before any window update: */
+    LogRel(("UIMachineLogicSeamless: Host-screen count changed.\n"));
+
+    /* Rebuild multi-screen layout: */
     m_pScreenLayout->rebuild();
 
     /* Call to base-class: */
-    UIMachineLogic::sltHostScreenCountChanged(cScreenCount);
+    UIMachineLogic::sltHostScreenCountChange();
 }
 
 void UIMachineLogicSeamless::prepareActionGroups()
@@ -125,39 +186,60 @@ void UIMachineLogicSeamless::prepareActionGroups()
 
     /* Guest auto-resize isn't allowed in seamless: */
     gActionPool->action(UIActionIndexRuntime_Toggle_GuestAutoresize)->setVisible(false);
-
     /* Adjust-window isn't allowed in seamless: */
     gActionPool->action(UIActionIndexRuntime_Simple_AdjustWindow)->setVisible(false);
-
     /* Disable mouse-integration isn't allowed in seamless: */
     gActionPool->action(UIActionIndexRuntime_Toggle_MouseIntegration)->setVisible(false);
+
+    /* Take care of view-action toggle state: */
+    UIAction *pActionSeamless = gActionPool->action(UIActionIndexRuntime_Toggle_Seamless);
+    if (!pActionSeamless->isChecked())
+    {
+        pActionSeamless->blockSignals(true);
+        pActionSeamless->setChecked(true);
+        pActionSeamless->blockSignals(false);
+        pActionSeamless->update();
+    }
+}
+
+void UIMachineLogicSeamless::prepareActionConnections()
+{
+    /* Call to base-class: */
+    UIMachineLogic::prepareActionConnections();
+
+    /* "View" actions connections: */
+    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Seamless), SIGNAL(triggered(bool)),
+            this, SLOT(sltChangeVisualStateToNormal()));
+    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Fullscreen), SIGNAL(triggered(bool)),
+            this, SLOT(sltChangeVisualStateToFullscreen()));
+    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Scale), SIGNAL(triggered(bool)),
+            this, SLOT(sltChangeVisualStateToScale()));
 }
 
 void UIMachineLogicSeamless::prepareMachineWindows()
 {
-    /* Do not create window(s) if they created already: */
+    /* Do not create machine-window(s) if they created already: */
     if (isMachineWindowsCreated())
         return;
 
-#ifdef Q_WS_MAC // TODO: Is that really need here?
+#ifdef Q_WS_MAC
     /* We have to make sure that we are getting the front most process.
      * This is necessary for Qt versions > 4.3.3: */
-    ::darwinSetFrontMostProcess();
+    darwinSetFrontMostProcess();
 #endif /* Q_WS_MAC */
 
-    /* Update the multi screen layout: */
+    /* Update the multi-screen layout: */
     m_pScreenLayout->update();
 
-    /* Create machine window(s): */
+    /* Create machine-window(s): */
     for (uint cScreenId = 0; cScreenId < session().GetMachine().GetMonitorCount(); ++cScreenId)
         addMachineWindow(UIMachineWindow::create(this, cScreenId));
 
-    /* Connect screen-layout change handler: */
-    for (int i = 0; i < machineWindows().size(); ++i)
-        connect(m_pScreenLayout, SIGNAL(sigScreenLayoutChanged()),
-                static_cast<UIMachineWindowSeamless*>(machineWindows()[i]), SLOT(sltShowInNecessaryMode()));
+    /* Connect multi-screen layout change handler: */
+    connect(m_pScreenLayout, SIGNAL(sigScreenLayoutChanged()),
+            this, SLOT(sltScreenLayoutChanged()));
 
-    /* Remember what machine window(s) created: */
+    /* Mark machine-window(s) created: */
     setMachineWindowsCreated(true);
 }
 
@@ -166,33 +248,59 @@ void UIMachineLogicSeamless::prepareMenu()
     /* Call to base-class: */
     UIMachineLogic::prepareMenu();
 
-    /* Finally update view-menu: */
-    m_pScreenLayout->setViewMenu(gActionPool->action(UIActionIndexRuntime_Menu_View)->menu());
+    /* Finally update view-menu, if necessary: */
+    if (uisession()->allowedActionsMenuView() & RuntimeMenuViewActionType_Multiscreen)
+        m_pScreenLayout->setViewMenu(gActionPool->action(UIActionIndexRuntime_Menu_View)->menu());
 }
 
 void UIMachineLogicSeamless::cleanupMachineWindows()
 {
-    /* Do not cleanup machine window(s) if not present: */
+    /* Do not destroy machine-window(s) if they destroyed already: */
     if (!isMachineWindowsCreated())
         return;
 
-    /* Cleanup machine window(s): */
+    /* Mark machine-window(s) destroyed: */
+    setMachineWindowsCreated(false);
+
+    /* Destroy machine-window(s): */
     foreach (UIMachineWindow *pMachineWindow, machineWindows())
         UIMachineWindow::destroy(pMachineWindow);
 }
 
+void UIMachineLogicSeamless::cleanupActionConnections()
+{
+    /* "View" actions disconnections: */
+    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Seamless), SIGNAL(triggered(bool)),
+               this, SLOT(sltChangeVisualStateToNormal()));
+    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Fullscreen), SIGNAL(triggered(bool)),
+               this, SLOT(sltChangeVisualStateToFullscreen()));
+    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Scale), SIGNAL(triggered(bool)),
+               this, SLOT(sltChangeVisualStateToScale()));
+
+    /* Call to base-class: */
+    UIMachineLogic::cleanupActionConnections();
+}
+
 void UIMachineLogicSeamless::cleanupActionGroups()
 {
-    /* Call to base-class: */
-    UIMachineLogic::cleanupActionGroups();
+    /* Take care of view-action toggle state: */
+    UIAction *pActionSeamless = gActionPool->action(UIActionIndexRuntime_Toggle_Seamless);
+    if (pActionSeamless->isChecked())
+    {
+        pActionSeamless->blockSignals(true);
+        pActionSeamless->setChecked(false);
+        pActionSeamless->blockSignals(false);
+        pActionSeamless->update();
+    }
 
     /* Reenable guest-autoresize action: */
     gActionPool->action(UIActionIndexRuntime_Toggle_GuestAutoresize)->setVisible(true);
-
     /* Reenable adjust-window action: */
     gActionPool->action(UIActionIndexRuntime_Simple_AdjustWindow)->setVisible(true);
-
     /* Reenable mouse-integration action: */
     gActionPool->action(UIActionIndexRuntime_Toggle_MouseIntegration)->setVisible(true);
+
+    /* Call to base-class: */
+    UIMachineLogic::cleanupActionGroups();
 }
 

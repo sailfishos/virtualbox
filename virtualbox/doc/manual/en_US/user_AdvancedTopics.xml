@@ -124,8 +124,8 @@ VBoxManage controlvm "Windows 2000" savestate</screen></para>
     </sect2>
   </sect1>
 
-  <sect1>
-    <title id="autologon">Automated guest logons</title>
+  <sect1 id="autologon">
+    <title>Automated guest logons</title>
 
     <para>VirtualBox provides Guest Addition modules for Windows, Linux and
     Solaris to enable automated logons on the guest.</para>
@@ -216,9 +216,9 @@ HKEY_CLASSES_ROOT\CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32</s
           </listitem>
 
           <listitem>
-            <para>For <emphasis role="bold">Windows Vista and Windows 7
-            guests,</emphasis> the logon subsystem does not support the
-            so-called Secure Attention Sequence
+            <para>For <emphasis role="bold">Windows Vista, Windows 7
+            and Windows 8 guests,</emphasis> the logon subsystem does not support
+            the so-called Secure Attention Sequence
             (<computeroutput>CTRL+ALT+DEL</computeroutput>). As a result, the
             guest's group policy settings need to be changed to not use the
             Secure Attention Sequence. Also, the user name given is only
@@ -428,8 +428,7 @@ HKEY_CLASSES_ROOT\CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32</s
         guest OS by default For installing vbox-greeter automatically upon
         Guest Additions installation, use the
         <computeroutput>--with-autologon</computeroutput> switch when starting
-        the VBoxLinuxAdditions.run file:<screen>
-        # ./VBoxLinuxAdditions.run -- --with-autologon</screen></para>
+        the VBoxLinuxAdditions.run file:</para><screen># ./VBoxLinuxAdditions.run -- --with-autologon</screen>
 
         <para>For manual or postponed installation, the
         <computeroutput>vbox-greeter.desktop</computeroutput>
@@ -447,9 +446,8 @@ HKEY_CLASSES_ROOT\CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32</s
         <computeroutput>/etc/lightdm/lightdm.conf</computeroutput> needs to be
         edited:</para>
 
-        <para><screen>
-        [SeatDefaults]
-        greeter-session=vbox-greeter</screen></para>
+        <para><screen>[SeatDefaults]
+greeter-session=vbox-greeter</screen></para>
 
         <note><para>The LightDM server needs to be fully restarted in order to
         get vbox-greeter used as the default greeter. As root, do a
@@ -457,7 +455,7 @@ HKEY_CLASSES_ROOT\CLSID\{275D3BCC-22BB-4948-A7F6-3A3054EBA92B}\InprocServer32</s
         Ubuntu, or simply restart the guest.</para></note>
 
         <note><para>vbox-greeter is independent of the graphical session chosen
-        by the user (like Gnome, KDE, Unity etc). However it requires FLTK 1.3
+        by the user (like Gnome, KDE, Unity etc). However, it requires FLTK 1.3
         for representing its own user interface.</para></note>
 
         <para>There are numerous guest properties which can be used to further
@@ -818,14 +816,15 @@ VBoxManage controlvm "VM name" unplugcpu 3</screen></para>
     step is to select the PCI card and attach it to the guest. To figure out
     the list of available PCI devices, use the
     <computeroutput>lspci</computeroutput> command. The output will look like
-    this <screen>
-        01:00.0 VGA compatible controller: ATI Technologies Inc Cedar PRO [Radeon HD 5450]
-        01:00.1 Audio device: ATI Technologies Inc Manhattan HDMI Audio [Mobility Radeon HD 5000 Series]
-        02:00.0 Ethernet controller: Realtek Semiconductor Co., Ltd. RTL8111/8168B PCI Express Gigabit Ethernet controller (rev 03)
-        03:00.0 SATA controller: JMicron Technology Corp. JMB362/JMB363 Serial ATA Controller (rev 03)
-        03:00.1 IDE interface: JMicron Technology Corp. JMB362/JMB363 Serial ATA Controller (rev 03)
-        06:00.0 VGA compatible controller: nVidia Corporation G86 [GeForce 8500 GT] (rev a1)
-      </screen> The first column is a PCI address (in format
+    this:</para>
+    <screen>01:00.0 VGA compatible controller: ATI Technologies Inc Cedar PRO [Radeon HD 5450]
+01:00.1 Audio device: ATI Technologies Inc Manhattan HDMI Audio [Mobility Radeon HD 5000 Series]
+02:00.0 Ethernet controller: Realtek Semiconductor Co., Ltd. RTL8111/8168B PCI Express Gigabit
+        Ethernet controller (rev 03)
+03:00.0 SATA controller: JMicron Technology Corp. JMB362/JMB363 Serial ATA Controller (rev 03)
+03:00.1 IDE interface: JMicron Technology Corp. JMB362/JMB363 Serial ATA Controller (rev 03)
+06:00.0 VGA compatible controller: nVidia Corporation G86 [GeForce 8500 GT] (rev a1)</screen>
+    <para>The first column is a PCI address (in format
     <computeroutput>bus:device.function</computeroutput>). This address could
     be used to identify the device for further operations. For example, to
     attach a PCI network controller on the system listed above to the second
@@ -855,6 +854,106 @@ VBoxManage controlvm "VM name" unplugcpu 3</screen></para>
            No lazy physical memory allocation. The host will preallocate the whole RAM required for the VM on startup (as we cannot catch physical hardware accesses to the physical memory).
         </listitem>
       </orderedlist></para>
+  </sect1>
+
+  <sect1>
+    <title>Webcam passthrough</title>
+
+    <sect2 id="webcam-passthrough">
+      <title>Using a host webcam in the guest</title>
+
+      <para>VirtualBox 4.3 includes an experimental feature which allows a guest to use
+      a host webcam. This complements the general USB passthrough support which was the
+      typical way of using host webcams in earlier versions. The webcam passthrough support
+      can handle non-USB video sources in theory, but this is completely untested.</para>
+
+      <note>
+        <para>The webcam passthrough module is shipped as part of the Oracle VM VirtualBox
+        extension pack, which must be installed separately. See <xref
+        linkend="intro-installing" /> for more information.</para>
+      </note>
+
+      <para>The host webcam can be attached to the VM using "Devices" menu in the VM menu bar.
+      The "Webcams" menu contains a list of available video input devices on the host.
+      Clicking on a webcam name attaches or detaches the corresponding host device.</para>
+
+      <para>The VBoxManage command line tool can be used to enable webcam passthrough.
+      Please see the host-specific sections below for additional details.
+      The following commands are available:
+        <itemizedlist>
+          <listitem><para>Get a list of host webcams (or other video input devices):
+            <screen>VBoxManage list webcams</screen>
+            The output format:
+            <screen>alias "user friendly name"
+host path or identifier</screen>
+            The alias can be used as a shortcut in other commands. Alias '.0' means
+            default video input device on the host, '.1', '.2', etc mean first, second, etc
+            video input device. The device order is host-specific.
+          </para></listitem>
+          <listitem><para>Attach a webcam to a running VM:
+            <screen>VBoxManage controlvm "VM name" webcam attach [host_path|alias [settings]]</screen>
+            This will attach a USB webcam device to the guest.</para>
+
+            <para>The <computeroutput>settings</computeroutput> parameter is a string
+            <computeroutput>Setting1=Value1;Setting2=Value2</computeroutput>, which allows to
+            configure the emulated webcam device. The following settings are supported:
+            <itemizedlist>
+              <listitem>
+                <computeroutput>MaxFramerate</computeroutput> The highest rate at which video frames
+                are sent to the guest. A higher frame rate requires more CPU power. Therefore sometimes
+                it is useful to set a lower limit. Default is no limit and allow the guest to use all
+                frame rates supported by the host webcam.
+              </listitem>
+              <listitem>
+                <computeroutput>MaxPayloadTransferSize</computeroutput> How many bytes the emulated
+                webcam can send to the guest at a time. Default value is 3060 bytes, which is used by
+                some webcams. Higher values can slightly reduce CPU load, if the guest is able to use
+                larger buffers. However, a high <computeroutput>MaxPayloadTransferSize</computeroutput>
+                might be not supported by some guests.
+              </listitem>
+            </itemizedlist>
+          </para></listitem>
+          <listitem><para>Detach a webcam from a running VM:
+            <screen>VBoxManage controlvm "VM name" webcam detach [host_path|alias]</screen>
+          </para></listitem>
+          <listitem><para>List webcams attached to a running VM:
+            <screen>VBoxManage controlvm "VM name" webcam list</screen>
+            The output contains path or alias which was used in 'webcam attach' command for
+            each attached webcam.
+          </para></listitem>
+        </itemizedlist>
+      </para>
+    </sect2>
+
+    <sect2>
+      <title>Windows hosts</title>
+
+      <para>When the webcam device is detached from the host, the emulated webcam device is
+      automatically detached from the guest.</para>
+    </sect2>
+
+    <sect2>
+      <title>Mac OS X hosts</title>
+
+      <para>OS X version 10.7 or newer is required.</para>
+
+      <para>When the webcam device is detached from the host, the emulated webcam device
+      remains attached to the guest and must be manually detached using the
+      <computeroutput>VBoxManage controlvm "VM name" webcam detach ...</computeroutput> command.</para>
+    </sect2>
+
+    <sect2>
+      <title>Linux hosts</title>
+
+      <para>When the webcam is detached from the host the emulated webcam device is
+      automatically detached from the guest only if the webcam is streaming video.
+      If the emulated webcam is inactive it should be manually detached using the
+      <computeroutput>VBoxManage controlvm "VM name" webcam detach ...</computeroutput> command.</para>
+
+      <para>Aliases <computeroutput>.0</computeroutput> and <computeroutput>.1</computeroutput> are mapped
+      to <computeroutput>/dev/video0</computeroutput>, alias <computeroutput>.2</computeroutput> is mapped
+      to <computeroutput>/dev/video1</computeroutput> and so forth.</para>
+    </sect2>
   </sect1>
 
   <sect1>
@@ -1127,9 +1226,8 @@ VBoxManage setextradata "VM name"
       desired SATA hard disk port.</para>
     </sect2>
 
-    <sect2>
-      <title id="iscsi-intnet">Access iSCSI targets via Internal
-      Networking</title>
+    <sect2 id="iscsi-intnet">
+      <title>Access iSCSI targets via Internal Networking</title>
 
       <para>As an experimental feature, VirtualBox allows for accessing an
       iSCSI target running in a virtual machine which is configured for using
@@ -1142,13 +1240,14 @@ VBoxManage setextradata "VM name"
       and a MAC address not used by other virtual machines must be chosen. In
       the example below, adapt the name of the virtual machine, the MAC
       address, the IP configuration and the Internal Networking name
-      ("MyIntNet") according to your needs. The following seven commands must
+      ("MyIntNet") according to your needs. The following eight commands must
       first be issued:<screen>VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/Trusted 1
 VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/Config/MAC 08:00:27:01:02:0f
 VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/Config/IP 10.0.9.1
 VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/Config/Netmask 255.255.255.0
 VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/LUN#0/Driver IntNet
 VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/LUN#0/Config/Network MyIntNet
+VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/LUN#0/Config/TrunkType 2
 VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/LUN#0/Config/IsService 1</screen></para>
 
       <para>Finally the iSCSI disk must be attached with the
@@ -1165,82 +1264,6 @@ VBoxManage setextradata "VM name" VBoxInternal/Devices/IntNetIP/0/LUN#0/Config/I
       is started without having the iSCSI target powered up, it can take up to
       200 seconds to detect this situation. The VM will fail to power
       up.</para>
-    </sect2>
-  </sect1>
-
-  <sect1>
-    <title>Launching more than 128 VMs on Linux hosts</title>
-
-    <para>Linux hosts have a fixed number of IPC semaphores IDs per process
-    preventing users from starting substantially many VMs. The exact number
-    may vary with each Linux distribution. While trying to launch more VMs you
-    would be shown a "Cannot create IPC semaphore" error. In order to run more
-    VMs, you will need to increase the semaphore ID limit of the VBoxSVC
-    process. Find the current semaphore limits imposed by the kernel by
-    executing as root:<screen>#/sbin/sysctl kernel.sem
-kernel.sem = 250  32000  32  128</screen></para>
-
-    <para>The "kernel.sem" parameter bundles together 4 values, the one we are
-    interested in is called "SEMMNI", the maximum number of semaphore IDs
-    which is 128 in the above example. Increase this semaphore ID limit by
-    executing as root:<screen>echo "kernel.sem = 250 32000 32 2048" &gt;&gt; /etc/sysctl.conf
-/sbin/sysctl -p</screen></para>
-
-    <para>The above commands will add the new limits to the config file, thus
-    making the effect persistent across reboots, and will activate the new
-    limits into the currently running kernel.</para>
-  </sect1>
-
-  <sect1>
-    <title>Launching more than 120 VMs on Solaris hosts</title>
-
-    <para>Solaris hosts have a fixed number of IPC semaphores IDs per process
-    preventing users from starting more than 120 VMs. While trying to launch
-    more VMs you would be shown a "Cannot create IPC semaphore" error. In
-    order to run more VMs, you will need to increase the semaphore ID limit of
-    the VBoxSVC process.</para>
-
-    <sect2>
-      <title>Temporary solution while VirtualBox is running</title>
-
-      <para>Execute as root the <computeroutput>prctl</computeroutput> command
-      as shown below for the currently running VBoxSVC process. The process ID
-      of VBoxSVC can be obtained using the <computeroutput>ps</computeroutput>
-      command.</para>
-
-      <screen>prctl -r -n project.max-sem-ids -v 2048 &lt;pid-of-VBoxSVC&gt;</screen>
-
-      <para>This will immediately increase the semaphore limit of the
-      currently running VBoxSVC process and allow you to launch more VMs.
-      However, this change is not persistent and will be lost when VBoxSVC
-      terminates.</para>
-    </sect2>
-
-    <sect2>
-      <title>Persistent solution, requires user to re-login</title>
-
-      <para>If the user running VirtualBox is root, execute the following
-      command:</para>
-
-      <screen>prctl -n project.max-sem-ids -v 2048 -r -i project user.root</screen>
-
-      <para>From this point, starting new processes will have the increased
-      limit of 2048. You may then re-login or close all VMs and restart
-      VBoxSVC. You can check the current VBoxSVC semaphore ID limit using the
-      following command:</para>
-
-      <screen>prctl -n project.max-sem-ids -i process &lt;pid-of-VBoxSVC&gt;</screen>
-
-      <para>If the user running VirtualBox is not root, you must add the
-      property to the user's default project. Create the default project and
-      set the limit by executing as root:</para>
-
-      <screen>projadd -U &lt;username&gt; user.&lt;username&gt;
-projmod -s -K "project.max-sem-ids=(priv,2048,deny)" user.&lt;username&gt;</screen>
-
-      <para>Substitute "&lt;username&gt;" with the name of the user running
-      VirtualBox. Then re-login as this user to be able to run more than 120
-      VMs.</para>
     </sect2>
   </sect1>
 
@@ -1285,7 +1308,7 @@ VBoxManage setextradata "VM name"
     configuration is used on a Windows host, because the Windows named pipe
     syntax is used. Keep in mind that on Windows hosts a named pipe must
     always start with <computeroutput>\\.\pipe\</computeroutput>. On Linux the
-    same config settings apply, except that the path name for the
+    same configuration settings apply, except that the path name for the
     <computeroutput>Location</computeroutput> can be chosen more freely. Local
     domain sockets can be placed anywhere, provided the user running
     VirtualBox has the permission to create a new file in the directory. The
@@ -1327,7 +1350,7 @@ VBoxManage setextradata "VM name"
       interface</title>
 
       <para>For network booting in NAT mode, by default VirtualBox uses a
-      built-in TFTP server at the IP address 10.0.2.3. This default behavior
+      built-in TFTP server at the IP address 10.0.2.4. This default behavior
       should work fine for typical remote-booting scenarios. However, it is
       possible to change the boot server IP and the location of the boot image
       with the following commands: <screen>VBoxManage modifyvm "VM name" --nattftpserver1 10.0.2.2
@@ -1451,7 +1474,8 @@ VBoxManage setextradata "VM name" \
 
     <para>The DMI data VirtualBox provides to guests can be changed for a
     specific VM. Use the following commands to configure the DMI BIOS
-    information:</para>
+    information. In case your VM is configured to use EFI firmware you need to
+    replace <code>pcbios</code> by <code>efi</code> in the keys.</para>
 
     <sect2>
       <title>DMI BIOS information (type 0)</title>
@@ -1503,12 +1527,14 @@ VBoxManage setextradata "VM name"
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiBoardLocInChass"   "Board Location"
 VBoxManage setextradata "VM name"
-      "VBoxInternal/Devices/pcbios/0/Config/DmiBoardType"         10</screen>
+      "VBoxInternal/Devices/pcbios/0/Config/DmiBoardBoardType"    10</screen>
     </sect2>
     <sect2>
       <title>DMI system enclosure or chassis (type 3)</title>
       <screen>VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiChassisVendor"     "Chassis Vendor"
+VBoxManage setextradata "VM name"
+      "VBoxInternal/Devices/pcbios/0/Config/DmiChassisType"       3
 VBoxManage setextradata "VM name"
       "VBoxInternal/Devices/pcbios/0/Config/DmiChassisVersion"    "Chassis Version"
 VBoxManage setextradata "VM name"
@@ -1640,7 +1666,6 @@ VBoxManage setextradata "VM name"
       <para><glosslist>
           <glossentry>
             <glossterm><computeroutput>--timesync-interval</computeroutput></glossterm>
-
             <glossdef>
               <para>Specifies the interval at which to synchronize the time
               with the host. The default is 10000 ms (10 seconds).</para>
@@ -1649,17 +1674,14 @@ VBoxManage setextradata "VM name"
 
           <glossentry>
             <glossterm><computeroutput>--timesync-min-adjust</computeroutput></glossterm>
-
             <glossdef>
               <para>The minimum absolute drift value measured in milliseconds
               to make adjustments for. The default is 1000 ms on OS/2 and 100
               ms elsewhere.</para>
             </glossdef>
           </glossentry>
-
           <glossentry>
             <glossterm><computeroutput>--timesync-latency-factor</computeroutput></glossterm>
-
             <glossdef>
               <para>The factor to multiply the time query latency with to
               calculate the dynamic minimum adjust time. The default is 8
@@ -1674,7 +1696,6 @@ VBoxManage setextradata "VM name"
 
           <glossentry>
             <glossterm><computeroutput>--timesync-max-latency</computeroutput></glossterm>
-
             <glossdef>
               <para>The max host timer query latency to accept. The default is
               250 ms.</para>
@@ -1683,7 +1704,6 @@ VBoxManage setextradata "VM name"
 
           <glossentry>
             <glossterm><computeroutput>--timesync-set-threshold</computeroutput></glossterm>
-
             <glossdef>
               <para>The absolute drift threshold, given as milliseconds where
               to start setting the time instead of trying to smoothly adjust
@@ -1693,7 +1713,6 @@ VBoxManage setextradata "VM name"
 
           <glossentry>
             <glossterm><computeroutput>--timesync-set-start</computeroutput></glossterm>
-
             <glossdef>
               <para>Set the time when starting the time sync service.</para>
             </glossdef>
@@ -1702,7 +1721,6 @@ VBoxManage setextradata "VM name"
           <glossentry>
             <glossterm><computeroutput>--timesync-set-on-restore
             0|1</computeroutput></glossterm>
-
             <glossdef>
               <para>Set the time after the VM was restored from a saved state
               when passing 1 as parameter (default). Disable by passing 0. In
@@ -1770,13 +1788,12 @@ VBoxManage setextradata "VM name"
         <para>Support for Crossbow based bridged networking was introduced
         with VirtualBox 4.1 and requires Solaris 11 build 159 or above.</para>
       </footnote> A VirtualBox VNIC template is a VNIC whose name starts with
-    "vboxvnic_template".</para>
+    "vboxvnic_template" (case-sensitive).</para>
 
     <para>Here is an example of how to use a VNIC template to configure a VLAN
     for VMs. Create a VirtualBox VNIC template, by executing as root:</para>
 
-    <screen>dladm create-vnic -t -l nge0 -v 23 vboxvnic_template0
-</screen>
+    <screen>dladm create-vnic -t -l nge0 -v 23 vboxvnic_template0</screen>
 
     <para>This will create a temporary VNIC over interface "nge0" with the
     VLAN ID 23. To create VNIC templates that are persistent across host
@@ -1791,8 +1808,7 @@ vboxvnic_template0 vnic 1500 up       --         nge0
 
 $ dladm show-vnic
 LINK         OVER         SPEED  MACADDRESS        MACADDRTYPE         VID
-vboxvnic_template0 nge0   1000   2:8:20:25:12:75   random              23
-</screen></para>
+vboxvnic_template0 nge0   1000   2:8:20:25:12:75   random              23</screen></para>
 
     <para>Once the VNIC template is created, all VMs that need to be part of
     VLAN 23 over the physical interface "nge0" can use the same VNIC template.
@@ -1900,7 +1916,7 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
     <title>Locking down the VirtualBox manager GUI</title>
 
     <sect2>
-      <title>GUI customization</title>
+      <title>Customizing the VM manager</title>
 
       <para>There are several advanced customization settings for locking down
       the VirtualBox manager, that is, removing some features that the user
@@ -1912,7 +1928,6 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
       following keywords:<glosslist>
           <glossentry>
             <glossterm><computeroutput>noSelector</computeroutput></glossterm>
-
             <glossdef>
               <para>Don't allow to start the VirtualBox manager. Trying to do so
               will show a window containing a proper error message.</para>
@@ -1921,7 +1936,6 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
 
           <glossentry>
             <glossterm><computeroutput>noMenuBar</computeroutput></glossterm>
-
             <glossdef>
               <para>VM windows will not contain a menu bar.</para>
             </glossdef>
@@ -1929,20 +1943,22 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
 
           <glossentry>
             <glossterm><computeroutput>noStatusBar</computeroutput></glossterm>
-
             <glossdef>
               <para>VM windows will not contain a status bar.</para>
             </glossdef>
           </glossentry>
         </glosslist></para>
 
-      <para>To disable any GUI customization do
+      <para>To disable any of these VM manager customizations do
         <screen>VBoxManage setextradata global GUI/Customizations</screen></para>
+
+    </sect2>
+    <sect2>
 
       <title>VM selector customization</title>
       <para>The following per-machine VM extradata settings can be used to change the
         behavior of the VM selector window in respect of certain VMs:</para>
-      <screen>VBoxManage setextradata VM_NAME SETTING true</screen>
+      <screen>VBoxManage setextradata "VM name" true</screen>
       <para>where <computeroutput>SETTING</computeroutput> can be:</para>
       <glosslist>
         <glossentry>
@@ -1959,167 +1975,940 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
           </glossdef>
         </glossentry>
         <glossentry>
+          <glossterm><computeroutput>GUI/PreventSnapshotOperations</computeroutput></glossterm>
+          <glossdef>
+            <para>Prevent snapshot operations for a VM from the GUI, either at runtime or when
+              the VM is powered off.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
           <glossterm><computeroutput>GUI/HideFromManager</computeroutput></glossterm>
           <glossdef>
             <para>Hide a certain VM in the VM selector window.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>GUI/PreventApplicationUpdate</computeroutput></glossterm>
+          <glossdef>
+            <para>Disable the automatic update check and hide the corresponding menu item.</para>
           </glossdef>
         </glossentry>
       </glosslist>
       <para>Please note that these settings wouldn't prevent the user from
         reconfiguring the VM by <computeroutput>VBoxManage modifyvm</computeroutput>.</para>
 
-      </sect2>
-
-      <sect2>
-        <title>Host Key customization</title>
-
-        <para>To disable all host key combinations, open the preferences and
-          change the host key to <emphasis>None</emphasis>. This might be useful
-          when using VirtualBox in a kiosk mode.</para>
-
-        <para>To redefine or disable certain host key actions, use the following command:</para>
-
-        <screen>VBoxManage setextradata global GUI/Input/MachineShortcuts "FullscreenMode=F,...."</screen>
-
-        <para>The following list shows the possible host key actions together with their default
-          host key shortcut. Setting an action to <emphasis>None</emphasis> will disable
-          that host key action.</para>
-        <table>
-          <title>ignoreme</title>
-          <tgroup cols="3">
-            <tbody>
-              <row>
-                <entry><emphasis role="bold">Action</emphasis></entry>
-                <entry><emphasis role="bold">Default Host Key</emphasis></entry>
-                <entry><emphasis role="bold">Action</emphasis></entry>
-              </row>
-              <row>
-                <entry>SettingsDialog</entry>
-                <entry>S</entry>
-                <entry>open the VM settings dialog</entry>
-              </row>
-              <row>
-                <entry>TakeSnapshot</entry>
-                <entry>S</entry>
-                <entry>take a snapshot</entry>
-              </row>
-              <row>
-                <entry>InformationsDialog</entry>
-                <entry>N</entry>
-                <entry>show the VM information dialog</entry>
-              </row>
-              <row>
-                <entry>MouseIntegration</entry>
-                <entry>I</entry>
-                <entry>toggle mouse integration</entry>
-              </row>
-              <row>
-                <entry>TypeCAD</entry>
-                <entry>Del</entry>
-                <entry>inject Ctrl+Alt+Del</entry>
-              </row>
-              <row>
-                <entry>TypeCABS</entry>
-                <entry>Backspace</entry>
-                <entry>inject Ctrl+Alt+Backspace</entry>
-              </row>
-              <row>
-                <entry>Pause</entry>
-                <entry>P</entry>
-                <entry>Pause the VM</entry>
-              </row>
-              <row>
-                <entry>Reset</entry>
-                <entry>R</entry>
-                <entry>(hard) reset the guest</entry>
-              </row>
-              <row>
-                <entry>Shutdown</entry>
-                <entry>H</entry>
-                <entry>press the ACPI power button</entry>
-              </row>
-              <row>
-                <entry>Close</entry>
-                <entry>Q</entry>
-                <entry>show the VM close dialog</entry>
-              </row>
-              <row>
-                <entry>FullscreenMode</entry>
-                <entry>F</entry>
-                <entry>switch the VM into fullscreen</entry>
-              </row>
-              <row>
-                <entry>SeamlessMode</entry>
-                <entry>L</entry>
-                <entry>switch the VM into seamless mode</entry>
-              </row>
-              <row>
-                <entry>ScaleMode</entry>
-                <entry>C</entry>
-                <entry>switch the VM into scale mode</entry>
-              </row>
-              <row>
-                <entry>PopupMenu</entry>
-                <entry>Home</entry>
-                <entry>show popup menu in fullscreen / seamless mode</entry>
-              </row>
-            </tbody>
-          </tgroup>
-        </table>
-
-        <para>To disable the fullscreen mode as well as the seamless mode, use the following command:
-          <screen>VBoxManage setextradata global GUI/Input/MachineShortcuts "FullscreenMode=None,SeamlessMode=None"</screen>
-        </para>
-
-      </sect2>
-      <sect2>
-        <title>Action when terminating the VM</title>
-
-        <para>You can disallow certain actions when terminating a VM. To disallow specific actions, type:</para>
-
-        <para><screen>VBoxManage setextradata "VM name" GUI/RestrictedCloseActions OPTION[,OPTION...]</screen></para>
-
-        <para>where <computeroutput>OPTION</computeroutput> is one of the
-          following keywords:<glosslist>
-          <glossentry>
-            <glossterm><computeroutput>SaveState</computeroutput></glossterm>
-
-            <glossdef>
-              <para>Don't allow the user to save the VM state when terminating
-              the VM.</para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm><computeroutput>Shutdown</computeroutput></glossterm>
-
-            <glossdef>
-              <para>Don't allow the user to shutdown the VM by sending the ACPI
-              power-off event to the guest.</para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm><computeroutput>PowerOff</computeroutput></glossterm>
-
-            <glossdef>
-              <para>Don't allow the user to power off the VM.</para>
-            </glossdef>
-          </glossentry>
-
-          <glossentry>
-            <glossterm><computeroutput>Restore</computeroutput></glossterm>
-
-            <glossdef>
-              <para>Don't allow the user to return to the last snapshot when
-                powering off the VM.</para>
-            </glossdef>
-          </glossentry>
-        </glosslist></para>
-
-      <para>Any combination of the above is allowed. If all options are
-        specified, the VM cannot be shut down at all.</para>
     </sect2>
+
+    <sect2>
+      <title>Configure VM selector menu entries</title>
+      <para>You can disable (i.e. black-list) certain entries in the global settings
+        page of the VM selector:</para>
+      <screen>VBoxManage setextradata global GUI/RestrictedGlobalSettingsPages OPTION[,OPTION...]</screen>
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>General</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>General</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Input</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Input</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Update</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Update</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Language</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Language</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Display</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Display</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Network</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Network</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Extensions</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Extensions</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Proxy</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Proxy</emphasis> settings pane.</para>
+          </glossdef>
+        </glossentry>
+
+      </glosslist>
+
+      <para>This is a global setting. Any combination of the above is allowed.
+         To restore the default behavior, use</para>
+      <screen>VBoxManage setextradata global GUI/RestrictedGlobalSettingsPages</screen>
+
+    </sect2>
+
+    <sect2>
+      <title>Configure VM window menu entries</title>
+      <para>You can disable (i.e. black-list) certain menu actions in the VM window:</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeMenus OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>All</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show any menu in the VM window.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Machine</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Machine</emphasis> menu in the VM window.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>View</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>View</emphasis> menu in the VM window.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Devices</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Devices</emphasis> menu in the VM window.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Help</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Help</emphasis> menu in the VM window.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Debug</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Debug</emphasis> menu in the VM window. The debug
+              menu is only visible if the GUI was started with special command line parameters
+              or environment variable settings.</para>
+          </glossdef>
+        </glossentry>
+
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+      the default behavior, use</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeMenus</screen>
+
+      <para>You can also disable (i.e. blacklist) certain menu actions of certain
+        menus. Use the following command to disable certain actions of the
+        <emphasis>Application</emphasis> menu (only available on Mac OS X hosts):</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeApplicationMenuActions OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>All</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show any menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>About</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>About</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+      the default behavior, use</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeMenus</screen>
+
+      <para>Use the following command to disable certain actions of the <emphasis>Machine</emphasis>
+        menu:</para>
+
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeApplicationMenuActions OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>All</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show any menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>SettingsDialog</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Settings</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>TakeSnapshot</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Take Snapshot</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>TakeScreenshot</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Take Screenshot</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>InformationDialog</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Session Information</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>MouseIntegration</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Disable Mouse Integration</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>TypeCAD</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Insert Ctrl+Alt+Del</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>TypeCABS</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Insert Ctrl+Alt+Backspace</emphasis> menu item in
+              this menu (available on X11 hosts only).</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Pause</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Pause</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Reset</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Reset</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>SaveState</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Save the machine state</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Shutdown</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>ACPI Shutdown</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>PowerOff</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Power Off the machine</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+      the default behavior, use</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeApplicationMenuActions</screen>
+
+      <para>Use the following command to disable certain actions of the <emphasis>View</emphasis>
+        menu:</para>
+
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeViewMenuActions OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>All</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show any menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Fullscreen</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Switch to Fullscreen</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Seamless</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Switch to Seamless Mode</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Scale</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Switch to Scaled Mode</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>GuestAutoresize</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Auto-resize Guest Display</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>AdjustWindow</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Adjust Window Size</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Multiscreen</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Multiscreen</emphasis> menu item in this menu (only visible in full screen / seamless mode).</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+      the default behavior, use</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeViewMenuActions</screen>
+
+      <para>Use the following command to disable certain actions of the <emphasis>View</emphasis>
+        menu:</para>
+
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeDevicesMenuActions OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords to disable actions in the <emphasis>Devices</emphasis> menu:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>All</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show any menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>OpticalDevices</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>CD/DVD Devices</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>FloppyDevices</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>FLoppy Devices</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>USBDevices</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>USB Devices</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>SharedClipboard</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Shared Clipboard</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>DragAndDrop</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Drag'n'Drop</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>NetworkSettings</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Network Settings...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>SharedFoldersSettings</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Shared Folders Settings...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>VRDEServer</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Remove Display</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>InstallGuestTools</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Insert Guest Additions CD imnage...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+      the default behavior, use</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeDevicesMenuActions</screen>
+
+      <para>Use the following command to disable certain actions of the <emphasis>View</emphasis>
+        menu:</para>
+
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeDebuggerMenuActions OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords to disable actions in the <emphasis>Debug</emphasis> menu (normally completely disabled):</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>All</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show any menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Statistics</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Statistics...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>CommandLine</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Command Line...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Logging</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Logging...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>LogDialog</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Show Log...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+      the default behavior, use</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeDebuggerMenuActions</screen>
+
+      <para>Use the following command to disable certain actions of the <emphasis>View</emphasis>
+        menu:</para>
+
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeHelpMenuActions OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords to disable actions in the <emphasis>Help</emphasis> menu (normally completely disabled):</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>All</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show any menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Contents</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Contents...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>WebSite</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>VirtualBox Web Site...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>ResetWarnings</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Reset All Warnings</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>NetworkAccessManager</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Network Operations Manager</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>About</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>About</emphasis> menu item in this menu (only on non Mac OS X hosts).</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Contents</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Contents...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Contents</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the <emphasis>Contents...</emphasis> menu item in this menu.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+      the default behavior, use</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedRuntimeHelpMenuActions</screen>
+
+    </sect2>
+
+    <sect2>
+
+      <title>Configure VM window status bar entries</title>
+
+      <para>You can disable (i.e. black-list) certain status bar items:</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedStatusBarIndicators OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>HardDisks</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the hard disk icon in the VM window status bar. By default
+              the hard disk icon is only shown if the VM configuration contains one or
+              more hard disks.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>OpticalDisks</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the CD icon in the VM window status bar. By default the
+              CD icon is only shown if the VM configuration contains one or more CD
+            drives.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>FloppyDisks</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the floppy icon in the VM window status bar. By default the
+              floppy icon is only shown if the VM configuration contains one more
+              more floppy drives.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Network</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the network icon in the VM window status bar. By default
+              the network icon is only shown if the VM configuration contains one or more
+            active network adapters.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>USB</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the USB icon in the status bar. </para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>SharedFolders</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the shared folders icon in the status bar.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>VideoCapture</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the video capture icon in the status bar.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Features</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the CPU features icon in the status bar.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Mouse</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the mouse icon in the status bar.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Keyboard</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't show the keyboard icon in the status bar.</para>
+          </glossdef>
+        </glossentry>
+
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. If all options
+        are specified, no icons are displayed in the status bar of the VM window. To restore
+        the default behavior, use</para>
+
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedStatusBarIndicators</screen>
+
+    </sect2>
+
+    <sect2>
+      <title>Configure VM window visual modes</title>
+
+      <para>You can disable (i.e. black-list) certain VM visual modes:</para>
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedVisualStates OPTION[,OPTION...]</screen>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>Fullscreen</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow to switch the VM into full screen mode.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Seamless</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow to switch the VM into seamless mode.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Scale</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow to switch the VM into scale mode.</para>
+          </glossdef>
+        </glossentry>
+      
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. To restore
+        the default behavior, use</para>
+
+      <screen>VBoxManage setextradata "VM name" GUI/RestrictedVisualStates</screen>
+
+    </sect2>
+
+    <sect2>
+      <title>Host Key customization</title>
+
+      <para>To disable all host key combinations, open the preferences and
+        change the host key to <emphasis>None</emphasis>. This might be useful
+        when using VirtualBox in a kiosk mode.</para>
+
+      <para>To redefine or disable certain host key actions, use the following command:</para>
+
+      <screen>VBoxManage setextradata global GUI/Input/MachineShortcuts "FullscreenMode=F,...."</screen>
+
+      <para>The following list shows the possible host key actions together with their default
+        host key shortcut. Setting an action to <emphasis>None</emphasis> will disable
+        that host key action.</para>
+      <table>
+        <title>Host Key customization</title>
+        <tgroup cols="3">
+          <thead>
+            <row>
+              <entry><emphasis role="bold">Action</emphasis></entry>
+              <entry><emphasis role="bold">Default Key</emphasis></entry>
+              <entry><emphasis role="bold">Action</emphasis></entry>
+            </row>
+          </thead>
+          <tbody>
+            <row>
+              <entry><computeroutput>TakeSnapshot</computeroutput></entry>
+              <entry>T</entry>
+              <entry>take a snapshot</entry>
+            </row>
+            <row>
+              <entry><computeroutput>TakeScreenshot</computeroutput></entry>
+              <entry>E</entry>
+              <entry>take a screenshot</entry>
+            </row>
+            <row>
+              <entry><computeroutput>MouseIntegration</computeroutput></entry>
+              <entry>I</entry>
+              <entry>toggle mouse integration</entry>
+            </row>
+            <row>
+              <entry><computeroutput>TypeCAD</computeroutput></entry>
+              <entry>Del</entry>
+              <entry>inject Ctrl+Alt+Del</entry>
+            </row>
+            <row>
+              <entry><computeroutput>TypeCABS</computeroutput></entry>
+              <entry>Backspace</entry>
+              <entry>inject Ctrl+Alt+Backspace</entry>
+            </row>
+            <row>
+              <entry><computeroutput>Pause</computeroutput></entry>
+              <entry>P</entry>
+              <entry>Pause the VM</entry>
+            </row>
+            <row>
+              <entry><computeroutput>Reset</computeroutput></entry>
+              <entry>R</entry>
+              <entry>(hard) reset the guest</entry>
+            </row>
+            <row>
+              <entry><computeroutput>SaveState</computeroutput></entry>
+              <entry></entry>
+              <entry>save the VM state and terminate the VM</entry>
+            </row>
+            <row>
+              <entry><computeroutput>Shutdown</computeroutput></entry>
+              <entry>H</entry>
+              <entry>press the (virtual) ACPI power button</entry>
+            </row>
+            <row>
+              <entry><computeroutput>PowerOff</computeroutput></entry>
+              <entry></entry>
+              <entry>power the VM off (without saving the state!)</entry>
+            </row>
+            <row>
+              <entry><computeroutput>Close</computeroutput></entry>
+              <entry>Q</entry>
+              <entry>show the VM close dialog</entry>
+            </row>
+            <row>
+              <entry><computeroutput>FullscreenMode</computeroutput></entry>
+              <entry>F</entry>
+              <entry>switch the VM into full screen</entry>
+            </row>
+            <row>
+              <entry><computeroutput>SeamlessMode</computeroutput></entry>
+              <entry>L</entry>
+              <entry>switch the VM into seamless mode</entry>
+            </row>
+            <row>
+              <entry><computeroutput>ScaleMode</computeroutput></entry>
+              <entry>C</entry>
+              <entry>switch the VM into scale mode</entry>
+            </row>
+            <row>
+              <entry><computeroutput>GuestAutoResize</computeroutput></entry>
+              <entry>G</entry>
+              <entry>automatically resize the guest window</entry>
+            </row>
+            <row>
+              <entry><computeroutput>WindowAdjust</computeroutput></entry>
+              <entry>A</entry>
+              <entry>immediately resize the guest window</entry>
+            </row>
+            <row>
+              <entry><computeroutput>PopupMenu</computeroutput></entry>
+              <entry>Home</entry>
+              <entry>show popup menu in full screen / seaml. mode</entry>
+            </row>
+            <row>
+              <entry><computeroutput>SettingsDialog</computeroutput></entry>
+              <entry>S</entry>
+              <entry>open the VM settings dialog</entry>
+            </row>
+            <row>
+              <entry><computeroutput>InformationDialog</computeroutput></entry>
+              <entry>N</entry>
+              <entry>show the VM information window</entry>
+            </row>
+            <row>
+              <entry><computeroutput>NetworkAdaptersDialog</computeroutput></entry>
+              <entry></entry>
+              <entry>show the VM network adapters dialog</entry>
+            </row>
+            <row>
+              <entry><computeroutput>SharedFoldersDialog</computeroutput></entry>
+              <entry></entry>
+              <entry>show the VM shared folders dialog</entry>
+            </row>
+            <row>
+              <entry><computeroutput>InstallGuestAdditions</computeroutput></entry>
+              <entry>D</entry>
+              <entry>mount the ISO containing the Guest Additions</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+
+      <para>To disable the full screen mode as well as the seamless mode, use the following command:
+        <screen>VBoxManage setextradata global GUI/Input/MachineShortcuts "FullscreenMode=None,SeamlessMode=None"</screen>
+      </para>
+
+    </sect2>
+
+    <sect2>
+      <title>Action when terminating the VM</title>
+
+      <para>You can disallow (i.e. black-list) certain actions when terminating a VM.
+        To disallow specific actions, type:</para>
+
+      <para><screen>VBoxManage setextradata "VM name" GUI/RestrictedCloseActions OPTION[,OPTION...]</screen></para>
+
+      <para>where <computeroutput>OPTION</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>SaveState</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow the user to save the VM state when terminating
+            the VM.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Shutdown</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow the user to shutdown the VM by sending the ACPI
+            power-off event to the guest.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>PowerOff</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow the user to power off the VM.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>PowerOffRestoringSnapshot</computeroutput></glossterm>
+          <glossdef>
+            <para>Don't allow the user to return to the last snapshot when
+              powering off the VM.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting. Any combination of the above is allowed. If all
+        options are specified, the VM cannot be shut down at all.</para>
+    </sect2>
+
+    <sect2>
+      <title>Action for handling a Guru Meditation</title>
+
+      <para>A VM runs into a Guru Meditation if there is a problem which
+        cannot be fixed by other means than terminating the process. The
+        default is to show a message window which instructs the user to
+        open a bug report.</para>
+      <para>This behavior can be configured:</para>
+        
+      <para><screen>VBoxManage setextradata "VM name" GUI/GuruMeditationHandler MODE</screen></para>
+
+      <para>where <computeroutput>MODE</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>Default</computeroutput></glossterm>
+          <glossdef>
+            <para>A message window is shown. After the user confirmed, the
+              VM is terminated.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>PowerOff</computeroutput></glossterm>
+          <glossdef>
+            <para>The VM is immediately powered-off without showing any message
+              window. The VM logfile will show information about what happend.</para>
+          </glossdef>
+        </glossentry>
+
+        <glossentry>
+          <glossterm><computeroutput>Ignore</computeroutput></glossterm>
+          <glossdef>
+            <para>The VM is left in stuck mode. Execution is stopped but no
+            message window is shown. The VM has to be powered off manually.</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting.</para>
+    </sect2>
+
+    <sect2 id="mouse-capture">
+      <title>Configuring automatic mouse capturing</title>
+
+      <para>
+        By default, the mouse is captured if the user clicks on the guest window
+        and the guest expects relative mouse coordiantes at this time. This
+        happens if the pointing device is configured as PS/2 mouse and the guest did
+        not (yet) start the VirtualBox Guest Additions (for instance, the guest is
+        booting or no Guest Additions installed at all) or if the pointing device
+        is configured as USB tablet but the guest has no USB driver loaded yet.
+        Once the Guest Additions become active or the USB guest driver is started,
+        the mouse capture is automatically released.
+      </para>
+      <para>
+        The default behavior is sometimes not desired. Therefore it can be configured:
+      </para>
+      <para><screen>VBoxManage setextradata "VM name" GUI/MouseCapturePolicy MODE</screen></para>
+      
+      <para>where <computeroutput>MODE</computeroutput> is one of the
+        following keywords:</para><glosslist>
+        <glossentry>
+          <glossterm><computeroutput>Default</computeroutput></glossterm>
+          <glossdef>
+            <para>The default behavior as described above.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>HostComboOnly</computeroutput></glossterm>
+          <glossdef>
+            <para>The mouse is only captured if the Host Key is toggled.</para>
+          </glossdef>
+        </glossentry>
+        <glossentry>
+          <glossterm><computeroutput>Disabled</computeroutput></glossterm>
+          <glossdef>
+            <para>The mouse is never captured, also not by toggling the Host Key</para>
+          </glossdef>
+        </glossentry>
+      </glosslist>
+
+      <para>This is a per-VM setting.</para>
+
+    </sect2>
+
+    <sect2 id="legacy-fullscreen-mode">
+      <title>Requesting legacy full-screen mode</title>
+
+      <para>
+        As of version 4.3.16, VirtualBox uses special window manager facilities to switch
+        a multi-screen machine to full-screen on a multi-monitor host system. However,
+        not all window managers provide these facilities correctly, so VirtualBox can be
+        told to use the old method of switching to full-screen mode instead using the command:
+      </para>
+      <para><screen>VBoxManage setextradata global GUI/Fullscreen/LegacyMode true</screen></para>
+
+      <para>
+        You can go back to the new method using the command:
+      </para>
+      <para><screen>VBoxManage setextradata global GUI/Fullscreen/LegacyMode</screen></para>
+
+      <para>This is a global setting.</para>
+
+    </sect2>
+
   </sect1>
 
   <sect1 id="vboxwebsrv-daemon">
@@ -2142,95 +2931,97 @@ VBoxManage setextradata "VM name" VBoxInternal2/CoreDumpLive 1</screen>At
       <computeroutput>/etc/default/virtualbox</computeroutput>.
       There is one mandatory parameter, <computeroutput>VBOXWEB_USER</computeroutput>,
       which must be set to the user which will later start the VMs. The
-      paramters in the table below all start with <computeroutput>VBOXWEB_</computeroutput>
+      parameters in the table below all start with <computeroutput>VBOXWEB_</computeroutput>
       (<computeroutput>VBOXWEB_HOST</computeroutput>,
       <computeroutput>VBOXWEB_PORT</computeroutput> etc.):
       <table>
-        <title>ignored</title>
+        <title>Web service configuration parameters</title>
         <tgroup cols="3">
-          <tbody>
+          <thead>
             <row>
               <entry><emphasis role="bold">Parameter</emphasis></entry>
               <entry><emphasis role="bold">Description</emphasis></entry>
               <entry><emphasis role="bold">Default</emphasis></entry>
             </row>
+          </thead>
+          <tbody>
             <row>
-              <entry>USER</entry>
+              <entry><computeroutput>USER</computeroutput></entry>
               <entry>The user as which the web service runs</entry>
               <entry></entry>
             </row>
             <row>
-              <entry>HOST</entry>
+              <entry><computeroutput>HOST</computeroutput></entry>
               <entry>The host to bind the web service to</entry>
               <entry>localhost</entry>
             </row>
             <row>
-              <entry>PORT</entry>
+              <entry><computeroutput>PORT</computeroutput></entry>
               <entry>The port to bind the web service to</entry>
               <entry>18083</entry>
             </row>
             <row>
-              <entry>SSL_KEYFILE</entry>
+              <entry><computeroutput>SSL_KEYFILE</computeroutput></entry>
               <entry>Server key and certificate file, PEM format</entry>
               <entry></entry>
             </row>
             <row>
-              <entry>SSL_PASSWORDFILE</entry>
+              <entry><computeroutput>SSL_PASSWORDFILE</computeroutput></entry>
               <entry>File name for password to server key</entry>
               <entry></entry>
             </row>
             <row>
-              <entry>SSL_CACERT</entry>
+              <entry><computeroutput>SSL_CACERT</computeroutput></entry>
               <entry>CA certificate file, PEM format</entry>
               <entry></entry>
             </row>
             <row>
-              <entry>SSL_CAPATH</entry>
+              <entry><computeroutput>SSL_CAPATH</computeroutput></entry>
               <entry>CA certificate path</entry>
               <entry></entry>
             </row>
             <row>
-              <entry>SSL_DHFILE</entry>
+              <entry><computeroutput>SSL_DHFILE</computeroutput></entry>
               <entry>DH file name or DH key length in bits</entry>
               <entry></entry>
             </row>
             <row>
-              <entry>SSL_RANDFILE</entry>
+              <entry><computeroutput>SSL_RANDFILE</computeroutput></entry>
               <entry>File containing seed for random number generator</entry>
               <entry></entry>
             </row>
             <row>
-              <entry>TIMEOUT</entry>
+              <entry><computeroutput>TIMEOUT</computeroutput></entry>
               <entry>Session timeout in seconds; 0 disables timeouts</entry>
               <entry>300</entry>
             </row>
             <row>
-              <entry>CHECK_INTERVAL</entry>
+              <entry><computeroutput>CHECK_INTERVAL</computeroutput></entry>
               <entry>Frequency of timeout checks in seconds</entry>
               <entry>5</entry>
             </row>
             <row>
-              <entry>THREADS</entry>
+              <entry><computeroutput>THREADS</computeroutput></entry>
               <entry>Maximum number of worker threads to run in parallel</entry>
               <entry>100</entry>
             </row>
             <row>
-              <entry>KEEPALIVE</entry>
+              <entry><computeroutput>KEEPALIVE</computeroutput></entry>
               <entry>Maximum number of requests before a socket will be closed</entry>
               <entry>100</entry>
             </row>
             <row>
-              <entry>ROTATE</entry>
+              <entry><computeroutput>ROTATE</computeroutput></entry>
               <entry>Number of log files; 0 disables log rotation</entry>
               <entry>10</entry>
             </row>
             <row>
-              <entry>LOGSIZE</entry>
+              <entry><computeroutput>LOGSIZE</computeroutput></entry>
               <entry>Maximum size of a log file in bytes to trigger rotation</entry>
               <entry>1MB</entry>
             </row>
             <row>
-              <entry>LOGINTERVAL</entry>
+              <entry><computeroutput>LOGINTERVAL</computeroutput></entry>
               <entry>Maximum time interval in seconds to trigger log rotation</entry>
               <entry>1 day</entry>
             </row>
@@ -2426,6 +3217,110 @@ svccfg -s svc:/application/virtualbox/webservice:default setprop config/user=roo
         <computeroutput>--help</computeroutput>.</para>
     </sect2>
 
+    <sect2 id="vboxwatchdog-linux">
+      <title>Linux: starting the watchdog service via <computeroutput>init</computeroutput></title>
+
+      <para>On Linux, the watchdog service can be automatically started during
+      host boot by adding appropriate parameters to the file
+      <computeroutput>/etc/default/virtualbox</computeroutput>.
+      There is one mandatory parameter, <computeroutput>VBOXWATCHDOG_USER</computeroutput>,
+      which must be set to the user which will later start the VMs. For backward
+      compatibility you can also specify <computeroutput>VBOXBALLOONCTRL_USER</computeroutput>The
+      parameters in the table below all start with <computeroutput>VBOXWATCHDOG_</computeroutput>
+      (<computeroutput>VBOXWATCHDOG_BALLOON_INTERVAL</computeroutput>,
+      <computeroutput>VBOXWATCHDOG_LOGSIZE</computeroutput> etc., and for
+      previously existing parameters the
+      <computeroutput>VBOXBALLOONCTRL_INTERVAL</computeroutput> etc. parameters
+      can still be used):
+      <table>
+        <title>VirtualBox watchdog configuration parameters</title>
+        <tgroup cols="3">
+          <thead>
+            <row>
+              <entry><emphasis role="bold">Parameter</emphasis></entry>
+              <entry><emphasis role="bold">Description</emphasis></entry>
+              <entry><emphasis role="bold">Default</emphasis></entry>
+            </row>
+          </thead>
+          <tbody>
+            <row>
+              <entry><computeroutput>USER</computeroutput></entry>
+              <entry>The user as which the watchdog service runs</entry>
+              <entry></entry>
+            </row>
+            <row>
+              <entry><computeroutput>ROTATE</computeroutput></entry>
+              <entry>Number of log files; 0 disables log rotation</entry>
+              <entry>10</entry>
+            </row>
+            <row>
+              <entry><computeroutput>LOGSIZE</computeroutput></entry>
+              <entry>Maximum size of a log file in bytes to trigger rotation</entry>
+              <entry>1MB</entry>
+            </row>
+            <row>
+              <entry><computeroutput>LOGINTERVAL</computeroutput></entry>
+              <entry>Maximum time interval in seconds to trigger log rotation</entry>
+              <entry>1 day</entry>
+            </row>
+            <row>
+              <entry><computeroutput>BALLOON_INTERVAL</computeroutput></entry>
+              <entry>Interval for checking the balloon size (msec)</entry>
+              <entry>30000</entry>
+            </row>
+            <row>
+              <entry><computeroutput>BALLOON_INCREMENT</computeroutput></entry>
+              <entry>Balloon size increment (MByte)</entry>
+              <entry>256</entry>
+            </row>
+            <row>
+              <entry><computeroutput>BALLOON_DECREMENT</computeroutput></entry>
+              <entry>Balloon size decrement (MByte)</entry>
+              <entry>128</entry>
+            </row>
+            <row>
+              <entry><computeroutput>BALLOON_LOWERLIMIT</computeroutput></entry>
+              <entry>Balloon size lower limit (MByte)</entry>
+              <entry>64</entry>
+            </row>
+            <row>
+              <entry><computeroutput>BALLOON_SAFETYMARGIN</computeroutput></entry>
+              <entry>Free memory required for decreasing the balloon size (MByte)</entry>
+              <entry>1024</entry>
+            </row>
+          </tbody>
+        </tgroup>
+      </table>
+      </para>
+    </sect2>
+
+    <sect2 id="vboxwatchdog-solaris">
+      <title>Solaris: starting the watchdog service via SMF</title>
+
+      <para>On Solaris hosts, the VirtualBox watchdog service daemon is
+      integrated into the SMF framework. You can change the parameters, but
+      don't have to if the defaults already match your needs:<screen>svccfg -s svc:/application/virtualbox/balloonctrl:default setprop config/balloon_interval=10000
+svccfg -s svc:/application/virtualbox/balloonctrl:default setprop config/balloon_safetymargin=134217728</screen></para>
+
+      <para>The table in the previous section showing the parameter names and
+      defaults also applies to Solaris. The parameter names must be changed
+      to lowercase and a prefix of <computeroutput>config/</computeroutput>
+      has to be added, e.g. <computeroutput>config/user</computeroutput> or
+      <computeroutput>config/balloon_safetymargin</computeroutput>. If you made any
+      change, don't forget to run the following command to put the changes into
+      effect immediately:<screen>svcadm refresh svc:/application/virtualbox/balloonctrl:default</screen></para>
+
+      <para>If you forget the above command then the previous settings will
+      be used when enabling the service. Check the current property settings
+      with:<screen>svcprop -p config svc:/application/virtualbox/balloonctrl:default</screen></para>
+
+      <para>When everything is configured correctly you can start the
+      VirtualBox watchdog service with the following command:<screen>svcadm enable svc:/application/virtualbox/balloonctrl:default</screen></para>
+
+      <para>For more information about SMF, please refer to the Solaris
+      documentation.</para>
+    </sect2>
+
   </sect1>
 
   <sect1 id="otherextpacks">
@@ -2455,7 +3350,7 @@ svccfg -s svc:/application/virtualbox/webservice:default setprop config/user=roo
     differently. VNC can only deal with password authentication, and there
     is no option to use password hashes. This leaves no other choice than
     having a clear-text password in the VM configuration, which can be set with
-    the following command:<screen>VBoxManage modifyvm VMNAME --vrdeproperty VNCPassword=secret</screen></para>
+    the following command:<screen>VBoxManage modifyvm "VM name" --vrdeproperty VNCPassword=secret</screen></para>
 
     <para>The user is responsible for keeping this password secret, and it
     should be removed when a VM configuration is passed to another person,
@@ -2487,12 +3382,12 @@ svccfg -s svc:/application/virtualbox/webservice:default setprop config/user=roo
       which points the service to the autostart configuration file which is used
       during boot to determine whether to allow individual users to start a VM
       automatically and configure startup delays.
-      The config file can be placed in <computeroutput>/etc/vbox</computeroutput>
+      The configuration file can be placed in <computeroutput>/etc/vbox</computeroutput>
       and contains several options. One is <computeroutput>default_policy</computeroutput>
       which controls whether the autostart service allows or denies to start a VM
       for users which are not in the exception list.
       The exception list starts with <computeroutput>exception_list</computeroutput>
-      and contains a comma seperated list with usernames. Furthermore a separate
+      and contains a comma separated list with usernames. Furthermore a separate
       startup delay can be configured for every user to avoid overloading the host.
       A sample configuration is given below:</para>
 
@@ -2554,4 +3449,119 @@ alice = {
       url="http://developer.apple.com/mac/library/documentation/MacOSX/Conceptual/BPSystemStartup/BPSystemStartup.html">http://developer.apple.com/mac/library/documentation/MacOSX/Conceptual/BPSystemStartup/BPSystemStartup.html</ulink></literal>.</para>
     </sect2>
   </sect1>
+
+  <sect1 id="vboxexpertstoragemgmt">
+    <title>VirtualBox expert storage management</title>
+
+    <para>In case the snapshot model of VirtualBox is not sufficient
+    it is possible to enable a special mode which makes it possible to
+    reconfigure storage attachments while the VM is paused.
+    The user has to make sure that the disk data stays consistent to the guest
+    because unlike with hotplugging the guest is not informed about detached
+    or newly attached media.</para>
+
+    <para>The expert storage management mode can be enabled per VM executing:</para>
+
+    <screen>VBoxManage setextradata "VM name" "VBoxInternal2/SilentReconfigureWhilePaused" 1</screen>
+
+    <para>Storage attachments can be reconfigured while the VM is paused afterwards using:</para>
+    <screen>VBoxManage storageattach ...</screen>
+  </sect1>
+
+  <sect1 id="hostpowertweaks">
+    <title>Handling of host power management events</title>
+
+    <para>Some host power management events are handled by VirtualBox. The
+    actual behavior depends on the platform:</para>
+
+    <para>
+      <glosslist>
+        <glossentry>
+          <glossterm>Host Suspends</glossterm>
+           <glossdef>
+             <para>
+               This event is generated when the host is about to suspend, that is,
+               the host saves the state to some non-volatile storage and powers off.
+             </para>
+             <para>
+               This event is currently only handled on Windows hosts and Mac OS X hosts.
+               When this event is generated, VirtualBox will pause all running VMs.
+             </para>
+           </glossdef>
+         </glossentry>
+         <glossentry>
+           <glossterm>Host Resumes</glossterm>
+           <glossdef>
+             <para>
+               This event is generated when the host woke up from the suspended
+               state.
+             </para>
+             <para>
+               This event is currently only handled on Windows hosts and Mac OS X hosts.
+               When this event is generated, VirtualBox will resume all VMs which
+               are where paused before.
+             </para>
+           </glossdef>
+         </glossentry>
+         <glossentry>
+           <glossterm>Battery Low</glossterm>
+           <glossdef>
+             <para>
+               The battery level reached a critical level (usually less than 5
+               percent charged).
+             </para>
+             <para>
+               This event is currently only handled on Windows hosts and Mac OS X hosts.
+               When this event is generated, VirtualBox will save the state and
+               terminate all VMs in preperation of a potential host powerdown.
+             </para>
+             <para>The behavior can be configured. By executing the following command,
+             no VM is saved:</para>
+             <screen>VBoxManage setextradata global "VBoxInternal2/SavestateOnBatteryLow" 0</screen>
+             <para>This is a global setting as well as a per-VM setting. The per-VM
+               value has higher precedence than the global value. The following command
+               will save the state of all VMs but will not save the state of VM "foo":</para>
+             <screen>VBoxManage setextradata global "VBoxInternal2/SavestateOnBatteryLow" 1
+VBoxManage setextradata "foo" "VBoxInternal2/SavestateOnBatteryLow" 0</screen>
+             <para>The first line is actually not required as by default the savestate
+             action is performed.</para>
+           </glossdef>
+         </glossentry>
+       </glosslist>
+     </para>
+
+   </sect1>
+
+   <sect1 id="sse412passthrough">
+     <title>Experimental support for passing through SSE4.1 / SSE4.2 instructions</title>
+     <para>
+       To provide SSE 4.1 / SSE 4.2 support to guests, the host CPU has to
+       implement these instruction sets. Starting with VirtualBox 4.3.8 it is
+       possible to enable these instructions for certain guests using the
+       following commands:</para><screen>VBoxManage setextradata "VM name" VBoxInternal/CPUM/SSE4.1 1
+VBoxManage setextradata "VM name" VBoxInternal/CPUM/SSE4.2 1</screen>
+     <para>
+       These are a per-VM settings and they are turned off by default.
+     </para>
+   </sect1>
+
+  <sect1 id="hidledssync">
+    <title>Support for keyboard indicators synchronization</title>
+
+    <para>
+      This feature makes the host keyboard lights match those of the virtual machine's virtual
+      keyboard when the machine window is selected. It is currently implemented for Mac OS X and
+      Windows hosts and available as of releases 4.2.24 and 4.3.8. The feature can be enabled using
+      the following command:
+    </para>
+
+    <screen>VBoxManage setextradata "VM name" GUI/HidLedsSync "1"</screen>
+
+    <para>
+      In order to disable it, use the same command but change "1" to "0", or use the VBoxManage
+      command to remove the extra data. This is a per-VM setting and it is disabled by default.
+    </para>
+
+  </sect1>
+
 </chapter>

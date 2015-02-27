@@ -24,6 +24,7 @@
 #include <VBox/vmm/vmm.h>
 #include "MMInternal.h"
 #include <VBox/vmm/vm.h>
+#include <VBox/vmm/hm.h>
 #include <VBox/log.h>
 #include <iprt/assert.h>
 #include <iprt/string.h>
@@ -256,7 +257,7 @@ DECLINLINE(RTR0PTR) mmHyperLookupCalcR0(PVM pVM, PMMLOOKUPHYPER pLookup, uint32_
             if (pLookup->u.Locked.pvR0)
                 return (RTR0PTR)((RTR0UINTPTR)pLookup->u.Locked.pvR0 + off);
 #ifdef VBOX_WITH_2X_4GB_ADDR_SPACE
-            AssertMsg(!VMMIsHwVirtExtForced(pVM), ("%s\n", R3STRING(pLookup->pszDesc)));
+            AssertMsg(!HMIsEnabled(pVM), ("%s\n", R3STRING(pLookup->pszDesc)));
 #else
             AssertMsgFailed(("%s\n", R3STRING(pLookup->pszDesc))); NOREF(pVM);
 #endif
@@ -566,6 +567,10 @@ const char *mmGetTagName(MMTAG enmTag)
         TAG2STR(CFGM_STRING);
         TAG2STR(CFGM_USER);
 
+        TAG2STR(CPUM_CTX);
+        TAG2STR(CPUM_CPUID);
+        TAG2STR(CPUM_MSRS);
+
         TAG2STR(CSAM);
         TAG2STR(CSAM_PATCH);
 
@@ -639,7 +644,7 @@ const char *mmGetTagName(MMTAG enmTag)
 
         TAG2STR(VMM);
 
-        TAG2STR(HWACCM);
+        TAG2STR(HM);
 
         #undef TAG2STR
 

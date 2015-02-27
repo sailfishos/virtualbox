@@ -1,7 +1,5 @@
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineLogicSeamless class declaration
+ * VBox Qt GUI - UIMachineLogicSeamless class declaration.
  */
 
 /*
@@ -16,8 +14,8 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef __UIMachineLogicSeamless_h__
-#define __UIMachineLogicSeamless_h__
+#ifndef ___UIMachineLogicSeamless_h___
+#define ___UIMachineLogicSeamless_h___
 
 /* Local includes: */
 #include "UIMachineLogic.h"
@@ -39,25 +37,47 @@ protected:
     /* Check if this logic is available: */
     bool checkAvailability();
 
-    /* Multi-screen stuff: */
+    /** Returns machine-window flags for 'Seamless' machine-logic and passed @a uScreenId. */
+    virtual Qt::WindowFlags windowFlags(ulong uScreenId) const { Q_UNUSED(uScreenId); return Qt::FramelessWindowHint; }
+
+    /** Adjusts machine-window geometry if necessary for 'Seamless'. */
+    virtual void adjustMachineWindowsGeometry();
+
+    /* Helpers: Multi-screen stuff: */
     int hostScreenForGuestScreen(int iScreenId) const;
     bool hasHostScreenForGuestScreen(int iScreenId) const;
 
+    /* API: 3D overlay visibility stuff: */
+    void notifyAbout3DOverlayVisibilityChange(bool fVisible);
+
 private slots:
 
-    void sltGuestMonitorChange(KGuestMonitorChangedEventType changeType, ulong uScreenId, QRect screenGeo);
-    void sltHostScreenCountChanged(int cScreenCount);
+    /** Checks if some visual-state type was requested. */
+    void sltCheckForRequestedVisualStateType();
+
+    /* Handler: Console callback stuff: */
+    void sltMachineStateChanged();
+
+    /** Updates machine-window(s) location/size on screen-layout changes. */
+    void sltScreenLayoutChanged();
+
+    /** Handles guest-screen count change. */
+    virtual void sltGuestMonitorChange(KGuestMonitorChangedEventType changeType, ulong uScreenId, QRect screenGeo);
+    /** Handles host-screen count change. */
+    virtual void sltHostScreenCountChange();
 
 private:
 
     /* Prepare helpers: */
     void prepareActionGroups();
+    void prepareActionConnections();
     void prepareMachineWindows();
     void prepareMenu();
 
     /* Cleanup helpers: */
     //void cleanupMenu() {}
     void cleanupMachineWindows();
+    void cleanupActionConnections();
     void cleanupActionGroups();
 
     /* Variables: */
@@ -69,5 +89,5 @@ private:
     friend class UIMachineViewSeamless;
 };
 
-#endif // __UIMachineLogicSeamless_h__
+#endif /* !___UIMachineLogicSeamless_h___ */
 

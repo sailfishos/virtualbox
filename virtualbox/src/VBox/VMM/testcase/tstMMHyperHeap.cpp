@@ -37,7 +37,10 @@
 #define NUM_CPUS  16
 
 
-int main(int argc, char **argv)
+/**
+ *  Entry point.
+ */
+extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
 
     /*
@@ -82,6 +85,13 @@ int main(int argc, char **argv)
     if (RT_FAILURE(rc))
     {
         RTPrintf("FAILURE: STAMR3Init failed. rc=%Rrc\n", rc);
+        return 1;
+    }
+
+    rc = CFGMR3Init(pVM, NULL, NULL);
+    if (RT_FAILURE(rc))
+    {
+        RTPrintf("FAILURE: CFGMR3Init failed. rc=%Rrc\n", rc);
         return 1;
     }
 
@@ -233,3 +243,15 @@ int main(int argc, char **argv)
 #endif
     return 0;
 }
+
+
+#if !defined(VBOX_WITH_HARDENING) || !defined(RT_OS_WINDOWS)
+/**
+ * Main entry point.
+ */
+int main(int argc, char **argv, char **envp)
+{
+    return TrustedMain(argc, argv, envp);
+}
+#endif
+

@@ -1,10 +1,10 @@
-# $Id: NASM.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: NASM.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - Netwide Assembler v0.98+.
 #
 
 #
-# Copyright (c) 2004-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,7 +35,7 @@ TOOL_NASM := Netwide Assembler v0.98+
 
 # Tool Specific Properties
 ifndef PATH_TOOL_NASM
- PATH_TOOL_NASM := $(sort $(wildcard $(PATH_DEVTOOLS_BLD)/nasm/v*.*))
+ PATH_TOOL_NASM := $(sort $(wildcard $(KBUILD_DEVTOOLS_HST)/nasm/v*.*))
  ifneq ($(PATH_TOOL_NASM),)
   PATH_TOOL_NASM := $(call lastword,$(PATH_TOOL_NASM))
  endif

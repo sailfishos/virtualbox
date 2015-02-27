@@ -80,14 +80,22 @@ void write_dword(uint16_t seg, uint16_t offset, uint32_t data)
 
 uint8_t inb_cmos(uint8_t cmos_reg)
 {
-    outb(0x70, cmos_reg);
-    return inb(0x71);
+    uint8_t     cmos_port = 0x70;
+
+    if (cmos_reg >= 0x80)
+        cmos_port += 2;
+    outb(cmos_port, cmos_reg);
+    return inb(cmos_port + 1);
 }
 
 void outb_cmos(uint8_t cmos_reg, uint8_t val)
 {
-    outb(0x70, cmos_reg);
-    outb(0x71, val);
+    uint8_t     cmos_port = 0x70;
+
+    if (cmos_reg >= 0x80)
+        cmos_port += 2;
+    outb(cmos_port, cmos_reg);
+    outb(cmos_port + 1, val);
 }
 
 void BIOSCALL dummy_isr_function(pusha_regs_t regs, uint16_t es,
@@ -99,7 +107,7 @@ void BIOSCALL dummy_isr_function(pusha_regs_t regs, uint16_t es,
     // interrupt so it will generally be called only once for each unexpected
     // interrupt level.
     uint8_t     isrA, isrB, imr, last_int = 0xFF;
-    
+
     outb(PIC_MASTER, PIC_CMD_RD_ISR);           // Read master ISR
     isrA = inb(PIC_MASTER);
     if (isrA) {
@@ -174,7 +182,7 @@ void BIOSCALL print_bios_banner(void)
     char        *bios_conf;
 
     /* Avoid using preprocessing directives within macro arguments. */
-    bios_conf = 
+    bios_conf =
 #ifdef __WATCOMC__
     "watcom "
 #endif

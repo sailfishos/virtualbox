@@ -164,7 +164,7 @@ static PRTMEMHDR rtR0MemAllocExecVmArea(size_t cb)
     pVmArea->nr_pages = 0;    /* paranoia? */
     pVmArea->pages    = NULL; /* paranoia? */
 
-    papPages = (struct page **)kmalloc(cPages * sizeof(papPages[0]), GFP_KERNEL);
+    papPages = (struct page **)kmalloc(cPages * sizeof(papPages[0]), GFP_KERNEL | __GFP_NOWARN);
     if (!papPages)
     {
         vunmap(pVmArea->addr);
@@ -173,34 +173,41 @@ static PRTMEMHDR rtR0MemAllocExecVmArea(size_t cb)
 
     for (iPage = 0; iPage < cPages; iPage++)
     {
-        papPages[iPage] = alloc_page(GFP_KERNEL | __GFP_HIGHMEM);
+        papPages[iPage] = alloc_page(GFP_KERNEL | __GFP_HIGHMEM | __GFP_NOWARN);
         if (!papPages[iPage])
             break;
     }
     if (iPage == cPages)
     {
         /*
-         * Map the pages.  The API requires an iterator argument, which can be
-         * used, in case of failure, to figure out how much was actually
-         * mapped.  Not sure how useful this really is, but whatever.
+         * Map the pages.
          *
          * Not entirely sure we really need to set nr_pages and pages here, but
          * they provide a very convenient place for storing something we need
          * in the free function, if nothing else...
          */
+# if LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
         struct page **papPagesIterator = papPages;
+# endif
         pVmArea->nr_pages = cPages;
         pVmArea->pages    = papPages;
-        if (!map_vm_area(pVmArea, PAGE_KERNEL_EXEC, &papPagesIterator))
+        if (!map_vm_area(pVmArea, PAGE_KERNEL_EXEC,
+# if LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
+                         &papPagesIterator
+# else
+                         papPages
+# endif
+                         ))
         {
             PRTMEMLNXHDREX pHdrEx = (PRTMEMLNXHDREX)pVmArea->addr;
             pHdrEx->pVmArea     = pVmArea;
             pHdrEx->pvDummy     = NULL;
             return &pHdrEx->Hdr;
         }
-
         /* bail out */
+# if LINUX_VERSION_CODE < KERNEL_VERSION(3, 17, 0)
         pVmArea->nr_pages = papPagesIterator - papPages;
+# endif
     }
 
     vunmap(pVmArea->addr);
@@ -247,11 +254,11 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
 
 # else  /* !RTMEMALLOC_EXEC_HEAP */
 # error "you don not want to go here..."
-        pHdr = (PRTMEMHDR)__vmalloc(cb + sizeof(*pHdr), GFP_KERNEL | __GFP_HIGHMEM, MY_PAGE_KERNEL_EXEC);
+        pHdr = (PRTMEMHDR)__vmalloc(cb + sizeof(*pHdr), GFP_KERNEL | __GFP_HIGHMEM | __GFP_NOWARN, MY_PAGE_KERNEL_EXEC);
 # endif /* !RTMEMALLOC_EXEC_HEAP */
 
 #elif defined(PAGE_KERNEL_EXEC) && defined(CONFIG_X86_PAE)
-        pHdr = (PRTMEMHDR)__vmalloc(cb + sizeof(*pHdr), GFP_KERNEL | __GFP_HIGHMEM, MY_PAGE_KERNEL_EXEC);
+        pHdr = (PRTMEMHDR)__vmalloc(cb + sizeof(*pHdr), GFP_KERNEL | __GFP_HIGHMEM | __GFP_NOWARN, MY_PAGE_KERNEL_EXEC);
 #else
         pHdr = (PRTMEMHDR)vmalloc(cb + sizeof(*pHdr));
 #endif
@@ -269,7 +276,8 @@ DECLHIDDEN(int) rtR0MemAllocEx(size_t cb, uint32_t fFlags, PRTMEMHDR *ppHdr)
         {
             fFlags |= RTMEMHDR_FLAG_KMALLOC;
             pHdr = kmalloc(cb + sizeof(*pHdr),
-                           (fFlags & RTMEMHDR_FLAG_ANY_CTX_ALLOC) ? GFP_ATOMIC : GFP_KERNEL);
+                           (fFlags & RTMEMHDR_FLAG_ANY_CTX_ALLOC) ? (GFP_ATOMIC | __GFP_NOWARN)
+                                                                  : (GFP_KERNEL | __GFP_NOWARN));
             if (RT_UNLIKELY(   !pHdr
                             && cb > PAGE_SIZE
                             && !(fFlags & RTMEMHDR_FLAG_ANY_CTX) ))
@@ -383,15 +391,15 @@ RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb)
     cOrder = CalcPowerOf2Order(cPages);
 #if (defined(RT_ARCH_AMD64) || defined(CONFIG_X86_PAE)) && defined(GFP_DMA32)
     /* ZONE_DMA32: 0-4GB */
-    paPages = alloc_pages(GFP_DMA32, cOrder);
+    paPages = alloc_pages(GFP_DMA32 | __GFP_NOWARN, cOrder);
     if (!paPages)
 #endif
 #ifdef RT_ARCH_AMD64
         /* ZONE_DMA; 0-16MB */
-        paPages = alloc_pages(GFP_DMA, cOrder);
+        paPages = alloc_pages(GFP_DMA | __GFP_NOWARN, cOrder);
 #else
         /* ZONE_NORMAL: 0-896MB */
-        paPages = alloc_pages(GFP_USER, cOrder);
+        paPages = alloc_pages(GFP_USER | __GFP_NOWARN, cOrder);
 #endif
     if (paPages)
     {

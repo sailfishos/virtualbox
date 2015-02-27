@@ -95,6 +95,10 @@ struct port_forward_rule
 LIST_HEAD(port_forward_rule_list, port_forward_rule);
 
 
+#ifdef RT_OS_WINDOWS
+struct pong;
+TAILQ_HEAD(pong_tailq, pong);
+#endif
 
 /* forward declaration */
 struct proto_handler;
@@ -146,6 +150,7 @@ typedef struct NATState
 #endif
     struct dns_list_head pDnsList;
     struct dns_domain_list_head pDomainList;
+    uint32_t dnsgen;            /* XXX: merge with dnsLastUpdate? */
     struct in_addr tftp_server;
     struct in_addr loopback_addr;
     uint32_t dnsLastUpdate;
@@ -177,8 +182,7 @@ typedef struct NATState
     struct udpstat_t udpstat;
     struct socket udb;
     struct socket *udp_last_so;
-    struct socket icmp_socket;
-    struct icmp_storage icmp_msg_head;
+
 # ifndef RT_OS_WINDOWS
     /* counter of sockets needed for allocation enough room to
      * process sockets with poll/epoll
@@ -197,18 +201,18 @@ typedef struct NATState
 #  define NSOCK_INC_EX(ex) do {} while (0)
 #  define NSOCK_DEC_EX(ex) do {} while (0)
 # endif
+
+    struct socket icmp_socket;
+# if !defined(RT_OS_WINDOWS)
+    struct icmp_storage icmp_msg_head;
     int cIcmpCacheSize;
     int iIcmpCacheLimit;
-# ifdef RT_OS_WINDOWS
-    void *pvIcmpBuffer;
-    size_t szIcmpBuffer;
-    /* Accordin MSDN specification IcmpParseReplies
-     * function should be detected in runtime
-     */
-    long (WINAPI * pfIcmpParseReplies)(void *, long);
-    BOOL (WINAPI * pfIcmpCloseHandle)(HANDLE);
-    HMODULE hmIcmpLibrary;
+# else
+    struct pong_tailq pongs_expected;
+    struct pong_tailq pongs_received;
+    size_t cbIcmpPending;
 # endif
+
 #if defined(RT_OS_WINDOWS)
 # define VBOX_SOCKET_EVENT (pData->phEvents[VBOX_SOCKET_EVENT_INDEX])
     HANDLE phEvents[VBOX_EVENT_COUNT];
@@ -246,7 +250,18 @@ typedef struct NATState
     struct mbstat mbstat;
 #endif
     uma_zone_t zone_ext_refcnt;
+    /**
+     * in (r89055) using of this behaviour has been changed and mean that Slirp
+     * can't parse hosts strucutures/files to provide to guest host name-resolving
+     * configuration, instead Slirp provides .{interface-number + 1}.3 as a nameserver
+     * and proxies DNS queiries to Host's Name Resolver API.
+     */
     bool fUseHostResolver;
+    /**
+     * Flag whether using the host resolver mode is permanent
+     * because the user configured it that way.
+     */
+    bool fUseHostResolverPermanent;
     /* from dnsproxy/dnsproxy.h*/
     unsigned int authoritative_port;
     unsigned int authoritative_timeout;
@@ -281,7 +296,6 @@ typedef struct NATState
     LIST_HEAD(RT_NOTHING, libalias) instancehead;
     int    i32AliasMode;
     struct libalias *proxy_alias;
-    struct libalias *dns_alias;
     LIST_HEAD(handler_chain, proto_handler) handler_chain;
     struct port_forward_rule_list port_forward_rule_head;
     int cRedirectionsActive;
@@ -419,7 +433,7 @@ typedef struct NATState
          (so) = (sonext))                                                \
     {                                                                    \
         (sonext) = (so)->so_next;                                        \
-         Log2(("%s:%d Processing so:%R[natsock]\n", __FUNCTION__, __LINE__, (so)));
+         Log5(("%s:%d Processing so:%R[natsock]\n", __FUNCTION__, __LINE__, (so)));
 # define CONTINUE(label) continue
 # define CONTINUE_NO_UNLOCK(label) continue
 # define LOOP_LABEL(label, so, sonext) /* empty*/

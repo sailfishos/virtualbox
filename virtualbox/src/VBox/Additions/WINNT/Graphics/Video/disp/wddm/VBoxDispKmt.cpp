@@ -16,11 +16,33 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include "VBoxDispD3DCmn.h"
+#include "VBoxDispD3DBase.h"
+#include "VBoxDispKmt.h"
+
+#include <iprt/assert.h>
+#include <iprt/log.h>
 
 #ifndef NT_SUCCESS
 # define NT_SUCCESS(_Status) ((_Status) >= 0)
 #endif
+
+/**
+ * Loads a system DLL.
+ *
+ * @returns Module handle or NULL
+ * @param   pszName             The DLL name.
+ */
+static HMODULE loadSystemDll(const char *pszName)
+{
+    char   szPath[MAX_PATH];
+    UINT   cchPath = GetSystemDirectoryA(szPath, sizeof(szPath));
+    size_t cbName  = strlen(pszName) + 1;
+    if (cchPath + 1 + cbName > sizeof(szPath))
+        return NULL;
+    szPath[cchPath] = '\\';
+    memcpy(&szPath[cchPath + 1], pszName, cbName);
+    return LoadLibraryA(szPath);
+}
 
 HRESULT vboxDispKmtCallbacksInit(PVBOXDISPKMT_CALLBACKS pCallbacks)
 {
@@ -28,7 +50,7 @@ HRESULT vboxDispKmtCallbacksInit(PVBOXDISPKMT_CALLBACKS pCallbacks)
 
     memset(pCallbacks, 0, sizeof (*pCallbacks));
 
-    pCallbacks->hGdi32 = LoadLibraryW(L"gdi32.dll");
+    pCallbacks->hGdi32 = loadSystemDll("gdi32.dll");
     if (pCallbacks->hGdi32 != NULL)
     {
         bool bSupported = true;
@@ -49,7 +71,11 @@ HRESULT vboxDispKmtCallbacksInit(PVBOXDISPKMT_CALLBACKS pCallbacks)
         Log((__FUNCTION__": pfnD3DKMTEscape = %p\n", pCallbacks->pfnD3DKMTEscape));
         bSupported &= !!(pCallbacks->pfnD3DKMTEscape);
 
-        pCallbacks->pfnD3DKMTCreateDevice = (PFND3DKMT_CREATEDEVICE)GetProcAddress(pCallbacks->hGdi32, "D3DKMTCreateDevice");
+        pCallbacks->pfnD3DKMTQueryAdapterInfo = (PFND3DKMT_QUERYADAPTERINFO)GetProcAddress(pCallbacks->hGdi32, "D3DKMTQueryAdapterInfo");
+        Log((__FUNCTION__": pfnD3DKMTQueryAdapterInfo = %p\n", pCallbacks->pfnD3DKMTQueryAdapterInfo));
+        bSupported &= !!(pCallbacks->pfnD3DKMTQueryAdapterInfo);
+
+                pCallbacks->pfnD3DKMTCreateDevice = (PFND3DKMT_CREATEDEVICE)GetProcAddress(pCallbacks->hGdi32, "D3DKMTCreateDevice");
         Log((__FUNCTION__": pfnD3DKMTCreateDevice = %p\n", pCallbacks->pfnD3DKMTCreateDevice));
         bSupported &= !!(pCallbacks->pfnD3DKMTCreateDevice);
 
@@ -84,6 +110,14 @@ HRESULT vboxDispKmtCallbacksInit(PVBOXDISPKMT_CALLBACKS pCallbacks)
         pCallbacks->pfnD3DKMTUnlock = (PFND3DKMT_UNLOCK)GetProcAddress(pCallbacks->hGdi32, "D3DKMTUnlock");
         Log((__FUNCTION__": pfnD3DKMTUnlock = %p\n", pCallbacks->pfnD3DKMTUnlock));
         bSupported &= !!(pCallbacks->pfnD3DKMTUnlock);
+
+        pCallbacks->pfnD3DKMTInvalidateActiveVidPn = (PFND3DKMT_INVALIDATEACTIVEVIDPN)GetProcAddress(pCallbacks->hGdi32, "D3DKMTInvalidateActiveVidPn");
+        Log((__FUNCTION__": pfnD3DKMTInvalidateActiveVidPn = %p\n", pCallbacks->pfnD3DKMTInvalidateActiveVidPn));
+        bSupported &= !!(pCallbacks->pfnD3DKMTInvalidateActiveVidPn);
+
+        pCallbacks->pfnD3DKMTPollDisplayChildren = (PFND3DKMT_POLLDISPLAYCHILDREN)GetProcAddress(pCallbacks->hGdi32, "D3DKMTPollDisplayChildren");
+        Log((__FUNCTION__": pfnD3DKMTPollDisplayChildren = %p\n", pCallbacks->pfnD3DKMTPollDisplayChildren));
+        bSupported &= !!(pCallbacks->pfnD3DKMTPollDisplayChildren);
 
         pCallbacks->pfnD3DKMTEnumAdapters = (PFND3DKMT_ENUMADAPTERS)GetProcAddress(pCallbacks->hGdi32, "D3DKMTEnumAdapters");
         Log((__FUNCTION__": pfnD3DKMTEnumAdapters = %p\n", pCallbacks->pfnD3DKMTEnumAdapters));
@@ -131,6 +165,9 @@ HRESULT vboxDispKmtCallbacksInit(PVBOXDISPKMT_CALLBACKS pCallbacks)
 HRESULT vboxDispKmtCallbacksTerm(PVBOXDISPKMT_CALLBACKS pCallbacks)
 {
     FreeLibrary(pCallbacks->hGdi32);
+#ifdef DEBUG_misha
+    memset(pCallbacks, 0, sizeof (*pCallbacks));
+#endif
     return S_OK;
 }
 
@@ -185,7 +222,7 @@ HRESULT vboxDispKmtAdpHdcCreate(HDC *phDc)
     return hr;
 }
 
-static HRESULT vboxDispKmtOpenAdapterViaHdc(PVBOXDISPKMT_CALLBACKS pCallbacks, PVBOXDISPKMT_ADAPTER pAdapter)
+static HRESULT vboxDispKmtOpenAdapterViaHdc(const VBOXDISPKMT_CALLBACKS *pCallbacks, PVBOXDISPKMT_ADAPTER pAdapter)
 {
     D3DKMT_OPENADAPTERFROMHDC OpenAdapterData = {0};
     HRESULT hr = vboxDispKmtAdpHdcCreate(&OpenAdapterData.hDc);
@@ -194,10 +231,6 @@ static HRESULT vboxDispKmtOpenAdapterViaHdc(PVBOXDISPKMT_CALLBACKS pCallbacks, P
 
     Assert(OpenAdapterData.hDc);
     NTSTATUS Status = pCallbacks->pfnD3DKMTOpenAdapterFromHdc(&OpenAdapterData);
-#ifdef DEBUG_misha
-    /* may fail with xpdm driver */
-    Assert(NT_SUCCESS(Status));
-#endif
     if (NT_SUCCESS(Status))
     {
         pAdapter->hAdapter = OpenAdapterData.hAdapter;
@@ -217,7 +250,7 @@ static HRESULT vboxDispKmtOpenAdapterViaHdc(PVBOXDISPKMT_CALLBACKS pCallbacks, P
     return hr;
 }
 
-static HRESULT vboxDispKmtOpenAdapterViaLuid(PVBOXDISPKMT_CALLBACKS pCallbacks, PVBOXDISPKMT_ADAPTER pAdapter)
+static HRESULT vboxDispKmtOpenAdapterViaLuid(const VBOXDISPKMT_CALLBACKS *pCallbacks, PVBOXDISPKMT_ADAPTER pAdapter)
 {
     if (pCallbacks->enmVersion < VBOXDISPKMT_CALLBACKS_VERSION_WIN8)
         return E_NOTIMPL;
@@ -266,7 +299,7 @@ static HRESULT vboxDispKmtOpenAdapterViaLuid(PVBOXDISPKMT_CALLBACKS pCallbacks, 
     return E_FAIL;
 }
 
-HRESULT vboxDispKmtOpenAdapter(PVBOXDISPKMT_CALLBACKS pCallbacks, PVBOXDISPKMT_ADAPTER pAdapter)
+HRESULT vboxDispKmtOpenAdapter(const VBOXDISPKMT_CALLBACKS *pCallbacks, PVBOXDISPKMT_ADAPTER pAdapter)
 {
     HRESULT hr = vboxDispKmtOpenAdapterViaHdc(pCallbacks, pAdapter);
     if (SUCCEEDED(hr))
@@ -288,6 +321,9 @@ HRESULT vboxDispKmtCloseAdapter(PVBOXDISPKMT_ADAPTER pAdapter)
     if (!Status)
     {
         DeleteDC(pAdapter->hDc);
+#ifdef DEBUG_misha
+        memset(pAdapter, 0, sizeof (*pAdapter));
+#endif
         return S_OK;
     }
 
@@ -327,6 +363,9 @@ HRESULT vboxDispKmtDestroyDevice(PVBOXDISPKMT_DEVICE pDevice)
     Assert(!Status);
     if (!Status)
     {
+#ifdef DEBUG_misha
+        memset(pDevice, 0, sizeof (*pDevice));
+#endif
         return S_OK;
     }
     return E_FAIL;
@@ -375,6 +414,11 @@ HRESULT vboxDispKmtDestroyContext(PVBOXDISPKMT_CONTEXT pContext)
     NTSTATUS Status = pContext->pDevice->pAdapter->pCallbacks->pfnD3DKMTDestroyContext(&DestroyContextData);
     Assert(!Status);
     if (!Status)
+    {
+#ifdef DEBUG_misha
+        memset(pContext, 0, sizeof (*pContext));
+#endif
         return S_OK;
+    }
     return E_FAIL;
 }

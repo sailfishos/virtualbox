@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2008-2012 Oracle Corporation
+# Copyright (C) 2008-2013 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -27,6 +27,12 @@ BLDDIRS += \
 	$(VBOX_PATH_CROGL_GENFILES)/state/
 
 ifdef VBOX_WITH_ADDITIONS
+ ifn1of ($(KBUILD_TARGET), darwin os2)
+  VBOX_WITH_CROGL_ADDITIONS = 1
+ endif
+endif
+
+ifdef VBOX_WITH_CROGL_ADDITIONS
  DLLS      += VBoxOGLcrutil VBoxOGLerrorspu
  LIBRARIES += VBoxOGLcrpacker VBoxOGLspuload VBoxOGLcrstate
 endif
@@ -77,35 +83,49 @@ VBoxOGLcrutil_SOURCES       = \
 	util/url.c \
 	util/warp.c \
 	util/vreg.cpp \
+	util/blitter.cpp \
+	util/compositor.cpp \
+	util/htable.cpp \
+	util/bmpscale.cpp \
 	util/vboxhgcm.c \
 	$(VBOX_PATH_CROGL_GENFILES)/debug_opcodes.c
+VBoxOGLcrutil_SOURCES.win = \
+	util/VBoxOGLcrutil.rc
 VBoxOGLcrutil_SOURCES.win.x86 = \
-	util/util.def \
-	util/util.rc
+	util/util.def
 VBoxOGLcrutil_LIBS.win = \
 	$(PATH_SDK_$(VBOX_WINDDK)_LIB)/ddraw.lib \
-	$(PATH_SDK_$(VBOX_WINDDK)_LIB)/dxguid.lib
+	$(PATH_SDK_$(VBOX_WINDDK)_LIB)/dxguid.lib \
+	$(PATH_SDK_$(VBOX_WINDDK)_LIB)/shlwapi.lib
 VBoxOGLcrutil_LIBS = \
 	$(VBOX_LIB_IPRT_GUEST_R3_SHARED) \
 	$(VBOX_LIB_VBGL_R3_SHARED)
+
+# Needed by GDEbuger
+ifdef CR_NO_GL_SYSTEM_PATH
+VBoxOGLcrutil_DEFS       += CR_NO_GL_SYSTEM_PATH
+endif
 ifdef VBOX_WITH_CRHGSMI
 VBoxOGLcrutil_DEFS.win    += VBOX_WITH_CRHGSMI
 VBoxOGLcrutil_LIBS.win    += $(VBOX_PATH_ADDITIONS_LIB)/VBoxCrHgsmi$(VBOX_SUFF_LIB)
 endif
 ifdef VBOX_WITH_WDDM
-VBoxOGLcrutil_DEFS.win   += VBOX_WITH_WDDM
+VBoxOGLcrutil_DEFS.win    += VBOX_WITH_WDDM
 VBoxOGLcrutil_DEFS.win    += CR_DEBUG_BACKDOOR_ENABLE
 VBoxOGLcrutil_INCS.win    += $(PATH_ROOT)/src/VBox/Additions/WINNT/Graphics/Video/disp/wddm
 VBoxOGLcrutil_LIBS.win    += $(VBOX_PATH_ADDITIONS_LIB)/VBoxDispMpLogger$(VBOX_SUFF_LIB)
 endif
 VBoxOGLcrutil_CLEAN = \
 	$(VBOX_PATH_CROGL_GENFILES)/debug_opcodes.c
+if1of ($(KBUILD_TARGET), linux)
+VBoxOGLcrutil_LDFLAGS += -Wl,-z,nodelete
+endif
 
 # vc7 hangs during compilation of this file when optimizations are enabled.
 VBoxOGLcrutil_pixel.c_CFLAGS.win.x86     += -Od
 VBoxOGLhostcrutil_pixel.c_CFLAGS.win.x86 += -Od
 
-if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_ADDITIONS)
+if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_CROGL_ADDITIONS)
 #
 # VBoxOGLcrutil-x86 - x86 VBoxOGLcrutil version built for amd64 build
 #
@@ -141,6 +161,9 @@ VBoxOGLhostcrutil_TEMPLATE = VBOXCROGLR3HOSTDLL
 if defined(VBOX_SIGNING_MODE) && defined(VBOX_WITH_WDDM)
  VBoxOGLhostcrutil_INSTTYPE.win = both
 endif
+if1of ($(KBUILD_TARGET), linux)
+VBoxOGLhostcrutil_LDFLAGS = $(NO_SUCH_VARIABLE)
+endif
 VBoxOGLhostcrutil_LDFLAGS.darwin = $(VBoxOGLcrutil_LDFLAGS.darwin) \
 	-install_name $(VBOX_DYLD_EXECUTABLE_PATH)/VBoxOGLhostcrutil.dylib
 VBoxOGLhostcrutil_LIBS.win =  \
@@ -161,6 +184,12 @@ endif
 $(VBOX_PATH_CROGL_GENFILES)/debug_opcodes.c: $(PATH_SUB_CURRENT)/util/debug_opcodes.py $(VBOX_CROGL_API_FILES) | $$(dir $$@)
 	$(call MSG_GENERATE,python,$@,$<)
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $< $(VBOX_PATH_CROGL_GLAPI)
+
+ifdef VBOX_WITH_CRDUMPER
+$(VBOX_PATH_CROGL_GENFILES)/dump_gen.cpp: $(PATH_SUB_CURRENT)/state_tracker/dump_gen.py $(PATH_ROOT)/src/VBox/HostServices/SharedOpenGL/crserverlib/get_sizes.py $(addprefix $(PATH_SUB_CURRENT)/state_tracker/, state_isenabled.txt state_extensions_isenabled.txt) $(VBOX_CROGL_API_FILES) | $$(dir $$@)
+	$(call MSG_GENERATE,python,$@,$<)
+	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $< $(VBOX_PATH_CROGL_GLAPI) $(<D)
+endif
 
 #
 # VBoxOGLcrpacker
@@ -260,7 +289,7 @@ ifdef VBOX_WITH_WDDM
 VBoxOGLcrpacker_DEFS.win   += VBOX_WITH_WDDM
 endif
 
-if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_ADDITIONS)
+if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_CROGL_ADDITIONS)
 #
 # VBoxOGLcrpacker-x86 - x86 VBoxOGLcrpacker version built for amd64 build
 #
@@ -344,7 +373,7 @@ ifdef VBOX_WITH_WDDM
 VBoxOGLspuload_DEFS.win   += VBOX_WITH_WDDM
 endif
 
-if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_ADDITIONS)
+if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_CROGL_ADDITIONS)
 #
 # VBoxOGLspuload-x86 - x86 VBoxOGLspuload version built for amd64 build
 #
@@ -444,13 +473,16 @@ VBoxOGLcrstate_SOURCES = \
 	$(VBOX_PATH_CROGL_GENFILES)/state_lighting_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_line_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_multisample_gen.c \
-	$(VBOX_PATH_CROGL_GENFILES)/state_point_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_polygon_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_regcombiner_gen.c \
-	$(VBOX_PATH_CROGL_GENFILES)/state_stencil_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_viewport_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_get.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_isenabled.c
+ifdef VBOX_WITH_CRDUMPER
+VBoxOGLcrstate_SOURCES += state_tracker/dump.cpp \
+	$(VBOX_PATH_CROGL_GENFILES)/dump_gen.cpp
+endif
+
 VBoxOGLcrstate_CLEAN = \
 	$(VBOX_PATH_CROGL_GENFILES)/state_buffer_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_current_gen.c \
@@ -459,17 +491,21 @@ VBoxOGLcrstate_CLEAN = \
 	$(VBOX_PATH_CROGL_GENFILES)/state_lighting_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_line_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_multisample_gen.c \
-	$(VBOX_PATH_CROGL_GENFILES)/state_point_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_polygon_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_regcombiner_gen.c \
-	$(VBOX_PATH_CROGL_GENFILES)/state_stencil_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_viewport_gen.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_get.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state_isenabled.c \
 	$(VBOX_PATH_CROGL_GENFILES)/state/cr_statefuncs.h
+ifdef VBOX_WITH_CRDUMPER
+VBoxOGLcrstate_CLEAN += $(VBOX_PATH_CROGL_GENFILES)/dump_gen.cpp
+endif
+
 ifneq ($(KBUILD_TARGET),win)
+ ifeq ($(VBOX_WITH_COMPATIBLE_LINUX_GUEST_PACKAGE),)
 state_tracker/state_lists.c_CFLAGS += $(VBOX_GCC_Wno-pointer-sign)
 VBoxOGLcrstate_CFLAGS +=
+ endif
 endif
 ifdef VBOX_WITH_CRHGSMI
 VBoxOGLcrstate_DEFS.win    += VBOX_WITH_CRHGSMI
@@ -477,8 +513,14 @@ endif
 ifdef VBOX_WITH_WDDM
 VBoxOGLcrstate_DEFS.win   += VBOX_WITH_WDDM
 endif
+ifdef VBOX_WITH_CRDUMPER
+VBoxOGLcrstate_DEFS        += VBOX_WITH_CRDUMPER
+#VBoxOGLcrutil_LIBS        += \
+    $(PATH_STAGE_LIB)/additions/VBoxOGLcrstate$(VBOX_SUFF_LIB) \
+    $(PATH_STAGE_LIB)/additions/VBoxOGLspuload$(VBOX_SUFF_LIB)
+endif
 
-if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_ADDITIONS)
+if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_CROGL_ADDITIONS)
 #
 # VBoxOGLcrstate-x86 - x86 VBoxOGLcrstate version built for amd64 build
 #
@@ -536,10 +578,6 @@ $(VBOX_PATH_CROGL_GENFILES)/state_multisample_gen.c: $(addprefix $(PATH_SUB_CURR
 	$(call MSG_GENERATE,python,$@,$<)
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $(<D)/gendiffcode.py multisample Multisample $(<D)
 
-$(VBOX_PATH_CROGL_GENFILES)/state_point_gen.c: $(addprefix $(PATH_SUB_CURRENT)/state_tracker/, state_point.txt gendiffcode.py) | $$(dir $$@)
-	$(call MSG_GENERATE,python,$@,$<)
-	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $(<D)/gendiffcode.py point Point $(<D)
-
 $(VBOX_PATH_CROGL_GENFILES)/state_polygon_gen.c: $(addprefix $(PATH_SUB_CURRENT)/state_tracker/, state_polygon.txt gendiffcode.py) | $$(dir $$@)
 	$(call MSG_GENERATE,python,$@,$<)
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $(<D)/gendiffcode.py polygon Polygon $(<D)
@@ -548,15 +586,11 @@ $(VBOX_PATH_CROGL_GENFILES)/state_regcombiner_gen.c: $(addprefix $(PATH_SUB_CURR
 	$(call MSG_GENERATE,python,$@,$<)
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $(<D)/gendiffcode.py regcombiner RegCombiner $(<D)
 
-$(VBOX_PATH_CROGL_GENFILES)/state_stencil_gen.c: $(addprefix $(PATH_SUB_CURRENT)/state_tracker/, state_stencil.txt gendiffcode.py) | $$(dir $$@)
-	$(call MSG_GENERATE,python,$@,$<)
-	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $(<D)/gendiffcode.py stencil Stencil $(<D)
-
 $(VBOX_PATH_CROGL_GENFILES)/state_viewport_gen.c: $(addprefix $(PATH_SUB_CURRENT)/state_tracker/, state_viewport.txt gendiffcode.py) | $$(dir $$@)
 	$(call MSG_GENERATE,python,$@,$<)
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $(<D)/gendiffcode.py viewport Viewport $(<D)
 
-$(VBOX_PATH_CROGL_GENFILES)/state_get.c: $(addprefix $(PATH_SUB_CURRENT)/state_tracker/, state_get.py state_get.txt state_extensions_get.txt) $(VBOX_CROGL_API_FILES) | $$(dir $$@)
+$(VBOX_PATH_CROGL_GENFILES)/state_get.c: $(addprefix $(PATH_SUB_CURRENT)/state_tracker/, state_get.py state_get.txt state_extensions_get.txt get_components.py) $(VBOX_CROGL_API_FILES) | $$(dir $$@)
 	$(call MSG_GENERATE,python,$@,$<)
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $(<D)/state_get.py $(VBOX_PATH_CROGL_GLAPI) $(<D)
 
@@ -592,9 +626,10 @@ endif
 VBoxOGLerrorspu_SOURCES = \
 	$(VBOX_PATH_CROGL_GENFILES)/errorspu.c \
 	error/errorspu_init.c
+VBoxOGLerrorspu_SOURCES.win = \
+	error/VBoxOGLerrorspu.rc
 VBoxOGLerrorspu_SOURCES.win.x86 = \
-	error/error.def \
-	error/errorspu.rc
+	error/error.def
 VBoxOGLerrorspu_CLEAN = \
 	$(VBOX_PATH_CROGL_GENFILES)/errorspu.c
 VBoxOGLerrorspu_LIBS = \
@@ -607,7 +642,7 @@ VBoxOGLerrorspu_DEFS.win   += VBOX_WITH_WDDM
 endif
 
 
-if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_ADDITIONS)
+if defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_CROGL_ADDITIONS)
 #
 # VBoxOGLerrorspu-x86 - x86 VBoxOGLerrorspu version built for amd64 build
 #

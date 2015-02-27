@@ -41,10 +41,10 @@ BOOL APIENTRY DllMain( HMODULE hModule,
             GetModuleFileNameA(NULL, buffer, sizeof(buffer));
             const PCHAR pc = strrchr(buffer, '\\');
             isWMP = (0 == strcmp(pc + 1, "wmplayer.exe"));
-            
+
             if (isWMP)
             {
-                RTR3InitDll(0);
+                RTR3InitDll(RTR3INIT_FLAGS_UNOBTRUSIVE);
                 VbglR3Init();
                 VBoxMMRHookLog("VBoxMMR: Hooking wmplayer process\n");
             }

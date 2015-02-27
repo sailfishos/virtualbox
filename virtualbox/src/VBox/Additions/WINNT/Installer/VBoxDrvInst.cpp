@@ -132,6 +132,48 @@ void LogCallback(DIFXAPI_LOG Event, DWORD dwError, PCWSTR pEventDescription, PVO
 }
 
 /**
+ * Loads a system DLL.
+ *
+ * @returns Module handle or NULL
+ * @param   pwszName            The DLL name.
+ */
+static HMODULE loadInstalledDll(const wchar_t *pwszName)
+{
+    /* Get the process image path. */
+    WCHAR  wszPath[MAX_PATH];
+    UINT   cwcPath = GetModuleFileNameW(NULL, wszPath, MAX_PATH);
+    if (!cwcPath || cwcPath >= MAX_PATH)
+        return NULL;
+
+    /* Drop the image filename. */
+    UINT   off = cwcPath - 1;
+    for (;;)
+    {
+        if (   wszPath[off] == '\\'
+            || wszPath[off] == '/'
+            || wszPath[off] == ':')
+        {
+            wszPath[off] = '\0';
+            cwcPath = off;
+            break;
+        }
+        if (!off--)
+            return NULL; /* No path? Shouldn't ever happen! */
+    }
+
+    /* Check if there is room in the buffer to construct the desired name. */
+    size_t cwcName = 0;
+    while (pwszName[cwcName])
+        cwcName++;
+    if (cwcPath + 1 + cwcName + 1 > MAX_PATH)
+        return NULL;
+
+    wszPath[cwcPath] = '\\';
+    memcpy(&wszPath[cwcPath + 1], pwszName, (cwcName + 1) * sizeof(wszPath[0]));
+    return LoadLibraryW(wszPath);
+}
+
+/**
  * (Un)Installs a driver from/to the system.
  *
  * @return  Exit code (EXIT_OK, EXIT_FAIL)
@@ -145,7 +187,7 @@ int VBoxInstallDriver(const BOOL fInstall, const _TCHAR *pszDriverPath, BOOL fSi
                       const _TCHAR *pszLogFile)
 {
     HRESULT hr = S_OK;
-    HMODULE hDIFxAPI = LoadLibrary(_T("DIFxAPI.dll"));
+    HMODULE hDIFxAPI = loadInstalledDll(L"DIFxAPI.dll");
     if (NULL == hDIFxAPI)
     {
         _tprintf(_T("ERROR: Unable to locate DIFxAPI.dll!\n"));
@@ -353,6 +395,33 @@ int VBoxInstallDriver(const BOOL fInstall, const _TCHAR *pszDriverPath, BOOL fSi
     return SUCCEEDED(hr) ? EXIT_OK : EXIT_FAIL;
 }
 
+static UINT WINAPI vboxDrvInstExecuteInfFileCallback(PVOID Context,
+                                                     UINT Notification,
+                                                     UINT_PTR Param1,
+                                                     UINT_PTR Param2)
+{
+#ifdef DEBUG
+    _tprintf (_T( "Got installation notification %u\n"), Notification);
+#endif
+
+    switch (Notification)
+    {
+        case SPFILENOTIFY_NEEDMEDIA:
+            _tprintf (_T( "Requesting installation media ...\n"));
+            break;
+
+        case SPFILENOTIFY_STARTCOPY:
+            _tprintf (_T( "Copying driver files to destination ...\n"));
+            break;
+
+        case SPFILENOTIFY_TARGETNEWER:
+        case SPFILENOTIFY_TARGETEXISTS:
+            return TRUE;
+    }
+
+    return SetupDefaultQueueCallback(Context, Notification, Param1, Param2);
+}
+
 /**
  * Executes a sepcified .INF section to install/uninstall drivers and/or services.
  *
@@ -363,18 +432,67 @@ int VBoxInstallDriver(const BOOL fInstall, const _TCHAR *pszDriverPath, BOOL fSi
  */
 int ExecuteInfFile(const _TCHAR *pszSection, int iMode, const _TCHAR *pszInf)
 {
-    _tprintf(_T("Executing INF-File: %ws (Section: %ws) ...\n"), pszInf, pszSection);
+    _tprintf(_T("Installing from INF-File: %ws (Section: %ws) ...\n"),
+             pszInf, pszSection);
 
-    /* Executed by the installer that already has proper privileges. */
-    _TCHAR szCommandLine[_MAX_PATH + 1] = { 0 };
-    swprintf(szCommandLine, sizeof(szCommandLine), TEXT( "%ws %d %ws" ), pszSection, iMode, pszInf);
+    UINT uErrorLine = 0;
+    HINF hINF = SetupOpenInfFile(pszInf, NULL, INF_STYLE_WIN4, &uErrorLine);
+    if (hINF != INVALID_HANDLE_VALUE)
+    {
+        PVOID pvQueue = SetupInitDefaultQueueCallback(NULL);
 
-#ifdef DEBUG
-    _tprintf (_T( "Commandline: %ws\n"), szCommandLine);
-#endif
+        BOOL fSuccess = SetupInstallFromInfSection(NULL,
+                                                    hINF,
+                                                    pszSection,
+                                                    SPINST_ALL,
+                                                    HKEY_LOCAL_MACHINE,
+                                                    NULL,
+                                                    SP_COPY_NEWER_OR_SAME | SP_COPY_NOSKIP,
+                                                    vboxDrvInstExecuteInfFileCallback,
+                                                    pvQueue,
+                                                    NULL,
+                                                    NULL
+                                                    );
+        if (fSuccess)
+        {
+            _tprintf (_T( "File installation stage successful\n"));
 
-    InstallHinfSection(NULL, NULL, szCommandLine, SW_SHOW);
-    /* No return value given! */
+            fSuccess = SetupInstallServicesFromInfSection(hINF,
+                                                          L"DefaultInstall.Services",
+                                                          0 /* Flags */);
+            if (fSuccess)
+            {
+                _tprintf (_T( "Service installation stage successful. Installation completed\n"));
+            }
+            else
+            {
+                DWORD dwErr = GetLastError();
+                switch (dwErr)
+                {
+                    case ERROR_SUCCESS_REBOOT_REQUIRED:
+                        _tprintf (_T( "A reboot is required to complete the installation\n"));
+                        break;
+
+                    case ERROR_SECTION_NOT_FOUND:
+                        break;
+
+                    default:
+                        _tprintf (_T( "Error %ld while installing service\n"), dwErr);
+                        break;
+                }
+            }
+        }
+        else
+            _tprintf (_T( "Error %ld while installing files\n"), GetLastError());
+
+        if (pvQueue)
+            SetupTermDefaultQueueCallback(pvQueue);
+
+        SetupCloseInfFile(hINF);
+    }
+    else
+        _tprintf (_T( "Unable to open %ws: %ld (error line %u)\n"),
+                  pszInf, GetLastError(), uErrorLine);
 
     return EXIT_OK;
 }
@@ -416,11 +534,11 @@ int RegistryAddStringToMultiSZ(const TCHAR *pszSubKey, const TCHAR *pszKeyValue,
         {
 
             /* Look if the network provider is already in the list. */
-            int iPos = 0;
+            unsigned int iPos = 0;
             size_t cb = 0;
 
             /* Replace delimiting "\0"'s with "," to make tokenizing work. */
-            for (int i = 0; i < cbKeyValue / sizeof(TCHAR); i++)
+            for (unsigned i = 0; i < cbKeyValue / sizeof(TCHAR); i++)
                 if (szKeyValue[i] == '\0') szKeyValue[i] = ',';
 
             TCHAR *pszToken = wcstok(szKeyValue, _T(","));
@@ -517,7 +635,7 @@ int RegistryRemoveStringFromMultiSZ(const TCHAR *pszSubKey, const TCHAR *pszKeyV
             TCHAR szFinalString[1024] = { 0 };
             int iIndex = 0;
             int iNewIndex = 0;
-            for (int i = 0; i < cbKeyValue / sizeof(TCHAR); i++)
+            for (unsigned i = 0; i < cbKeyValue / sizeof(TCHAR); i++)
             {
                 if (szKeyValue[i] != _T('\0'))
                     szCurString[iIndex++] = szKeyValue[i];

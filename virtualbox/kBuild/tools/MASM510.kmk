@@ -1,10 +1,10 @@
-# $Id: MASM510.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: MASM510.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - MASM v5.10
 #
 
 #
-# Copyright (c) 2008-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2008-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -35,21 +35,21 @@ TOOL_MASM510 := Microsoft Macro Assembler v5.10
 
 # Tool Specific Properties
 ifndef TOOL_MASM510_AS
- TOOL_MASM510_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS_BLD)/masm/v5.10*/masm$(HOSTSUFF_EXE))))
+ TOOL_MASM510_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS_HST)/masm/v5.10*/masm$(HOSTSUFF_EXE))))
  ifeq ($(TOOL_MASM510_AS),)
-  TOOL_MASM510_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS_TRG)/masm/v5.10*/masm$(HOSTSUFF_EXE))))
+  TOOL_MASM510_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS_TRG)/masm/v5.10*/masm$(HOSTSUFF_EXE))))
  endif
  ifeq ($(TOOL_MASM510_AS),)
-  TOOL_MASM510_AS := $(firstword $(rsort $(wildcard $(PATH_DEVTOOLS)/os2.x86/ddk/*/base/tools/masm$(HOSTSUFF_EXE))))
+  TOOL_MASM510_AS := $(firstword $(rsort $(wildcard $(KBUILD_DEVTOOLS)/os2.x86/ddk/*/base/tools/masm$(HOSTSUFF_EXE))))
  endif
  ifeq ($(TOOL_MASM510_AS),)
   TOOL_MASM510_AS := $(firstword $(rsort $(wildcard \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/video/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/bin/masm$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/print/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/wpshell/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
-	$(PATH_DEVTOOLS)/os2.x86/ddk/*/mme/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/video/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/bin/masm$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/base32/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/print/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/wpshell/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
+	$(KBUILD_DEVTOOLS)/os2.x86/ddk/*/mme/tools/os2.386/lx.386/bin/masm$(HOSTSUFF_EXE) \
 	)))
  endif
  ifneq ($(TOOL_MASM510_AS),)

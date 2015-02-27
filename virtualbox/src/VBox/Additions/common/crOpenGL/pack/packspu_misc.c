@@ -14,7 +14,8 @@ void PACKSPU_APIENTRY packspu_ChromiumParametervCR(GLenum target, GLenum type, G
 
     CRMessage msg;
     int len;
-    
+    GLint ai32ServerValues[2];
+    GLboolean fFlush = GL_FALSE;
     GET_THREAD(thread);
 
     
@@ -29,16 +30,67 @@ void PACKSPU_APIENTRY packspu_ChromiumParametervCR(GLenum target, GLenum type, G
             msg.gather.offset = 69;
             len = sizeof(CRMessageGather);
             crNetSend(thread->netServer.conn, NULL, &msg, len);
+            return;
+
+        case GL_SHARE_LISTS_CR:
+        {
+            ContextInfo *pCtx[2];
+            GLint *ai32Values;
+            int i;
+            if (count != 2)
+            {
+                WARN(("GL_SHARE_LISTS_CR invalid cound %d", count));
+                return;
+            }
+
+            if (type != GL_UNSIGNED_INT && type != GL_INT)
+            {
+                WARN(("GL_SHARE_LISTS_CR invalid type %d", type));
+                return;
+            }
+
+            ai32Values = (GLint*)values;
+
+            for (i = 0; i < 2; ++i)
+            {
+                const int slot = ai32Values[i] - MAGIC_OFFSET;
+
+                if (slot < 0 || slot >= pack_spu.numContexts)
+                {
+                    WARN(("GL_SHARE_LISTS_CR invalid value[%d] %d", i, ai32Values[i]));
+                    return;
+                }
+
+                pCtx[i] = &pack_spu.context[slot];
+                if (!pCtx[i]->clientState)
+                {
+                    WARN(("GL_SHARE_LISTS_CR invalid pCtx1 for value[%d] %d", i, ai32Values[i]));
+                    return;
+                }
+
+                ai32ServerValues[i] = pCtx[i]->serverCtx;
+            }
+
+            crStateShareLists(pCtx[0]->clientState, pCtx[1]->clientState);
+
+            values = ai32ServerValues;
+
+            fFlush = GL_TRUE;
+
             break;
-            
+        }
+
         default:
-            if (pack_spu.swap)
-                crPackChromiumParametervCRSWAP(target, type, count, values);
-            else
-                crPackChromiumParametervCR(target, type, count, values);
+            break;
     }
 
+    if (pack_spu.swap)
+        crPackChromiumParametervCRSWAP(target, type, count, values);
+    else
+        crPackChromiumParametervCR(target, type, count, values);
 
+    if (fFlush)
+        packspuFlush( (void *) thread );
 }
 
 GLboolean packspuSyncOnFlushes()
@@ -153,6 +205,18 @@ void PACKSPU_APIENTRY packspu_Flush( void )
 
         crUnlockMutex(&_PackMutex);
     }
+}
+
+void PACKSPU_APIENTRY packspu_NewList(GLuint list, GLenum mode)
+{
+    crStateNewList(list, mode);
+    crPackNewList(list, mode);
+}
+
+void PACKSPU_APIENTRY packspu_EndList()
+{
+    crStateEndList();
+    crPackEndList();
 }
 
 void PACKSPU_APIENTRY packspu_VBoxWindowDestroy( GLint con, GLint window )
@@ -434,6 +498,13 @@ static void packspuFluchOnThreadSwitch(GLboolean fEnable)
     thread->currentContext->currentThread = fEnable ? thread : NULL;
 }
 
+static void packspuCheckZerroVertAttr(GLboolean fEnable)
+{
+    GET_THREAD(thread);
+
+    thread->currentContext->fCheckZerroVertAttr = fEnable;
+}
+
 void PACKSPU_APIENTRY packspu_ChromiumParameteriCR(GLenum target, GLint value)
 {
     switch (target)
@@ -442,19 +513,66 @@ void PACKSPU_APIENTRY packspu_ChromiumParameteriCR(GLenum target, GLint value)
             /* this is a pure packspu state, don't propagate it any further */
             packspuFluchOnThreadSwitch(value);
             return;
+        case GL_CHECK_ZERO_VERT_ARRT:
+            packspuCheckZerroVertAttr(value);
+            return;
         case GL_SHARE_CONTEXT_RESOURCES_CR:
             crStateShareContext(value);
             break;
         case GL_RCUSAGE_TEXTURE_SET_CR:
+        {
+            Assert(value);
             crStateSetTextureUsed(value, GL_TRUE);
             break;
+        }
         case GL_RCUSAGE_TEXTURE_CLEAR_CR:
+        {
+            Assert(value);
+#ifdef DEBUG
+            {
+                CRContext *pCurState = crStateGetCurrent();
+                CRTextureObj *tobj = (CRTextureObj*)crHashtableSearch(pCurState->shared->textureTable, value);
+                Assert(tobj);
+            }
+#endif
             crStateSetTextureUsed(value, GL_FALSE);
             break;
+        }
         default:
             break;
     }
     crPackChromiumParameteriCR(target, value);
+}
+
+GLenum PACKSPU_APIENTRY packspu_GetError( void )
+{
+    GET_THREAD(thread);
+    int writeback = 1;
+    GLenum return_val = (GLenum) 0;
+    CRContext *pCurState = crStateGetCurrent();
+
+    if (!CRPACKSPU_IS_WDDM_CRHGSMI() && !(pack_spu.thread[pack_spu.idxThreadInUse].netServer.conn->actual_network))
+    {
+        crError( "packspu_GetError doesn't work when there's no actual network involved!\nTry using the simplequery SPU in your chain!" );
+    }
+    if (pack_spu.swap)
+    {
+        crPackGetErrorSWAP( &return_val, &writeback );
+    }
+    else
+    {
+        crPackGetError( &return_val, &writeback );
+    }
+
+    packspuFlush( (void *) thread );
+    CRPACKSPU_WRITEBACK_WAIT(thread, writeback);
+
+    if (pack_spu.swap)
+    {
+        return_val = (GLenum) SWAP32(return_val);
+    }
+
+    return return_val;
 }
 
 #ifdef CHROMIUM_THREADSAFE
@@ -615,8 +733,17 @@ void PACKSPU_APIENTRY packspu_VBoxDetachThread()
                         crPackSetContext(NULL);
                         CR_UNLOCK_PACKER_CONTEXT(thread->packer);
                         crPackDeleteContext(pack_spu.thread[i].packer);
+
+                        if (pack_spu.thread[i].buffer.pack)
+                        {
+                            crNetFree(pack_spu.thread[i].netServer.conn, pack_spu.thread[i].buffer.pack);
+                            pack_spu.thread[i].buffer.pack = NULL;
+                        }
                     }
                     crNetFreeConnection(pack_spu.thread[i].netServer.conn);
+
+                    if (pack_spu.thread[i].netServer.name)
+                        crFree(pack_spu.thread[i].netServer.name);
 
                     pack_spu.numThreads--;
                     /*note can't shift the array here, because other threads have TLS references to array elements*/
@@ -712,3 +839,11 @@ void PACKSPU_APIENTRY packspu_VBoxPackDetachThread()
 {
 }
 #endif /*CHROMIUM_THREADSAFE*/
+
+void PACKSPU_APIENTRY packspu_VBoxPresentComposition(GLint win, const struct VBOXVR_SCR_COMPOSITOR * pCompositor, const struct VBOXVR_SCR_COMPOSITOR_ENTRY *pChangedEntry)
+{
+}
+
+void PACKSPU_APIENTRY packspu_StringMarkerGREMEDY(GLsizei len, const GLvoid *string)
+{
+}

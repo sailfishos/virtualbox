@@ -34,7 +34,7 @@
 #include <VBox/VBoxGuest2.h>
 
 /* One would increase this whenever definitions in this file are changed */
-#define VBOXVIDEOIF_VERSION 15
+#define VBOXVIDEOIF_VERSION 20
 
 #define VBOXWDDM_NODE_ID_SYSTEM           0
 #define VBOXWDDM_NODE_ID_3D               (VBOXWDDM_NODE_ID_SYSTEM)
@@ -105,6 +105,8 @@ typedef struct VBOXWDDM_ALLOCINFO
         struct
         {
             D3DDDI_RESOURCEFLAGS fFlags;
+            /* id used to identify the allocation on the host */
+            uint32_t hostID;
             uint64_t hSharedHandle;
             VBOXWDDM_SURFACE_DESC SurfDesc;
         };
@@ -112,7 +114,6 @@ typedef struct VBOXWDDM_ALLOCINFO
         struct
         {
             uint32_t cbBuffer;
-            uint64_t hSynch;
             VBOXUHGSMI_BUFFER_TYPE_FLAGS fUhgsmiType;
         };
     };
@@ -180,7 +181,6 @@ typedef struct VBOXWDDM_DMA_PRIVATEDATA_BASEHDR
 
 typedef struct VBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO
 {
-    uint32_t bDoNotSignalCompletion;
     uint32_t offData;
     uint32_t cbData;
 } VBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO, *PVBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO;
@@ -190,6 +190,7 @@ typedef struct VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD
     VBOXWDDM_DMA_PRIVATEDATA_BASEHDR Base;
     VBOXWDDM_UHGSMI_BUFFER_UI_SUBMIT_INFO aBufInfos[1];
 } VBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD, *PVBOXWDDM_DMA_PRIVATEDATA_UM_CHROMIUM_CMD;
+
 
 #define VBOXVHWA_F_ENABLED  0x00000001
 #define VBOXVHWA_F_CKEY_DST 0x00000002
@@ -249,7 +250,11 @@ typedef enum
     VBOXWDDM_CONTEXT_TYPE_CUSTOM_UHGSMI_3D,
     VBOXWDDM_CONTEXT_TYPE_CUSTOM_UHGSMI_GL,
     /* context created by the kernel->user communication mechanism for visible rects reporting, etc.  */
-    VBOXWDDM_CONTEXT_TYPE_CUSTOM_SESSION
+    VBOXWDDM_CONTEXT_TYPE_CUSTOM_SESSION,
+    /* context created by VBoxTray to handle resize operations */
+    VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_RESIZE,
+    /* context created by VBoxTray to handle seamless operations */
+    VBOXWDDM_CONTEXT_TYPE_CUSTOM_DISPIF_SEAMLESS
 } VBOXWDDM_CONTEXT_TYPE;
 
 typedef struct VBOXWDDM_CREATECONTEXT_INFO
@@ -421,6 +426,7 @@ typedef struct VBOXSWAPCHAININFO
 {
     VBOXDISP_KMHANDLE hSwapchainKm; /* in, NULL if new is being created */
     VBOXDISP_UMHANDLE hSwapchainUm; /* in, UMD private data */
+    int32_t winHostID;
     RECT Rect;
     UINT u32Reserved;
     UINT cAllocs;
@@ -471,6 +477,15 @@ typedef struct VBOXDISPIFESCAPE_SHRC_REF
     uint64_t hAlloc;
 } VBOXDISPIFESCAPE_SHRC_REF, *PVBOXDISPIFESCAPE_SHRC_REF;
 
+typedef struct VBOXDISPIFESCAPE_SETALLOCHOSTID
+{
+    VBOXDISPIFESCAPE EscapeHdr;
+    int32_t rc;
+    uint32_t hostID;
+    uint64_t hAlloc;
+
+} VBOXDISPIFESCAPE_SETALLOCHOSTID, *PVBOXDISPIFESCAPE_SETALLOCHOSTID;
+
 typedef struct VBOXDISPIFESCAPE_CRHGSMICTLCON_CALL
 {
     VBOXDISPIFESCAPE EscapeHdr;
@@ -481,6 +496,7 @@ typedef struct VBOXDISPIFESCAPE_CRHGSMICTLCON_CALL
 typedef struct VBOXWDDM_QI
 {
     uint32_t u32Version;
+    uint32_t u32VBox3DCaps;
     uint32_t cInfos;
     VBOXVHWA_INFO aInfos[VBOX_VIDEO_MAX_SCREENS];
 } VBOXWDDM_QI;
@@ -531,7 +547,8 @@ DECLINLINE(UINT) vboxWddmCalcBitsPerPixel(D3DDDIFORMAT enmFormat)
         case D3DDDIFMT_A2R10G10B10:
             return 32;
         case D3DDDIFMT_A16B16G16R16:
-        case D3DDDIFMT_A16B16G16R16F:
+// Floating-point formats are not implemented in Chromium.
+//        case D3DDDIFMT_A16B16G16R16F:
             return 64;
         case D3DDDIFMT_A8P8:
             return 16;
@@ -580,6 +597,8 @@ DECLINLINE(UINT) vboxWddmCalcBitsPerPixel(D3DDDIFORMAT enmFormat)
         case D3DDDIFMT_R32F:
             return 32;
         case D3DDDIFMT_R16F:
+            return 16;
+        case D3DDDIFMT_YUY2: /* 4 bytes per 2 pixels. */
             return 16;
         default:
             AssertBreakpoint();

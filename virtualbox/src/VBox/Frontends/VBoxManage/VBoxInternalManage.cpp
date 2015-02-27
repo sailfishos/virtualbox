@@ -121,7 +121,7 @@ typedef struct HOSTPARTITION
 typedef struct HOSTPARTITIONS
 {
     /** partitioning type - MBR or GPT */
-    PARTITIONING_TYPE uPartitioningType;
+    VBOXHDDPARTTYPE uPartitioningType;
     unsigned        cPartitions;
     HOSTPARTITION   aPartitions[HOSTPARTITION_MAX];
 } HOSTPARTITIONS, *PHOSTPARTITIONS;
@@ -145,13 +145,13 @@ void printUsageInternal(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
         "         incompatible ways without warning.\n",
 
         (u64Cmd & USAGE_LOADMAP)
-        ? "  loadmap <vmname>|<uuid> <symfile> <address> [module] [subtrahend] [segment]\n"
+        ? "  loadmap <vmname|uuid> <symfile> <address> [module] [subtrahend] [segment]\n"
           "      This will instruct DBGF to load the given map file\n"
           "      during initialization.  (See also loadmap in the debugger.)\n"
           "\n"
         : "",
         (u64Cmd & USAGE_LOADSYMS)
-        ? "  loadsyms <vmname>|<uuid> <symfile> [delta] [module] [module address]\n"
+        ? "  loadsyms <vmname|uuid> <symfile> [delta] [module] [module address]\n"
           "      This will instruct DBGF to load the given symbol file\n"
           "      during initialization.\n"
           "\n"
@@ -243,7 +243,7 @@ void printUsageInternal(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
         "",
 #endif
         (u64Cmd & USAGE_DEBUGLOG)
-        ? "  debuglog <vmname>|<uuid> [--enable|--disable] [--flags todo]\n"
+        ? "  debuglog <vmname|uuid> [--enable|--disable] [--flags todo]\n"
           "           [--groups todo] [--destinations todo]\n"
           "       Controls debug logging.\n"
           "\n"
@@ -254,7 +254,7 @@ void printUsageInternal(USAGECATEGORY u64Cmd, PRTSTREAM pStrm)
           "\n"
         : "",
         (u64Cmd & USAGE_GUESTSTATS)
-        ? "  gueststats <vmname>|<uuid> [--interval <seconds>]\n"
+        ? "  gueststats <vmname|uuid> [--interval <seconds>]\n"
           "       Obtains and prints internal guest statistics.\n"
           "       Sets the update interval if specified.\n"
           "\n"
@@ -672,7 +672,7 @@ static int CmdSetHDUUID(int argc, char **argv, ComPtr<IVirtualBox> aVirtualBox, 
     }
 
     /* Open the image */
-    rc = VDOpen(pDisk, pszFormat, argv[1], VD_OPEN_FLAGS_NORMAL, NULL);
+    rc = VDOpen(pDisk, pszFormat, argv[1], VD_OPEN_FLAGS_NORMAL | VD_OPEN_FLAGS_INFO, NULL);
     if (RT_FAILURE(rc))
     {
         RTMsgError("Cannot open the image: %Rrc", rc);
@@ -754,7 +754,7 @@ static int partRead(RTFILE File, PHOSTPARTITIONS pPart)
     uint64_t lastUsableLBA = 0;
     int rc;
 
-    PARTITIONING_TYPE partitioningType;
+    VBOXHDDPARTTYPE partitioningType;
 
     pPart->cPartitions = 0;
     memset(pPart->aPartitions, '\0', sizeof(pPart->aPartitions));
@@ -2383,7 +2383,7 @@ int CmdDebugLog(int argc, char **argv, ComPtr<IVirtualBox> aVirtualBox, ComPtr<I
                 break;
 
             default:
-                return errorGetOpt(USAGE_DEBUGLOG , ch, &ValueUnion);
+                return errorGetOpt(USAGE_DEBUGLOG, ch, &ValueUnion);
         }
     }
 
@@ -2453,7 +2453,7 @@ int CmdGuestStats(int argc, char **argv, ComPtr<IVirtualBox> aVirtualBox, ComPtr
                 break;
 
             default:
-                return errorGetOpt(USAGE_GUESTSTATS , ch, &ValueUnion);
+                return errorGetOpt(USAGE_GUESTSTATS, ch, &ValueUnion);
         }
     }
 
@@ -2522,7 +2522,7 @@ int handleInternalCommands(HandlerArg *a)
     if (!strcmp(pszCmd, "loadsyms"))
         return CmdLoadSyms(a->argc - 1, &a->argv[1], a->virtualBox, a->session);
     //if (!strcmp(pszCmd, "unloadsyms"))
-    //    return CmdUnloadSyms(argc - 1 , &a->argv[1]);
+    //    return CmdUnloadSyms(argc - 1, &a->argv[1]);
     if (!strcmp(pszCmd, "sethduuid") || !strcmp(pszCmd, "sethdparentuuid"))
         return CmdSetHDUUID(a->argc, &a->argv[0], a->virtualBox, a->session);
     if (!strcmp(pszCmd, "dumphdinfo"))

@@ -1,10 +1,10 @@
-# $Id: VCC70.kmk 2557 2011-12-13 12:48:32Z bird $
+# $Id: VCC70.kmk 2726 2014-02-26 23:23:54Z bird $
 ## @file
 # kBuild Tool Config - Visual C++ 7.0 (aka Visual Studio .NET), targeting x86.
 #
 
 #
-# Copyright (c) 2004-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -36,9 +36,9 @@ TOOL_VCC70 := Visual C++ 7.0 (aka Visual Studio .NET), targeting x86.
 # Tool Specific Properties
 ifndef PATH_TOOL_VCC70
  PATH_TOOL_VCC70 := $(firstword $(wildcard \
-	$(PATH_DEVTOOLS)/win.x86/vcc/v7 \
-	$(PATH_DEVTOOLS)/x86.win32/vcc/v7 \
-	$(PATH_DEVTOOLS)/x86.win32/vcc70) )
+	$(KBUILD_DEVTOOLS)/win.x86/vcc/v7 \
+	$(KBUILD_DEVTOOLS)/x86.win32/vcc/v7 \
+	$(KBUILD_DEVTOOLS)/x86.win32/vcc70) )
  # if not found, we'll enter 'pathless' mode.
 else
  # Resolve any fancy stuff once and for all.

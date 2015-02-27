@@ -102,17 +102,13 @@ static void VBoxMRxUnload(IN PDRIVER_OBJECT DriverObject)
                 State = (MRX_VBOX_STATE)InterlockedCompareExchange((LONG *)&VBoxMRxState, MRX_VBOX_STARTABLE, MRX_VBOX_STARTED);
 
                 if (State != MRX_VBOX_STARTABLE)
-                {
                     Status = STATUS_REDIRECTOR_STARTED;
-                }
             }
 
             RxDereferenceAndDeleteRxContext(RxContext);
         }
         else
-        {
             Status = STATUS_INSUFFICIENT_RESOURCES;
-        }
 
         RxUnregisterMinirdr(VBoxMRxDeviceObject);
     }
@@ -120,15 +116,11 @@ static void VBoxMRxUnload(IN PDRIVER_OBJECT DriverObject)
     RtlInitUnicodeString(&UserModeDeviceName, DD_MRX_VBOX_USERMODE_SHADOW_DEV_NAME_U);
     Status = IoDeleteSymbolicLink(&UserModeDeviceName);
     if (Status != STATUS_SUCCESS)
-    {
-        Log(("VBOXSF: MRxUnload: IoDeleteSymbolicLink Status 0x%08X\n",
-             Status));
-    }
+        Log(("VBOXSF: MRxUnload: IoDeleteSymbolicLink Status 0x%08X\n", Status));
 
     RxUnload(DriverObject);
 
-    Log(("VBOXSF: MRxUnload: VBoxSF.sys driver object %p unloaded\n",
-         DriverObject));
+    Log(("VBOXSF: MRxUnload: VBoxSF.sys driver object %p unloaded\n", DriverObject));
 }
 
 static void vbsfInitMRxDispatch(void)
@@ -233,9 +225,7 @@ static BOOL vboxIsPrefixOK (const WCHAR *FilePathName, ULONG PathNameLength)
         }
     }
     else
-    {
         PrefixOK = FALSE;
-    }
 
     return PrefixOK;
 }
@@ -424,7 +414,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
 
     Log(("VBOXSF: DriverEntry: Driver object %p\n", DriverObject));
 
-    if (DriverObject == NULL)
+    if (!DriverObject)
     {
         Log(("VBOXSF: DriverEntry: driver object is NULL.\n"));
         return STATUS_UNSUCCESSFUL;
@@ -434,8 +424,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
     vboxRC = vboxInit();
     if (RT_FAILURE(vboxRC))
     {
-        Log(("VBOXSF: DriverEntry: ERROR while initializing VBox subsystem (%Rrc)!\n",
-             vboxRC));
+        Log(("VBOXSF: DriverEntry: ERROR while initializing VBox subsystem (%Rrc)!\n", vboxRC));
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -638,7 +627,6 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
         {
             Log(("VBOXSF: MRxDevFcbXXXControlFile: IRP_MN_USER_FS_REQUEST: 0x%08X\n",
                  LowIoContext->ParamsFor.FsCtl.MinorFunction));
-
             Status = STATUS_INVALID_DEVICE_REQUEST;
             break;
         }
@@ -651,13 +639,15 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                 {
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_ADDCONN\n"));
                     Status = vbsfCreateConnection(RxContext, &RxContext->PostRequest);
-                } break;
+                    break;
+                }
 
                 case IOCTL_MRX_VBOX_DELCONN:
                 {
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_DELCONN\n"));
                     Status = vbsfDeleteConnection(RxContext, &RxContext->PostRequest);
-                } break;
+                    break;
+                }
 
                 case IOCTL_MRX_VBOX_GETLIST:
                 {
@@ -666,13 +656,13 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETLIST\n"));
 
-                    if (NULL == pDeviceExtension)
+                    if (!pDeviceExtension)
                     {
                         RxContext->InformationToReturn = 0;
                         break;
                     }
 
-                    if ((cbOut >= _MRX_MAX_DRIVE_LETTERS) && (NULL != pu8Out))
+                    if (cbOut >= _MRX_MAX_DRIVE_LETTERS && !pu8Out)
                     {
                         BOOLEAN fLocked = FALSE;
 
@@ -712,12 +702,10 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
                     RxContext->InformationToReturn = 0;
 
-                    if (NULL == pDeviceExtension)
-                    {
+                    if (!pDeviceExtension)
                         break;
-                    }
 
-                    if ((cbOut >= _MRX_MAX_DRIVE_LETTERS) && (NULL != pu8Out))
+                    if (cbOut >= _MRX_MAX_DRIVE_LETTERS && !pu8Out)
                     {
                         SHFLMAPPING mappings[_MRX_MAX_DRIVE_LETTERS];
                         uint32_t cMappings = RT_ELEMENTS(mappings);
@@ -765,7 +753,7 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: ConnectName = %.*ls, Len = %d, RemoteName = 0x%p, Len = %d\n",
                          cbConnectName / sizeof(WCHAR), pwcConnectName, cbConnectName, pwcRemoteName, cbRemoteName));
 
-                    if (NULL == pDeviceExtension)
+                    if (!pDeviceExtension)
                     {
                         Status = STATUS_INVALID_PARAMETER;
                         break;
@@ -773,7 +761,7 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: Looking up connection name and connections\n"));
 
-                    if ((cbConnectName > sizeof(WCHAR)) && (NULL != pwcConnectName))
+                    if (cbConnectName > sizeof(WCHAR) && !pwcConnectName)
                     {
                         ULONG cbLocalConnectionName;
 
@@ -790,7 +778,7 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
                         ExAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
 
-                        if (NULL == pDeviceExtension->wszLocalConnectionName[idx])
+                        if (!pDeviceExtension->wszLocalConnectionName[idx])
                         {
                             Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: LocalConnectionName is NULL!\n"));
                             ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
@@ -839,7 +827,6 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                     PWCHAR pwcRemoteName = (PWCHAR)LowIoContext->ParamsFor.IoCtl.pOutputBuffer;
 
                     int vboxRC;
-
                     PSHFLSTRING pString;
                     uint32_t cbString;
 
@@ -854,12 +841,16 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                         break;
                     }
                     memset(pString, 0, cbString);
-                    ShflStringInitBuffer(pString, cbRemoteName);
+                    if (!ShflStringInitBuffer(pString, cbString))
+                    {
+                        vbsfFreeNonPagedMem(pString);
+                        Status = STATUS_BAD_NETWORK_NAME;
+                        break;
+                    }
 
                     vboxRC = vboxCallQueryMapName(&pDeviceExtension->hgcmClient,
                                                   (*pConnectId) & ~0x80 /** @todo fix properly */,
-                                                  pString,
-                                                  cbString);
+                                                  pString, cbString);
                     if (   vboxRC == VINF_SUCCESS
                         && pString->u16Length < cbRemoteName)
                     {
@@ -870,14 +861,13 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                         Status = STATUS_SUCCESS;
                     }
                     else
-                    {
                         Status = STATUS_BAD_NETWORK_NAME;
-                    }
 
                     vbsfFreeNonPagedMem(pString);
 
                     RxContext->InformationToReturn = ReturnedSize;
-                } break;
+                    break;
+                }
 
                 case IOCTL_MRX_VBOX_START:
                 {
@@ -1018,16 +1008,15 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                          Status));
 
                     if (Status == STATUS_PENDING && RxContext->PostRequest == TRUE)
-                    {
                         Status = STATUS_MORE_PROCESSING_REQUIRED;
-                    }
-
-                } break;
+                    break;
+                }
 
                 default:
                     Status = STATUS_INVALID_DEVICE_REQUEST;
                     break;
-            } break;
+            }
+            break;
         }
 
         case IRP_MJ_INTERNAL_DEVICE_CONTROL:
@@ -1049,6 +1038,58 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
     return Status;
 }
 
+static NTSTATUS vbsfVerifyConnectionName(PUNICODE_STRING ConnectionName)
+{
+    /* Check that the connection name is valid:
+     * "\Device\VBoxMiniRdr\;X:\vboxsvr\sf"
+     */
+    NTSTATUS Status = STATUS_BAD_NETWORK_NAME;
+
+    ULONG i;
+    PWCHAR pwc;
+    PWCHAR pwc1;
+
+    static PWCHAR spwszPrefix = L"\\Device\\VBoxMiniRdr\\;";
+
+    /* Unicode chars in the string. */
+    ULONG cConnectionName = ConnectionName->Length / sizeof(WCHAR);
+    ULONG cRemainingName;
+
+    /* Check that the name starts with correct prefix. */
+    pwc1 = &spwszPrefix[0];
+    pwc = ConnectionName->Buffer;
+    for (i = 0; i < cConnectionName; i++, pwc1++, pwc++)
+    {
+        if (*pwc1 == 0 || *pwc == 0 || *pwc1 != *pwc)
+            break;
+    }
+
+    cRemainingName = cConnectionName - i;
+
+    Log(("VBOXSF: vbsfVerifyConnectionName: prefix %d remaining %d [%.*ls]\n",
+         *pwc1 == 0, cRemainingName, cRemainingName, &ConnectionName->Buffer[i]));
+
+    if (*pwc1 == 0)
+    {
+        /* pwc should point to a drive letter followed by ':\' that is at least 3 chars more. */
+        if (cRemainingName >= 3)
+        {
+           if (   pwc[0] >= L'A' && pwc[0] <= L'Z'
+               && pwc[1] == L':')
+           {
+               pwc += 2;
+               cRemainingName -= 2;
+
+               /* @todo should also check that the drive letter corresponds to the name. */
+               if (vboxIsPrefixOK(pwc, cRemainingName * sizeof (WCHAR)))
+                   Status = STATUS_SUCCESS;
+           }
+        }
+    }
+
+    return Status;
+}
+
 static HANDLE vbsfOpenConnectionHandle(PUNICODE_STRING ConnectionName)
 {
     NTSTATUS Status;
@@ -1060,24 +1101,29 @@ static HANDLE vbsfOpenConnectionHandle(PUNICODE_STRING ConnectionName)
     Log(("VBOXSF: vbsfOpenConnectionHandle: ConnectionName = %.*ls\n",
          ConnectionName->Length / sizeof(WCHAR), ConnectionName->Buffer));
 
-    /* Have to create a OBJ_KERNEL_HANDLE. Otherwise the driver verifier on Windows 7 bugchecks. */
-    InitializeObjectAttributes(&ObjectAttributes,
-                               ConnectionName,
-                               OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
-                               NULL,
-                               NULL);
+    Status = vbsfVerifyConnectionName(ConnectionName);
 
-    Status = ZwCreateFile(&Handle,
-                          SYNCHRONIZE,
-                          &ObjectAttributes,
-                          &IoStatusBlock,
-                          NULL,
-                          FILE_ATTRIBUTE_NORMAL,
-                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                          FILE_OPEN_IF,
-                          FILE_CREATE_TREE_CONNECTION | FILE_SYNCHRONOUS_IO_NONALERT,
-                          NULL,
-                          0);
+    if (NT_SUCCESS(Status))
+    {
+        /* Have to create a OBJ_KERNEL_HANDLE. Otherwise the driver verifier on Windows 7 bugchecks. */
+        InitializeObjectAttributes(&ObjectAttributes,
+                                   ConnectionName,
+                                   OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
+                                   NULL,
+                                   NULL);
+
+        Status = ZwCreateFile(&Handle,
+                              SYNCHRONIZE,
+                              &ObjectAttributes,
+                              &IoStatusBlock,
+                              NULL,
+                              FILE_ATTRIBUTE_NORMAL,
+                              FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                              FILE_OPEN_IF,
+                              FILE_CREATE_TREE_CONNECTION | FILE_SYNCHRONOUS_IO_NONALERT,
+                              NULL,
+                              0);
+    }
 
     if (   Status != STATUS_SUCCESS
         || Handle == INVALID_HANDLE_VALUE)
@@ -1118,12 +1164,10 @@ NTSTATUS vbsfCreateConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
     cbConnectName = LowIoContext->ParamsFor.IoCtl.InputBufferLength;
     pwcConnectName = (PWCHAR)LowIoContext->ParamsFor.IoCtl.pInputBuffer;
 
-    if (pDeviceExtension == NULL)
-    {
+    if (!pDeviceExtension)
         return STATUS_INVALID_PARAMETER;
-    }
 
-    if (cbConnectName == 0 || pwcConnectName == NULL)
+    if (cbConnectName == 0 || !pwcConnectName)
     {
         Log(("VBOXSF: vbsfCreateConnection: Connection name / length is invalid!\n"));
         return STATUS_INVALID_PARAMETER;
@@ -1150,9 +1194,7 @@ NTSTATUS vbsfCreateConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
         for (i = 0; i < cbConnectName; i += sizeof(WCHAR))
         {
             if (*pwc == L':')
-            {
                 break;
-            }
             pwc++;
         }
 
@@ -1182,9 +1224,9 @@ NTSTATUS vbsfCreateConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
 
                     pDeviceExtension->wszLocalConnectionName[idx] = (PUNICODE_STRING)vbsfAllocNonPagedMem(sizeof(UNICODE_STRING) + cbConnectName);
 
-                    if (pDeviceExtension->wszLocalConnectionName[idx] == NULL)
+                    if (!pDeviceExtension->wszLocalConnectionName[idx])
                     {
-                        Log(("VBOXSF: vbsfCreateConnection: LocalConnectionName at index %d NOT allocated!\n", 
+                        Log(("VBOXSF: vbsfCreateConnection: LocalConnectionName at index %d NOT allocated!\n",
                              idx));
                         Status = STATUS_INSUFFICIENT_RESOURCES;
                     }
@@ -1265,8 +1307,9 @@ NTSTATUS vbsfDeleteConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
         if (NT_SUCCESS(Status))
         {
             PFOBX Fobx = (PFOBX)pFileObject->FsContext2;
+            Log(("VBOXSF: vbsfDeleteConnection: Fobx %p\n", Fobx));
 
-            if (NodeType(Fobx) == RDBSS_NTC_V_NETROOT)
+            if (Fobx && NodeType(Fobx) == RDBSS_NTC_V_NETROOT)
             {
                 PV_NET_ROOT VNetRoot = (PV_NET_ROOT)Fobx;
 
@@ -1328,6 +1371,9 @@ NTSTATUS vbsfDeleteConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
                     }
 
                     ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+
+                    Log(("VBOXSF: vbsfDeleteConnection: deleted index 0x%x\n",
+                         idx));
                 }
             }
         }
@@ -1338,6 +1384,7 @@ NTSTATUS vbsfDeleteConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
         }
     }
 
+    Log(("VBOXSF: vbsfDeleteConnection: Status 0x%08X\n", Status));
     return Status;
 }
 
@@ -1390,4 +1437,3 @@ ULONG WmlTrace(IN ULONG ulType, IN PVOID pTraceUuid, IN ULONG64 ullLogger, ...)
 {
     return STATUS_SUCCESS;
 }
-

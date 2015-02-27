@@ -157,12 +157,12 @@ CGuestOSType UINameAndSystemEditor::type() const
 void UINameAndSystemEditor::retranslateUi()
 {
     m_pNameLabel->setText(tr("&Name:"));
-    m_pNameEditor->setWhatsThis(tr("Displays the name of the virtual machine."));
+    m_pNameEditor->setWhatsThis(tr("Holds the name of the virtual machine."));
     m_pFamilyLabel->setText(tr("&Type:"));
-    m_pFamilyCombo->setWhatsThis(tr("Displays the operating system family that "
+    m_pFamilyCombo->setWhatsThis(tr("Selects the operating system family that "
                                     "you plan to install into this virtual machine."));
     m_pTypeLabel->setText(tr("&Version:"));
-    m_pTypeCombo->setWhatsThis(tr("Displays the operating system type that "
+    m_pTypeCombo->setWhatsThis(tr("Selects the operating system type that "
                                   "you plan to install into this virtual machine "
                                   "(called a guest operating system)."));
 }
@@ -196,14 +196,20 @@ void UINameAndSystemEditor::sltFamilyChanged(int iIndex)
     /* Or select WinXP item for Windows family as default: */
     else if (strFamilyId == "Windows")
     {
-        int iIndexWinXP = m_pTypeCombo->findData("WindowsXP", TypeID);
+        QString strDefaultID = "WindowsXP";
+        if (ARCH_BITS == 64 && m_fSupportsHWVirtEx && m_fSupportsLongMode)
+            strDefaultID += "_64";
+        int iIndexWinXP = m_pTypeCombo->findData(strDefaultID, TypeID);
         if (iIndexWinXP != -1)
             m_pTypeCombo->setCurrentIndex(iIndexWinXP);
     }
     /* Or select Ubuntu item for Linux family as default: */
     else if (strFamilyId == "Linux")
     {
-        int iIndexUbuntu = m_pTypeCombo->findData("Ubuntu", TypeID);
+        QString strDefaultID = "Ubuntu";
+        if (ARCH_BITS == 64 && m_fSupportsHWVirtEx && m_fSupportsLongMode)
+            strDefaultID += "_64";
+        int iIndexUbuntu = m_pTypeCombo->findData(strDefaultID, TypeID);
         if (iIndexUbuntu != -1)
             m_pTypeCombo->setCurrentIndex(iIndexUbuntu);
     }

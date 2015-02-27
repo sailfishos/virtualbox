@@ -1,10 +1,10 @@
-# $Id: dtrace.kmk 2571 2012-04-15 11:12:31Z bird $
+# $Id: dtrace.kmk 2726 2014-02-26 23:23:54Z bird $
 ## @file
 # DTrace unit.
 #
 
 #
-# Copyright (c) 2012 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2012-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #

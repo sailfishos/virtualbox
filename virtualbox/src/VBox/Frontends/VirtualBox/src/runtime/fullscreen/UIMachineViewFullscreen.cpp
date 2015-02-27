@@ -62,29 +62,7 @@ UIMachineViewFullscreen::~UIMachineViewFullscreen()
 
 void UIMachineViewFullscreen::sltAdditionsStateChanged()
 {
-    /* Check if we should restrict minimum size: */
-    maybeRestrictMinimumSize();
-
-    /* Check if we should resize guest to fullscreen */
-    if ((int)frameBuffer()->width() != workingArea().size().width() ||
-        (int)frameBuffer()->height() != workingArea().size().height())
-        if (m_bIsGuestAutoresizeEnabled && uisession()->isGuestSupportsGraphics())
-            sltPerformGuestResize(workingArea().size());
-}
-
-bool UIMachineViewFullscreen::event(QEvent *pEvent)
-{
-    switch (pEvent->type())
-    {
-        case ResizeEventType:
-        {
-            return guestResizeEvent(pEvent, true);
-        }
-
-        default:
-            break;
-    }
-    return UIMachineView::event(pEvent);
+    adjustGuestScreenSize();
 }
 
 bool UIMachineViewFullscreen::eventFilter(QObject *pWatched, QEvent *pEvent)
@@ -100,6 +78,9 @@ bool UIMachineViewFullscreen::eventFilter(QObject *pWatched, QEvent *pEvent)
                 if (pResizeEvent->size() != workingArea().size())
                     break;
 
+                /* Recalculate max guest size: */
+                setMaxGuestSize();
+                /* And resize guest to that size: */
                 if (m_bIsGuestAutoresizeEnabled && uisession()->isGuestSupportsGraphics())
                     QTimer::singleShot(0, this, SLOT(sltPerformGuestResize()));
                 break;
@@ -140,7 +121,7 @@ void UIMachineViewFullscreen::prepareConsoleConnections()
     UIMachineView::prepareConsoleConnections();
 
     /* Guest additions state-change updater: */
-    connect(uisession(), SIGNAL(sigAdditionsStateChange()), this, SLOT(sltAdditionsStateChanged()));
+    connect(uisession(), SIGNAL(sigAdditionsStateActualChange()), this, SLOT(sltAdditionsStateChanged()));
 }
 
 void UIMachineViewFullscreen::setGuestAutoresizeEnabled(bool fEnabled)
@@ -149,11 +130,24 @@ void UIMachineViewFullscreen::setGuestAutoresizeEnabled(bool fEnabled)
     {
         m_bIsGuestAutoresizeEnabled = fEnabled;
 
-        maybeRestrictMinimumSize();
-
         if (uisession()->isGuestSupportsGraphics())
             sltPerformGuestResize();
     }
+}
+
+void UIMachineViewFullscreen::adjustGuestScreenSize()
+{
+    /* Check if we should adjust guest-screen to new size: */
+    if (frameBuffer()->isAutoEnabled() ||
+        (int)frameBuffer()->width() != workingArea().size().width() ||
+        (int)frameBuffer()->height() != workingArea().size().height())
+        if (m_bIsGuestAutoresizeEnabled &&
+            uisession()->isGuestSupportsGraphics() &&
+            uisession()->isScreenVisible(screenId()))
+        {
+            frameBuffer()->setAutoEnabled(false);
+            sltPerformGuestResize(workingArea().size());
+        }
 }
 
 QRect UIMachineViewFullscreen::workingArea() const
@@ -167,20 +161,5 @@ QRect UIMachineViewFullscreen::workingArea() const
 QSize UIMachineViewFullscreen::calculateMaxGuestSize() const
 {
     return workingArea().size();
-}
-
-void UIMachineViewFullscreen::maybeRestrictMinimumSize()
-{
-    /* Sets the minimum size restriction depending on the auto-resize feature state and the current rendering mode.
-     * Currently, the restriction is set only in SDL mode and only when the auto-resize feature is inactive.
-     * We need to do that because we cannot correctly draw in a scrolled window in SDL mode.
-     * In all other modes, or when auto-resize is in force, this function does nothing. */
-    if (vboxGlobal().vmRenderMode() == SDLMode)
-    {
-        if (!uisession()->isGuestSupportsGraphics() || !m_bIsGuestAutoresizeEnabled)
-            setMinimumSize(sizeHint());
-        else
-            setMinimumSize(0, 0);
-    }
 }
 

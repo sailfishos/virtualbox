@@ -1,4 +1,4 @@
-# $Revision: 83687 $
+# $Revision: 97163 $
 ## @file
 # VirtualBox Guest Additions Module Makefile.
 #
@@ -73,6 +73,7 @@ MOD_OBJS   = \
 	common/misc/assert.o \
 	common/misc/thread.o \
 	common/string/RTStrCopy.o \
+	common/string/RTStrCopyEx.o \
 	common/string/RTStrCopyP.o \
 	common/string/strformat.o \
 	common/string/strformatrt.o \
@@ -126,7 +127,7 @@ ifeq ($(KERN_VERSION),24)
  ## @todo move to MOD_DEFS when we have finished refactoring
  MOD_CFLAGS = -DEXPORT_SYMTAB
 else
- MOD_CFLAGS = -include $(MANGLING)
+ MOD_CFLAGS = -Wno-declaration-after-statement -include $(MANGLING)
 endif
 
 MOD_CLEAN = . linux r0drv generic r0drv/linux r0drv/generic VBox \

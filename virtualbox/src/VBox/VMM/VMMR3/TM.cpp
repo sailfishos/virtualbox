@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2013 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -124,6 +124,7 @@
 #include <iprt/asm-amd64-x86.h> /* for SUPGetCpuHzFromGIP from sup.h  */
 #include <VBox/vmm/vmm.h>
 #include <VBox/vmm/mm.h>
+#include <VBox/vmm/hm.h>
 #include <VBox/vmm/ssm.h>
 #include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/dbgftrace.h>
@@ -134,6 +135,7 @@
 #include <VBox/vmm/iom.h>
 #include "TMInternal.h"
 #include <VBox/vmm/vm.h>
+#include <VBox/vmm/uvm.h>
 
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/param.h>
@@ -170,7 +172,7 @@ static DECLCALLBACK(int)    tmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion
 static DECLCALLBACK(void)   tmR3TimerCallback(PRTTIMER pTimer, void *pvUser, uint64_t iTick);
 static void                 tmR3TimerQueueRun(PVM pVM, PTMTIMERQUEUE pQueue);
 static void                 tmR3TimerQueueRunVirtualSync(PVM pVM);
-static DECLCALLBACK(int)    tmR3SetWarpDrive(PVM pVM, uint32_t u32Percent);
+static DECLCALLBACK(int)    tmR3SetWarpDrive(PUVM pUVM, uint32_t u32Percent);
 #ifndef VBOX_WITHOUT_NS_ACCOUNTING
 static DECLCALLBACK(void)   tmR3CpuLoadTimer(PVM pVM, PTMTIMER pTimer, void *pvUser);
 #endif
@@ -695,6 +697,8 @@ VMM_INT_DECL(int) TMR3Init(PVM pVM)
     STAM_REG(pVM, &pVM->tm.s.StatTSCWarp,                             STAMTYPE_COUNTER, "/TM/TSC/Intercept/Warp",              STAMUNIT_OCCURENCES, "Warpdrive is active.");
     STAM_REG(pVM, &pVM->tm.s.StatTSCSet,                              STAMTYPE_COUNTER, "/TM/TSC/Sets",                        STAMUNIT_OCCURENCES, "Calls to TMCpuTickSet.");
     STAM_REG(pVM, &pVM->tm.s.StatTSCUnderflow,                        STAMTYPE_COUNTER, "/TM/TSC/Underflow",                   STAMUNIT_OCCURENCES, "TSC underflow; corrected with last seen value .");
+    STAM_REG(pVM, &pVM->tm.s.StatVirtualPause,                        STAMTYPE_COUNTER, "/TM/TSC/Pause",                       STAMUNIT_OCCURENCES, "The number of times the TSC was paused.");
+    STAM_REG(pVM, &pVM->tm.s.StatVirtualResume,                       STAMTYPE_COUNTER, "/TM/TSC/Resume",                      STAMUNIT_OCCURENCES, "The number of times the TSC was resumed.");
 #endif /* VBOX_WITH_STATISTICS */
 
     for (VMCPUID i = 0; i < pVM->cCpus; i++)
@@ -937,21 +941,24 @@ VMM_INT_DECL(int) TMR3InitFinalize(PVM pVM)
     /*
      * Resolve symbols.
      */
-    rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSBad",          &pVM->tm.s.VirtualGetRawDataRC.pfnBad);
-    AssertRCReturn(rc, rc);
-    rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSRediscover",   &pVM->tm.s.VirtualGetRawDataRC.pfnRediscover);
-    AssertRCReturn(rc, rc);
-    if (pVM->tm.s.pfnVirtualGetRawR3       == RTTimeNanoTSLFenceSync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceSync",  &pVM->tm.s.pfnVirtualGetRawRC);
-    else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLFenceAsync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceAsync", &pVM->tm.s.pfnVirtualGetRawRC);
-    else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacySync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacySync",  &pVM->tm.s.pfnVirtualGetRawRC);
-    else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacyAsync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacyAsync", &pVM->tm.s.pfnVirtualGetRawRC);
-    else
-        AssertFatalFailed();
-    AssertRCReturn(rc, rc);
+    if (!HMIsEnabled(pVM))
+    {
+        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSBad",          &pVM->tm.s.VirtualGetRawDataRC.pfnBad);
+        AssertRCReturn(rc, rc);
+        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSRediscover",   &pVM->tm.s.VirtualGetRawDataRC.pfnRediscover);
+        AssertRCReturn(rc, rc);
+        if (pVM->tm.s.pfnVirtualGetRawR3       == RTTimeNanoTSLFenceSync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceSync",  &pVM->tm.s.pfnVirtualGetRawRC);
+        else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLFenceAsync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceAsync", &pVM->tm.s.pfnVirtualGetRawRC);
+        else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacySync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacySync",  &pVM->tm.s.pfnVirtualGetRawRC);
+        else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacyAsync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacyAsync", &pVM->tm.s.pfnVirtualGetRawRC);
+        else
+            AssertFatalFailed();
+        AssertRCReturn(rc, rc);
+    }
 
     rc = PDMR3LdrGetSymbolR0(pVM, NULL, "tmVirtualNanoTSBad",          &pVM->tm.s.VirtualGetRawDataR0.pfnBad);
     AssertRCReturn(rc, rc);
@@ -997,28 +1004,31 @@ VMM_INT_DECL(void) TMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
     LogFlow(("TMR3Relocate\n"));
     NOREF(offDelta);
 
-    pVM->tm.s.pvGIPRC = MMHyperR3ToRC(pVM, pVM->tm.s.pvGIPR3);
-    pVM->tm.s.paTimerQueuesRC = MMHyperR3ToRC(pVM, pVM->tm.s.paTimerQueuesR3);
     pVM->tm.s.paTimerQueuesR0 = MMHyperR3ToR0(pVM, pVM->tm.s.paTimerQueuesR3);
 
-    pVM->tm.s.VirtualGetRawDataRC.pu64Prev = MMHyperR3ToRC(pVM, (void *)&pVM->tm.s.u64VirtualRawPrev);
-    AssertFatal(pVM->tm.s.VirtualGetRawDataRC.pu64Prev);
-    rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSBad",          &pVM->tm.s.VirtualGetRawDataRC.pfnBad);
-    AssertFatalRC(rc);
-    rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSRediscover",   &pVM->tm.s.VirtualGetRawDataRC.pfnRediscover);
-    AssertFatalRC(rc);
+    if (!HMIsEnabled(pVM))
+    {
+        pVM->tm.s.pvGIPRC = MMHyperR3ToRC(pVM, pVM->tm.s.pvGIPR3);
+        pVM->tm.s.paTimerQueuesRC = MMHyperR3ToRC(pVM, pVM->tm.s.paTimerQueuesR3);
+        pVM->tm.s.VirtualGetRawDataRC.pu64Prev = MMHyperR3ToRC(pVM, (void *)&pVM->tm.s.u64VirtualRawPrev);
+        AssertFatal(pVM->tm.s.VirtualGetRawDataRC.pu64Prev);
+        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSBad",          &pVM->tm.s.VirtualGetRawDataRC.pfnBad);
+        AssertFatalRC(rc);
+        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "tmVirtualNanoTSRediscover",   &pVM->tm.s.VirtualGetRawDataRC.pfnRediscover);
+        AssertFatalRC(rc);
 
-    if (pVM->tm.s.pfnVirtualGetRawR3       == RTTimeNanoTSLFenceSync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceSync",  &pVM->tm.s.pfnVirtualGetRawRC);
-    else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLFenceAsync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceAsync", &pVM->tm.s.pfnVirtualGetRawRC);
-    else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacySync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacySync",  &pVM->tm.s.pfnVirtualGetRawRC);
-    else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacyAsync)
-        rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacyAsync", &pVM->tm.s.pfnVirtualGetRawRC);
-    else
-        AssertFatalFailed();
-    AssertFatalRC(rc);
+        if (pVM->tm.s.pfnVirtualGetRawR3       == RTTimeNanoTSLFenceSync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceSync",  &pVM->tm.s.pfnVirtualGetRawRC);
+        else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLFenceAsync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLFenceAsync", &pVM->tm.s.pfnVirtualGetRawRC);
+        else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacySync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacySync",  &pVM->tm.s.pfnVirtualGetRawRC);
+        else if (pVM->tm.s.pfnVirtualGetRawR3  == RTTimeNanoTSLegacyAsync)
+            rc = PDMR3LdrGetSymbolRC(pVM, NULL, "RTTimeNanoTSLegacyAsync", &pVM->tm.s.pfnVirtualGetRawRC);
+        else
+            AssertFatalFailed();
+        AssertFatalRC(rc);
+    }
 
     /*
      * Iterate the timers updating the pVMRC pointers.
@@ -1145,6 +1155,7 @@ static DECLCALLBACK(int) tmR3Save(PVM pVM, PSSMHANDLE pSSM)
     }
     Assert(!pVM->tm.s.cVirtualTicking);
     Assert(!pVM->tm.s.fVirtualSyncTicking);
+    Assert(!pVM->tm.s.cTSCsTicking);
 #endif
 
     /*
@@ -1196,6 +1207,7 @@ static DECLCALLBACK(int) tmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, u
     }
     Assert(!pVM->tm.s.cVirtualTicking);
     Assert(!pVM->tm.s.fVirtualSyncTicking);
+    Assert(!pVM->tm.s.cTSCsTicking);
 #endif
 
     /*
@@ -1252,12 +1264,17 @@ static DECLCALLBACK(int) tmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, u
     }
 
     /* the cpu tick clock. */
+    pVM->tm.s.cTSCsTicking = 0;
+    pVM->tm.s.offTSCPause = 0;
+    pVM->tm.s.u64LastPausedTSC = 0;
     for (VMCPUID i = 0; i < pVM->cCpus; i++)
     {
         PVMCPU pVCpu = &pVM->aCpus[i];
 
         pVCpu->tm.s.fTSCTicking = false;
         SSMR3GetU64(pSSM, &pVCpu->tm.s.u64TSC);
+        if (pVM->tm.s.u64LastPausedTSC < pVCpu->tm.s.u64TSC)
+            pVM->tm.s.u64LastPausedTSC = pVCpu->tm.s.u64TSC;
 
         if (pVM->tm.s.fTSCUseRealTSC)
             pVCpu->tm.s.offTSCRawSrc = 0; /** @todo TSC restore stuff and HWACC. */
@@ -1663,6 +1680,7 @@ VMMR3DECL(int) TMR3TimerDestroy(PTMTIMER pTimer)
         STAM_PROFILE_START(&pVM->tm.s.CTX_SUFF_Z(StatScheduleOne), a);
         Assert(pQueue->offSchedule);
         tmTimerQueueSchedule(pVM, pQueue);
+        STAM_PROFILE_STOP(&pVM->tm.s.CTX_SUFF_Z(StatScheduleOne), a);
     }
 
     /*
@@ -1882,17 +1900,17 @@ static DECLCALLBACK(void) tmR3TimerCallback(PRTTIMER pTimer, void *pvUser, uint6
 
     AssertCompile(TMCLOCK_MAX == 4);
 #ifdef DEBUG_Sander /* very annoying, keep it private. */
-    if (VMCPU_FF_ISSET(pVCpuDst, VMCPU_FF_TIMER))
+    if (VMCPU_FF_IS_SET(pVCpuDst, VMCPU_FF_TIMER))
         Log(("tmR3TimerCallback: timer event still pending!!\n"));
 #endif
-    if (    !VMCPU_FF_ISSET(pVCpuDst, VMCPU_FF_TIMER)
+    if (    !VMCPU_FF_IS_SET(pVCpuDst, VMCPU_FF_TIMER)
         &&  (   pVM->tm.s.paTimerQueuesR3[TMCLOCK_VIRTUAL_SYNC].offSchedule /** @todo FIXME - reconsider offSchedule as a reason for running the timer queues. */
             ||  pVM->tm.s.paTimerQueuesR3[TMCLOCK_VIRTUAL].offSchedule
             ||  pVM->tm.s.paTimerQueuesR3[TMCLOCK_REAL].offSchedule
             ||  pVM->tm.s.paTimerQueuesR3[TMCLOCK_TSC].offSchedule
             ||  tmR3AnyExpiredTimers(pVM)
             )
-        && !VMCPU_FF_ISSET(pVCpuDst, VMCPU_FF_TIMER)
+        && !VMCPU_FF_IS_SET(pVCpuDst, VMCPU_FF_TIMER)
         && !pVM->tm.s.fRunningQueues
        )
     {
@@ -2624,8 +2642,20 @@ VMMR3DECL(int) TMR3TimerSetCritSect(PTMTIMERR3 pTimer, PPDMCRITSECT pCritSect)
  */
 VMMR3_INT_DECL(PRTTIMESPEC) TMR3UtcNow(PVM pVM, PRTTIMESPEC pTime)
 {
+    /* Get a stable set of VirtualSync parameters before querying UTC. */
+    uint64_t offVirtualSync;
+    uint64_t offVirtualSyncGivenUp;
+    do
+    {
+        offVirtualSync        = ASMAtomicReadU64(&pVM->tm.s.offVirtualSync);
+        offVirtualSyncGivenUp = ASMAtomicReadU64((uint64_t volatile *)&pVM->tm.s.offVirtualSyncGivenUp);
+    } while (ASMAtomicReadU64(&pVM->tm.s.offVirtualSync) != offVirtualSync);
+
+    Assert(offVirtualSync >= offVirtualSyncGivenUp);
+    uint64_t const offLag = offVirtualSync - offVirtualSyncGivenUp;
+
     RTTimeNow(pTime);
-    RTTimeSpecSubNano(pTime, ASMAtomicReadU64(&pVM->tm.s.offVirtualSync) - ASMAtomicReadU64((uint64_t volatile *)&pVM->tm.s.offVirtualSyncGivenUp));
+    RTTimeSpecSubNano(pTime, offLag);
     RTTimeSpecAddNano(pTime, pVM->tm.s.offUTC);
     return pTime;
 }
@@ -2654,11 +2684,16 @@ VMMR3DECL(int) TMR3NotifySuspend(PVM pVM, PVMCPU pVCpu)
 
     /*
      * Pause the TSC last since it is normally linked to the virtual
-     * sync clock, so the above code may actually stop both clock.
+     * sync clock, so the above code may actually stop both clocks.
      */
-    rc = tmCpuTickPause(pVCpu);
-    if (RT_FAILURE(rc))
-        return rc;
+    if (!pVM->tm.s.fTSCTiedToExecution)
+    {
+        TM_LOCK_TIMERS(pVM);    /* Exploit the timer lock for synchronization. */
+        rc = tmCpuTickPauseLocked(pVM, pVCpu);
+        TM_UNLOCK_TIMERS(pVM);
+        if (RT_FAILURE(rc))
+            return rc;
+    }
 
 #ifndef VBOX_WITHOUT_NS_ACCOUNTING
     /*
@@ -2702,7 +2737,9 @@ VMMR3DECL(int) TMR3NotifyResume(PVM pVM, PVMCPU pVCpu)
      */
     if (!pVM->tm.s.fTSCTiedToExecution)
     {
-        rc = tmCpuTickResume(pVM, pVCpu);
+        TM_LOCK_TIMERS(pVM);    /* Exploit the timer lock for synchronization. */
+        rc = tmCpuTickResumeLocked(pVM, pVCpu);
+        TM_UNLOCK_TIMERS(pVM);
         if (RT_FAILURE(rc))
             return rc;
     }
@@ -2725,9 +2762,9 @@ VMMR3DECL(int) TMR3NotifyResume(PVM pVM, PVMCPU pVCpu)
  * @param   pVM         Pointer to the VM.
  * @param   u32Percent  The new percentage. 100 means normal operation.
  */
-VMMDECL(int) TMR3SetWarpDrive(PVM pVM, uint32_t u32Percent)
+VMMDECL(int) TMR3SetWarpDrive(PUVM pUVM, uint32_t u32Percent)
 {
-    return VMR3ReqPriorityCallWait(pVM, VMCPUID_ANY, (PFNRT)tmR3SetWarpDrive, 2, pVM, u32Percent);
+    return VMR3ReqPriorityCallWaitU(pUVM, VMCPUID_ANY, (PFNRT)tmR3SetWarpDrive, 2, pUVM, u32Percent);
 }
 
 
@@ -2735,12 +2772,14 @@ VMMDECL(int) TMR3SetWarpDrive(PVM pVM, uint32_t u32Percent)
  * EMT worker for TMR3SetWarpDrive.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pUVM        The user mode VM handle.
  * @param   u32Percent  See TMR3SetWarpDrive().
  * @internal
  */
-static DECLCALLBACK(int) tmR3SetWarpDrive(PVM pVM, uint32_t u32Percent)
+static DECLCALLBACK(int) tmR3SetWarpDrive(PUVM pUVM, uint32_t u32Percent)
 {
+    PVM    pVM = pUVM->pVM;
+    VM_ASSERT_VALID_EXT_RETURN(pVM, VERR_INVALID_VM_HANDLE);
     PVMCPU pVCpu = VMMGetCpu(pVM);
 
     /*
@@ -2771,6 +2810,21 @@ static DECLCALLBACK(int) tmR3SetWarpDrive(PVM pVM, uint32_t u32Percent)
         TMR3NotifyResume(pVM, pVCpu);
     TM_UNLOCK_TIMERS(pVM);
     return VINF_SUCCESS;
+}
+
+
+/**
+ * Gets the current warp drive percent.
+ *
+ * @returns The warp drive percent.
+ * @param   pVM         Pointer to the VM.
+ */
+VMMR3DECL(uint32_t) TMR3GetWarpDrive(PUVM pUVM)
+{
+    UVM_ASSERT_VALID_EXT_RETURN(pUVM, UINT32_MAX);
+    PVM pVM = pUVM->pVM;
+    VM_ASSERT_VALID_EXT_RETURN(pVM, UINT32_MAX);
+    return pVM->tm.s.u32VirtualWarpDrivePercentage;
 }
 
 

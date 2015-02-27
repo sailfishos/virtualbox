@@ -166,7 +166,7 @@ RT_C_DECLS_BEGIN
 #define RTSTR_MAX       (~(size_t)0)
 
 
-/** @def RTMEM_TAG
+/** @def RTSTR_TAG
  * The default allocation tag used by the RTStr allocation APIs.
  *
  * When not defined before the inclusion of iprt/string.h, this will default to
@@ -671,11 +671,16 @@ RTDECL(int) RTStrReallocTag(char **ppsz, size_t cbNew, const char *pszTag);
  */
 RTDECL(int) RTStrValidateEncoding(const char *psz);
 
-/** @name Flags for RTStrValidateEncodingEx
+/** @name Flags for RTStrValidateEncodingEx and RTUtf16ValidateEncodingEx
  */
 /** Check that the string is zero terminated within the given size.
  * VERR_BUFFER_OVERFLOW will be returned if the check fails. */
 #define RTSTR_VALIDATE_ENCODING_ZERO_TERMINATED     RT_BIT_32(0)
+/** Check that the string is exactly the given length.
+ * If it terminates early, VERR_BUFFER_UNDERFLOW will be returned.  When used
+ * together with RTSTR_VALIDATE_ENCODING_ZERO_TERMINATED, the given length must
+ * include the terminator or VERR_BUFFER_OVERFLOW will be returned. */
+#define RTSTR_VALIDATE_ENCODING_EXACT_LENGTH        RT_BIT_32(1)
 /** @} */
 
 /**
@@ -683,8 +688,9 @@ RTDECL(int) RTStrValidateEncoding(const char *psz);
  *
  * @returns iprt status code.
  * @param   psz         The string.
- * @param   cch         The max string length. Use RTSTR_MAX to process the entire string.
- * @param   fFlags      Reserved for future. Pass 0.
+ * @param   cch         The max string length (/ size).  Use RTSTR_MAX to
+ *                      process the entire string.
+ * @param   fFlags      Combination of RTSTR_VALIDATE_ENCODING_XXX flags.
  */
 RTDECL(int) RTStrValidateEncodingEx(const char *psz, size_t cch, uint32_t fFlags);
 
@@ -2412,6 +2418,31 @@ RTDECL(char *) RTStrToLower(char *psz);
 RTDECL(char *) RTStrToUpper(char *psz);
 
 /**
+ * Checks if the string is case foldable, i.e. whether it would change if
+ * subject to RTStrToLower or RTStrToUpper.
+ *
+ * @returns true / false
+ * @param   psz     The string in question.
+ */
+RTDECL(bool) RTStrIsCaseFoldable(const char *psz);
+
+/**
+ * Checks if the string is upper cased (no lower case chars in it).
+ *
+ * @returns true / false
+ * @param   psz     The string in question.
+ */
+RTDECL(bool) RTStrIsUpperCased(const char *psz);
+
+/**
+ * Checks if the string is lower cased (no upper case chars in it).
+ *
+ * @returns true / false
+ * @param   psz     The string in question.
+ */
+RTDECL(bool) RTStrIsLowerCased(const char *psz);
+
+/**
  * Find the length of a zero-terminated byte string, given
  * a max string length.
  *
@@ -2978,9 +3009,15 @@ RTDECL(int8_t) RTStrToInt8(const char *pszValue);
  * @param   cchBuf      The size of the output buffer.
  * @param   pv          Pointer to the bytes to stringify.
  * @param   cb          The number of bytes to stringify.
- * @param   fFlags      Must be zero, reserved for future use.
+ * @param   fFlags      Combination of RTSTRPRINTHEXBYTES_F_XXX values.
+ * @sa      RTUtf16PrintHexBytes.
  */
 RTDECL(int) RTStrPrintHexBytes(char *pszBuf, size_t cchBuf, void const *pv, size_t cb, uint32_t fFlags);
+/** @name RTSTRPRINTHEXBYTES_F_XXX - flags for RTStrPrintHexBytes and RTUtf16PritnHexBytes.
+ * @{ */
+/** Upper case hex digits, the default is lower case. */
+#define RTSTRPRINTHEXBYTES_F_UPPER      RT_BIT(0)
+/** @} */
 
 /**
  * Converts a string of hex bytes back into binary data.
@@ -3182,6 +3219,52 @@ RTDECL(uint32_t)    RTStrHash1ExNV(size_t cPairs, va_list va);
  */
 
 /**
+ * Allocates memory for UTF-16 string storage (default tag).
+ *
+ * You should normally not use this function, except if there is some very
+ * custom string handling you need doing that isn't covered by any of the other
+ * APIs.
+ *
+ * @returns Pointer to the allocated UTF-16 string.  The first wide char is
+ *          always set to the string terminator char, the contents of the
+ *          remainder of the memory is undefined.  The string must be freed by
+ *          calling RTUtf16Free.
+ *
+ *          NULL is returned if the allocation failed.  Please translate this to
+ *          VERR_NO_UTF16_MEMORY and not VERR_NO_MEMORY.  Also consider
+ *          RTUtf16AllocEx if an IPRT status code is required.
+ *
+ * @param   cb                  How many bytes to allocate, will be rounded up
+ *                              to a multiple of two. If this is zero, we will
+ *                              allocate a terminator wide char anyway.
+ */
+#define RTUtf16Alloc(cb)                    RTUtf16AllocTag((cb), RTSTR_TAG)
+
+/**
+ * Allocates memory for UTF-16 string storage (custom tag).
+ *
+ * You should normally not use this function, except if there is some very
+ * custom string handling you need doing that isn't covered by any of the other
+ * APIs.
+ *
+ * @returns Pointer to the allocated UTF-16 string.  The first wide char is
+ *          always set to the string terminator char, the contents of the
+ *          remainder of the memory is undefined.  The string must be freed by
+ *          calling RTUtf16Free.
+ *
+ *          NULL is returned if the allocation failed.  Please translate this to
+ *          VERR_NO_UTF16_MEMORY and not VERR_NO_MEMORY.  Also consider
+ *          RTUtf16AllocExTag if an IPRT status code is required.
+ *
+ * @param   cb                  How many bytes to allocate, will be rounded up
+ *                              to a multiple of two. If this is zero, we will
+ *                              allocate a terminator wide char anyway.
+ * @param   pszTag              Allocation tag used for statistics and such.
+ */
+RTDECL(PRTUTF16) RTUtf16AllocTag(size_t cb, const char *pszTag);
+
+
+/**
  * Free a UTF-16 string allocated by RTStrToUtf16(), RTStrToUtf16Ex(),
  * RTLatin1ToUtf16(), RTLatin1ToUtf16Ex(), RTUtf16Dup() or RTUtf16DupEx().
  *
@@ -3251,6 +3334,161 @@ RTDECL(int) RTUtf16DupExTag(PRTUTF16 *ppwszString, PCRTUTF16 pwszString, size_t 
 RTDECL(size_t) RTUtf16Len(PCRTUTF16 pwszString);
 
 /**
+ * Find the length of a zero-terminated byte string, given a max string length.
+ *
+ * @returns The string length or cbMax. The returned length does not include
+ *          the zero terminator if it was found.
+ *
+ * @param   pwszString  The string.
+ * @param   cwcMax      The max string length in RTUTF16s.
+ * @sa      RTUtf16NLenEx, RTStrNLen.
+ */
+RTDECL(size_t) RTUtf16NLen(PCRTUTF16 pwszString, size_t cwcMax);
+
+/**
+ * Find the length of a zero-terminated byte string, given
+ * a max string length.
+ *
+ * @returns IPRT status code.
+ * @retval  VINF_SUCCESS if the string has a length less than cchMax.
+ * @retval  VERR_BUFFER_OVERFLOW if the end of the string wasn't found
+ *          before cwcMax was reached.
+ *
+ * @param   pwszString  The string.
+ * @param   cwcMax      The max string length in RTUTF16s.
+ * @param   pcwc        Where to store the string length excluding the
+ *                      terminator.  This is set to cwcMax if the terminator
+ *                      isn't found.
+ * @sa      RTUtf16NLen, RTStrNLenEx.
+ */
+RTDECL(int) RTUtf16NLenEx(PCRTUTF16 pwszString, size_t cwcMax, size_t *pcwc);
+
+/**
+ * Find the zero terminator in a string with a limited length.
+ *
+ * @returns Pointer to the zero terminator.
+ * @returns NULL if the zero terminator was not found.
+ *
+ * @param   pwszString  The string.
+ * @param   cwcMax      The max string length.  RTSTR_MAX is fine.
+ */
+RTDECL(PCRTUTF16) RTUtf16End(PCRTUTF16 pwszString, size_t cwcMax);
+
+/**
+ * Strips blankspaces from both ends of the string.
+ *
+ * @returns Pointer to first non-blank char in the string.
+ * @param   pwsz    The string to strip.
+ */
+RTDECL(PRTUTF16) RTUtf16Strip(PRTUTF16 pwsz);
+
+/**
+ * Strips blankspaces from the start of the string.
+ *
+ * @returns Pointer to first non-blank char in the string.
+ * @param   pwsz    The string to strip.
+ */
+RTDECL(PRTUTF16) RTUtf16StripL(PCRTUTF16 pwsz);
+
+/**
+ * Strips blankspaces from the end of the string.
+ *
+ * @returns pwsz.
+ * @param   pwsz    The string to strip.
+ */
+RTDECL(PRTUTF16) RTUtf16StripR(PRTUTF16 pwsz);
+
+/**
+ * String copy with overflow handling.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_BUFFER_OVERFLOW if the destination buffer is too small.  The
+ *          buffer will contain as much of the string as it can hold, fully
+ *          terminated.
+ *
+ * @param   pwszDst             The destination buffer.
+ * @param   cwcDst              The size of the destination buffer in RTUTF16s.
+ * @param   pwszSrc             The source string.  NULL is not OK.
+ */
+RTDECL(int) RTUtf16Copy(PRTUTF16 pwszDst, size_t cwcDst, PCRTUTF16 pwszSrc);
+
+/**
+ * String copy with overflow handling, ASCII source.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_BUFFER_OVERFLOW if the destination buffer is too small.  The
+ *          buffer will contain as much of the string as it can hold, fully
+ *          terminated.
+ *
+ * @param   pwszDst             The destination buffer.
+ * @param   cwcDst              The size of the destination buffer in RTUTF16s.
+ * @param   pszSrc              The source string, pure ASCII.  NULL is not OK.
+ */
+RTDECL(int) RTUtf16CopyAscii(PRTUTF16 pwszDst, size_t cwcDst, const char *pszSrc);
+
+/**
+ * String copy with overflow handling.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_BUFFER_OVERFLOW if the destination buffer is too small.  The
+ *          buffer will contain as much of the string as it can hold, fully
+ *          terminated.
+ *
+ * @param   pwszDst             The destination buffer.
+ * @param   cwcDst              The size of the destination buffer in RTUTF16s.
+ * @param   pwszSrc             The source string.  NULL is not OK.
+ * @param   cwcSrcMax           The maximum number of chars (not code points) to
+ *                              copy from the source string, not counting the
+ *                              terminator as usual.
+ */
+RTDECL(int) RTUtf16CopyEx(PRTUTF16 pwszDst, size_t cwcDst, PCRTUTF16 pwszSrc, size_t cwcSrcMax);
+
+/**
+ * String concatenation with overflow handling.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_BUFFER_OVERFLOW if the destination buffer is too small.  The
+ *          buffer will contain as much of the string as it can hold, fully
+ *          terminated.
+ *
+ * @param   pszDst              The destination buffer.
+ * @param   cwcDst              The size of the destination buffer in RTUTF16s.
+ * @param   pwszSrc             The source string.  NULL is not OK.
+ */
+RTDECL(int) RTUtf16Cat(PRTUTF16 pwszDst, size_t cwcDst, PCRTUTF16 pwszSrc);
+
+/**
+ * String concatenation with overflow handling, ASCII source.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_BUFFER_OVERFLOW if the destination buffer is too small.  The
+ *          buffer will contain as much of the string as it can hold, fully
+ *          terminated.
+ *
+ * @param   pszDst              The destination buffer.
+ * @param   cwcDst              The size of the destination buffer in RTUTF16s.
+ * @param   pszSrc              The source string, pure ASCII.  NULL is not OK.
+ */
+RTDECL(int) RTUtf16CatAscii(PRTUTF16 pwszDst, size_t cwcDst, const char *pwszSrc);
+
+/**
+ * String concatenation with overflow handling.
+ *
+ * @retval  VINF_SUCCESS on success.
+ * @retval  VERR_BUFFER_OVERFLOW if the destination buffer is too small.  The
+ *          buffer will contain as much of the string as it can hold, fully
+ *          terminated.
+ *
+ * @param   pwszDst             The destination buffer.
+ * @param   cwcDst              The size of the destination buffer in RTUTF16s.
+ * @param   pwszSrc             The source string.  NULL is not OK.
+ * @param   cwcSrcMax           The maximum number of UTF-16 chars (not code
+ *                              points) to copy from the source string, not
+ *                              counting the terminator as usual.
+ */
+RTDECL(int) RTUtf16CatEx(PRTUTF16 pwszDst, size_t cwcDst, PCRTUTF16 pwszSrc, size_t cwcSrcMax);
+
+/**
  * Performs a case sensitive string compare between two UTF-16 strings.
  *
  * @returns < 0 if the first string less than the second string.s
@@ -3260,7 +3498,20 @@ RTDECL(size_t) RTUtf16Len(PCRTUTF16 pwszString);
  * @param   pwsz2       Second UTF-16 string. Null is allowed.
  * @remark  This function will not make any attempt to validate the encoding.
  */
-RTDECL(int) RTUtf16Cmp(register PCRTUTF16 pwsz1, register PCRTUTF16 pwsz2);
+RTDECL(int) RTUtf16Cmp(PCRTUTF16 pwsz1, PCRTUTF16 pwsz2);
+
+/**
+ * Performs a case sensitive string compare between an UTF-16 string and a pure
+ * ASCII string.
+ *
+ * @returns < 0 if the first string less than the second string.s
+ * @returns 0 if the first string identical to the second string.
+ * @returns > 0 if the first string greater than the second string.
+ * @param   pwsz1       First UTF-16 string. Null is allowed.
+ * @param   psz2        Second string, pure ASCII. Null is allowed.
+ * @remark  This function will not make any attempt to validate the encoding.
+ */
+RTDECL(int) RTUtf16CmpAscii(PCRTUTF16 pwsz1, const char *psz2);
 
 /**
  * Performs a case insensitive string compare between two UTF-16 strings.
@@ -3276,6 +3527,21 @@ RTDECL(int) RTUtf16Cmp(register PCRTUTF16 pwsz1, register PCRTUTF16 pwsz2);
  * @param   pwsz2       Second UTF-16 string. Null is allowed.
  */
 RTDECL(int) RTUtf16ICmp(PCRTUTF16 pwsz1, PCRTUTF16 pwsz2);
+
+/**
+ * Performs a case insensitive string compare between an UTF-16 string and an
+ * pure ASCII string.
+ *
+ * Since this compare only takes cares about the first 128 codepoints in
+ * unicode, no tables are needed and there aren't any real complications.
+ *
+ * @returns < 0 if the first string less than the second string.
+ * @returns 0 if the first string identical to the second string.
+ * @returns > 0 if the first string greater than the second string.
+ * @param   pwsz1       First UTF-16 string. Null is allowed.
+ * @param   psz2        Second string, pure ASCII. Null is allowed.
+ */
+RTDECL(int) RTUtf16ICmpAscii(PCRTUTF16 pwsz1, const char *psz2);
 
 /**
  * Performs a case insensitive string compare between two UTF-16 strings
@@ -3318,6 +3584,33 @@ RTDECL(PRTUTF16) RTUtf16ToLower(PRTUTF16 pwsz);
  * @param   pwsz        The string to fold.
  */
 RTDECL(PRTUTF16) RTUtf16ToUpper(PRTUTF16 pwsz);
+
+/**
+ * Validates the UTF-16 encoding of the string.
+ *
+ * @returns iprt status code.
+ * @param   pwsz        The string.
+ */
+RTDECL(int) RTUtf16ValidateEncoding(PCRTUTF16 pwsz);
+
+/**
+ * Validates the UTF-16 encoding of the string.
+ *
+ * @returns iprt status code.
+ * @param   pwsz        The string.
+ * @param   cwc         The max string length (/ size) in UTF-16 units. Use
+ *                      RTSTR_MAX to process the entire string.
+ * @param   fFlags      Combination of RTSTR_VALIDATE_ENCODING_XXX flags.
+ */
+RTDECL(int) RTUtf16ValidateEncodingEx(PCRTUTF16 pwsz, size_t cwc, uint32_t fFlags);
+
+/**
+ * Checks if the UTF-16 encoding is valid.
+ *
+ * @returns true / false.
+ * @param   pwsz        The string.
+ */
+RTDECL(bool) RTUtf16IsValidEncoding(PCRTUTF16 pwsz);
 
 /**
  * Sanitise a (valid) UTF-16 string by replacing all characters outside a white
@@ -3745,6 +4038,24 @@ DECLINLINE(bool) RTUtf16IsSurrogatePair(RTUTF16 wcHigh, RTUTF16 wcLow)
         && RTUtf16IsLowSurrogate(wcLow);
 }
 
+/**
+ * Formats a buffer stream as hex bytes.
+ *
+ * The default is no separating spaces or line breaks or anything.
+ *
+ * @returns IPRT status code.
+ * @retval  VERR_INVALID_POINTER if any of the pointers are wrong.
+ * @retval  VERR_BUFFER_OVERFLOW if the buffer is insufficent to hold the bytes.
+ *
+ * @param   pwszBuf     Output string buffer.
+ * @param   cwcBuf      The size of the output buffer in RTUTF16 units.
+ * @param   pv          Pointer to the bytes to stringify.
+ * @param   cb          The number of bytes to stringify.
+ * @param   fFlags      Combination of RTSTRPRINTHEXBYTES_F_XXX values.
+ * @sa      RTStrPrintHexBytes.
+ */
+RTDECL(int) RTUtf16PrintHexBytes(PRTUTF16 pwszBuf, size_t cwcBuf, void const *pv, size_t cb, uint32_t fFlags);
+
 /** @} */
 
 
@@ -3858,6 +4169,12 @@ RTDECL(int) RTLatin1ToUtf16ExTag(const char *pszString, size_t cchString,
                                  PRTUTF16 *ppwsz, size_t cwc, size_t *pcwc, const char *pszTag);
 
 /** @} */
+
+#ifndef ___iprt_nocrt_string_h
+# if defined(RT_OS_WINDOWS)
+RTDECL(void *) mempcpy(void *pvDst, const void *pvSrc, size_t cb);
+# endif
+#endif
 
 
 RT_C_DECLS_END

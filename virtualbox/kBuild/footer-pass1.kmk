@@ -1,4 +1,4 @@
-# $Id: footer-pass1.kmk 2551 2011-11-09 13:28:02Z bird $
+# $Id: footer-pass1.kmk 2764 2015-01-28 18:51:46Z bird $
 ## @file
 # kBuild - Footer - Target lists - Pass 1.
 #
@@ -7,7 +7,7 @@
 #
 
 #
-# Copyright (c) 2004-2011 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -107,13 +107,9 @@ ifeq ($(insttype),)
    local insttype := both
  endif
 endif
-ifn1of ($(insttype), none both stage)
- $(error kBuild: Unknown value '$(insttype)' for '$(target)_INSTTYPE'. Valid values are 'none', 'both' and 'stage'.)
-endif
 $(target)_1_INSTTYPE := $(insttype)
 
-if1of ($(insttype), stage both)
- local inst := $(strip $(firstdefined \
+local inst := $(strip $(firstdefined \
 	$(target)_INST.$(bld_trg).$(bld_trg_arch).$(bld_type) \
 	$(target)_INST.$(bld_trg).$(bld_trg_arch) \
 	$(target)_INST.$(bld_trg).$(bld_type) \
@@ -124,7 +120,7 @@ if1of ($(insttype), stage both)
 	$(target)_INST \
 	definst \
 	,value))
- local stage := $(strip $(firstdefined \
+local stage := $(strip $(firstdefined \
 	$(target)_STAGE.$(bld_trg).$(bld_trg_arch).$(bld_type) \
 	$(target)_STAGE.$(bld_trg).$(bld_trg_arch) \
 	$(target)_STAGE.$(bld_trg).$(bld_type) \
@@ -135,6 +131,7 @@ if1of ($(insttype), stage both)
 	$(target)_STAGE \
 	inst \
 	,value))
+if1of ($(insttype), stage both)
  $(target)_1_STAGE := $(stage)
  if "$(substr $(stage),-1,1)" == "/" # Multicast support requires addprefix/suffix.
   $(target)_1_STAGE_TARGET := $(addprefix $(PATH_STAGE)/,$(addsuffix $(notdir $(out)),$(stage)))
@@ -143,9 +140,11 @@ if1of ($(insttype), stage both)
  else
   $(target)_1_STAGE_TARGET := $(addprefix $(PATH_STAGE)/,$(stage))
  endif
-else
+else if1of ($(insttype), none)
  $(target)_1_STAGE :=
  $(target)_1_STAGE_TARGET :=
+else
+ $(error kBuild: Unknown value '$(insttype)' for '$(target)_INSTTYPE'. Valid values are 'none', 'both' and 'stage'.)
 endif
 INSTARGET_$(target) := $($(target)_1_STAGE_TARGET)
 
@@ -174,9 +173,6 @@ local debug_insttype := $(firstword \
 	$($(target)_DEBUG_INSTTYPE.$(bld_type)) \
 	$($(target)_DEBUG_INSTTYPE) \
 	$(insttype) )
-ifn1of ($(debug_insttype), none both stage)
- $(error kBuild: Unknown value '$(debug_insttype)' for '$(target)_DEBUG_INSTTYPE'. Valid values are 'none', 'both' and 'stage'.)
-endif
 $(target)_1_DEBUG_INSTTYPE := $(debug_insttype)
 
 if1of ($(debug_insttype), stage both)
@@ -205,8 +201,10 @@ if1of ($(debug_insttype), stage both)
  ifndef $(target)_1_DEBUG_STAGE
   $(target)_1_DEBUG_STAGE := ./
  endif
-else
+else if1of ($(debug_insttype), none)
  $(target)_1_DEBUG_STAGE :=
+else
+ $(error kBuild: Unknown value '$(debug_insttype)' for '$(target)_DEBUG_INSTTYPE'. Valid values are 'none', 'both' and 'stage'.)
 endif
 
 if1of ($(debug_insttype), both)
@@ -244,7 +242,7 @@ define def_pass1_bldprog
 ifndef $(target)_INST
 $(target)_INSTTYPE := none
 endif
-$(evalval def_pass1_link_common)
+$(evalvalctx def_pass1_link_common)
 endef
 
 EXT     := EXE
@@ -253,7 +251,7 @@ definst := $(INST_BIN)
 tool_prefix := LD
 bld_trg_base_var := PLATFORM
 $(foreach target, $(_ALL_BLDPROGS), \
-	$(evalval def_pass1_bldprog))
+	$(evalvalctx def_pass1_bldprog))
 
 
 #
@@ -265,7 +263,7 @@ definst := $(INST_LIB)
 tool_prefix := AR
 bld_trg_base_var := TARGET
 $(foreach target, $(_ALL_LIBRARIES), \
-	$(evalval def_pass1_link_common))
+	$(evalvalctx def_pass1_link_common))
 
 
 #
@@ -277,7 +275,7 @@ definst := $(INST_DLL)
 tool_prefix := LD
 bld_trg_base_var := TARGET
 $(foreach target, $(_ALL_DLLS), \
-	$(evalval def_pass1_link_common))
+	$(evalvalctx def_pass1_link_common))
 
 
 #
@@ -293,7 +291,7 @@ if1of ($(KBUILD_TARGET), nt os2 win win64 win32)
  tool_prefix := AR
  bld_trg_base_var := TARGET
  $(foreach target, $(_ALL_IMPORT_LIBS), \
-	$(evalval def_pass1_link_common))
+	$(evalvalctx def_pass1_link_common))
 else
  EXT     := DLL
  EXTPRE  :=
@@ -301,7 +299,7 @@ else
  tool_prefix := LD
  bld_trg_base_var := TARGET
  $(foreach target, $(_ALL_IMPORT_LIBS), \
-	$(evalval def_pass1_link_common))
+	$(evalvalctx def_pass1_link_common))
 endif
 
 
@@ -314,7 +312,7 @@ definst := $(INST_BIN)
 tool_prefix := LD
 bld_trg_base_var := TARGET
 $(foreach target, $(_ALL_PROGRAMS), \
-	$(evalval def_pass1_link_common))
+	$(evalvalctx def_pass1_link_common))
 
 
 #
@@ -326,7 +324,7 @@ definst := $(INST_SYS)
 tool_prefix := LD
 bld_trg_base_var := TARGET
 $(foreach target, $(_ALL_SYSMODS), \
-	$(evalval def_pass1_link_common))
+	$(evalvalctx def_pass1_link_common))
 
 
 #
@@ -338,7 +336,7 @@ definst := $(INST_BIN)
 tool_prefix := LD
 bld_trg_base_var := TARGET
 $(foreach target, $(_ALL_MISCBINS), \
-	$(evalval def_pass1_link_common))
+	$(evalvalctx def_pass1_link_common))
 
 
 #
@@ -452,7 +450,7 @@ endef # def_pass1_install
 $(eval-opt-var def_pass1_install)
 
 $(foreach target, $(_ALL_INSTALLS), \
-	$(evalval def_pass1_install))
+	$(evalvalctx def_pass1_install))
 
 ifdef KBUILD_PROFILE_SELF
  $(evalcall def_profile_self, done pass 1)

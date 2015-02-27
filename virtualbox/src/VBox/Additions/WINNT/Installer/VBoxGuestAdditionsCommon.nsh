@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2006-2013 Oracle Corporation
+; Copyright (C) 2006-2014 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -136,7 +136,7 @@ Function ExtractFiles
       FILE "$%PATH_OUT%\bin\additions\wined3dwddm-x86.dll"
     !endif ; $%VBOX_WITH_CROGL% == "1"
   !endif ; $%BUILD_TARGET_ARCH% == "amd64"
-  
+
   !if $%VBOX_WITH_WDDM_W8% == "1"
   ; WDDM Video driver for Win8
   SetOutPath "$0\VBoxVideoW8"
@@ -276,43 +276,51 @@ FunctionEnd
 !insertmacro CheckArchitecture ""
 !insertmacro CheckArchitecture "un."
 
-!macro GetWindowsVer un
-Function ${un}GetWindowsVer
+;
+; Macro for retrieving the Windows version this installer is running on.
+;
+; @return  Stack: Windows version string. Empty on error /
+;                 if not able to identify.
+;
+!macro GetWindowsVersionEx un
+Function ${un}GetWindowsVersionEx
 
-  ; Check if we are running on w2k or above
-  ; For other windows versions (>XP) it may be necessary to change winver.nsh
+  Push $0
+  Push $1
+
+  ; Check if we are running on Windows 2000 or above
+  ; For other windows versions (> XP) it may be necessary to change winver.nsh
   Call ${un}GetWindowsVersion
-  Pop $R3     ; Windows Version
+  Pop $0         ; Windows Version
 
-  Push $R3    ; The windows version string
-  Push "NT"   ; String to search for. Win 2k family returns no string containing 'NT'
+  Push $0        ; The windows version string
+  Push "NT"      ; String to search for. W2K+ returns no string containing "NT"
   Call ${un}StrStr
-  Pop $R0
-  StrCmp $R0 '' nt5plus       ; Not NT 3.XX or 4.XX
+  Pop $1
 
-  ; Ok we know it is NT. Must be a string like NT X.XX
-  Push $R3    ; The windows version string
-  Push "4."   ; String to search for
-  Call ${un}StrStr
-  Pop $R0
-  StrCmp $R0 "" nt5plus nt4   ; If empty -> not NT 4
+  ${If} $1 == "" ; If empty -> not NT 3.XX or 4.XX
+    ; $0 contains the original version string
+  ${Else}
+    ; Ok we know it is NT. Must be a string like NT X.XX
+    Push $0        ; The windows version string
+    Push "4."      ; String to search for
+    Call ${un}StrStr
+    Pop $1
+    ${If} $1 == "" ; If empty -> not NT 4
+      ;; @todo NT <= 3.x ?
+      ; $0 contains the original version string
+    ${Else}
+      StrCpy $0 "NT4"
+    ${EndIf}
+  ${EndIf}
 
-nt5plus:    ; Windows 2000+ (XP, Vista, ...)
-
-  StrCpy $g_strWinVersion $R3
-  goto exit
-
-nt4:        ; NT 4.0
-
-  StrCpy $g_strWinVersion "NT4"
-  goto exit
-
-exit:
+  Pop $1
+  Exch $0
 
 FunctionEnd
 !macroend
-!insertmacro GetWindowsVer ""
-!insertmacro GetWindowsVer "un."
+!insertmacro GetWindowsVersionEx ""
+!insertmacro GetWindowsVersionEx "un."
 
 !macro GetAdditionsVersion un
 Function ${un}GetAdditionsVersion
@@ -414,7 +422,7 @@ exe_stop_loop:
 !ifdef _DEBUG
   ${LogVerbose} "Stopping attempt #$3"
 !endif
-  
+
   ${If} $g_strWinVersion == "NT4"
     StrCpy $2 "VBoxServiceNT.exe"
   ${Else}
@@ -515,12 +523,12 @@ FunctionEnd
 !macro AbortShutdown un
 Function ${un}AbortShutdown
 
-  Push $0
-
-  ; Try to abort the shutdown
-  nsExec::ExecToLog '"$g_strSystemDir\shutdown.exe" -a' $0
-
-  Pop $0
+  ${If} ${FileExists} "$g_strSystemDir\shutdown.exe"
+    ; Try to abort the shutdown
+    ${CmdExecute} "$\"$g_strSystemDir\shutdown.exe$\" -a" "true"
+  ${Else}
+    ${LogVerbose} "Shutting down not supported: Binary $\"$g_strSystemDir\shutdown.exe$\" not found"
+  ${EndIf}
 
 FunctionEnd
 !macroend
@@ -532,17 +540,21 @@ Function ${un}CheckForWDDMCapability
 
 !if $%VBOX_WITH_WDDM% == "1"
   ; If we're on a 32-bit Windows Vista / 7 / 8 we can use the WDDM driver
-  ${If} $g_strWinVersion == "Vista"
+  ${If}   $g_strWinVersion == "Vista"
   ${OrIf} $g_strWinVersion == "7"
   ${OrIf} $g_strWinVersion == "8"
+  ${OrIf} $g_strWinVersion == "8_1"
+  ${OrIf} $g_strWinVersion == "10"
     StrCpy $g_bCapWDDM "true"
-    ${LogVerbose}  "OS is WDDM driver capable"
+    ${LogVerbose} "OS is WDDM driver capable"
   ${EndIf}
   ; If we're on Windows 8 we *have* to use the WDDM driver, so select it
   ; by default
-  ${If} $g_strWinVersion == "8"
+  ${If}   $g_strWinVersion == "8"
+  ${OrIf} $g_strWinVersion == "8_1"
+  ${OrIf} $g_strWinVersion == "10"
     StrCpy $g_bWithWDDM "true"
-    ${LogVerbose}  "OS needs WDDM driver by default"
+    ${LogVerbose} "OS needs WDDM driver by default"
   ${EndIf}
 !endif
 
@@ -561,9 +573,11 @@ Function ${un}CheckForCapabilities
   StrCpy $g_iSystemMode $0
 
   ; Does the guest have a DLL cache?
-  ${If} $g_strWinVersion == "Vista"
+  ${If}   $g_strWinVersion == "Vista"
   ${OrIf} $g_strWinVersion == "7"
   ${OrIf} $g_strWinVersion == "8"
+  ${OrIf} $g_strWinVersion == "8_1"
+  ${OrIf} $g_strWinVersion == "10"
     StrCpy $g_bCapDllCache "true"
     ${LogVerbose}  "OS has a DLL cache"
   ${EndIf}
@@ -780,7 +794,7 @@ FunctionEnd
 !define VerifyFileEx "!insertmacro VerifyFileEx"
 
 ;
-; Macro for copying a file only if the source file is verified 
+; Macro for copying a file only if the source file is verified
 ; to be from a certain vendor and architecture.
 ; @return  Stack: "0" if copied, "1" if not, "2" on error / not found.
 ; @param   Un/Installer prefix; either "" or "un".
@@ -793,12 +807,22 @@ FunctionEnd
   Push $0
   Push "${Architecture}"
   Push "${Vendor}"
-  Push "${FileSrc}"  
+  Push "${FileSrc}"
   Call ${un}VerifyFile
   Pop $0
   ${If} $0 == "0"
     ${LogVerbose} "Copying verified file $\"${FileSrc}$\" to $\"${FileDest}$\" ..."
+    ClearErrors
+    SetOverwrite on
     CopyFiles /SILENT "${FileSrc}" "${FileDest}"
+    ${If} ${Errors}
+      CreateDirectory "$TEMP\${PRODUCT_NAME}"
+      ${GetFileName} "${FileSrc}" $0 ; Get the base name
+      CopyFiles /SILENT "${FileSrc}" "$TEMP\${PRODUCT_NAME}\$0"
+      ${LogVerbose} "Immediate installation failed, postponing to next reboot (temporary location is: $\"$TEMP\${PRODUCT_NAME}\$0$\") ..."
+      ;${InstallFileEx} "${un}" "${FileSrc}" "${FileDest}" "$TEMP" ; Only works with compile time files!
+      System::Call "kernel32::MoveFileEx(t '$TEMP\${PRODUCT_NAME}\$0', t '${FileDest}', i 5)"
+    ${EndIf}
   ${Else}
     ${LogVerbose} "Skipping to copy file $\"${FileSrc}$\" to $\"${FileDest}$\" (not Vendor: ${Vendor}, Architecture: ${Architecture})"
   ${EndIf}
@@ -811,8 +835,8 @@ FunctionEnd
 ; Macro for installing a library/DLL.
 ; @return  Stack: "0" if copied, "1" if not, "2" on error / not found.
 ; @param   Un/Installer prefix; either "" or "un".
-; @param   Name of lib/DLL to verify and copy to destination.
-; @param   Destination name to copy verified file to.
+; @param   Name of lib/DLL to copy to destination.
+; @param   Destination name to copy the source file to.
 ; @param   Temporary folder used for exchanging the (locked) lib/DLL after a reboot.
 ;
 !macro InstallFileEx un FileSrc FileDest DirTemp
@@ -852,6 +876,62 @@ FunctionEnd
 !macroend
 !define InstallFileVerify "!insertmacro InstallFileVerify"
 
+; Prepares the access rights for replacing
+; a WRP (Windows Resource Protection) protected file
+!macro PrepareWRPFile un
+Function ${un}PrepareWRPFile
+
+  Pop $0
+  Push $1
+
+  ${IfNot} ${FileExists} "$0"
+    ${LogVerbose} "WRP: File $\"$0$\" does not exist, skipping"
+    Return
+  ${EndIf}
+
+  ${If} ${FileExists} "$g_strSystemDir\takeown.exe"
+    ${CmdExecute} "$\"$g_strSystemDir\takeown.exe$\" /F $\"$0$\"" "true"
+  ${Else}
+    ${LogVerbose} "WRP: Warning: takeown.exe not found, skipping"
+  ${EndIf}
+
+  AccessControl::SetFileOwner "$0" "(S-1-5-32-545)"
+  Pop $1
+  ${LogVerbose} "WRP: Setting file owner for $\"$0$\" returned: $1"
+
+  AccessControl::GrantOnFile "$0" "(S-1-5-32-545)" "FullAccess"
+  Pop $1
+  ${LogVerbose} "WRP: Setting access rights for $\"$0$\" returned: $1"
+
+!if $%VBOX_WITH_GUEST_INSTALL_HELPER% == "1"
+  !ifdef WFP_FILE_EXCEPTION
+    VBoxGuestInstallHelper::DisableWFP "$0"
+    Pop $1 ; Get return value (ignored for now)
+    ${LogVerbose} "WRP: Setting WFP exception for $\"$0$\" returned: $1"
+  !endif
+!endif
+
+  Pop $1
+
+FunctionEnd
+!macroend
+!insertmacro PrepareWRPFile ""
+!insertmacro PrepareWRPFile "un."
+
+;
+; Macro for preparing the access rights for replacing
+; a WRP (Windows Resource Protection) protected file.
+; @return  None.
+; @param   Path of file to prepare.
+;
+!macro PrepareWRPFileEx un FileSrc
+  Push $0
+  Push "${FileSrc}"
+  Call ${un}PrepareWRPFile
+  Pop $0
+!macroend
+!define PrepareWRPFileEx "!insertmacro PrepareWRPFileEx"
+
 ;
 ; Validates backed up and replaced Direct3D files; either the d3d*.dll have
 ; to be from Microsoft or the (already) backed up msd3d*.dll files. If both
@@ -864,13 +944,13 @@ Function ${un}ValidateD3DFiles
   Push $0
 
   ; We need to switch to 64-bit app mode to handle the "real" 64-bit files in
-  ; ""system32" on a 64-bit guest
+  ; "system32" on a 64-bit guest
   Call ${un}SetAppMode64
 
   ; Note: Not finding a file (like *d3d8.dll) on Windows Vista/7 is fine;
   ;       it simply is not present there.
-  
-  ; Note 2: On 64-bit systems there are no 64-bit *d3d8 DLLs, only 32-bit ones 
+
+  ; Note 2: On 64-bit systems there are no 64-bit *d3d8 DLLs, only 32-bit ones
   ;         in SysWOW64 (or in system32 on 32-bit systems).
 
 !if $%BUILD_TARGET_ARCH% == "x86"
@@ -880,7 +960,7 @@ Function ${un}ValidateD3DFiles
     Goto verify_msd3d
   ${EndIf}
 !endif
-  
+
   ${VerifyFileEx} "${un}" "$SYSDIR\d3d9.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
   Pop $0
   ${If} $0 == "1"
@@ -1007,3 +1087,70 @@ FunctionEnd
 !macroend
 !insertmacro ValidateFilesDirect3D ""
 !insertmacro ValidateFilesDirect3D "un."
+
+;
+; Restores formerly backed up Direct3D original files, which were replaced by
+; a VBox XPDM driver installation before. This might be necessary for upgrading a
+; XPDM installation to a WDDM one.
+; @return  Stack: "0" if files were restored successfully; otherwise "1".
+;
+!macro RestoreFilesDirect3D un
+Function ${un}RestoreFilesDirect3D
+
+  Push $0
+
+  ; We need to switch to 64-bit app mode to handle the "real" 64-bit files in
+  ; "system32" on a 64-bit guest
+  Call ${un}SetAppMode64
+
+  ; Note: Not finding a file (like *d3d8.dll) on Windows Vista/7 is fine;
+  ;       it simply is not present there.
+
+  ; Note 2: On 64-bit systems there are no 64-bit *d3d8 DLLs, only 32-bit ones
+  ;         in SysWOW64 (or in system32 on 32-bit systems).
+
+  ${LogVerbose} "Restoring original D3D files ..."
+!if $%BUILD_TARGET_ARCH% == "x86"
+  ${PrepareWRPFileEx} "${un}" "$SYSDIR\d3d8.dll"
+  ${CopyFileEx} "${un}" "$SYSDIR\msd3d8.dll" "$SYSDIR\d3d8.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
+!endif
+  ${PrepareWRPFileEx} "${un}" "$SYSDIR\d3d9.dll"
+  ${CopyFileEx} "${un}" "$SYSDIR\msd3d9.dll" "$SYSDIR\d3d9.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
+
+  ${If} $g_bCapDllCache == "true"
+!if $%BUILD_TARGET_ARCH% == "x86"
+    ${PrepareWRPFileEx} "${un}" "$SYSDIR\dllcache\d3d8.dll"
+    ${CopyFileEx} "${un}" "$SYSDIR\dllcache\msd3d8.dll" "$SYSDIR\dllcache\d3d8.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
+!endif
+    ${PrepareWRPFileEx} "${un}" "$SYSDIR\dllcache\d3d9.dll"
+    ${CopyFileEx} "${un}" "$SYSDIR\dllcache\msd3d9.dll" "$SYSDIR\dllcache\d3d9.dll" "Microsoft Corporation" "$%BUILD_TARGET_ARCH%"
+  ${EndIf}
+
+!if $%BUILD_TARGET_ARCH% == "amd64"
+  ${PrepareWRPFileEx} "${un}" "$g_strSysWow64\d3d8.dll"
+  ${CopyFileEx} "${un}" "$g_strSysWow64\msd3d8.dll" "$g_strSysWow64\d3d8.dll" "Microsoft Corporation" "x86"
+  ${PrepareWRPFileEx} "${un}" "$g_strSysWow64\d3d9.dll"
+  ${CopyFileEx} "${un}" "$g_strSysWow64\msd3d9.dll" "$g_strSysWow64\d3d9.dll" "Microsoft Corporation" "x86"
+
+  ${If} $g_bCapDllCache == "true"
+    ${PrepareWRPFileEx} "${un}" "$g_strSysWow64\dllcache\d3d8.dll"
+    ${CopyFileEx} "${un}" "$g_strSysWow64\dllcache\msd3d8.dll" "$g_strSysWow64\dllcache\d3d8.dll" "Microsoft Corporation" "x86"
+    ${PrepareWRPFileEx} "${un}" "$g_strSysWow64\dllcache\d3d9.dll"
+    ${CopyFileEx} "${un}" "$g_strSysWow64\dllcache\msd3d9.dll" "$g_strSysWow64\dllcache\d3d9.dll" "Microsoft Corporation" "x86"
+  ${EndIf}
+!endif
+
+  ; Do a re-validation afterwards.
+  Call ${un}ValidateD3DFiles
+  Pop $0
+  ${If} $0 == "1" ; D3D files are invalid
+    ${LogVerbose} $(VBOX_UNINST_UNABLE_TO_RESTORE_D3D)
+    MessageBox MB_ICONSTOP|MB_OK $(VBOX_UNINST_UNABLE_TO_RESTORE_D3D) /SD IDOK
+  ${EndIf}
+
+  Exch $0
+
+FunctionEnd
+!macroend
+!insertmacro RestoreFilesDirect3D ""
+!insertmacro RestoreFilesDirect3D "un."

@@ -124,6 +124,11 @@
 #include <asm/uaccess.h>
 #include <asm/div64.h>
 
+/* For thread-context hooks. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 18) && defined(CONFIG_PREEMPT_NOTIFIERS)
+# include <linux/preempt.h>
+#endif
+
 /* for workqueue / task queues. */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 41)
 # include <linux/workqueue.h>
@@ -143,6 +148,10 @@
 
 #ifndef DEFINE_WAIT
 # define DEFINE_WAIT(name) DECLARE_WAITQUEUE(name, current)
+#endif
+
+#ifndef __GFP_NOWARN
+# define __GFP_NOWARN 0
 #endif
 
 /*

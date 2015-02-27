@@ -1,10 +1,10 @@
-# $Id: XGCCAMD64LINUX.kmk 2413 2010-09-11 17:43:04Z bird $
+# $Id: XGCCAMD64LINUX.kmk 2750 2015-01-23 12:24:02Z bird $
 ## @file
 # kBuild Tool Config - GCC Cross compiler for AMD64+Linux.
 #
 
 #
-# Copyright (c) 2004-2010 knut st. osmundsen <bird-kBuild-spamx@anduin.net>
+# Copyright (c) 2004-2014 knut st. osmundsen <bird-kBuild-spam-xiv@anduin.net>
 #
 # This file is part of kBuild.
 #
@@ -43,14 +43,14 @@ else # x-compile:
  ifndef TOOL_XGCCAMD64LINUX_PREFIX
   TOOL_XGCCAMD64LINUX_PREFIX := x86_64-unknown-linux-gnu-
   ifndef PATH_TOOL_XGCCAMD64LINUX
-   PATH_TOOL_XGCCAMD64LINUX := $(sort $(wildcard $(PATH_DEVTOOLS_BLD)/x86_64-unknown-linux-gnu/*))
+   PATH_TOOL_XGCCAMD64LINUX := $(sort $(wildcard $(KBUILD_DEVTOOLS_HST)/x86_64-unknown-linux-gnu/*))
    ifeq ($(PATH_TOOL_XGCCAMD64LINUX),)
     ifeq ($(filter-out win.amd64,$(KBUILD_HOST).$(KBUILD_HOST_ARCH)),) # these can use the windows build.
      TOOL_XGCCAMD64LINUX_EXEC_PREFIX ?= $(EXEC_X86_WIN32)
      TOOL_XGCCAMD64LINUX_HOSTSUFF_EXE := .exe
-     PATH_TOOL_XGCCAMD64LINUX := $(sort $(wildcard $(PATH_DEVTOOLS)/win.x86/x86_64-unknown-linux-gnu/*))
+     PATH_TOOL_XGCCAMD64LINUX := $(sort $(wildcard $(KBUILD_DEVTOOLS)/win.x86/x86_64-unknown-linux-gnu/*))
      ifeq ($(PATH_TOOL_XGCCAMD64LINUX),)
-      PATH_TOOL_XGCCAMD64LINUX := $(sort $(wildcard $(PATH_DEVTOOLS)/x86.win32/x86_64-unknown-linux-gnu/*))
+      PATH_TOOL_XGCCAMD64LINUX := $(sort $(wildcard $(KBUILD_DEVTOOLS)/x86.win32/x86_64-unknown-linux-gnu/*))
      endif
     endif
    endif
