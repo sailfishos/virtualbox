@@ -130,7 +130,7 @@ VirtualBox guest addition tools.
 # version may contain a +, and virtualbox refuses to build with that in the path
 # so change the buildsubdir to be different from what's in the tarfile
 %setup -q -n %{name} -c
-mv %{name}-%{version}/%{name}/* .
+cd %{name}/
 
 # use the packaged kBuild rather than the bundled one
 rm -rf kBuild
