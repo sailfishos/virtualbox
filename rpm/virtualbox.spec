@@ -129,8 +129,9 @@ VirtualBox guest addition tools.
 %prep
 # version may contain a +, and virtualbox refuses to build with that in the path
 # so change the buildsubdir to be different from what's in the tarfile
-%setup -q -n %{name} -c
-mv %{name}-%{version}/%{name}/* .
+# Special care must be taken to preserve compatibility with both OBS and mb2
+%setup -q -c -n %{name}/%{name}
+mv %{name}-%{version}/%{name}/* . ||:
 
 # use the packaged kBuild rather than the bundled one
 rm -rf kBuild
@@ -153,7 +154,7 @@ done
 eval "sed \$(echo "\$pass" | sed -e "s/--output=/>/g;s/--append=/>/g;s/--output/>/g;s/--append/>>/g");"
 EOF
 chmod +x ./kmk_sed
-echo "SED = $RPM_BUILD_DIR/%{name}/kmk_sed"  >> LocalConfig.kmk
+echo "SED = $(readlink -f ./kmk_sed)"  >> LocalConfig.kmk
 ####workaround kmk_sed --^
 ##########################
 #
