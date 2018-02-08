@@ -133,9 +133,6 @@ VirtualBox guest addition tools.
 %setup -q -c -n %{name}/%{name}
 mv %{name}-%{version}/%{name}/* . ||:
 
-# use the packaged kBuild rather than the bundled one
-rm -rf kBuild
-
 #copy kbuild config
 %__cp %{S:10} LocalConfig.kmk
 %__cp %{S:14} vboxservice.service 
@@ -159,9 +156,6 @@ echo "SED = $(readlink -f ./kmk_sed)"  >> LocalConfig.kmk
 ##########################
 #
 %build
-#ensure we dont ever use them
-rm -rf src/libs/{libpng-*,libxml2-*,libxslt-*,zlib-*,boost-*}
-
 #	--disable-kmods		don't build Linux kernel modules -  but use SUSE specific way see few lines under
 #	--nofatal		try to avoid build fail caused by missing makeself package
 ./configure \
