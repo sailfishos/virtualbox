@@ -167,7 +167,7 @@ if  $(KBUILD_VERSION_MAJOR) == 0 \
  if $(KMK_REVISION) >= 2689
   # OK.
  else
-  $(error You must update kBuild! Requires kBuild revision 2577 or later, found $(KMK_REVISION) ($(KBUILD_VERSION)))
+  $(error You must update kBuild! Requires kBuild revision 2689 or later, found $(KMK_REVISION) ($(KBUILD_VERSION)))
  endif
 else
  $(error You must update kBuild! Requires 0.1.999 or later, found $(KBUILD_VERSION))
