@@ -239,9 +239,6 @@ depmod -a %{kernel_version}
 # Create a group for accessing automounted vbox sf folders
 groupadd -r vboxsf || true
 
-%clean
-[ -d "%{buildroot}" -a "%{buildroot}" != "" ] && %__rm -rf "%{buildroot}"
-
 %files guest-tools
 %defattr(-, root, root)
 %{_bindir}/VBoxControl
