@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,11 +25,11 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DIR
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/dir.h>
 #include <iprt/path.h>
@@ -57,7 +57,7 @@ RTDECL(int) RTDirCreate(const char *pszPath, RTFMODE fMode, uint32_t fCreate)
          * Convert to UTF-16.
          */
         PRTUTF16 pwszString;
-        rc = RTStrToUtf16(pszPath, &pwszString);
+        rc = RTPathWinFromUtf8(&pwszString, pszPath, 0 /*fFlags*/);
         AssertRC(rc);
         if (RT_SUCCESS(rc))
         {
@@ -72,15 +72,23 @@ RTDECL(int) RTDirCreate(const char *pszPath, RTFMODE fMode, uint32_t fCreate)
             /*
              * Turn off indexing of directory through Windows Indexing Service
              */
-            if (RT_SUCCESS(rc))
+            /** @todo This FILE_ATTRIBUTE_NOT_CONTENT_INDEXED hack (for .VDI files,
+             *        really) may cause failures on samba shares.  That really sweet and
+             *        need to be addressed differently.  We shouldn't be doing this
+             *        unless the caller actually asks for it, must less returning failure,
+             *        for crying out loud!  This is only important a couple of places in
+             *        main, if important is the right way to put it... */
+            if (   RT_SUCCESS(rc)
+                && !(fCreate & RTDIRCREATE_FLAGS_NOT_CONTENT_INDEXED_DONT_SET))
             {
-                if (SetFileAttributesW((LPCWSTR)pwszString, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED))
+                if (   SetFileAttributesW((LPCWSTR)pwszString, FILE_ATTRIBUTE_NOT_CONTENT_INDEXED)
+                    || (fCreate & RTDIRCREATE_FLAGS_NOT_CONTENT_INDEXED_NOT_CRITICAL) )
                     rc = VINF_SUCCESS;
                 else
                     rc = RTErrConvertFromWin32(GetLastError());
             }
 
-            RTUtf16Free(pwszString);
+            RTPathWinFree(pwszString);
         }
     }
     else
@@ -100,7 +108,7 @@ RTDECL(int) RTDirRemove(const char *pszPath)
      * Convert to UTF-16.
      */
     PRTUTF16 pwszString;
-    int rc = RTStrToUtf16(pszPath, &pwszString);
+    int rc = RTPathWinFromUtf8(&pwszString, pszPath, 0 /*fFlags*/);
     AssertRC(rc);
     if (RT_SUCCESS(rc))
     {
@@ -112,7 +120,7 @@ RTDECL(int) RTDirRemove(const char *pszPath)
         else
             rc = RTErrConvertFromWin32(GetLastError());
 
-        RTUtf16Free(pwszString);
+        RTPathWinFree(pwszString);
     }
 
     LogFlow(("RTDirRemove(%p:{%s}): returns %Rrc\n", pszPath, pszPath, rc));
@@ -122,6 +130,7 @@ RTDECL(int) RTDirRemove(const char *pszPath)
 
 RTDECL(int) RTDirFlush(const char *pszPath)
 {
+    RT_NOREF_PV(pszPath);
     return VERR_NOT_SUPPORTED;
 }
 

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -58,6 +58,18 @@ typedef struct RTCRDIGESTDESC
     uint32_t            cbState;
     /** Reserved. */
     uint32_t            uReserved;
+
+    /**
+     * Allocates the digest data.
+     */
+    DECLCALLBACKMEMBER(void *, pfnNew)(void);
+
+    /**
+     * Frees the digest data.
+     *
+     * @param   pvState     The opaque message digest state.
+     */
+    DECLCALLBACKMEMBER(void, pfnFree)(void *pvState);
 
     /**
      * Updates the digest with more data.
@@ -145,7 +157,7 @@ typedef RTCRDIGESTDESC const *PCRTCRDIGESTDESC;
  *                          RTCrDigestCreate.  This is optional, fewer
  *                          algortihms are available if not specified.
  */
-RTDECL(PCRTCRDIGESTDESC) RTCrDigestFindByObjIdString(const char *pszObjId, void *ppvOpaque);
+RTDECL(PCRTCRDIGESTDESC) RTCrDigestFindByObjIdString(const char *pszObjId, void **ppvOpaque);
 
 /**
  * Finds a cryptographic hash / message digest descriptor by object identifier
@@ -153,13 +165,13 @@ RTDECL(PCRTCRDIGESTDESC) RTCrDigestFindByObjIdString(const char *pszObjId, void 
  *
  * @returns Pointer to the message digest details & vtable if found.  NULL if
  *          not found.
- * @param   pszObjId        The ASN.1 object ID of the message digest algorithm.
+ * @param   pObjId          The ASN.1 object ID of the message digest algorithm.
  * @param   ppvOpaque       Where to return an opaque implementation specfici
  *                          sub-type indicator that can be passed to
  *                          RTCrDigestCreate.  This is optional, fewer
  *                          algortihms are available if not specified.
  */
-RTDECL(PCRTCRDIGESTDESC) RTCrDigestFindByObjId(PCRTASN1OBJID pObjId, void *ppvOpaque);
+RTDECL(PCRTCRDIGESTDESC) RTCrDigestFindByObjId(PCRTASN1OBJID pObjId, void **ppvOpaque);
 
 RTDECL(PCRTCRDIGESTDESC) RTCrDigestFindByType(RTDIGESTTYPE enmDigestType);
 RTDECL(int) RTCrDigestCreateByObjIdString(PRTCRDIGEST phDigest, const char *pszObjId);
@@ -173,6 +185,7 @@ RTDECL(int) RTCrDigestReset(RTCRDIGEST hDigest);
 RTDECL(uint32_t) RTCrDigestRetain(RTCRDIGEST hDigest);
 RTDECL(uint32_t) RTCrDigestRelease(RTCRDIGEST hDigest);
 RTDECL(int) RTCrDigestUpdate(RTCRDIGEST hDigest, void const *pvData, size_t cbData);
+RTDECL(int) RTCrDigestUpdateFromVfsFile(RTCRDIGEST hDigest, RTVFSFILE hVfsFile, bool fRewindFile);
 RTDECL(int) RTCrDigestFinal(RTCRDIGEST hDigest, void *pvHash, size_t cbHash);
 RTDECL(bool) RTCrDigestMatch(RTCRDIGEST hDigest, void const *pvHash, size_t cbHash);
 RTDECL(uint8_t const *) RTCrDigestGetHash(RTCRDIGEST hDigest);
@@ -180,6 +193,35 @@ RTDECL(uint32_t) RTCrDigestGetHashSize(RTCRDIGEST hDigest);
 RTDECL(uint64_t) RTCrDigestGetConsumedSize(RTCRDIGEST hDigest);
 RTDECL(bool) RTCrDigestIsFinalized(RTCRDIGEST hDigest);
 RTDECL(RTDIGESTTYPE) RTCrDigestGetType(RTCRDIGEST hDigest);
+RTDECL(const char *) RTCrDigestGetAlgorithmOid(RTCRDIGEST hDigest);
+
+
+/**
+ * Translates an IPRT digest type value to an OID.
+ *
+ * @returns Dotted OID string on success, NULL if not translatable.
+ * @param       enmDigestType       The IPRT digest type value to convert.
+ */
+RTDECL(const char *) RTCrDigestTypeToAlgorithmOid(RTDIGESTTYPE enmDigestType);
+
+/**
+ * Translates an IPRT digest type value to a name/descriptive string.
+ *
+ * The purpose here is for human readable output rather than machine readable
+ * output, i.e. the names aren't set in stone.
+ *
+ * @returns Pointer to read-only string, NULL if unknown type.
+ * @param       enmDigestType       The IPRT digest type value to convert.
+ */
+RTDECL(const char *) RTCrDigestTypeToName(RTDIGESTTYPE enmDigestType);
+
+/**
+ * Translates an IPRT digest type value to a hash size.
+ *
+ * @returns Hash size (in bytes).
+ * @param       enmDigestType       The IPRT digest type value to convert.
+ */
+RTDECL(uint32_t) RTCrDigestTypeToHashSize(RTDIGESTTYPE enmDigestType);
 
 /** @} */
 

@@ -1,8 +1,10 @@
+/* $Id: VBoxGuestDrvInst.cpp $ */
 /** @file
- *
  * instdrvmain - Install guest drivers on NT4
- *
- * Copyright (C) 2006-2010 Oracle Corporation
+ */
+
+/*
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,8 +23,8 @@
  */
 
 
-#include <windows.h>
-#include <setupapi.h>
+#include <iprt/win/windows.h>
+#include <iprt/win/setupapi.h>
 #include <regstr.h>
 #include <DEVGUID.h>
 #include <stdio.h>
@@ -31,9 +33,9 @@
 #include "string.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /** The video service name. */
 #define  VBOXGUEST_VIDEO_NAME    "VBoxVideo"

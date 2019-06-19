@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2008-2012 Oracle Corporation
+# Copyright (C) 2008-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -86,7 +86,7 @@ VBOX_FBSD_ADD_DBG_SYM_FILES := $(addsuffix .dbgsym,$(VBOX_FBSD_ADD_STRIP_BIN))
 VBOX_FBSD_ADD_INS_FILES := $(addprefix $(VBOX_FBSD_ADD_INS_OUT_DIR)/,$(VBOX_FBSD_ADD_STRIP_BIN) $(VBOX_FBSD_ADD_STRIP_OBJ) $(VBOX_FBSD_ADD_DBG_SYM_FILES))
 VBOX_FBSD_ADD_INS_MODULES := $(addprefix $(VBOX_FBSD_ADD_INS_OUT_DIR)/module/,$(VBOX_FBSD_ADD_MODULES))
 
-# Cleanup of the the installer directory files
+# Cleanup of the installer directory files
 OTHER_CLEAN += $(VBOX_FBSD_ADD_INS_FILES)) $(VBOX_FBSD_ADD_INS_MODULES)
 
 # pattern rule for copying the debug info from the VBOX_FBSD_ADD_STRIP_BIN files to the installation directory
@@ -182,7 +182,7 @@ $(PATH_STAGE_BIN)/additions/VBoxFreeBSDAdditions.tbz: \
 		$(wildcard $(PATH_STAGE_BIN)/additions/src/*/*) \
 		$(wildcard $(PATH_STAGE_BIN)/additions/src/*/*/*) \
 		$(wildcard $(PATH_STAGE_BIN)/additions/src/*/*/*/*) \
-		$(VBOX_VERSION_STAMP)
+		$(VBOX_VERSION_STAMP) $(VBOX_SVN_REV_HEADER)
 	pkg_create \
 		-I $(VBOX_PATH_FREEBSD_ADDITION_INSTALLER)/install.sh \
 		-c $(VBOX_PATH_FREEBSD_ADDITION_INSTALLER)/pkg-comment \

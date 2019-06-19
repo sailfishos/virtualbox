@@ -1,12 +1,10 @@
 /* $Id: UIWizardImportAppPageBasic1.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardImportAppPageBasic1 class implementation
+ * VBox Qt GUI - UIWizardImportAppPageBasic1 class implementation.
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,17 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QFileInfo>
-#include <QVBoxLayout>
+# include <QFileInfo>
+# include <QVBoxLayout>
 
 /* Local includes: */
-#include "UIWizardImportAppPageBasic1.h"
-#include "UIWizardImportAppPageBasic2.h"
-#include "UIWizardImportApp.h"
-#include "VBoxGlobal.h"
-#include "VBoxFilePathSelectorWidget.h"
-#include "QIRichTextLabel.h"
+# include "UIWizardImportAppPageBasic1.h"
+# include "UIWizardImportAppPageBasic2.h"
+# include "UIWizardImportApp.h"
+# include "VBoxGlobal.h"
+# include "UIEmptyFilePathSelector.h"
+# include "QIRichTextLabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardImportAppPage1::UIWizardImportAppPage1()
 {
@@ -39,11 +44,11 @@ UIWizardImportAppPageBasic1::UIWizardImportAppPageBasic1()
     QVBoxLayout *pMainLayout = new QVBoxLayout(this);
     {
         m_pLabel = new QIRichTextLabel(this);
-        m_pFileSelector = new VBoxEmptyFileSelector(this);
+        m_pFileSelector = new UIEmptyFilePathSelector(this);
         {
             m_pFileSelector->setHomeDir(vboxGlobal().documentsPath());
-            m_pFileSelector->setMode(VBoxFilePathSelectorWidget::Mode_File_Open);
-            m_pFileSelector->setButtonPosition(VBoxEmptyFileSelector::RightPosition);
+            m_pFileSelector->setMode(UIEmptyFilePathSelector::Mode_File_Open);
+            m_pFileSelector->setButtonPosition(UIEmptyFilePathSelector::RightPosition);
             m_pFileSelector->setEditable(true);
         }
         pMainLayout->addWidget(m_pLabel);

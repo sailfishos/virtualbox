@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -203,8 +203,9 @@ typedef struct PDMASYNCCOMPLETIONENDPOINT
     R3PTRTYPE(PPDMASYNCCOMPLETIONEPCLASS)       pEpClass;
     /** Template associated with this endpoint. */
     PPDMASYNCCOMPLETIONTEMPLATE                 pTemplate;
-    /** Reference count. */
-    unsigned                                    cUsers;
+    /** Statistics ID for endpoints having a similar URI (same filename for example)
+     * to avoid assertions. */
+    unsigned                                    iStatId;
     /** URI describing the endpoint */
     char                                       *pszUri;
     /** Pointer to the assigned bandwidth manager. */

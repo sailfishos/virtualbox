@@ -1,12 +1,10 @@
 /* $Id: UIFilmContainer.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIFilmContainer class implementation
+ * VBox Qt GUI - UIFilmContainer class implementation.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QHBoxLayout>
-#include <QVBoxLayout>
-#include <QScrollArea>
-#include <QScrollBar>
-#include <QCheckBox>
-#include <QPainter>
+# include <QHBoxLayout>
+# include <QVBoxLayout>
+# include <QScrollArea>
+# include <QScrollBar>
+# include <QStyle>
+# include <QCheckBox>
+# include <QPainter>
 
 /* GUI includes: */
-#include "UIFilmContainer.h"
+# include "UIFilmContainer.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIFilmContainer::UIFilmContainer(QWidget *pParent /* = 0*/)
     : QWidget(pParent)
@@ -62,7 +68,11 @@ void UIFilmContainer::setValue(const QVector<BOOL> &value)
         {
             /* Configure viewport layout: */
             pWidgetLayout->setMargin(0);
-            pWidgetLayout->setSpacing(4);
+#ifdef VBOX_WS_MAC
+            pWidgetLayout->setSpacing(5);
+#else
+            pWidgetLayout->setSpacing(qApp->style()->pixelMetric(QStyle::PM_LayoutHorizontalSpacing) / 2);
+#endif
             /* Create new widgets according passed vector: */
             for (int iScreenIndex = 0; iScreenIndex < value.size(); ++iScreenIndex)
             {
@@ -140,7 +150,7 @@ void UIFilm::retranslateUi()
 {
     /* Translate check-box: */
     m_pCheckBox->setText(QApplication::translate("UIMachineSettingsDisplay", "Screen %1").arg(m_iScreenIndex + 1));
-    m_pCheckBox->setWhatsThis(QApplication::translate("UIMachineSettingsDisplay", "Enable video recording for screen %1.").arg(m_iScreenIndex + 1));
+    m_pCheckBox->setWhatsThis(QApplication::translate("UIMachineSettingsDisplay", "When checked, enables video recording for screen %1.").arg(m_iScreenIndex + 1));
 }
 
 void UIFilm::prepare()
@@ -161,11 +171,9 @@ void UIFilm::prepareLayout()
     m_pMainLayout = new QVBoxLayout(this);
 
     /* Configure layout: */
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     m_pMainLayout->setContentsMargins(10, 10, 15, 10);
-#else /* Q_WS_MAC */
-    m_pMainLayout->setContentsMargins(10, 10, 10, 10);
-#endif /* !Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
     /* Add strech: */
     m_pMainLayout->addStretch();
@@ -179,11 +187,11 @@ void UIFilm::prepareCheckBox()
 
     /* Configure font: */
     QFont currentFont = m_pCheckBox->font();
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     currentFont.setPointSize(currentFont.pointSize() - 2);
-#else /* Q_WS_MAC */
+#else /* VBOX_WS_MAC */
     currentFont.setPointSize(currentFont.pointSize() - 1);
-#endif /* !Q_WS_MAC */
+#endif /* !VBOX_WS_MAC */
     m_pCheckBox->setFont(currentFont);
 
     /* Insert check-box into layout: */

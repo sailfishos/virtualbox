@@ -1,12 +1,10 @@
 /* $Id: UIWarningPane.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWarningPane class implementation
+ * VBox Qt GUI - UIWarningPane class implementation.
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,18 +15,25 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QEvent>
-#include <QTimer>
+# include <QHBoxLayout>
+# include <QLabel>
+# include <QEvent>
+# include <QTimer>
 
 /* GUI includes: */
-#include "UIWarningPane.h"
-#include "QIWidgetValidator.h"
+# include "UIWarningPane.h"
+# include "QIWidgetValidator.h"
 
 /* Other VBox includes: */
-#include <VBox/sup.h>
+# include <VBox/sup.h>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWarningPane::UIWarningPane(QWidget *pParent)
     : QWidget(pParent)
@@ -101,7 +106,6 @@ void UIWarningPane::prepareContent()
     {
         /* Configure layout: */
         pMainLayout->setContentsMargins(0, 0, 0, 0);
-        pMainLayout->setSpacing(10);
         /* Add left stretch: */
         pMainLayout->addStretch();
         /* Create text-label: */
@@ -115,7 +119,6 @@ void UIWarningPane::prepareContent()
         {
             /* Configure layout: */
             m_pIconLayout->setContentsMargins(0, 0, 0, 0);
-            m_pIconLayout->setSpacing(6);
             /* Add into main-layout: */
             pMainLayout->addLayout(m_pIconLayout);
         }

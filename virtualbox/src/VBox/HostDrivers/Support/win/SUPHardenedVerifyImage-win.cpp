@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef IN_RING0
 # define IPRT_NT_MAP_TO_ZW
 # include <iprt/nt/nt.h>
@@ -59,9 +60,9 @@
 #include "win/SUPHardenedVerify-win.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The size of static hash (output) buffers.
  * Avoids dynamic allocations and cleanups for of small buffers as well as extra
  * calls for getting the appropriate buffer size.  The largest digest in regular
@@ -75,9 +76,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 #ifdef IN_RING3
 typedef LONG (WINAPI * PFNWINVERIFYTRUST)(HWND hwnd, GUID const *pgActionID, PVOID pWVTData);
@@ -97,12 +98,15 @@ typedef HCERTSTORE (WINAPI *PFNCERTOPENSTORE)(PCSTR pszStoreProvider, DWORD dwEn
                                               DWORD dwFlags, const void *pvParam);
 typedef BOOL (WINAPI *PFNCERTCLOSESTORE)(HCERTSTORE hCertStore, DWORD dwFlags);
 typedef PCCERT_CONTEXT (WINAPI *PFNCERTENUMCERTIFICATESINSTORE)(HCERTSTORE hCertStore, PCCERT_CONTEXT pPrevCertContext);
+
+typedef NTSTATUS (WINAPI *PFNBCRYPTOPENALGORTIHMPROVIDER)(BCRYPT_ALG_HANDLE *phAlgo, PCWSTR pwszAlgoId,
+                                                          PCWSTR pwszImpl, DWORD dwFlags);
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The build certificate. */
 static RTCRX509CERTIFICATE  g_BuildX509Cert;
 
@@ -135,6 +139,16 @@ SUPSYSROOTDIRBUF            g_CommonFilesNtPath;
 SUPSYSROOTDIRBUF            g_CommonFilesX86NtPath;
 # endif
 #endif /* IN_RING3 && !VBOX_PERMIT_MORE*/
+
+/**
+ * Blacklisted DLL names.
+ */
+const RTSTRTUPLE g_aSupNtViBlacklistedDlls[] =
+{
+    { RT_STR_TUPLE("SCROBJ.dll") },
+    { NULL, 0 } /* terminator entry */
+};
+
 
 static union
 {
@@ -192,9 +206,9 @@ static uint32_t volatile                g_idActiveThread = UINT32_MAX;
 #endif
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef IN_RING3
 static int supR3HardNtViCallWinVerifyTrust(HANDLE hFile, PCRTUTF16 pwszName, uint32_t fFlags, PRTERRINFO pErrInfo,
                                            PFNWINVERIFYTRUST pfnWinVerifyTrust, HRESULT *phrcWinVerifyTrust);
@@ -284,7 +298,7 @@ static DECLCALLBACK(RTFOFF) supHardNtViRdrTell(PRTLDRREADER pReader)
 
 
 /** @copydoc RTLDRREADER::pfnSize */
-static DECLCALLBACK(RTFOFF) supHardNtViRdrSize(PRTLDRREADER pReader)
+static DECLCALLBACK(uint64_t) supHardNtViRdrSize(PRTLDRREADER pReader)
 {
     PSUPHNTVIRDR pNtViRdr = (PSUPHNTVIRDR)pReader;
     Assert(pNtViRdr->Core.uMagic == RTLDRREADER_MAGIC);
@@ -303,6 +317,7 @@ static DECLCALLBACK(const char *) supHardNtViRdrLogName(PRTLDRREADER pReader)
 /** @copydoc RTLDRREADER::pfnMap */
 static DECLCALLBACK(int) supHardNtViRdrMap(PRTLDRREADER pReader, const void **ppvBits)
 {
+    RT_NOREF2(pReader, ppvBits);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -310,6 +325,7 @@ static DECLCALLBACK(int) supHardNtViRdrMap(PRTLDRREADER pReader, const void **pp
 /** @copydoc RTLDRREADER::pfnUnmap */
 static DECLCALLBACK(int) supHardNtViRdrUnmap(PRTLDRREADER pReader, const void *pvBits)
 {
+    RT_NOREF2(pReader, pvBits);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -420,7 +436,7 @@ DECLHIDDEN(int) supHardNtViRdrCreate(HANDLE hFile, PCRTUTF16 pwszName, uint32_t 
     pNtViRdr->hFile           = hFile;
     pNtViRdr->hEvent          = hEvent;
     pNtViRdr->off             = 0;
-    pNtViRdr->cbFile          = StdInfo.EndOfFile.QuadPart;
+    pNtViRdr->cbFile          = (uint64_t)StdInfo.EndOfFile.QuadPart;
     pNtViRdr->fFlags          = fFlags;
     *ppNtViRdr = pNtViRdr;
     return VINF_SUCCESS;
@@ -491,6 +507,7 @@ static bool supHardNtViCheckIsOwnedByTrustedInstallerOrSimilar(HANDLE hFile, PCR
 
     SUP_DPRINTF(("%ls: Owner is not trusted installer (%.*Rhxs)\n",
                  pwszName, ((uint8_t *)pOwner)[1] /*SubAuthorityCount*/ * sizeof(ULONG) + 8, pOwner));
+    RT_NOREF1(pwszName);
     return false;
 }
 
@@ -553,6 +570,7 @@ static bool supHardViUtf16PathIsEqual(PCRTUTF16 pwszLeft, const char *pszRight)
 }
 
 
+#if 0 /* unused */
 /**
  * Simple case insensitive UTF-16 / ASCII ends-with path predicate.
  *
@@ -568,14 +586,15 @@ static bool supHardViUtf16PathEndsWith(PCRTUTF16 pwsz, const char *pszSuffix)
         return supHardViUtf16PathIsEqual(pwsz + cwc - cchSuffix, pszSuffix);
     return false;
 }
+#endif
 
 
 /**
  * Simple case insensitive UTF-16 / ASCII starts-with path predicate.
  *
  * @returns true if starts with given string, false if not.
- * @param   pwsz                The UTF-16 path string.
- * @param   pszPrefix           The ascii prefix string.
+ * @param   pwszLeft            The UTF-16 path string.
+ * @param   pszRight            The ascii prefix string.
  */
 static bool supHardViUtf16PathStartsWithAscii(PCRTUTF16 pwszLeft, const char *pszRight)
 {
@@ -670,7 +689,7 @@ DECLHIDDEN(bool) supHardViUniStrPathStartsWithUniStr(UNICODE_STRING const *pUniS
 }
 
 
-
+#ifndef IN_RING0
 /**
  * Counts slashes in the given UTF-8 path string.
  *
@@ -686,6 +705,7 @@ static uint32_t supHardViUtf16PathCountSlashes(PCRTUTF16 pwsz)
             cSlashes++;
     return cSlashes;
 }
+#endif
 
 
 #ifdef VBOX_PERMIT_MORE
@@ -728,6 +748,8 @@ DECLHIDDEN(bool) supHardViIsAppPatchDir(PCRTUTF16 pwszPath, uint32_t cwcName)
  */
 static int supHardNtViCheckIfNotSignedOk(RTLDRMOD hLdrMod, PCRTUTF16 pwszName, uint32_t fFlags, HANDLE hFile, int rc)
 {
+    RT_NOREF1(hLdrMod);
+
     if (fFlags & (SUPHNTVI_F_REQUIRE_BUILD_CERT | SUPHNTVI_F_REQUIRE_KERNEL_CODE_SIGNING))
         return rc;
 
@@ -779,7 +801,7 @@ static int supHardNtViCheckIfNotSignedOk(RTLDRMOD hLdrMod, PCRTUTF16 pwszName, u
         if (supHardViUtf16PathIsEqual(pwsz, "apisetschema.dll"))
             return IS_W70() ? VINF_LDRVI_NOT_SIGNED : rc;
         if (supHardViUtf16PathIsEqual(pwsz, "apphelp.dll"))
-            return uNtVer < SUP_MAKE_NT_VER_SIMPLE(6, 4) ? VINF_LDRVI_NOT_SIGNED : rc;
+            return VINF_LDRVI_NOT_SIGNED; /* So far, never signed... */
 #ifdef VBOX_PERMIT_VERIFIER_DLL
         if (supHardViUtf16PathIsEqual(pwsz, "verifier.dll"))
             return uNtVer < SUP_NT_VER_W81 ? VINF_LDRVI_NOT_SIGNED : rc;
@@ -916,7 +938,17 @@ static int supHardNtViCheckIfNotSignedOk(RTLDRMOD hLdrMod, PCRTUTF16 pwszName, u
 
 
 /**
- * @callback_method_impl{RTCRPKCS7VERIFYCERTCALLBACK,
+ * @callback_method_impl{FNRTDUMPPRINTFV, Formats into RTERRINFO. }
+ */
+static DECLCALLBACK(void) supHardNtViAsn1DumpToErrInfo(void *pvUser, const char *pszFormat, va_list va)
+{
+    PRTERRINFO pErrInfo = (PRTERRINFO)pvUser;
+    RTErrInfoAddV(pErrInfo, pErrInfo->rc, pszFormat, va);
+}
+
+
+/**
+ * @callback_method_impl{FNRTCRPKCS7VERIFYCERTCALLBACK,
  * Standard code signing.  Use this for Microsoft SPC.}
  */
 static DECLCALLBACK(int) supHardNtViCertVerifyCallback(PCRTCRX509CERTIFICATE pCert, RTCRX509CERTPATHS hCertPaths,
@@ -934,7 +966,15 @@ static DECLCALLBACK(int) supHardNtViCertVerifyCallback(PCRTCRX509CERTIFICATE pCe
     {
         if (RTCrX509Certificate_Compare(pCert, &g_BuildX509Cert) == 0) /* healthy paranoia */
             return VINF_SUCCESS;
-        return RTErrInfoSetF(pErrInfo, VERR_SUP_VP_NOT_BUILD_CERT_IPE, "Not valid kernel code signature.");
+        int rc = RTErrInfoSetF(pErrInfo, VERR_SUP_VP_NOT_BUILD_CERT_IPE, "Not valid kernel code signature (fFlags=%#x).", fFlags);
+        if (pErrInfo)
+        {
+            RTErrInfoAdd(pErrInfo, rc, "\n\nExe cert:\n");
+            RTAsn1Dump(&pCert->SeqCore.Asn1Core, 0 /*fFlags*/, 0 /*uLevel*/, supHardNtViAsn1DumpToErrInfo, pErrInfo);
+            RTErrInfoAdd(pErrInfo, rc, "\n\nBuild cert:\n");
+            RTAsn1Dump(&g_BuildX509Cert.SeqCore.Asn1Core, 0 /*fFlags*/, 0 /*uLevel*/, supHardNtViAsn1DumpToErrInfo, pErrInfo);
+        }
+        return rc;
     }
 
     /*
@@ -1012,8 +1052,11 @@ static DECLCALLBACK(int) supHardNtViCertVerifyCallback(PCRTCRX509CERTIFICATE pCe
 
 static DECLCALLBACK(int) supHardNtViCallback(RTLDRMOD hLdrMod, RTLDRSIGNATURETYPE enmSignature,
                                              void const *pvSignature, size_t cbSignature,
+                                             void const *pvExternalData, size_t cbExternalData,
                                              PRTERRINFO pErrInfo, void *pvUser)
 {
+    RT_NOREF(hLdrMod, enmSignature, pvExternalData, cbExternalData);
+
     /*
      * Check out the input.
      */
@@ -1024,7 +1067,9 @@ static DECLCALLBACK(int) supHardNtViCallback(RTLDRMOD hLdrMod, RTLDRSIGNATURETYP
     PCRTCRPKCS7CONTENTINFO pContentInfo = (PCRTCRPKCS7CONTENTINFO)pvSignature;
     AssertReturn(RTCrPkcs7ContentInfo_IsSignedData(pContentInfo), VERR_INTERNAL_ERROR_5);
     AssertReturn(pContentInfo->u.pSignedData->SignerInfos.cItems == 1, VERR_INTERNAL_ERROR_5);
-    PCRTCRPKCS7SIGNERINFO pSignerInfo = &pContentInfo->u.pSignedData->SignerInfos.paItems[0];
+    PCRTCRPKCS7SIGNERINFO pSignerInfo = pContentInfo->u.pSignedData->SignerInfos.papItems[0];
+
+    AssertReturn(!pvExternalData, VERR_INTERNAL_ERROR_5);
 
     /*
      * If special certificate requirements, check them out before validating
@@ -1058,6 +1103,38 @@ static DECLCALLBACK(int) supHardNtViCallback(RTLDRMOD hLdrMod, RTLDRSIGNATURETYP
         fFlags |= RTCRPKCS7VERIFY_SD_F_USE_SIGNING_TIME_UNVERIFIED | RTCRPKCS7VERIFY_SD_F_USE_MS_TIMESTAMP_UNVERIFIED;
     return RTCrPkcs7VerifySignedData(pContentInfo, fFlags, g_hSpcAndNtKernelSuppStore, g_hSpcAndNtKernelRootStore,
                                      &ValidationTime, supHardNtViCertVerifyCallback, pNtViRdr, pErrInfo);
+}
+
+
+/**
+ * RTTimeNow equivaltent that handles ring-3 where we cannot use it.
+ *
+ * @returns pNow
+ * @param   pNow                Where to return the current time.
+ */
+static PRTTIMESPEC supHardNtTimeNow(PRTTIMESPEC pNow)
+{
+#ifdef IN_RING3
+    /*
+     * Just read system time.
+     */
+    KUSER_SHARED_DATA volatile *pUserSharedData = (KUSER_SHARED_DATA volatile *)MM_SHARED_USER_DATA_VA;
+# ifdef RT_ARCH_AMD64
+    uint64_t uRet = *(uint64_t volatile *)&pUserSharedData->SystemTime; /* This is what KeQuerySystemTime does (missaligned). */
+    return RTTimeSpecSetNtTime(pNow, uRet);
+# else
+
+    LARGE_INTEGER NtTime;
+    do
+    {
+        NtTime.HighPart = pUserSharedData->SystemTime.High1Time;
+        NtTime.LowPart  = pUserSharedData->SystemTime.LowPart;
+    } while (pUserSharedData->SystemTime.High2Time != NtTime.HighPart);
+    return RTTimeSpecSetNtTime(pNow, NtTime.QuadPart);
+# endif
+#else  /* IN_RING0 */
+    return RTTimeNow(pNow);
+#endif /* IN_RING0 */
 }
 
 
@@ -1108,7 +1185,7 @@ DECLHIDDEN(int) supHardenedWinVerifyImageByLdrMod(RTLDRMOD hLdrMod, PCRTUTF16 pw
      * In one report by 'thor' the WinSxS resident comctl32.dll was owned by
      * SECURITY_BUILTIN_DOMAIN_RID + DOMAIN_ALIAS_RID_ADMINS (with 4.3.16).
      */
-    /** @todo Since we're now allowing Builtin\Administrators after all, perhaps we
+    /** @todo Since we're now allowing Builtin\\Administrators after all, perhaps we
      *        could drop these system32 + winsxs hacks?? */
     if (   (pNtViRdr->fFlags & SUPHNTVI_F_TRUSTED_INSTALLER_OWNER)
         && !supHardNtViCheckIsOwnedByTrustedInstallerOrSimilar(pNtViRdr->hFile, pwszName))
@@ -1140,6 +1217,10 @@ DECLHIDDEN(int) supHardenedWinVerifyImageByLdrMod(RTLDRMOD hLdrMod, PCRTUTF16 pw
      *         use this as a minimum timestamp for further build cert
      *         validations.  This works around issues with old DLLs that
      *         we sign against with our certificate (crt, sdl, qt).
+     *
+     * Update: If the validation fails, retry with the current timestamp. This
+     *         is a workaround for NTDLL.DLL in build 14971 having a weird
+     *         timestamp: 0xDF1E957E (Sat Aug 14 14:05:18 2088).
      */
     int rc = RTLdrQueryProp(hLdrMod, RTLDRPROP_TIMESTAMP_SECONDS, &pNtViRdr->uTimestamp, sizeof(pNtViRdr->uTimestamp));
     if (RT_SUCCESS(rc))
@@ -1157,6 +1238,16 @@ DECLHIDDEN(int) supHardenedWinVerifyImageByLdrMod(RTLDRMOD hLdrMod, PCRTUTF16 pw
         if ((pNtViRdr->fFlags & SUPHNTVI_F_REQUIRE_BUILD_CERT) && g_uBuildTimestampHack == 0 && RT_SUCCESS(rc))
             g_uBuildTimestampHack = pNtViRdr->uTimestamp;
 #endif
+
+        if (rc == VERR_CR_X509_CPV_NOT_VALID_AT_TIME)
+        {
+            RTTIMESPEC Now;
+            uint64_t uOld = pNtViRdr->uTimestamp;
+            pNtViRdr->uTimestamp = RTTimeSpecGetSeconds(supHardNtTimeNow(&Now));
+            SUP_DPRINTF(("%ls: VERR_CR_X509_CPV_NOT_VALID_AT_TIME for %#RX64; retrying against current time: %#RX64.\n",
+                         pwszName, uOld, pNtViRdr->uTimestamp)); NOREF(uOld);
+            rc = RTLdrVerifySignature(hLdrMod, supHardNtViCallback, pNtViRdr, pErrInfo);
+        }
 
         /*
          * Microsoft doesn't sign a whole bunch of DLLs, so we have to
@@ -1191,7 +1282,48 @@ DECLHIDDEN(int) supHardenedWinVerifyImageByLdrMod(RTLDRMOD hLdrMod, PCRTUTF16 pw
      */
     if (!fAvoidWinVerifyTrust)
         rc = supHardenedWinVerifyImageTrust(pNtViRdr->hFile, pwszName, pNtViRdr->fFlags, rc, pfWinVerifyTrust, pErrInfo);
+#else
+    RT_NOREF1(fAvoidWinVerifyTrust);
 #endif
+
+    /*
+     * Check for blacklisted DLLs, both internal name and filename.
+     */
+    if (RT_SUCCESS(rc))
+    {
+        size_t const cwcName = RTUtf16Len(pwszName);
+        char         szIntName[64];
+        int rc2 = RTLdrQueryProp(hLdrMod, RTLDRPROP_INTERNAL_NAME, szIntName, sizeof(szIntName));
+        if (RT_SUCCESS(rc2))
+        {
+            size_t const cchIntName = strlen(szIntName);
+            for (unsigned i = 0; g_aSupNtViBlacklistedDlls[i].psz != NULL; i++)
+                if (   cchIntName == g_aSupNtViBlacklistedDlls[i].cch
+                    && RTStrICmpAscii(szIntName, g_aSupNtViBlacklistedDlls[i].psz) == 0)
+                {
+                    rc = RTErrInfoSetF(pErrInfo, VERR_SUP_VP_UNDESIRABLE_MODULE,
+                                       "The image '%ls' is listed as undesirable.", pwszName);
+                    break;
+                }
+        }
+        if (RT_SUCCESS(rc))
+        {
+            for (unsigned i = 0; g_aSupNtViBlacklistedDlls[i].psz != NULL; i++)
+                if (cwcName >= g_aSupNtViBlacklistedDlls[i].cch)
+                {
+                    PCRTUTF16 pwszTmp = &pwszName[cwcName - g_aSupNtViBlacklistedDlls[i].cch];
+                    if (   (   cwcName == g_aSupNtViBlacklistedDlls[i].cch
+                            || pwszTmp[-1] == '\\'
+                            || pwszTmp[-1] == '/')
+                        && RTUtf16ICmpAscii(pwszTmp, g_aSupNtViBlacklistedDlls[i].psz) == 0)
+                    {
+                        rc = RTErrInfoSetF(pErrInfo, VERR_SUP_VP_UNDESIRABLE_MODULE,
+                                           "The image '%ls' is listed as undesirable.", pwszName);
+                        break;
+                    }
+                }
+        }
+    }
 
 #ifdef IN_SUP_HARDENED_R3
     /*
@@ -1250,7 +1382,7 @@ DECLHIDDEN(int) supHardenedWinVerifyImageByHandle(HANDLE hFile, PCRTUTF16 pwszNa
             supHardNtViRdrDestroy(&pNtViRdr->Core);
     }
     SUP_DPRINTF(("supHardenedWinVerifyImageByHandle: -> %d (%ls)%s\n",
-                 rc, pwszName, pfWinVerifyTrust && *pfWinVerifyTrust ? "WinVerifyTrust" : ""));
+                 rc, pwszName, pfWinVerifyTrust && *pfWinVerifyTrust ? " WinVerifyTrust" : ""));
     return rc;
 }
 
@@ -1441,6 +1573,7 @@ static int supHardNtViCertStoreInit(PRTCRSTORE phStore,
                                     PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
     AssertReturn(*phStore == NIL_RTCRSTORE, VERR_WRONG_ORDER);
+    RT_NOREF1(pszErrorTag);
 
     int rc = RTCrStoreCreateInMem(phStore, cCerts1 + cCerts2);
     if (RT_FAILURE(rc))
@@ -1905,10 +2038,11 @@ static bool supR3HardenedWinIsDesiredRootCA(PCRTCRX509CERTIFICATE pCert)
 /**
  * Loads a module in the system32 directory.
  *
- * @returns Module handle on success. Won't return on faliure.
+ * @returns Module handle on success. Won't return on failure if fMandatory = true.
  * @param   pszName             The name of the DLL to load.
+ * @param   fMandatory          Whether the library is mandatory.
  */
-DECLHIDDEN(HMODULE) supR3HardenedWinLoadSystem32Dll(const char *pszName)
+DECLHIDDEN(HMODULE) supR3HardenedWinLoadSystem32Dll(const char *pszName, bool fMandatory)
 {
     WCHAR wszName[200+60];
     UINT cwcDir = GetSystemDirectoryW(wszName, RT_ELEMENTS(wszName) - 60);
@@ -1927,7 +2061,8 @@ DECLHIDDEN(HMODULE) supR3HardenedWinLoadSystem32Dll(const char *pszName)
         fFlags = 0;
         hMod = LoadLibraryExW(wszName, NULL, fFlags);
     }
-    if (hMod == NULL)
+    if (   hMod == NULL
+        && fMandatory)
         supR3HardenedFatal("Error loading '%s': %u [%ls]", pszName, RtlGetLastWin32Error(), wszName);
     return hMod;
 }
@@ -1946,7 +2081,7 @@ static void supR3HardenedWinRetrieveTrustedRootCAs(void)
     /*
      * Load crypt32.dll and resolve the APIs we need.
      */
-    HMODULE hCrypt32 = supR3HardenedWinLoadSystem32Dll("crypt32.dll");
+    HMODULE hCrypt32 = supR3HardenedWinLoadSystem32Dll("crypt32.dll", true /*fMandatory*/);
 
 #define RESOLVE_CRYPT32_API(a_Name, a_pfnType) \
     a_pfnType pfn##a_Name = (a_pfnType)GetProcAddress(hCrypt32, #a_Name); \
@@ -2033,9 +2168,9 @@ DECLHIDDEN(void) supR3HardenedWinResolveVerifyTrustApiAndHookThreadCreation(cons
      * irreversably disabling most (if not all) debug events for them.
      */
     char szPath[RTPATH_MAX];
-    supR3HardenedPathSharedLibs(szPath, sizeof(szPath) - sizeof("/VBoxSupLib.DLL"));
+    supR3HardenedPathAppSharedLibs(szPath, sizeof(szPath) - sizeof("/VBoxSupLib.DLL"));
     suplibHardenedStrCat(szPath, "/VBoxSupLib.DLL");
-    HMODULE hSupLibMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, true /*fSystem32Only*/);
+    HMODULE hSupLibMod = (HMODULE)supR3HardenedWinLoadLibrary(szPath, true /*fSystem32Only*/, 0 /*fMainFlags*/);
     if (hSupLibMod == NULL)
         supR3HardenedFatal("Error loading '%s': %u", szPath, RtlGetLastWin32Error());
 # endif
@@ -2050,9 +2185,9 @@ DECLHIDDEN(void) supR3HardenedWinResolveVerifyTrustApiAndHookThreadCreation(cons
         supR3HardenedError(RtlGetLastWin32Error(), false /*fFatal*/, "TlsAlloc failed");
 
     /*
-     * Resolve it.
+     * Resolve the imports we need.
      */
-    HMODULE hWintrust = supR3HardenedWinLoadSystem32Dll("Wintrust.dll");
+    HMODULE hWintrust = supR3HardenedWinLoadSystem32Dll("Wintrust.dll", true /*fMandatory*/);
 #define RESOLVE_CRYPT_API(a_Name, a_pfnType, a_uMinWinVer) \
     do { \
         g_pfn##a_Name = (a_pfnType)GetProcAddress(hWintrust, #a_Name); \
@@ -2074,12 +2209,48 @@ DECLHIDDEN(void) supR3HardenedWinResolveVerifyTrustApiAndHookThreadCreation(cons
     RESOLVE_CRYPT_API(CryptCATAdminAcquireContext2,          PFNCRYPTCATADMINACQUIRECONTEXT2,         SUP_NT_VER_W80);
     RESOLVE_CRYPT_API(CryptCATAdminCalcHashFromFileHandle2,  PFNCRYPTCATADMINCALCHASHFROMFILEHANDLE2, SUP_NT_VER_W80);
 
-    /*
-     * Call it on ourselves and ntdll to make sure it loads all the providers
-     * now, we would otherwise geting into recursive trouble in the
-     * NtCreateSection hook.
-     */
 # ifdef IN_SUP_HARDENED_R3
+    /*
+     * Load bcrypt.dll and instantiate a few hashing and signing providers to
+     * make sure the providers are cached for later us.  Avoid recursion issues.
+     */
+    HMODULE hBCrypt = supR3HardenedWinLoadSystem32Dll("bcrypt.dll", false /*fMandatory*/);
+    if (hBCrypt)
+    {
+        PFNBCRYPTOPENALGORTIHMPROVIDER pfnOpenAlgoProvider;
+        pfnOpenAlgoProvider = (PFNBCRYPTOPENALGORTIHMPROVIDER)GetProcAddress(hBCrypt, "BCryptOpenAlgorithmProvider");
+        if (pfnOpenAlgoProvider)
+        {
+            SUP_DPRINTF(("bcrypt.dll loaded at %p, BCryptOpenAlgorithmProvider at %p, preloading providers:\n",
+                         hBCrypt, pfnOpenAlgoProvider));
+#  define PRELOAD_ALGO_PROVIDER(a_Name) \
+                do { \
+                    BCRYPT_ALG_HANDLE hAlgo = NULL; \
+                    NTSTATUS rcNt = pfnOpenAlgoProvider(&hAlgo, a_Name, NULL, 0); \
+                    SUP_DPRINTF(("%sBCryptOpenAlgorithmProvider(,'%ls',0,0) -> %#x (hAlgo=%p)\n", \
+                                 NT_SUCCESS(rcNt) ? "    " : "warning: ", a_Name, rcNt, hAlgo)); \
+                } while (0)
+            PRELOAD_ALGO_PROVIDER(BCRYPT_MD2_ALGORITHM);
+            PRELOAD_ALGO_PROVIDER(BCRYPT_MD4_ALGORITHM);
+            PRELOAD_ALGO_PROVIDER(BCRYPT_MD5_ALGORITHM);
+            PRELOAD_ALGO_PROVIDER(BCRYPT_SHA1_ALGORITHM);
+            PRELOAD_ALGO_PROVIDER(BCRYPT_SHA256_ALGORITHM);
+            PRELOAD_ALGO_PROVIDER(BCRYPT_SHA512_ALGORITHM);
+            PRELOAD_ALGO_PROVIDER(BCRYPT_RSA_ALGORITHM);
+            PRELOAD_ALGO_PROVIDER(BCRYPT_DSA_ALGORITHM);
+#  undef PRELOAD_ALGO_PROVIDER
+        }
+        else
+            SUP_DPRINTF(("Warning! Failed to find BCryptOpenAlgorithmProvider in bcrypt.dll\n"));
+    }
+    else
+        SUP_DPRINTF(("Warning! Failed to load bcrypt.dll\n"));
+
+    /*
+     * Call the verification API on ourselves and ntdll to make sure it works
+     * and loads more stuff it needs, preventing any recursive fun we'd run
+     * into after we set g_pfnWinVerifyTrust.
+     */
     RTERRINFOSTATIC ErrInfoStatic;
     RTErrInfoInitStatic(&ErrInfoStatic);
     int rc = supR3HardNtViCallWinVerifyTrust(NULL, g_SupLibHardenedExeNtPath.UniStr.Buffer, 0,
@@ -2087,6 +2258,8 @@ DECLHIDDEN(void) supR3HardenedWinResolveVerifyTrustApiAndHookThreadCreation(cons
     if (RT_FAILURE(rc))
         supR3HardenedFatalMsg(pszProgName, kSupInitOp_Integrity, rc,
                               "WinVerifyTrust failed on stub executable: %s", ErrInfoStatic.szMsg);
+# else
+    RT_NOREF1(pszProgName);
 # endif
 
     if (g_uNtVerCombined >= SUP_MAKE_NT_VER_SIMPLE(6, 0)) /* ntdll isn't signed on XP, assuming this is the case on W2K3 for now. */
@@ -2148,6 +2321,7 @@ static int supR3HardNtViNtToWinPath(PCRTUTF16 pwszNtName, PCRTUTF16 *ppwszWinPat
 static int supR3HardNtViCallWinVerifyTrust(HANDLE hFile, PCRTUTF16 pwszName, uint32_t fFlags, PRTERRINFO pErrInfo,
                                            PFNWINVERIFYTRUST pfnWinVerifyTrust, HRESULT *phrcWinVerifyTrust)
 {
+    RT_NOREF1(fFlags);
     if (phrcWinVerifyTrust)
         *phrcWinVerifyTrust = S_OK;
 
@@ -2215,8 +2389,24 @@ static int supR3HardNtViCallWinVerifyTrust(HANDLE hFile, PCRTUTF16 pwszName, uin
             case TRUST_E_NOSIGNATURE:             pszErrConst = "TRUST_E_NOSIGNATURE";          break;
             case TRUST_E_FAIL:                    pszErrConst = "TRUST_E_FAIL";                 break;
             case TRUST_E_EXPLICIT_DISTRUST:       pszErrConst = "TRUST_E_EXPLICIT_DISTRUST";    break;
+            case CERT_E_EXPIRED:                  pszErrConst = "CERT_E_EXPIRED";               break;
+            case CERT_E_VALIDITYPERIODNESTING:    pszErrConst = "CERT_E_VALIDITYPERIODNESTING"; break;
+            case CERT_E_ROLE:                     pszErrConst = "CERT_E_ROLE";                  break;
+            case CERT_E_PATHLENCONST:             pszErrConst = "CERT_E_PATHLENCONST";          break;
+            case CERT_E_CRITICAL:                 pszErrConst = "CERT_E_CRITICAL";              break;
+            case CERT_E_PURPOSE:                  pszErrConst = "CERT_E_PURPOSE";               break;
+            case CERT_E_ISSUERCHAINING:           pszErrConst = "CERT_E_ISSUERCHAINING";        break;
+            case CERT_E_MALFORMED:                pszErrConst = "CERT_E_MALFORMED";             break;
+            case CERT_E_UNTRUSTEDROOT:            pszErrConst = "CERT_E_UNTRUSTEDROOT";         break;
             case CERT_E_CHAINING:                 pszErrConst = "CERT_E_CHAINING";              break;
+            case CERT_E_REVOKED:                  pszErrConst = "CERT_E_REVOKED";               break;
+            case CERT_E_UNTRUSTEDTESTROOT:        pszErrConst = "CERT_E_UNTRUSTEDTESTROOT";     break;
             case CERT_E_REVOCATION_FAILURE:       pszErrConst = "CERT_E_REVOCATION_FAILURE";    break;
+            case CERT_E_CN_NO_MATCH:              pszErrConst = "CERT_E_CN_NO_MATCH";           break;
+            case CERT_E_WRONG_USAGE:              pszErrConst = "CERT_E_WRONG_USAGE";           break;
+            case CERT_E_UNTRUSTEDCA:              pszErrConst = "CERT_E_UNTRUSTEDCA";           break;
+            case CERT_E_INVALID_POLICY:           pszErrConst = "CERT_E_INVALID_POLICY";        break;
+            case CERT_E_INVALID_NAME:             pszErrConst = "CERT_E_INVALID_NAME";          break;
             case CRYPT_E_FILE_ERROR:              pszErrConst = "CRYPT_E_FILE_ERROR";           break;
             case CRYPT_E_REVOKED:                 pszErrConst = "CRYPT_E_REVOKED";              break;
         }
@@ -2256,6 +2446,7 @@ static int supR3HardNtViCallWinVerifyTrust(HANDLE hFile, PCRTUTF16 pwszName, uin
 static int supR3HardNtViCallWinVerifyTrustCatFile(HANDLE hFile, PCRTUTF16 pwszName, uint32_t fFlags, PRTERRINFO pErrInfo,
                                                   PFNWINVERIFYTRUST pfnWinVerifyTrust)
 {
+    RT_NOREF1(fFlags);
     SUP_DPRINTF(("supR3HardNtViCallWinVerifyTrustCatFile: hFile=%p pwszName=%ls\n", hFile, pwszName));
 
     /*
@@ -2560,11 +2751,13 @@ l_fresh_context:
  * This is used by supHardenedWinVerifyImageByLdrMod as well as
  * supR3HardenedScreenImage.
  *
- * @returns IPRT status code.
+ * @returns IPRT status code, modified @a rc.
  * @param   hFile               Handle of the file to verify.
  * @param   pwszName            Full NT path to the DLL in question, used for
  *                              dealing with unsigned system dlls as well as for
  *                              error/logging.
+ * @param   fFlags              SUPHNTVI_F_XXX.
+ * @param   rc                  The current status code.
  * @param   pfWinVerifyTrust    Where to return whether WinVerifyTrust was
  *                              actually used.
  * @param   pErrInfo            Pointer to error info structure. Optional.
@@ -2581,77 +2774,92 @@ DECLHIDDEN(int) supHardenedWinVerifyImageTrust(HANDLE hFile, PCRTUTF16 pwszName,
      */
     if (g_pfnWinVerifyTrust != NULL)
     {
-        /* Check for recursion. */
-        bool fNoRecursion;
-        if (g_iTlsWinVerifyTrustRecursion != UINT32_MAX)
-        {
-            fNoRecursion = TlsGetValue(g_iTlsWinVerifyTrustRecursion) == 0;
-            if (fNoRecursion)
-                TlsSetValue(g_iTlsWinVerifyTrustRecursion, (void *)1);
-        }
-        else
-        {
-            uint32_t const idCurrentThread = RTNtCurrentThreadId();
-            fNoRecursion = ASMAtomicCmpXchgU32(&g_idActiveThread, idCurrentThread, UINT32_MAX);
-        }
-        if (fNoRecursion)
-        {
-            /* We can call WinVerifyTrust. */
-            if (pfWinVerifyTrust)
-                *pfWinVerifyTrust = true;
+        uint32_t const idCurrentThread = RTNtCurrentThreadId();
 
-            if (rc != VERR_LDRVI_NOT_SIGNED)
+        /* Check if loader lock owner. */
+        struct _RTL_CRITICAL_SECTION volatile *pLoaderLock = NtCurrentPeb()->LoaderLock;
+        bool fOwnsLoaderLock = pLoaderLock
+                            && pLoaderLock->OwningThread == (HANDLE)(uintptr_t)idCurrentThread
+                            && pLoaderLock->RecursionCount > 0;
+        if (!fOwnsLoaderLock)
+        {
+            /* Check for recursion. */
+            bool fNoRecursion;
+            if (g_iTlsWinVerifyTrustRecursion != UINT32_MAX)
             {
-                if (rc == VINF_LDRVI_NOT_SIGNED)
+                fNoRecursion = TlsGetValue(g_iTlsWinVerifyTrustRecursion) == 0;
+                if (fNoRecursion)
+                    TlsSetValue(g_iTlsWinVerifyTrustRecursion, (void *)1);
+            }
+            else
+                fNoRecursion = ASMAtomicCmpXchgU32(&g_idActiveThread, idCurrentThread, UINT32_MAX);
+
+            if (fNoRecursion && !fOwnsLoaderLock)
+            {
+                /* We can call WinVerifyTrust. */
+                if (pfWinVerifyTrust)
+                    *pfWinVerifyTrust = true;
+
+                if (rc != VERR_LDRVI_NOT_SIGNED)
                 {
-                    if (fFlags & SUPHNTVI_F_ALLOW_CAT_FILE_VERIFICATION)
+                    if (rc == VINF_LDRVI_NOT_SIGNED)
                     {
-                        int rc2 = supR3HardNtViCallWinVerifyTrustCatFile(hFile, pwszName, fFlags, pErrInfo, g_pfnWinVerifyTrust);
-                        SUP_DPRINTF(("supR3HardNtViCallWinVerifyTrustCatFile -> %d (org %d)\n", rc2, rc));
-                        rc = rc2;
+                        if (fFlags & SUPHNTVI_F_ALLOW_CAT_FILE_VERIFICATION)
+                        {
+                            int rc2 = supR3HardNtViCallWinVerifyTrustCatFile(hFile, pwszName, fFlags, pErrInfo,
+                                                                             g_pfnWinVerifyTrust);
+                            SUP_DPRINTF(("supR3HardNtViCallWinVerifyTrustCatFile -> %d (org %d)\n", rc2, rc));
+                            rc = rc2;
+                        }
+                        else
+                        {
+                            AssertFailed();
+                            rc = VERR_LDRVI_NOT_SIGNED;
+                        }
+                    }
+                    else if (RT_SUCCESS(rc))
+                    {
+                        HRESULT hrcWinVerifyTrust;
+                        rc = supR3HardNtViCallWinVerifyTrust(hFile, pwszName, fFlags, pErrInfo, g_pfnWinVerifyTrust,
+                                                             &hrcWinVerifyTrust);
+
+                        /* DLLs signed with special roots, like "Microsoft Digital Media Authority 2005",
+                           may fail here because the root cert is not in the normal certificate stores
+                           (if any).  Our verification code has the basics of these certificates included
+                           and can verify them, which is why we end up here instead of in the
+                           VINF_LDRVI_NOT_SIGNED case above.  Current workaround is to do as above.
+                           (Intel graphics driver DLLs, like igdusc64.dll. */
+                        if (   RT_FAILURE(rc)
+                            && hrcWinVerifyTrust == CERT_E_CHAINING
+                            && (fFlags & SUPHNTVI_F_ALLOW_CAT_FILE_VERIFICATION))
+                        {
+                            rc = supR3HardNtViCallWinVerifyTrustCatFile(hFile, pwszName, fFlags, pErrInfo, g_pfnWinVerifyTrust);
+                            SUP_DPRINTF(("supR3HardNtViCallWinVerifyTrustCatFile -> %d (was CERT_E_CHAINING)\n", rc));
+                        }
                     }
                     else
                     {
-                        AssertFailed();
-                        rc = VERR_LDRVI_NOT_SIGNED;
+                        int rc2 = supR3HardNtViCallWinVerifyTrust(hFile, pwszName, fFlags, pErrInfo, g_pfnWinVerifyTrust, NULL);
+                        AssertMsg(RT_FAILURE_NP(rc2),
+                                  ("rc=%Rrc, rc2=%Rrc %s", rc, rc2, pErrInfo ? pErrInfo->pszMsg : "<no-err-info>"));
+                        RT_NOREF_PV(rc2);
                     }
                 }
-                else if (RT_SUCCESS(rc))
-                {
-                    HRESULT hrcWinVerifyTrust;
-                    rc = supR3HardNtViCallWinVerifyTrust(hFile, pwszName, fFlags, pErrInfo, g_pfnWinVerifyTrust,
-                                                         &hrcWinVerifyTrust);
 
-                    /* DLLs signed with special roots, like "Microsoft Digital Media Authority 2005",
-                       may fail here because the root cert is not in the normal certificate stores
-                       (if any).  Our verification code has the basics of these certificates included
-                       and can verify them, which is why we end up here instead of in the
-                       VINF_LDRVI_NOT_SIGNED case above.  Current workaround is to do as above.
-                       (Intel graphics driver DLLs, like igdusc64.dll. */
-                    if (   RT_FAILURE(rc)
-                        && hrcWinVerifyTrust == CERT_E_CHAINING
-                        && (fFlags & SUPHNTVI_F_ALLOW_CAT_FILE_VERIFICATION))
-                    {
-                        rc = supR3HardNtViCallWinVerifyTrustCatFile(hFile, pwszName, fFlags, pErrInfo, g_pfnWinVerifyTrust);
-                        SUP_DPRINTF(("supR3HardNtViCallWinVerifyTrustCatFile -> %d (was CERT_E_CHAINING)\n", rc));
-                    }
-                }
+                /* Unwind recursion. */
+                if (g_iTlsWinVerifyTrustRecursion != UINT32_MAX)
+                    TlsSetValue(g_iTlsWinVerifyTrustRecursion, (void *)0);
                 else
-                {
-                    int rc2 = supR3HardNtViCallWinVerifyTrust(hFile, pwszName, fFlags, pErrInfo, g_pfnWinVerifyTrust, NULL);
-                    AssertMsg(RT_FAILURE_NP(rc2),
-                              ("rc=%Rrc, rc2=%Rrc %s", rc, rc2, pErrInfo ? pErrInfo->pszMsg : "<no-err-info>"));
-                }
+                    ASMAtomicWriteU32(&g_idActiveThread, UINT32_MAX);
             }
-
-            /* Unwind recursion. */
-            if (g_iTlsWinVerifyTrustRecursion != UINT32_MAX)
-                TlsSetValue(g_iTlsWinVerifyTrustRecursion, (void *)0);
+            /*
+             * No can do.
+             */
             else
-                ASMAtomicWriteU32(&g_idActiveThread, UINT32_MAX);
+                SUP_DPRINTF(("Detected WinVerifyTrust recursion: rc=%Rrc '%ls'.\n", rc, pwszName));
         }
         else
-            SUP_DPRINTF(("Detected WinVerifyTrust recursion: rc=%Rrc '%ls'.\n", rc, pwszName));
+            SUP_DPRINTF(("Detected loader lock ownership: rc=%Rrc '%ls'.\n", rc, pwszName));
     }
     return rc;
 }
@@ -2679,24 +2887,28 @@ DECLHIDDEN(bool) supHardenedWinIsWinVerifyTrustCallable(void)
  * Initializes g_uNtVerCombined and g_NtVerInfo.
  * Called from suplibHardenedWindowsMain and suplibOsInit.
  */
-DECLHIDDEN(void) supR3HardenedWinInitVersion(void)
+DECLHIDDEN(void) supR3HardenedWinInitVersion(bool fEarly)
 {
     /*
      * Get the windows version.  Use RtlGetVersion as GetVersionExW and
      * GetVersion might not be telling the whole truth (8.0 on 8.1 depending on
      * the application manifest).
+     *
+     * Note! Windows 10 build 14267+ touches BSS when calling RtlGetVersion, so we
+     *       have to use the fallback for the call from the early init code.
      */
     OSVERSIONINFOEXW NtVerInfo;
 
     RT_ZERO(NtVerInfo);
     NtVerInfo.dwOSVersionInfoSize = sizeof(RTL_OSVERSIONINFOEXW);
-    if (!NT_SUCCESS(RtlGetVersion((PRTL_OSVERSIONINFOW)&NtVerInfo)))
+    if (   fEarly
+        || !NT_SUCCESS(RtlGetVersion((PRTL_OSVERSIONINFOW)&NtVerInfo)))
     {
         RT_ZERO(NtVerInfo);
         PPEB pPeb = NtCurrentPeb();
         NtVerInfo.dwMajorVersion = pPeb->OSMajorVersion;
         NtVerInfo.dwMinorVersion = pPeb->OSMinorVersion;
-        NtVerInfo.dwBuildNumber  = pPeb->OSPlatformId;
+        NtVerInfo.dwBuildNumber  = pPeb->OSBuildNumber;
     }
 
     g_uNtVerCombined = SUP_MAKE_NT_VER_COMBINED(NtVerInfo.dwMajorVersion, NtVerInfo.dwMinorVersion, NtVerInfo.dwBuildNumber,

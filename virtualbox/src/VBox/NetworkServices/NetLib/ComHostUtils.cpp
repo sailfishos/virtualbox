@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,10 +15,11 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#ifdef RT_OS_WINDOWS
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#if defined(RT_OS_WINDOWS) && !defined(VBOX_COM_OUTOFPROC_MODULE)
 # define VBOX_COM_OUTOFPROC_MODULE
 #endif
 #include <VBox/com/com.h>
@@ -56,7 +57,7 @@
 #include "../NetLib/VBoxNetBaseService.h"
 
 #ifdef RT_OS_WINDOWS /* WinMain */
-# include <Windows.h>
+# include <iprt/win/windows.h>
 # include <stdlib.h>
 # ifdef INET_ADDRSTRLEN
 /* On Windows INET_ADDRSTRLEN defined as 22 Ws2ipdef.h, because it include port number */
@@ -78,12 +79,12 @@ int localMappings(const ComNatPtr& nat, AddressToOffsetMapping& mapping)
     mapping.clear();
 
     ComBstrArray strs;
-    int cStrs;
+    size_t cStrs;
     HRESULT hrc = nat->COMGETTER(LocalMappings)(ComSafeArrayAsOutParam(strs));
     if (   SUCCEEDED(hrc)
         && (cStrs = strs.size()))
     {
-        for (int i = 0; i < cStrs; ++i)
+        for (size_t i = 0; i < cStrs; ++i)
         {
             char szAddr[17];
             RTNETADDRIPV4 ip4addr;
@@ -108,48 +109,6 @@ int localMappings(const ComNatPtr& nat, AddressToOffsetMapping& mapping)
                         mapping.insert(
                           AddressToOffsetMapping::value_type(ip4addr, u32Off));
                 }
-            }
-        }
-    }
-    else
-        return VERR_NOT_FOUND;
-
-    return VINF_SUCCESS;
-}
-
-/**
- * @note: const dropped here, because of map<K,V>::operator[] which isn't const, map<K,V>::at() has const
- * variant but it's C++11.
- */
-int hostDnsServers(const ComHostPtr& host, const RTNETADDRIPV4& networkid,
-                   /*const*/ AddressToOffsetMapping& mapping, AddressList& servers)
-{
-    servers.clear();
-
-    ComBstrArray strs;
-    if (SUCCEEDED(host->COMGETTER(NameServers)(ComSafeArrayAsOutParam(strs))))
-    {
-        RTNETADDRIPV4 addr;
-        int rc;
-
-        for (unsigned int i = 0; i < strs.size(); ++i)
-        {
-            rc = RTNetStrToIPv4Addr(com::Utf8Str(strs[i]).c_str(), &addr);
-            if (RT_SUCCESS(rc))
-            {
-                if (addr.au8[0] == 127)
-                {
-                    /* XXX: here we want map<K,V>::at(const K& k) const */
-                    if (mapping[addr] != 0)
-                    {
-                        addr.u = RT_H2N_U32(RT_N2H_U32(networkid.u)
-                                            + mapping[addr]);
-                    }
-                    else
-                        continue; /* XXX: Warning here (local mapping wasn't registered) */
-                }
-
-                servers.push_back(addr);
             }
         }
     }
@@ -211,5 +170,61 @@ int createNatListener(ComNatListenerPtr& listener, const ComVirtualBoxPtr& vboxp
     hrc = esVBox->RegisterListener(listener, ComSafeArrayAsInParam(events), true);
     AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
 
+    return VINF_SUCCESS;
+}
+
+int destroyNatListener(ComNatListenerPtr& listener, const ComVirtualBoxPtr& vboxptr)
+{
+    if (listener)
+    {
+        ComPtr<IEventSource> esVBox;
+        HRESULT hrc = vboxptr->COMGETTER(EventSource)(esVBox.asOutParam());
+        AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+        if (!esVBox.isNull())
+        {
+            hrc = esVBox->UnregisterListener(listener);
+            AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+        }
+        listener.setNull();
+    }
+    return VINF_SUCCESS;
+}
+
+int createClientListener(ComNatListenerPtr& listener, const ComVirtualBoxClientPtr& vboxclientptr,
+                         NATNetworkEventAdapter *adapter, /* const */ ComEventTypeArray& events)
+{
+    ComObjPtr<NATNetworkListenerImpl> obj;
+    HRESULT hrc = obj.createObject();
+    AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+
+    hrc = obj->init(new NATNetworkListener(), adapter);
+    AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+
+    ComPtr<IEventSource> esVBox;
+    hrc = vboxclientptr->COMGETTER(EventSource)(esVBox.asOutParam());
+    AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+
+    listener = obj;
+
+    hrc = esVBox->RegisterListener(listener, ComSafeArrayAsInParam(events), true);
+    AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+
+    return VINF_SUCCESS;
+}
+
+int destroyClientListener(ComNatListenerPtr& listener, const ComVirtualBoxClientPtr& vboxclientptr)
+{
+    if (listener)
+    {
+        ComPtr<IEventSource> esVBox;
+        HRESULT hrc = vboxclientptr->COMGETTER(EventSource)(esVBox.asOutParam());
+        AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+        if (!esVBox.isNull())
+        {
+            hrc = esVBox->UnregisterListener(listener);
+            AssertComRCReturn(hrc, VERR_INTERNAL_ERROR);
+        }
+        listener.setNull();
+    }
     return VINF_SUCCESS;
 }

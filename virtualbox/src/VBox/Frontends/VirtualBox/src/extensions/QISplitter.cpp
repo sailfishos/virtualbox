@@ -1,12 +1,10 @@
 /* $Id: QISplitter.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QISplitter class implementation
+ * VBox Qt GUI - VirtualBox Qt extensions: QISplitter class implementation.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,14 +15,22 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QApplication>
-#include <QEvent>
-#include <QPainter>
-#include <QPaintEvent>
+# include <QApplication>
+# include <QEvent>
+# include <QPainter>
+# include <QPaintEvent>
 
 /* GUI includes: */
-#include "QISplitter.h"
+# include "QISplitter.h"
+# include "VBoxGlobal.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* A simple shaded line: */
 class QIShadeSplitterHandle: public QSplitterHandle
@@ -140,9 +146,9 @@ QISplitter::QISplitter(QWidget *pParent /* = 0 */)
     : QSplitter(pParent)
     , m_fPolished(false)
     , m_type(Shade)
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     , m_fHandleGrabbed(false)
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 {
     qApp->installEventFilter(this);
 }
@@ -151,9 +157,9 @@ QISplitter::QISplitter(Qt::Orientation orientation, QWidget *pParent /* = 0 */)
     : QSplitter(orientation, pParent)
     , m_fPolished(false)
     , m_type(Shade)
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     , m_fHandleGrabbed(false)
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 {
     qApp->installEventFilter (this);
 }
@@ -171,7 +177,7 @@ bool QISplitter::eventFilter(QObject *pWatched, QEvent *pEvent)
                 break;
         }
     }
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     /* Special handling on the Mac. Cause there the horizontal handle is only 1
      * pixel wide, its hard to catch. Therefor we make some invisible area
      * around the handle and forwarding the mouse events to the handle, if the
@@ -210,7 +216,7 @@ bool QISplitter::eventFilter(QObject *pWatched, QEvent *pEvent)
                                 && pMouseEvent->buttons().testFlag(Qt::LeftButton))
                             {
                                 m_fHandleGrabbed = true;
-                                setCursor(Qt::SplitHCursor);
+                                VBoxGlobal::setCursor(this, Qt::SplitHCursor);
                                 qApp->postEvent(pHandle, new QMouseEvent(newME));
                                 return true;
                             }
@@ -223,7 +229,7 @@ bool QISplitter::eventFilter(QObject *pWatched, QEvent *pEvent)
                                 || (   m_fHandleGrabbed
                                     && pMouseEvent->buttons().testFlag(Qt::LeftButton)))
                             {
-                                setCursor(Qt::SplitHCursor);
+                                VBoxGlobal::setCursor(this, Qt::SplitHCursor);
                                 qApp->postEvent(pHandle, new QMouseEvent(newME));
                                 return true;
                             }
@@ -231,7 +237,7 @@ bool QISplitter::eventFilter(QObject *pWatched, QEvent *pEvent)
                             {
                                 /* If not, reset the state. */
                                 m_fHandleGrabbed = false;
-                                setCursor(Qt::ArrowCursor);
+                                VBoxGlobal::setCursor(this, Qt::ArrowCursor);
                             }
                         }
                     }
@@ -242,14 +248,14 @@ bool QISplitter::eventFilter(QObject *pWatched, QEvent *pEvent)
             case QEvent::MouseButtonRelease:
             {
                 m_fHandleGrabbed = false;
-                setCursor(Qt::ArrowCursor);
+                VBoxGlobal::setCursor(this, Qt::ArrowCursor);
                 break;
             }
             default:
                 break;
         }
     }
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
     return QSplitter::eventFilter(pWatched, pEvent);
 }
@@ -285,4 +291,3 @@ QSplitterHandle* QISplitter::createHandle()
 }
 
 #include "QISplitter.moc"
-

@@ -1,11 +1,10 @@
 /* $Id: VBoxDispDDrawVHWA.cpp $ */
-
 /** @file
  * VBox XPDM Display driver, DirectDraw callbacks VHWA related
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,11 +19,14 @@
 #include "VBoxDispDDraw.h"
 #include <iprt/asm.h>
 
-static DECLCALLBACK(void) VBoxDispVHWASurfBltCompletion(PVBOXDISPDEV pDev, VBOXVHWACMD * pCmd, void * pContext)
+/** @callback_method_impl{FNVBOXVHWACMDCOMPLETION} */
+static DECLCALLBACK(void)
+VBoxDispVHWASurfBltCompletion(PVBOXDISPDEV pDev, VBOXVHWACMD RT_UNTRUSTED_VOLATILE_HOST *pCmd, void *pvContext)
 {
-    VBOXVHWACMD_SURF_BLT *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_BLT);
-    PVBOXVHWASURFDESC pSrcDesc = (PVBOXVHWASURFDESC)pBody->SrcGuestSurfInfo;
-    PVBOXVHWASURFDESC pDestDesc = (PVBOXVHWASURFDESC)pBody->DstGuestSurfInfo;
+    RT_NOREF(pvContext);
+    VBOXVHWACMD_SURF_BLT RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_BLT);
+    PVBOXVHWASURFDESC pSrcDesc  = (PVBOXVHWASURFDESC)(uintptr_t)pBody->SrcGuestSurfInfo;
+    PVBOXVHWASURFDESC pDestDesc = (PVBOXVHWASURFDESC)(uintptr_t)pBody->DstGuestSurfInfo;
 
     ASMAtomicDecU32(&pSrcDesc->cPendingBltsSrc);
     ASMAtomicDecU32(&pDestDesc->cPendingBltsDst);
@@ -32,11 +34,14 @@ static DECLCALLBACK(void) VBoxDispVHWASurfBltCompletion(PVBOXDISPDEV pDev, VBOXV
     VBoxDispVHWACommandRelease(pDev, pCmd);
 }
 
-static DECLCALLBACK(void) VBoxDispVHWASurfFlipCompletion(PVBOXDISPDEV pDev, VBOXVHWACMD * pCmd, void * pContext)
+/** @callback_method_impl{FNVBOXVHWACMDCOMPLETION} */
+static DECLCALLBACK(void)
+VBoxDispVHWASurfFlipCompletion(PVBOXDISPDEV pDev, VBOXVHWACMD RT_UNTRUSTED_VOLATILE_HOST *pCmd, void *pvContext)
 {
-    VBOXVHWACMD_SURF_FLIP *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_FLIP);
-    PVBOXVHWASURFDESC pCurrDesc = (PVBOXVHWASURFDESC)pBody->CurrGuestSurfInfo;
-    PVBOXVHWASURFDESC pTargDesc = (PVBOXVHWASURFDESC)pBody->TargGuestSurfInfo;
+    RT_NOREF(pvContext);
+    VBOXVHWACMD_SURF_FLIP RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_FLIP);
+    PVBOXVHWASURFDESC pCurrDesc = (PVBOXVHWASURFDESC)(uintptr_t)pBody->CurrGuestSurfInfo;
+    PVBOXVHWASURFDESC pTargDesc = (PVBOXVHWASURFDESC)(uintptr_t)pBody->TargGuestSurfInfo;
 
     ASMAtomicDecU32(&pCurrDesc->cPendingFlipsCurr);
     ASMAtomicDecU32(&pTargDesc->cPendingFlipsTarg);
@@ -69,20 +74,20 @@ int VBoxDispVHWAUpdateDDHalInfo(PVBOXDISPDEV pDev, DD_HALINFO *pHalInfo)
 
     if (VBOXVHWA_CAP(pDev, VBOXVHWA_CAPS_BLT) && VBOXVHWA_CAP(pDev, VBOXVHWA_CAPS_BLTSTRETCH))
     {
-        pHalInfo->ddCaps.dwFXCaps |= DDFXCAPS_BLTSTRETCHX|DDFXCAPS_BLTSTRETCHY|
-                                     DDFXCAPS_BLTSTRETCHXN|DDFXCAPS_BLTSTRETCHYN|
-                                     DDFXCAPS_BLTSHRINKX|DDFXCAPS_BLTSHRINKY|
-                                     DDFXCAPS_BLTSHRINKXN|DDFXCAPS_BLTSHRINKYN|
-                                     DDFXCAPS_BLTARITHSTRETCHY;
+        pHalInfo->ddCaps.dwFXCaps |= DDFXCAPS_BLTSTRETCHX  | DDFXCAPS_BLTSTRETCHY
+                                   | DDFXCAPS_BLTSTRETCHXN | DDFXCAPS_BLTSTRETCHYN
+                                   | DDFXCAPS_BLTSHRINKX   | DDFXCAPS_BLTSHRINKY
+                                   | DDFXCAPS_BLTSHRINKXN  | DDFXCAPS_BLTSHRINKYN
+                                   | DDFXCAPS_BLTARITHSTRETCHY;
     }
 
     if (VBOXVHWA_CAP(pDev, VBOXVHWA_CAPS_OVERLAY) && VBOXVHWA_CAP(pDev, VBOXVHWA_CAPS_OVERLAYSTRETCH))
     {
-        pHalInfo->ddCaps.dwFXCaps |= DDFXCAPS_OVERLAYSTRETCHX|DDFXCAPS_OVERLAYSTRETCHY|
-                                     DDFXCAPS_OVERLAYSTRETCHXN|DDFXCAPS_OVERLAYSTRETCHYN|
-                                     DDFXCAPS_OVERLAYSHRINKX|DDFXCAPS_OVERLAYSHRINKY|
-                                     DDFXCAPS_OVERLAYSHRINKXN|DDFXCAPS_OVERLAYSHRINKYN|
-                                     DDFXCAPS_OVERLAYARITHSTRETCHY;
+        pHalInfo->ddCaps.dwFXCaps |= DDFXCAPS_OVERLAYSTRETCHX  | DDFXCAPS_OVERLAYSTRETCHY
+                                   | DDFXCAPS_OVERLAYSTRETCHXN | DDFXCAPS_OVERLAYSTRETCHYN
+                                   | DDFXCAPS_OVERLAYSHRINKX   | DDFXCAPS_OVERLAYSHRINKY
+                                   | DDFXCAPS_OVERLAYSHRINKXN  | DDFXCAPS_OVERLAYSHRINKYN
+                                   | DDFXCAPS_OVERLAYARITHSTRETCHY;
     }
 
     pHalInfo->ddCaps.dwCKeyCaps = VBoxDispVHWAToDDCKEYCAPS(pDev->vhwa.colorKeyCaps);
@@ -162,18 +167,16 @@ DWORD APIENTRY VBoxDispDDSetColorKey(PDD_SETCOLORKEYDATA lpSetColorKey)
 
     DD_SURFACE_LOCAL *pSurf = lpSetColorKey->lpDDSurface;
     PVBOXVHWASURFDESC pDesc = (PVBOXVHWASURFDESC)pSurf->lpGbl->dwReserved1;
-    VBOXVHWACMD* pCmd;
 
     lpSetColorKey->ddRVal = DD_OK;
 
     if (pDesc)
     {
-        pCmd = VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_COLORKEY_SET, sizeof(VBOXVHWACMD_SURF_COLORKEY_SET));
-
+        VBOXVHWACMD RT_UNTRUSTED_VOLATILE_HOST *pCmd =
+            VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_COLORKEY_SET, sizeof(VBOXVHWACMD_SURF_COLORKEY_SET));
         if (pCmd)
         {
-            VBOXVHWACMD_SURF_COLORKEY_SET *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_COLORKEY_SET);
-            memset(pBody, 0, sizeof(VBOXVHWACMD_SURF_COLORKEY_SET));
+            VBOXVHWACMD_SURF_COLORKEY_SET RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_COLORKEY_SET);
 
             pBody->u.in.offSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pSurf->lpGbl->fpVidMem);
             pBody->u.in.hSurf = pDesc->hHostHandle;
@@ -220,13 +223,12 @@ DWORD APIENTRY VBoxDispDDBlt(PDD_BLTDATA lpBlt)
 
     if (pSrcDesc && pDstDesc)
     {
-        VBOXVHWACMD *pCmd;
+        VBOXVHWACMD RT_UNTRUSTED_VOLATILE_HOST  *pCmd;
 
         pCmd = VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_BLT, sizeof(VBOXVHWACMD_SURF_BLT));
         if (pCmd)
         {
-            VBOXVHWACMD_SURF_BLT *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_BLT);
-            memset(pBody, 0, sizeof(VBOXVHWACMD_SURF_BLT));
+            VBOXVHWACMD_SURF_BLT RT_UNTRUSTED_VOLATILE_HOST  *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_BLT);
 
             pBody->u.in.offSrcSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pSrcSurf->lpGbl->fpVidMem);
             pBody->u.in.offDstSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pDstSurf->lpGbl->fpVidMem);
@@ -235,8 +237,8 @@ DWORD APIENTRY VBoxDispDDBlt(PDD_BLTDATA lpBlt)
             VBoxDispVHWAFromRECTL(&pBody->u.in.dstRect, &lpBlt->rDest);
             pBody->u.in.hSrcSurf = pSrcDesc->hHostHandle;
             VBoxDispVHWAFromRECTL(&pBody->u.in.srcRect, &lpBlt->rSrc);
-            pBody->DstGuestSurfInfo = (uint64_t)pDstDesc;
-            pBody->SrcGuestSurfInfo = (uint64_t)pSrcDesc;
+            pBody->DstGuestSurfInfo = (uintptr_t)pDstDesc;
+            pBody->SrcGuestSurfInfo = (uintptr_t)pSrcDesc;
 
             pBody->u.in.flags = VBoxDispVHWAFromDDBLTs(lpBlt->dwFlags);
             VBoxDispVHWAFromDDBLTFX(&pBody->u.in.desc, &lpBlt->bltFX);
@@ -299,22 +301,19 @@ DWORD APIENTRY VBoxDispDDFlip(PDD_FLIPDATA lpFlip)
             }
         }
 
-        VBOXVHWACMD *pCmd;
-
-        pCmd = VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_FLIP, sizeof(VBOXVHWACMD_SURF_FLIP));
-
+        VBOXVHWACMD RT_UNTRUSTED_VOLATILE_HOST *pCmd
+            = VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_FLIP, sizeof(VBOXVHWACMD_SURF_FLIP));
         if (pCmd)
         {
-            VBOXVHWACMD_SURF_FLIP *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_FLIP);
-            memset(pBody, 0, sizeof(VBOXVHWACMD_SURF_FLIP));
+            VBOXVHWACMD_SURF_FLIP RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_FLIP);
 
             pBody->u.in.offCurrSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pCurrSurf->lpGbl->fpVidMem);
             pBody->u.in.offTargSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pTargSurf->lpGbl->fpVidMem);
 
             pBody->u.in.hTargSurf = pTargDesc->hHostHandle;
             pBody->u.in.hCurrSurf = pCurrDesc->hHostHandle;
-            pBody->TargGuestSurfInfo = (uint64_t)pTargDesc;
-            pBody->CurrGuestSurfInfo = (uint64_t)pCurrDesc;
+            pBody->TargGuestSurfInfo = (uintptr_t)pTargDesc;
+            pBody->CurrGuestSurfInfo = (uintptr_t)pCurrDesc;
 
             pTargDesc->bVisible = pCurrDesc->bVisible;
             pCurrDesc->bVisible = false;
@@ -455,13 +454,11 @@ DWORD APIENTRY VBoxDispDDSetOverlayPosition(PDD_SETOVERLAYPOSITIONDATA lpSetOver
             return DDHAL_DRIVER_HANDLED;
         }
 
-        VBOXVHWACMD *pCmd;
-
-        pCmd = VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_OVERLAY_SETPOSITION, sizeof(VBOXVHWACMD_SURF_OVERLAY_SETPOSITION));
+        VBOXVHWACMD RT_UNTRUSTED_VOLATILE_HOST *pCmd
+            = VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_OVERLAY_SETPOSITION, sizeof(VBOXVHWACMD_SURF_OVERLAY_SETPOSITION));
         if (pCmd)
         {
-            VBOXVHWACMD_SURF_OVERLAY_SETPOSITION *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_OVERLAY_SETPOSITION);
-            memset(pBody, 0, sizeof(VBOXVHWACMD_SURF_OVERLAY_SETPOSITION));
+            VBOXVHWACMD_SURF_OVERLAY_SETPOSITION RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_OVERLAY_SETPOSITION);
 
             pBody->u.in.offSrcSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pSrcSurf->lpGbl->fpVidMem);
             pBody->u.in.offDstSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pDstSurf->lpGbl->fpVidMem);
@@ -503,13 +500,11 @@ DWORD APIENTRY VBoxDispDDUpdateOverlay(PDD_UPDATEOVERLAYDATA lpUpdateOverlay)
 
     if (pSrcDesc)
     {
-        VBOXVHWACMD* pCmd;
-
-        pCmd = VBoxDispVHWACommandCreate (pDev, VBOXVHWACMD_TYPE_SURF_OVERLAY_UPDATE, sizeof(VBOXVHWACMD_SURF_OVERLAY_UPDATE));
+        VBOXVHWACMD RT_UNTRUSTED_VOLATILE_HOST *pCmd
+            = VBoxDispVHWACommandCreate(pDev, VBOXVHWACMD_TYPE_SURF_OVERLAY_UPDATE, sizeof(VBOXVHWACMD_SURF_OVERLAY_UPDATE));
         if (pCmd)
         {
-            VBOXVHWACMD_SURF_OVERLAY_UPDATE *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_OVERLAY_UPDATE);
-            memset(pBody, 0, sizeof(VBOXVHWACMD_SURF_OVERLAY_UPDATE));
+            VBOXVHWACMD_SURF_OVERLAY_UPDATE RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVHWACMD_BODY(pCmd, VBOXVHWACMD_SURF_OVERLAY_UPDATE);
 
             pBody->u.in.offSrcSurface = VBoxDispVHWAVramOffsetFromPDEV(pDev, pSrcSurf->lpGbl->fpVidMem);
 

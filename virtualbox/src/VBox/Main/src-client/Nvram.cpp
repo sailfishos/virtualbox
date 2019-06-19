@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,13 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define LOG_GROUP LOG_GROUP_DEV_EFI
+#include "LoggingNew.h"
+
 #include "Nvram.h"
 #include "ConsoleImpl.h"
 #include "Global.h"
@@ -39,9 +43,9 @@
 #include <iprt/semaphore.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct NVRAM NVRAM;
 typedef struct NVRAM *PNVRAM;
 
@@ -67,9 +71,9 @@ struct NVRAM
 };
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The default NVRAM attribute value (non-volatile, boot servier access,
   runtime access). */
 #define NVRAM_DEFAULT_ATTRIB        UINT32_C(0x7)
@@ -96,7 +100,7 @@ Nvram::~Nvram()
 
 
 /**
- * @interface_method_impl(PDMINVRAM,pfnVarStoreSeqEnd)
+ * @interface_method_impl{PDMINVRAMCONNECTOR,pfnVarStoreSeqEnd}
  */
 DECLCALLBACK(int) drvNvram_VarStoreSeqEnd(PPDMINVRAMCONNECTOR pInterface, int rc)
 {
@@ -130,7 +134,7 @@ static char *drvNvram_binaryToCfgmString(void const *pvBuf, size_t cbBuf)
 }
 
 /**
- * @interface_method_impl(PDMINVRAM,pfnVarStoreSeqPut)
+ * @interface_method_impl{PDMINVRAMCONNECTOR,pfnVarStoreSeqPut}
  */
 DECLCALLBACK(int) drvNvram_VarStoreSeqPut(PPDMINVRAMCONNECTOR pInterface, int idxVariable,
                                           PCRTUUID pVendorUuid, const char *pszName, size_t cchName,
@@ -173,7 +177,7 @@ DECLCALLBACK(int) drvNvram_VarStoreSeqPut(PPDMINVRAMCONNECTOR pInterface, int id
                 strcpy(szExtraName + offValueNm, apszTodo[i]);
                 try
                 {
-                    HRESULT hrc = pThis->pNvram->getParent()->machine()->SetExtraData(Bstr(szExtraName).raw(),
+                    HRESULT hrc = pThis->pNvram->getParent()->i_machine()->SetExtraData(Bstr(szExtraName).raw(),
                                                                                       Bstr(apszTodo[i + 1]).raw());
                     if (FAILED(hrc))
                     {
@@ -215,7 +219,7 @@ static void drvNvram_deleteVar(PNVRAM pThis, const char *pszVarNodeNm)
         strcpy(szExtraName + offValue, s_apszValueNames[i]);
         try
         {
-            HRESULT hrc = pThis->pNvram->getParent()->machine()->SetExtraData(Bstr(szExtraName).raw(), Bstr().raw());
+            HRESULT hrc = pThis->pNvram->getParent()->i_machine()->SetExtraData(Bstr(szExtraName).raw(), Bstr().raw());
             if (FAILED(hrc))
                 LogRel(("drvNvram_deleteVar: SetExtraData(%s,) returned %Rhrc\n", szExtraName, hrc));
         }
@@ -227,7 +231,7 @@ static void drvNvram_deleteVar(PNVRAM pThis, const char *pszVarNodeNm)
 }
 
 /**
- * @interface_method_impl(PDMINVRAM,pfnVarStoreSeqBegin)
+ * @interface_method_impl{PDMINVRAMCONNECTOR,pfnVarStoreSeqBegin}
  */
 DECLCALLBACK(int) drvNvram_VarStoreSeqBegin(PPDMINVRAMCONNECTOR pInterface, uint32_t cVariables)
 {
@@ -254,7 +258,7 @@ DECLCALLBACK(int) drvNvram_VarStoreSeqBegin(PPDMINVRAMCONNECTOR pInterface, uint
 }
 
 /**
- * @interface_method_impl(PDMINVRAMCONNECTOR,pfnVarQueryByIndex)
+ * @interface_method_impl{PDMINVRAMCONNECTOR,pfnVarQueryByIndex}
  */
 DECLCALLBACK(int) drvNvram_VarQueryByIndex(PPDMINVRAMCONNECTOR pInterface, uint32_t idxVariable,
                                            PRTUUID pVendorUuid, char *pszName, uint32_t *pcchName,
@@ -310,11 +314,11 @@ DECLCALLBACK(int) drvNvram_VarQueryByIndex(PPDMINVRAMCONNECTOR pInterface, uint3
 
 
 /**
- * @interface_method_impl(PDMIBASE,pfnQueryInterface)
+ * @interface_method_impl{PDMIBASE,pfnQueryInterface}
  */
 DECLCALLBACK(void *) Nvram::drvNvram_QueryInterface(PPDMIBASE pInterface, const char *pszIID)
 {
-    LogFlow(("%s pInterface:%p, pszIID:%s\n", __FUNCTION__, pInterface, pszIID));
+    LogFlowFunc(("pInterface=%p pszIID=%s\n", pInterface, pszIID));
     PPDMDRVINS pDrvIns = PDMIBASE_2_PDMDRV(pInterface);
     PNVRAM pThis = PDMINS_2_DATA(pDrvIns, PNVRAM);
 
@@ -325,12 +329,12 @@ DECLCALLBACK(void *) Nvram::drvNvram_QueryInterface(PPDMIBASE pInterface, const 
 
 
 /**
- * @interface_method_impl(PDMDRVREG,pfnDestruct)
+ * @interface_method_impl{PDMDRVREG,pfnDestruct}
  */
 DECLCALLBACK(void) Nvram::drvNvram_Destruct(PPDMDRVINS pDrvIns)
 {
     PDMDRV_CHECK_VERSIONS_RETURN_VOID(pDrvIns);
-    LogFlow(("%s: iInstance/#d\n", __FUNCTION__, pDrvIns->iInstance));
+    LogFlowFunc(("iInstance/#%d\n", pDrvIns->iInstance));
     PNVRAM pThis = PDMINS_2_DATA(pDrvIns, PNVRAM);
     if (pThis->pNvram != NULL)
         pThis->pNvram->mpDrv = NULL;
@@ -338,12 +342,13 @@ DECLCALLBACK(void) Nvram::drvNvram_Destruct(PPDMDRVINS pDrvIns)
 
 
 /**
- * @interface_method_impl(PDMDRVREG,pfnConstruct)
+ * @interface_method_impl{PDMDRVREG,pfnConstruct}
  */
 DECLCALLBACK(int) Nvram::drvNvram_Construct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t fFlags)
 {
+    RT_NOREF(fFlags);
     PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
-    LogFlowFunc(("iInstance/#d, pCfg:%p, fFlags:%x\n", pDrvIns->iInstance, pCfg, fFlags));
+    LogFlowFunc(("iInstance/#%d pCfg=%p fFlags=%x\n", pDrvIns->iInstance, pCfg, fFlags));
     PNVRAM pThis = PDMINS_2_DATA(pDrvIns, PNVRAM);
 
     /*

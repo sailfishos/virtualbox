@@ -1,10 +1,11 @@
+/* $Id: HostPower.h $ */
 /** @file
  *
  * VirtualBox interface to host's power notification service
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,14 +19,18 @@
 #ifndef ____H_HOSTPOWER
 #define ____H_HOSTPOWER
 
+#ifdef RT_OS_DARWIN /* first, so we can undef pVM in iprt/cdefs.h */
+# include <IOKit/pwr_mgt/IOPMLib.h>
+# include <Carbon/Carbon.h>
+#endif
+
 #include "VirtualBoxBase.h"
 
 #include <vector>
 
-#ifdef RT_OS_DARWIN
-# include <IOKit/pwr_mgt/IOPMLib.h>
-# include <Carbon/Carbon.h>
-#endif /* RT_OS_DARWIN */
+#ifdef RT_OS_LINUX
+# include <VBox/dbus.h>
+#endif
 
 class HostPowerService
 {
@@ -39,7 +44,7 @@ class HostPowerService
     std::vector<ComPtr<IInternalSessionControl> > mSessionControls;
 };
 
-# ifdef RT_OS_WINDOWS
+# if defined(RT_OS_WINDOWS) || defined(DOXYGEN_RUNNING)
 /**
  * The Windows hosted Power Service.
  */
@@ -58,7 +63,32 @@ private:
     HWND        mHwnd;
     RTTHREAD    mThread;
 };
-# elif defined(RT_OS_DARWIN) /* RT_OS_WINDOWS */
+# endif
+# if defined(RT_OS_LINUX) || defined(DOXYGEN_RUNNING)
+/**
+ * The Linux hosted Power Service.
+ */
+class HostPowerServiceLinux : public HostPowerService
+{
+public:
+
+    HostPowerServiceLinux(VirtualBox *aVirtualBox);
+    virtual ~HostPowerServiceLinux();
+
+private:
+
+    static DECLCALLBACK(int) powerChangeNotificationThread(RTTHREAD ThreadSelf, void *pInstance);
+
+    /* Private member vars */
+    /** Our message thread. */
+    RTTHREAD mThread;
+    /** Our (private) connection to the DBus.  Closing this will cause the
+     * message thread to exit. */
+    DBusConnection *mpConnection;
+};
+
+# endif
+# if defined(RT_OS_DARWIN) || defined(DOXYGEN_RUNNING)
 /**
  * The Darwin hosted Power Service.
  */
@@ -87,7 +117,7 @@ private:
 
     bool mCritical; /* Indicate if the battery was in the critical state last checked */
 };
-# endif /* RT_OS_DARWIN */
+# endif
 
 #endif /* !____H_HOSTPOWER */
 /* vi: set tabstop=4 shiftwidth=4 expandtab: */

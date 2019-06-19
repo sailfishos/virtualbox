@@ -7,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,11 +28,11 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_SEMAPHORE
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/semaphore.h>
 #include "internal/iprt.h"
@@ -48,9 +48,9 @@
 #include "internal/strict.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 struct RTSEMEVENTMULTIINTERNAL
 {
     /** Magic value (RTSEMEVENTMULTI_MAGIC). */
@@ -108,6 +108,8 @@ RTDECL(int)  RTSemEventMultiCreateEx(PRTSEMEVENTMULTI phEventMultiSem, uint32_t 
             va_end(va);
         }
         pThis->fEverHadSignallers = false;
+#else
+        RT_NOREF_PV(hClass); RT_NOREF_PV(pszNameFmt);
 #endif
 
         *phEventMultiSem = pThis;
@@ -221,6 +223,7 @@ rtSemEventWaitHandleStatus(struct RTSEMEVENTMULTIINTERNAL *pThis, uint32_t fFlag
                 return rc2;
 
             AssertMsgFailed(("WaitForSingleObject(event) -> rc=%d while converted lasterr=%d\n", rc, rc2));
+            RT_NOREF_PV(pThis);
             return VERR_INTERNAL_ERROR;
         }
     }
@@ -293,6 +296,7 @@ DECLINLINE(int) rtSemEventMultiWinWait(RTSEMEVENTMULTI hEventMultiSem, uint32_t 
     }
 #else
     RTTHREAD hThreadSelf = RTThreadSelf();
+    RT_NOREF_PV(pSrcPos);
 #endif
     RTThreadBlocking(hThreadSelf, RTTHREADSTATE_EVENT_MULTI, true);
     rc = WaitForSingleObjectEx(pThis->hev, dwMsTimeout, TRUE /*fAlertable*/);
@@ -339,6 +343,8 @@ RTDECL(void) RTSemEventMultiSetSignaller(RTSEMEVENTMULTI hEventMultiSem, RTTHREA
 
     ASMAtomicWriteBool(&pThis->fEverHadSignallers, true);
     RTLockValidatorRecSharedResetOwner(&pThis->Signallers, hThread, NULL);
+#else
+    RT_NOREF_PV(hEventMultiSem); RT_NOREF_PV(hThread);
 #endif
 }
 
@@ -352,6 +358,8 @@ RTDECL(void) RTSemEventMultiAddSignaller(RTSEMEVENTMULTI hEventMultiSem, RTTHREA
 
     ASMAtomicWriteBool(&pThis->fEverHadSignallers, true);
     RTLockValidatorRecSharedAddOwner(&pThis->Signallers, hThread, NULL);
+#else
+    RT_NOREF_PV(hEventMultiSem); RT_NOREF_PV(hThread);
 #endif
 }
 
@@ -364,6 +372,8 @@ RTDECL(void) RTSemEventMultiRemoveSignaller(RTSEMEVENTMULTI hEventMultiSem, RTTH
     AssertReturnVoid(pThis->u32Magic == RTSEMEVENTMULTI_MAGIC);
 
     RTLockValidatorRecSharedRemoveOwner(&pThis->Signallers, hThread);
+#else
+    RT_NOREF_PV(hEventMultiSem); RT_NOREF_PV(hThread);
 #endif
 }
 

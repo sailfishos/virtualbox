@@ -1,12 +1,10 @@
 /* $Id: UIMachineSettingsSFDetails.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIMachineSettingsSFDetails class implementation
+ * VBox Qt GUI - UIMachineSettingsSFDetails class implementation.
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,17 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes */
-#include <QDir>
-#include <QPushButton>
+# include <QDir>
+# include <QPushButton>
 
 /* Other includes */
-#include "UIMachineSettingsSFDetails.h"
-#include "VBoxGlobal.h"
+# include "UIMachineSettingsSFDetails.h"
+# include "VBoxGlobal.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIMachineSettingsSFDetails::UIMachineSettingsSFDetails(DialogType type,
                                                        bool fEnableSelector, /* for "permanent" checkbox */
-                                                       const SFoldersNameList &usedNames,
+                                                       const QStringList &usedNames,
                                                        QWidget *pParent /* = 0 */)
    : QIWithRetranslateUI2<QIDialog>(pParent)
    , m_type(type)
@@ -58,10 +63,10 @@ UIMachineSettingsSFDetails::UIMachineSettingsSFDetails(DialogType type,
     /* Adjust dialog size: */
     adjustSize();
 
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setFixedSize(minimumSize());
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 }
 
 void UIMachineSettingsSFDetails::setPath(const QString &strPath)
@@ -134,14 +139,11 @@ void UIMachineSettingsSFDetails::retranslateUi()
 
 void UIMachineSettingsSFDetails::sltValidate()
 {
-    UISharedFolderType resultType = m_fUsePermanent && !mCbPermanent->isChecked() ? ConsoleType : MachineType;
-    SFolderName pair = qMakePair(mLeName->text(), resultType);
-
     mButtonBox->button(QDialogButtonBox::Ok)->setEnabled(!mPsPath->path().isEmpty() &&
                                                          QDir(mPsPath->path()).exists() &&
                                                          !mLeName->text().trimmed().isEmpty() &&
                                                          !mLeName->text().contains(" ") &&
-                                                         !m_usedNames.contains (pair));
+                                                         !m_usedNames.contains(mLeName->text()));
 }
 
 void UIMachineSettingsSFDetails::sltSelectPath()
@@ -150,15 +152,15 @@ void UIMachineSettingsSFDetails::sltSelectPath()
         return;
 
     QString strFolderName(mPsPath->path());
-#if defined (Q_WS_WIN) || defined (Q_OS_OS2)
+#if defined (VBOX_WS_WIN) || defined (Q_OS_OS2)
     if (strFolderName[0].isLetter() && strFolderName[1] == ':' && strFolderName[2] == 0)
     {
-        /* VBoxFilePathSelectorWidget returns root path as 'X:', which is invalid path.
+        /* UIFilePathSelector returns root path as 'X:', which is invalid path.
          * Append the trailing backslash to get a valid root path 'X:\': */
         strFolderName += "\\";
         mPsPath->setPath(strFolderName);
     }
-#endif /* Q_WS_WIN || Q_OS_OS2 */
+#endif /* VBOX_WS_WIN || Q_OS_OS2 */
     QDir folder(strFolderName);
     if (!folder.isRoot())
     {
@@ -168,9 +170,9 @@ void UIMachineSettingsSFDetails::sltSelectPath()
     else
     {
         /* Processing root folder: */
-#if defined (Q_WS_WIN) || defined (Q_OS_OS2)
+#if defined (VBOX_WS_WIN) || defined (Q_OS_OS2)
         mLeName->setText(strFolderName.toUpper()[0] + "_DRIVE");
-#elif defined (Q_WS_X11)
+#elif defined (VBOX_WS_X11)
         mLeName->setText("ROOT");
 #endif
     }

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "../include/ExtPackUtil.h"
 
 #include <iprt/buildconfig.h>
@@ -47,8 +47,8 @@
 
 #ifdef RT_OS_WINDOWS
 # define _WIN32_WINNT 0x0501
-# include <Objbase.h>                   /* CoInitializeEx */
-# include <Windows.h>                   /* ShellExecuteEx, ++ */
+# include <iprt/win/windows.h>          /* ShellExecuteEx, ++ */
+# include <iprt/win/objbase.h>                   /* CoInitializeEx */
 # ifdef DEBUG
 #  include <Sddl.h>
 # endif
@@ -70,9 +70,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Enable elevation on Windows and Darwin. */
 #if !defined(RT_OS_OS2) || defined(DOXYGEN_RUNNING)
 # define WITH_ELEVATION
@@ -93,9 +93,9 @@
 /** @}  */
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef RT_OS_WINDOWS
 static HINSTANCE g_hInstance;
 #endif
@@ -294,7 +294,8 @@ static RTEXITCODE SetExtPackPermissions(const char *pszDir)
      if (RT_FAILURE(rc))
          return RTMsgErrorExit(RTEXITCODE_FAILURE, "Failed to set directory permissions: %Rrc ('%s')", rc, pszDir);
 #else
-        /** @todo  */
+     /** @todo TrustedInstaller? */
+     RT_NOREF1(pszDir);
 #endif
 
     return RTEXITCODE_SUCCESS;
@@ -338,6 +339,7 @@ static RTEXITCODE ValidateMemberOfExtPack(const char *pszName, RTVFSOBJTYPE enmT
  */
 static RTEXITCODE ValidateUnpackedExtPack(const char *pszDir, const char *pszTarball, const char *pszExtPackName)
 {
+    RT_NOREF2(pszTarball, pszExtPackName);
     RTMsgInfo("Validating unpacked extension pack...");
 
     RTERRINFOSTATIC ErrInfo;
@@ -489,6 +491,7 @@ static RTEXITCODE UnpackExtPackFile(const char *pszName, const char *pszDstFilen
 static RTEXITCODE UnpackExtPack(RTFILE hTarballFile, const char *pszDirDst, RTMANIFEST hValidManifest,
                                 const char *pszTarball)
 {
+    RT_NOREF1(pszTarball);
     RTMsgInfo("Unpacking extension pack into '%s'...", pszDirDst);
 
     /*
@@ -652,6 +655,8 @@ static RTEXITCODE DoInstall2(const char *pszBaseDir, const char *pszCertDir, con
                              const char *pszTarballDigest, RTFILE hTarballFile, RTFILE hTarballFileOpt,
                              const char *pszName, const char *pszMangledName, bool fReplace)
 {
+    RT_NOREF1(pszCertDir);
+
     /*
      * Do some basic validation of the tarball file.
      */
@@ -1068,8 +1073,8 @@ static RTEXITCODE DoCleanup(int argc, char **argv)
     /*
      * Ok, down to business.
      */
-    PRTDIR pDir;
-    rc = RTDirOpen(&pDir, pszBaseDir);
+    RTDIR hDir;
+    rc = RTDirOpen(&hDir, pszBaseDir);
     if (RT_FAILURE(rc))
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "Failed open the base directory: %Rrc ('%s')", rc, pszBaseDir);
 
@@ -1078,7 +1083,7 @@ static RTEXITCODE DoCleanup(int argc, char **argv)
     for (;;)
     {
         RTDIRENTRYEX Entry;
-        rc = RTDirReadEx(pDir, &Entry, NULL /*pcbDirEntry*/, RTFSOBJATTRADD_NOTHING, RTPATH_F_ON_LINK);
+        rc = RTDirReadEx(hDir, &Entry, NULL /*pcbDirEntry*/, RTFSOBJATTRADD_NOTHING, RTPATH_F_ON_LINK);
         if (RT_FAILURE(rc))
         {
             if (rc != VERR_NO_MORE_FILES)
@@ -1121,7 +1126,7 @@ static RTEXITCODE DoCleanup(int argc, char **argv)
             }
         }
     }
-    RTDirClose(pDir);
+    RTDirClose(hDir);
     if (!cCleaned)
         RTMsgInfo("Nothing to clean.");
     return rcExit;
@@ -1232,6 +1237,7 @@ static void CopyFileToStdXxx(RTFILE hSrc, PRTSTREAM pDst, bool fComplain)
 static RTEXITCODE RelaunchElevatedNative(const char *pszExecPath, const char **papszArgs, int cSuArgs, int cMyArgs,
                                          int iCmd, const char *pszDisplayInfoHack)
 {
+    RT_NOREF1(cMyArgs);
     RTEXITCODE rcExit = RTEXITCODE_FAILURE;
 #ifdef RT_OS_WINDOWS
     NOREF(iCmd);
@@ -1319,7 +1325,7 @@ static RTEXITCODE RelaunchElevatedNative(const char *pszExecPath, const char **p
                         DWORD dwExitCode;
                         if (GetExitCodeProcess(Info.hProcess, &dwExitCode))
                         {
-                            if (dwExitCode >= 0 && dwExitCode < 128)
+                            if (dwExitCode < 128)
                                 rcExit = (RTEXITCODE)dwExitCode;
                             else
                                 rcExit = RTEXITCODE_FAILURE;
@@ -1344,6 +1350,7 @@ static RTEXITCODE RelaunchElevatedNative(const char *pszExecPath, const char **p
         RTMsgError("RTStrToUtf16 failed: %Rc", rc);
 
 #elif defined(RT_OS_DARWIN)
+    RT_NOREF(pszDisplayInfoHack);
     char szIconName[RTPATH_MAX];
     int rc = RTPathAppPrivateArch(szIconName, sizeof(szIconName));
     if (RT_SUCCESS(rc))
@@ -1380,9 +1387,16 @@ static RTEXITCODE RelaunchElevatedNative(const char *pszExecPath, const char **p
              * Execute with extra permissions
              */
             FILE *pSocketStrm;
+#if defined(__clang__) || RT_GNUC_PREREQ(4, 4)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
             orc = AuthorizationExecuteWithPrivileges(AuthRef, pszExecPath, kAuthorizationFlagDefaults,
                                                      (char * const *)&papszArgs[cSuArgs + 3],
                                                      &pSocketStrm);
+#if defined(__clang__) || RT_GNUC_PREREQ(4, 4)
+# pragma GCC diagnostic pop
+#endif
             if (orc == errAuthorizationSuccess)
             {
                 /*
@@ -1413,13 +1427,15 @@ static RTEXITCODE RelaunchElevatedNative(const char *pszExecPath, const char **p
 
 #else
 
+    RT_NOREF2(pszExecPath, pszDisplayInfoHack);
+
     /*
      * Several of the alternatives below will require a command line.
      */
     char *pszCmdLine;
     int rc = RTGetOptArgvToString(&pszCmdLine, &papszArgs[cSuArgs], RTGETOPTARGV_CNV_QUOTE_BOURNE_SH);
     if (RT_FAILURE(rc))
-        return RTMsgErrorExit(RTEXITCODE_FAILURE, "RTGetOptArgvToString failed: %Rrc");
+        return RTMsgErrorExit(RTEXITCODE_FAILURE, "RTGetOptArgvToString failed: %Rrc", rc);
 
     /*
      * Look for various standard stuff for executing a program as root.
@@ -1887,7 +1903,16 @@ int main(int argc, char **argv)
             case OPT_STDERR:
             case OPT_STDOUT:
             {
+# ifdef RT_OS_WINDOWS
+                PRTUTF16 pwszName = NULL;
+                rc = RTStrToUtf16(ValueUnion.psz, &pwszName);
+                if (RT_FAILURE(rc))
+                    return RTMsgErrorExit(RTEXITCODE_FAILURE, "Error converting '%s' to UTF-16: %Rrc\n", ValueUnion.psz, rc);
+                FILE *pFile = _wfreopen(pwszName, L"r+", ch == OPT_STDOUT ? stdout : stderr);
+                RTUtf16Free(pwszName);
+# else
                 FILE *pFile = freopen(ValueUnion.psz, "r+", ch == OPT_STDOUT ? stdout : stderr);
+# endif
                 if (!pFile)
                 {
                     rc = RTErrConvertFromErrno(errno);
@@ -1937,7 +1962,7 @@ extern "C" int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPST
 
     int    cArgs;
     char **papszArgs;
-    rc = RTGetOptArgvFromString(&papszArgs, &cArgs, pszCmdLine, NULL);
+    rc = RTGetOptArgvFromString(&papszArgs, &cArgs, pszCmdLine, RTGETOPTARGV_CNV_QUOTE_MS_CRT, NULL);
     if (RT_SUCCESS(rc))
     {
 

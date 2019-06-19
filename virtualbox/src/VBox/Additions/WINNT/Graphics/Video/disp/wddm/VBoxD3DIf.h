@@ -1,11 +1,10 @@
 /* $Id: VBoxD3DIf.h $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,7 +20,7 @@
 
 #include "VBoxDispD3DCmn.h"
 
-static D3DFORMAT vboxDDI2D3DFormat(D3DDDIFORMAT format);
+D3DFORMAT vboxDDI2D3DFormat(D3DDDIFORMAT format);
 D3DMULTISAMPLE_TYPE vboxDDI2D3DMultiSampleType(D3DDDIMULTISAMPLE_TYPE enmType);
 D3DPOOL vboxDDI2D3DPool(D3DDDI_POOL enmPool);
 D3DRENDERSTATETYPE vboxDDI2D3DRenderStateType(D3DDDIRENDERSTATETYPE enmType);
@@ -79,10 +78,9 @@ DECLINLINE(HRESULT) VBoxD3DIfSurfGet(PVBOXWDDMDISP_RESOURCE pRc, UINT iAlloc, ID
         }
         case VBOXDISP_D3DIFTYPE_TEXTURE:
         {
-            Assert(pRc->cAllocations == 1); /* <- VBoxD3DIfSurfGet is typically used in Blt & ColorFill functions
-                                             * in this case, if texture is used as a destination,
-                                             * we should update sub-layers as well which is not done currently
-                                             * so for now check VBoxD3DIfSurfGet is used for one-level textures */
+            /* @todo VBoxD3DIfSurfGet is typically used in Blt & ColorFill functions
+             * in this case, if texture is used as a destination,
+             * we should update sub-layers as well which is not done currently. */
             IDirect3DTexture9 *pD3DIfTex = (IDirect3DTexture9*)pD3DIf;
             IDirect3DSurface9 *pSurfaceLevel;
             Assert(pD3DIfTex);
@@ -131,7 +129,7 @@ DECLINLINE(IDirect3DDevice9*) VBoxD3DIfDeviceGet(PVBOXWDDMDISP_DEVICE pDevice)
 #endif
 
     HRESULT hr = VBoxD3DIfDeviceCreateDummy(pDevice);
-    Assert(hr == S_OK);
+    Assert(hr == S_OK); NOREF(hr);
     Assert(pDevice->pDevice9If);
     return pDevice->pDevice9If;
 }

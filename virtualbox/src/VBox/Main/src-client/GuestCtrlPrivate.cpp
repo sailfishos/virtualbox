@@ -1,11 +1,10 @@
 /* $Id: GuestCtrlPrivate.cpp $ */
 /** @file
- *
  * Internal helpers/structures for guest control functionality.
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +15,16 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/******************************************************************************
- *   Header Files                                                             *
- ******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define LOG_GROUP LOG_GROUP_GUEST_CONTROL
+#include "LoggingNew.h"
+
+#ifndef VBOX_WITH_GUEST_CONTROL
+# error "VBOX_WITH_GUEST_CONTROL must defined in this file"
+#endif
 #include "GuestCtrlImplPrivate.h"
 #include "GuestSessionImpl.h"
 #include "VMMDev.h"
@@ -30,264 +36,7 @@
 # include <iprt/file.h>
 #endif /* DEBUG */
 
-#ifdef LOG_GROUP
- #undef LOG_GROUP
-#endif
-#define LOG_GROUP LOG_GROUP_GUEST_CONTROL
-#include <VBox/log.h>
 
-/******************************************************************************
- *   Structures and Typedefs                                                  *
- ******************************************************************************/
-
-int GuestEnvironment::BuildEnvironmentBlock(void **ppvEnv, size_t *pcbEnv, uint32_t *pcEnvVars)
-{
-    AssertPtrReturn(ppvEnv, VERR_INVALID_POINTER);
-    /* Rest is optional. */
-
-    size_t cbEnv = 0;
-    uint32_t cEnvVars = 0;
-
-    int rc = VINF_SUCCESS;
-
-    size_t cEnv = mEnvironment.size();
-    if (cEnv)
-    {
-        std::map<Utf8Str, Utf8Str>::const_iterator itEnv = mEnvironment.begin();
-        for (; itEnv != mEnvironment.end() && RT_SUCCESS(rc); itEnv++)
-        {
-            char *pszEnv;
-            if (!RTStrAPrintf(&pszEnv, "%s=%s", itEnv->first.c_str(), itEnv->second.c_str()))
-            {
-                rc = VERR_NO_MEMORY;
-                break;
-            }
-            AssertPtr(pszEnv);
-            rc = appendToEnvBlock(pszEnv, ppvEnv, &cbEnv, &cEnvVars);
-            RTStrFree(pszEnv);
-        }
-        Assert(cEnv == cEnvVars);
-    }
-
-    if (pcbEnv)
-        *pcbEnv = cbEnv;
-    if (pcEnvVars)
-        *pcEnvVars = cEnvVars;
-
-    return rc;
-}
-
-void GuestEnvironment::Clear(void)
-{
-    mEnvironment.clear();
-}
-
-int GuestEnvironment::CopyFrom(const GuestEnvironmentArray &environment)
-{
-    int rc = VINF_SUCCESS;
-
-    for (GuestEnvironmentArray::const_iterator it = environment.begin();
-         it != environment.end() && RT_SUCCESS(rc);
-         ++it)
-    {
-        rc = Set((*it));
-    }
-
-    return rc;
-}
-
-int GuestEnvironment::CopyTo(GuestEnvironmentArray &environment)
-{
-    size_t s = 0;
-    for (std::map<Utf8Str, Utf8Str>::const_iterator it = mEnvironment.begin();
-         it != mEnvironment.end();
-         ++it, ++s)
-    {
-        environment[s] = Bstr(it->first + "=" + it->second).raw();
-    }
-
-    return VINF_SUCCESS;
-}
-
-/* static */
-void GuestEnvironment::FreeEnvironmentBlock(void *pvEnv)
-{
-    if (pvEnv)
-        RTMemFree(pvEnv);
-}
-
-Utf8Str GuestEnvironment::Get(size_t nPos)
-{
-    size_t curPos = 0;
-    std::map<Utf8Str, Utf8Str>::const_iterator it = mEnvironment.begin();
-    for (; it != mEnvironment.end() && curPos < nPos;
-         ++it, ++curPos) { }
-
-    if (it != mEnvironment.end())
-        return Utf8Str(it->first + "=" + it->second);
-
-    return Utf8Str("");
-}
-
-Utf8Str GuestEnvironment::Get(const Utf8Str &strKey)
-{
-    std::map <Utf8Str, Utf8Str>::const_iterator itEnv = mEnvironment.find(strKey);
-    Utf8Str strRet;
-    if (itEnv != mEnvironment.end())
-        strRet = itEnv->second;
-    return strRet;
-}
-
-bool GuestEnvironment::Has(const Utf8Str &strKey)
-{
-    std::map <Utf8Str, Utf8Str>::const_iterator itEnv = mEnvironment.find(strKey);
-    return (itEnv != mEnvironment.end());
-}
-
-int GuestEnvironment::Set(const Utf8Str &strKey, const Utf8Str &strValue)
-{
-    /** @todo Do some validation using regex. */
-    if (strKey.isEmpty())
-        return VERR_INVALID_PARAMETER;
-
-    int rc = VINF_SUCCESS;
-    const char *pszString = strKey.c_str();
-    while (*pszString != '\0' && RT_SUCCESS(rc))
-    {
-         if (   !RT_C_IS_ALNUM(*pszString)
-             && !RT_C_IS_GRAPH(*pszString))
-             rc = VERR_INVALID_PARAMETER;
-         *pszString++;
-    }
-
-    if (RT_SUCCESS(rc))
-        mEnvironment[strKey] = strValue;
-
-    return rc;
-}
-
-int GuestEnvironment::Set(const Utf8Str &strPair)
-{
-    RTCList<RTCString> listPair = strPair.split("=", RTCString::KeepEmptyParts);
-    /* Skip completely empty pairs. Note that we still need pairs with a valid
-     * (set) key and an empty value. */
-    if (listPair.size() <= 1)
-        return VINF_SUCCESS;
-
-    int rc = VINF_SUCCESS;
-    size_t p = 0;
-    while (p < listPair.size() && RT_SUCCESS(rc))
-    {
-        Utf8Str strKey = listPair.at(p++);
-        if (   strKey.isEmpty()
-            || strKey.equals("=")) /* Skip pairs with empty keys (e.g. "=FOO"). */
-        {
-            break;
-        }
-        Utf8Str strValue;
-        if (p < listPair.size()) /* Does the list also contain a value? */
-            strValue = listPair.at(p++);
-
-#ifdef DEBUG
-        LogFlowFunc(("strKey=%s, strValue=%s\n",
-                     strKey.c_str(), strValue.c_str()));
-#endif
-        rc = Set(strKey, strValue);
-    }
-
-    return rc;
-}
-
-size_t GuestEnvironment::Size(void)
-{
-    return mEnvironment.size();
-}
-
-int GuestEnvironment::Unset(const Utf8Str &strKey)
-{
-    std::map <Utf8Str, Utf8Str>::iterator itEnv = mEnvironment.find(strKey);
-    if (itEnv != mEnvironment.end())
-    {
-        mEnvironment.erase(itEnv);
-        return VINF_SUCCESS;
-    }
-
-    return VERR_NOT_FOUND;
-}
-
-GuestEnvironment& GuestEnvironment::operator=(const GuestEnvironmentArray &that)
-{
-    CopyFrom(that);
-    return *this;
-}
-
-GuestEnvironment& GuestEnvironment::operator=(const GuestEnvironment &that)
-{
-    for (std::map<Utf8Str, Utf8Str>::const_iterator it = that.mEnvironment.begin();
-         it != that.mEnvironment.end();
-         ++it)
-    {
-        mEnvironment[it->first] = it->second;
-    }
-
-    return *this;
-}
-
-/**
- * Appends environment variables to the environment block.
- *
- * Each var=value pair is separated by the null character ('\\0').  The whole
- * block will be stored in one blob and disassembled on the guest side later to
- * fit into the HGCM param structure.
- *
- * @returns VBox status code.
- *
- * @param   pszEnvVar       The environment variable=value to append to the
- *                          environment block.
- * @param   ppvList         This is actually a pointer to a char pointer
- *                          variable which keeps track of the environment block
- *                          that we're constructing.
- * @param   pcbList         Pointer to the variable holding the current size of
- *                          the environment block.  (List is a misnomer, go
- *                          ahead a be confused.)
- * @param   pcEnvVars       Pointer to the variable holding count of variables
- *                          stored in the environment block.
- */
-int GuestEnvironment::appendToEnvBlock(const char *pszEnv, void **ppvList, size_t *pcbList, uint32_t *pcEnvVars)
-{
-    int rc = VINF_SUCCESS;
-    size_t cchEnv = strlen(pszEnv); Assert(cchEnv >= 2);
-    if (*ppvList)
-    {
-        size_t cbNewLen = *pcbList + cchEnv + 1; /* Include zero termination. */
-        char *pvTmp = (char *)RTMemRealloc(*ppvList, cbNewLen);
-        if (pvTmp == NULL)
-            rc = VERR_NO_MEMORY;
-        else
-        {
-            memcpy(pvTmp + *pcbList, pszEnv, cchEnv);
-            pvTmp[cbNewLen - 1] = '\0'; /* Add zero termination. */
-            *ppvList = (void **)pvTmp;
-        }
-    }
-    else
-    {
-        char *pszTmp;
-        if (RTStrAPrintf(&pszTmp, "%s", pszEnv) >= 0)
-        {
-            *ppvList = (void **)pszTmp;
-            /* Reset counters. */
-            *pcEnvVars = 0;
-            *pcbList = 0;
-        }
-    }
-    if (RT_SUCCESS(rc))
-    {
-        *pcbList += cchEnv + 1; /* Include zero termination. */
-        *pcEnvVars += 1;        /* Increase env variable count. */
-    }
-    return rc;
-}
 
 int GuestFsObjData::FromLs(const GuestProcessStreamBlock &strmBlk)
 {
@@ -311,7 +60,7 @@ int GuestFsObjData::FromLs(const GuestProcessStreamBlock &strmBlk)
             mType = FsObjType_Directory;
         /** @todo Add more types! */
         else
-            mType = FsObjType_Undefined;
+            mType = FsObjType_Unknown;
         /* Object size. */
         rc = strmBlk.GetInt64Ex("st_size", &mObjectSize);
         if (RT_FAILURE(rc)) throw rc;
@@ -377,7 +126,7 @@ int GuestFsObjData::FromStat(const GuestProcessStreamBlock &strmBlk)
             mType = FsObjType_Directory;
         /** @todo Add more types! */
         else
-            mType = FsObjType_Undefined;
+            mType = FsObjType_Unknown;
         /* Object size. */
         rc = strmBlk.GetInt64Ex("st_size", &mObjectSize);
         if (RT_FAILURE(rc)) throw rc;
@@ -406,7 +155,7 @@ GuestProcessStreamBlock::GuestProcessStreamBlock(void)
 GuestProcessStreamBlock::GuestProcessStreamBlock(const GuestProcessStreamBlock &otherBlock)
 {
     for (GuestCtrlStreamPairsIter it = otherBlock.mPairs.begin();
-         it != otherBlock.end(); it++)
+         it != otherBlock.end(); ++it)
     {
         mPairs[it->first] = new
         if (it->second.pszValue)
@@ -439,7 +188,7 @@ void GuestProcessStreamBlock::DumpToLog(void) const
                  this, mPairs.size()));
 
     for (GuestCtrlStreamPairMapIterConst it = mPairs.begin();
-         it != mPairs.end(); it++)
+         it != mPairs.end(); ++it)
     {
         LogFlowFunc(("\t%s=%s\n", it->first.c_str(), it->second.mValue.c_str()));
     }
@@ -604,8 +353,8 @@ int GuestProcessStreamBlock::SetValue(const char *pszKey, const char *pszValue)
 
 GuestProcessStream::GuestProcessStream(void)
     : m_cbAllocated(0),
-      m_cbSize(0),
-      m_cbOffset(0),
+      m_cbUsed(0),
+      m_offBuffer(0),
       m_pbBuffer(NULL)
 {
 
@@ -632,34 +381,35 @@ int GuestProcessStream::AddData(const BYTE *pbData, size_t cbData)
     int rc = VINF_SUCCESS;
 
     /* Rewind the buffer if it's empty. */
-    size_t     cbInBuf   = m_cbSize - m_cbOffset;
+    size_t     cbInBuf   = m_cbUsed - m_offBuffer;
     bool const fAddToSet = cbInBuf == 0;
     if (fAddToSet)
-        m_cbSize = m_cbOffset = 0;
+        m_cbUsed = m_offBuffer = 0;
 
     /* Try and see if we can simply append the data. */
-    if (cbData + m_cbSize <= m_cbAllocated)
+    if (cbData + m_cbUsed <= m_cbAllocated)
     {
-        memcpy(&m_pbBuffer[m_cbSize], pbData, cbData);
-        m_cbSize += cbData;
+        memcpy(&m_pbBuffer[m_cbUsed], pbData, cbData);
+        m_cbUsed += cbData;
     }
     else
     {
         /* Move any buffered data to the front. */
-        cbInBuf = m_cbSize - m_cbOffset;
+        cbInBuf = m_cbUsed - m_offBuffer;
         if (cbInBuf == 0)
-            m_cbSize = m_cbOffset = 0;
-        else if (m_cbOffset) /* Do we have something to move? */
+            m_cbUsed = m_offBuffer = 0;
+        else if (m_offBuffer) /* Do we have something to move? */
         {
-            memmove(m_pbBuffer, &m_pbBuffer[m_cbOffset], cbInBuf);
-            m_cbSize = cbInBuf;
-            m_cbOffset = 0;
+            memmove(m_pbBuffer, &m_pbBuffer[m_offBuffer], cbInBuf);
+            m_cbUsed = cbInBuf;
+            m_offBuffer = 0;
         }
 
         /* Do we need to grow the buffer? */
-        if (cbData + m_cbSize > m_cbAllocated)
+        if (cbData + m_cbUsed > m_cbAllocated)
         {
-            size_t cbAlloc = m_cbSize + cbData;
+/** @todo Put an upper limit on the allocation?   */
+            size_t cbAlloc = m_cbUsed + cbData;
             cbAlloc = RT_ALIGN_Z(cbAlloc, _64K);
             void *pvNew = RTMemRealloc(m_pbBuffer, cbAlloc);
             if (pvNew)
@@ -674,10 +424,10 @@ int GuestProcessStream::AddData(const BYTE *pbData, size_t cbData)
         /* Finally, copy the data. */
         if (RT_SUCCESS(rc))
         {
-            if (cbData + m_cbSize <= m_cbAllocated)
+            if (cbData + m_cbUsed <= m_cbAllocated)
             {
-                memcpy(&m_pbBuffer[m_cbSize], pbData, cbData);
-                m_cbSize += cbData;
+                memcpy(&m_pbBuffer[m_cbUsed], pbData, cbData);
+                m_cbUsed += cbData;
             }
             else
                 rc = VERR_BUFFER_OVERFLOW;
@@ -699,21 +449,21 @@ void GuestProcessStream::Destroy(void)
     }
 
     m_cbAllocated = 0;
-    m_cbSize = 0;
-    m_cbOffset = 0;
+    m_cbUsed = 0;
+    m_offBuffer = 0;
 }
 
 #ifdef DEBUG
 void GuestProcessStream::Dump(const char *pszFile)
 {
     LogFlowFunc(("Dumping contents of stream=0x%p (cbAlloc=%u, cbSize=%u, cbOff=%u) to %s\n",
-                 m_pbBuffer, m_cbAllocated, m_cbSize, m_cbOffset, pszFile));
+                 m_pbBuffer, m_cbAllocated, m_cbUsed, m_offBuffer, pszFile));
 
     RTFILE hFile;
     int rc = RTFileOpen(&hFile, pszFile, RTFILE_O_CREATE_REPLACE | RTFILE_O_WRITE | RTFILE_O_DENY_WRITE);
     if (RT_SUCCESS(rc))
     {
-        rc = RTFileWrite(hFile, m_pbBuffer, m_cbSize, NULL /* pcbWritten */);
+        rc = RTFileWrite(hFile, m_pbBuffer, m_cbUsed, NULL /* pcbWritten */);
         RTFileClose(hFile);
     }
 }
@@ -740,25 +490,25 @@ void GuestProcessStream::Dump(const char *pszFile)
 int GuestProcessStream::ParseBlock(GuestProcessStreamBlock &streamBlock)
 {
     if (   !m_pbBuffer
-        || !m_cbSize)
+        || !m_cbUsed)
     {
         return VERR_NO_DATA;
     }
 
-    AssertReturn(m_cbOffset <= m_cbSize, VERR_INVALID_PARAMETER);
-    if (m_cbOffset == m_cbSize)
+    AssertReturn(m_offBuffer <= m_cbUsed, VERR_INVALID_PARAMETER);
+    if (m_offBuffer == m_cbUsed)
         return VERR_NO_DATA;
 
     int rc = VINF_SUCCESS;
 
-    char    *pszOff    = (char*)&m_pbBuffer[m_cbOffset];
+    char    *pszOff    = (char*)&m_pbBuffer[m_offBuffer];
     char    *pszStart  = pszOff;
     uint32_t uDistance;
     while (*pszStart)
     {
         size_t pairLen = strlen(pszStart);
         uDistance = (pszStart - pszOff);
-        if (m_cbOffset + uDistance + pairLen + 1 >= m_cbSize)
+        if (m_offBuffer + uDistance + pairLen + 1 >= m_cbUsed)
         {
             rc = VERR_MORE_DATA;
             break;
@@ -794,11 +544,11 @@ int GuestProcessStream::ParseBlock(GuestProcessStreamBlock &streamBlock)
     uDistance = (pszStart - pszOff);
     if (   !uDistance
         && *pszStart == '\0'
-        && m_cbOffset < m_cbSize)
+        && m_offBuffer < m_cbUsed)
     {
         uDistance++;
     }
-    m_cbOffset += uDistance;
+    m_offBuffer += uDistance;
 
     return rc;
 }
@@ -826,6 +576,7 @@ void GuestBase::baseUninit(void)
     LogFlowThisFuncEnter();
 
     int rc = RTCritSectDelete(&mWaitEventCritSect);
+    NOREF(rc);
 
     LogFlowFuncLeaveRC(rc);
     /* No return value. */
@@ -855,10 +606,10 @@ int GuestBase::cancelWaitEvents(void)
                 int rc2 = pEvent->Cancel();
                 AssertRC(rc2);
 
-                itEvents++;
+                ++itEvents;
             }
 
-            itEventGroups++;
+            ++itEventGroups;
         }
 
         int rc2 = RTCritSectLeave(&mWaitEventCritSect);
@@ -917,7 +668,7 @@ int GuestBase::dispatchGeneric(PVBOXGUESTCTRLHOSTCBCTX pCtxCb, PVBOXGUESTCTRLHOS
                 break;
         }
     }
-    catch (std::bad_alloc)
+    catch (std::bad_alloc &)
     {
         vrc = VERR_NO_MEMORY;
     }
@@ -961,6 +712,21 @@ int GuestBase::registerWaitEvent(uint32_t uSessionID, uint32_t uObjectID,
     return registerWaitEvent(uSessionID, uObjectID, eventTypesEmpty, ppEvent);
 }
 
+/**
+ * Registers (creates) a new wait event based on a given session and object ID.
+ *
+ * From those IDs an unique context ID (CID) will be built, which only can be
+ * around once at a time.
+ *
+ * @returns IPRT status code. VERR_ALREADY_EXISTS if an event with the given session
+ *          and object ID already has been registered.
+ *
+ * @param   uSessionID              Session ID to register wait event for.
+ * @param   uObjectID               Object ID to register wait event for.
+ * @param   lstEvents               List of events to register the wait event for.
+ * @param   ppEvent                 Pointer to registered (created) wait event on success.
+ *                                  Must be destroyed with unregisterWaitEvent().
+ */
 int GuestBase::registerWaitEvent(uint32_t uSessionID, uint32_t uObjectID,
                                  const GuestEventTypes &lstEvents,
                                  GuestWaitEvent **ppEvent)
@@ -985,18 +751,36 @@ int GuestBase::registerWaitEvent(uint32_t uSessionID, uint32_t uObjectID,
             /* Insert event into matching event group. This is for faster per-group
              * lookup of all events later. */
             for (GuestEventTypes::const_iterator itEvents = lstEvents.begin();
-                 itEvents != lstEvents.end(); itEvents++)
+                 itEvents != lstEvents.end(); ++itEvents)
             {
-                mWaitEventGroups[(*itEvents)].insert(
-                   std::pair<uint32_t, GuestWaitEvent*>(uContextID, pEvent));
-                /** @todo Check for key collision. */
+                /* Check if the event group already has an event with the same
+                 * context ID in it (collision). */
+                GuestWaitEvents eventGroup = mWaitEventGroups[(*itEvents)];
+                if (eventGroup.find(uContextID) == eventGroup.end())
+                {
+                    /* No, insert. */
+                    mWaitEventGroups[(*itEvents)].insert(std::pair<uint32_t, GuestWaitEvent *>(uContextID, pEvent));
+                }
+                else
+                {
+                    rc = VERR_ALREADY_EXISTS;
+                    break;
+                }
             }
 
-            /* Register event in regular event list. */
-            /** @todo Check for key collisions. */
-            mWaitEvents[uContextID] = pEvent;
+            if (RT_SUCCESS(rc))
+            {
+                /* Register event in regular event list. */
+                if (mWaitEvents.find(uContextID) == mWaitEvents.end())
+                {
+                    mWaitEvents[uContextID] = pEvent;
+                }
+                else
+                    rc  = VERR_ALREADY_EXISTS;
+            }
 
-            *ppEvent = pEvent;
+            if (RT_SUCCESS(rc))
+                *ppEvent = pEvent;
         }
         catch(std::bad_alloc &)
         {
@@ -1045,7 +829,7 @@ int GuestBase::signalWaitEvent(VBoxEventType_T aType, IEvent *aEvent)
                     AssertPtr(itEvents->second);
                     const GuestEventTypes evTypes = itEvents->second->Types();
                     for (GuestEventTypes::const_iterator itType = evTypes.begin();
-                         itType != evTypes.end(); itType++)
+                         itType != evTypes.end(); ++itType)
                     {
                         if ((*itType) != aType) /* Only remove all other groups. */
                         {
@@ -1066,10 +850,13 @@ int GuestBase::signalWaitEvent(VBoxEventType_T aType, IEvent *aEvent)
                     }
 
                     /* Remove the event from the passed-in event group. */
-                    itGroup->second.erase(itEvents++);
+                    GuestWaitEvents::iterator itEventsNext = itEvents;
+                    ++itEventsNext;
+                    itGroup->second.erase(itEvents);
+                    itEvents = itEventsNext;
                 }
                 else
-                    itEvents++;
+                    ++itEvents;
 #ifdef DEBUG
                 cEvents++;
 #endif
@@ -1105,57 +892,91 @@ int GuestBase::signalWaitEventInternalEx(PVBOXGUESTCTRLHOSTCBCTX pCbCtx,
     AssertPtrReturn(pCbCtx, VERR_INVALID_POINTER);
     /* pPayload is optional. */
 
-    int rc2;
-    GuestWaitEvents::iterator itEvent = mWaitEvents.find(pCbCtx->uContextID);
-    if (itEvent != mWaitEvents.end())
+    int rc2 = RTCritSectEnter(&mWaitEventCritSect);
+    if (RT_SUCCESS(rc2))
     {
-        LogFlowThisFunc(("Signalling event=%p (CID %RU32, rc=%Rrc, guestRc=%Rrc, pPayload=%p) ...\n",
-                         itEvent->second, itEvent->first, rc, guestRc, pPayload));
-        GuestWaitEvent *pEvent = itEvent->second;
-        AssertPtr(pEvent);
-        rc2 = pEvent->SignalInternal(rc, guestRc, pPayload);
+        GuestWaitEvents::iterator itEvent = mWaitEvents.find(pCbCtx->uContextID);
+        if (itEvent != mWaitEvents.end())
+        {
+            LogFlowThisFunc(("Signalling event=%p (CID %RU32, rc=%Rrc, guestRc=%Rrc, pPayload=%p) ...\n",
+                             itEvent->second, itEvent->first, rc, guestRc, pPayload));
+            GuestWaitEvent *pEvent = itEvent->second;
+            AssertPtr(pEvent);
+            rc2 = pEvent->SignalInternal(rc, guestRc, pPayload);
+        }
+        else
+            rc2 = VERR_NOT_FOUND;
+
+        int rc3 = RTCritSectLeave(&mWaitEventCritSect);
+        if (RT_SUCCESS(rc2))
+            rc2 = rc3;
     }
-    else
-        rc2 = VERR_NOT_FOUND;
 
     return rc2;
 }
 
-void GuestBase::unregisterWaitEvent(GuestWaitEvent *pEvent)
+/**
+ * Unregisters (deletes) a wait event.
+ *
+ * After successful unregistration the event will not be valid anymore.
+ *
+ * @returns IPRT status code.
+ * @param   pEvent                  Event to unregister (delete).
+ */
+int GuestBase::unregisterWaitEvent(GuestWaitEvent *pEvent)
 {
     if (!pEvent) /* Nothing to unregister. */
-        return;
+        return VINF_SUCCESS;
 
     int rc = RTCritSectEnter(&mWaitEventCritSect);
     if (RT_SUCCESS(rc))
     {
         LogFlowThisFunc(("pEvent=%p\n", pEvent));
 
-        const GuestEventTypes lstTypes = pEvent->Types();
-        for (GuestEventTypes::const_iterator itEvents = lstTypes.begin();
-             itEvents != lstTypes.end(); itEvents++)
+        try
         {
-            /** @todo Slow O(n) lookup. Optimize this. */
-            GuestWaitEvents::iterator itCurEvent = mWaitEventGroups[(*itEvents)].begin();
-            while (itCurEvent != mWaitEventGroups[(*itEvents)].end())
+            /* Remove the event from all event type groups. */
+            const GuestEventTypes lstTypes = pEvent->Types();
+            for (GuestEventTypes::const_iterator itType = lstTypes.begin();
+                 itType != lstTypes.end(); ++itType)
             {
-                if (itCurEvent->second == pEvent)
+                /** @todo Slow O(n) lookup. Optimize this. */
+                GuestWaitEvents::iterator itCurEvent = mWaitEventGroups[(*itType)].begin();
+                while (itCurEvent != mWaitEventGroups[(*itType)].end())
                 {
-                    mWaitEventGroups[(*itEvents)].erase(itCurEvent++);
-                    break;
+                    if (itCurEvent->second == pEvent)
+                    {
+                        mWaitEventGroups[(*itType)].erase(itCurEvent);
+                        break;
+                    }
+                    else
+                        ++itCurEvent;
                 }
-                else
-                    itCurEvent++;
             }
-        }
 
-        delete pEvent;
-        pEvent = NULL;
+            /* Remove the event from the general event list as well. */
+            GuestWaitEvents::iterator itEvent = mWaitEvents.find(pEvent->ContextID());
+
+            Assert(itEvent != mWaitEvents.end());
+            Assert(itEvent->second == pEvent);
+
+            mWaitEvents.erase(itEvent);
+
+            delete pEvent;
+            pEvent = NULL;
+        }
+        catch (const std::exception &ex)
+        {
+            NOREF(ex);
+            AssertFailedStmt(rc = VERR_NOT_FOUND);
+        }
 
         int rc2 = RTCritSectLeave(&mWaitEventCritSect);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
+
+    return rc;
 }
 
 /**
@@ -1225,11 +1046,11 @@ int GuestObject::registerWaitEvent(const GuestEventTypes &lstEvents,
                                    GuestWaitEvent **ppEvent)
 {
     AssertPtr(mSession);
-    return GuestBase::registerWaitEvent(mSession->getId(), mObjectID, lstEvents, ppEvent);
+    return GuestBase::registerWaitEvent(mSession->i_getId(), mObjectID, lstEvents, ppEvent);
 }
 
 int GuestObject::sendCommand(uint32_t uFunction,
-                             uint32_t uParms, PVBOXHGCMSVCPARM paParms)
+                             uint32_t cParms, PVBOXHGCMSVCPARM paParms)
 {
 #ifndef VBOX_GUESTCTRL_TEST_CASE
     ComObjPtr<Console> pConsole = mConsole;
@@ -1238,11 +1059,11 @@ int GuestObject::sendCommand(uint32_t uFunction,
     int vrc = VERR_HGCM_SERVICE_NOT_FOUND;
 
     /* Forward the information to the VMM device. */
-    VMMDev *pVMMDev = pConsole->getVMMDev();
+    VMMDev *pVMMDev = pConsole->i_getVMMDev();
     if (pVMMDev)
     {
-        LogFlowThisFunc(("uFunction=%RU32, uParms=%RU32\n", uFunction, uParms));
-        vrc = pVMMDev->hgcmHostCall(HGCMSERVICE_NAME, uFunction, uParms, paParms);
+        LogFlowThisFunc(("uFunction=%RU32, cParms=%RU32\n", uFunction, cParms));
+        vrc = pVMMDev->hgcmHostCall(HGCMSERVICE_NAME, uFunction, cParms, paParms);
         if (RT_FAILURE(vrc))
         {
             /** @todo What to do here? */
@@ -1252,6 +1073,7 @@ int GuestObject::sendCommand(uint32_t uFunction,
     LogFlowThisFuncEnter();
 
     /* Not needed within testcases. */
+    RT_NOREF(uFunction, cParms, paParms);
     int vrc = VINF_SUCCESS;
 #endif
     return vrc;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -32,6 +32,7 @@
 #include <sys/poll.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -134,9 +135,8 @@ proxy_sockerr_rtstrfmt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput,
                        void *pvUser)
 {
     const int error = (int)(intptr_t)pvValue;
-    size_t cb = 0;
 
-    const char *msg = NULL;
+    const char *msg;
     char buf[128];
 
     NOREF(cchWidth);
@@ -147,13 +147,12 @@ proxy_sockerr_rtstrfmt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput,
     AssertReturn(strcmp(pszType, "sockerr") == 0, 0);
 
     /* make sure return type mismatch is caught */
+    buf[0] = '\0';
 #if defined(RT_OS_LINUX) && defined(_GNU_SOURCE)
     msg = strerror_r(error, buf, sizeof(buf));
 #else
-    {
-        int status = strerror_r(error, buf, sizeof(buf));
-        msg = buf;
-    }
+    strerror_r(error, buf, sizeof(buf));
+    msg = buf;
 #endif
     return RTStrFormat(pfnOutput, pvArgOutput, NULL, NULL, "%s", msg);
 }
@@ -317,7 +316,17 @@ proxy_create_socket(int sdom, int stype)
         return INVALID_SOCKET;
     }
 
-#if !defined(SOCK_NONBLOCK) && !defined(RT_OS_WINDOWS)
+#if defined(RT_OS_WINDOWS)
+    {
+        u_long mode = 1;
+        status = ioctlsocket(s, FIONBIO, &mode);
+        if (status == SOCKET_ERROR) {
+            DPRINTF(("FIONBIO: %R[sockerr]\n", SOCKERRNO()));
+            closesocket(s);
+            return INVALID_SOCKET;
+        }
+    }
+#elif !defined(SOCK_NONBLOCK)
     {
         int sflags;
 
@@ -351,14 +360,49 @@ proxy_create_socket(int sdom, int stype)
     }
 #endif
 
+    /*
+     * Disable the Nagle algorithm. Otherwise the host may hold back
+     * packets that the guest wants to go out, causing potentially
+     * horrible performance. The guest is already applying the Nagle
+     * algorithm (or not) the way it wants.
+     */
+    if (stype == SOCK_STREAM) {
+        int on = 1;
+        const socklen_t onlen = sizeof(on);
+
+        status = setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (char *)&on, onlen);
+        if (status < 0) {
+            DPRINTF(("TCP_NODELAY: %R[sockerr]\n", SOCKERRNO()));
+        }
+    }
+
 #if defined(RT_OS_WINDOWS)
-    {
-        u_long mode = 1;
-        status = ioctlsocket(s, FIONBIO, &mode);
-        if (status == SOCKET_ERROR) {
-            DPRINTF(("FIONBIO: %R[sockerr]\n", SOCKERRNO()));
-            closesocket(s);
-            return INVALID_SOCKET;
+    /*
+     * lwIP only holds one packet of "refused data" for us.  Proxy
+     * relies on OS socket send buffer and doesn't do its own
+     * buffering.  Unfortunately on Windows send buffer is very small
+     * (8K by default) and is not dynamically adpated by the OS it
+     * seems.  So a single large write will fill it up and that will
+     * make lwIP drop segments, causing guest TCP into pathologic
+     * resend patterns.  As a quick and dirty fix just bump it up.
+     */
+    if (stype == SOCK_STREAM) {
+        int sndbuf;
+        socklen_t optlen = sizeof(sndbuf);
+
+        status = getsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&sndbuf, &optlen);
+        if (status == 0) {
+            if (sndbuf < 64 * 1024) {
+                sndbuf = 64 * 1024;
+                status = setsockopt(s, SOL_SOCKET, SO_SNDBUF,
+                                    (char *)&sndbuf, optlen);
+                if (status != 0) {
+                    DPRINTF(("SO_SNDBUF: setsockopt: %R[sockerr]\n", SOCKERRNO()));
+                }
+            }
+        }
+        else {
+            DPRINTF(("SO_SNDBUF: getsockopt: %R[sockerr]\n", SOCKERRNO()));
         }
     }
 #endif
@@ -430,7 +474,7 @@ proxy_connected_socket(int sdom, int stype,
     }
     DPRINTF(("socket %d\n", s));
 
-    /* TODO: needs locking if dynamic modifyvm is allowed */
+    /** @todo needs locking if dynamic modifyvm is allowed */
     if (sdom == PF_INET6) {
         psrc_sa = (const struct sockaddr *)g_proxy_options->src6;
         src_sa_len = sizeof(struct sockaddr_in6);
@@ -545,7 +589,7 @@ proxy_reset_socket(SOCKET s)
      * http://bugs.sun.com/bugdatabase/view_bug.do?bug_id=4468997
      */
     setsockopt(s, SOL_SOCKET, SO_LINGER, (char *)&linger, sizeof(linger));
-    
+
     closesocket(s);
 }
 

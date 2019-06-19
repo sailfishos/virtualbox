@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,11 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define IN_TSTVMSTRUCT 1
 #include <VBox/vmm/cfgm.h>
 #include <VBox/vmm/cpum.h>
 #include <VBox/vmm/mm.h>
@@ -43,6 +45,8 @@
 #include "HMInternal.h"
 #include "VMMInternal.h"
 #include "DBGFInternal.h"
+#include "GIMInternal.h"
+#include "APICInternal.h"
 #include "STAMInternal.h"
 #include "VMInternal.h"
 #include "EMInternal.h"
@@ -225,27 +229,31 @@ int main()
     CHECK_PADDING_VM(64, tm);
     PRINT_OFFSET(VM, tm.s.VirtualSyncLock);
     CHECK_PADDING_VM(64, dbgf);
+    CHECK_PADDING_VM(64, gim);
     CHECK_PADDING_VM(64, ssm);
+#ifdef VBOX_WITH_REM
     CHECK_PADDING_VM(64, rem);
+#endif
     CHECK_PADDING_VM(8, vm);
     CHECK_PADDING_VM(8, cfgm);
+    CHECK_PADDING_VM(8, apic);
 
     PRINT_OFFSET(VMCPU, cpum);
-    CHECK_PADDING_VMCPU(64, cpum);
+    CHECK_PADDING_VMCPU(64, iem);
     CHECK_PADDING_VMCPU(64, hm);
     CHECK_PADDING_VMCPU(64, em);
-    CHECK_PADDING_VMCPU(64, iem);
     CHECK_PADDING_VMCPU(64, trpm);
     CHECK_PADDING_VMCPU(64, tm);
     CHECK_PADDING_VMCPU(64, vmm);
     CHECK_PADDING_VMCPU(64, pdm);
     CHECK_PADDING_VMCPU(64, iom);
     CHECK_PADDING_VMCPU(64, dbgf);
-#if 0
-    PRINT_OFFSET(VMCPU, abAlignment2);
-#endif
+    CHECK_PADDING_VMCPU(64, gim);
+    CHECK_PADDING_VMCPU(64, apic);
+
     PRINT_OFFSET(VMCPU, pgm);
     CHECK_PADDING_VMCPU(4096, pgm);
+    CHECK_PADDING_VMCPU(4096, cpum);
 #ifdef VBOX_WITH_STATISTICS
     PRINT_OFFSET(VMCPU, pgm.s.pStatTrap0eAttributionRC);
 #endif
@@ -253,13 +261,13 @@ int main()
     CHECK_MEMBER_ALIGNMENT(VM, selm.s.Tss, 16);
     PRINT_OFFSET(VM, selm.s.Tss);
     PVM pVM = NULL; NOREF(pVM);
-    if ((RT_OFFSETOF(VM, selm.s.Tss) & PAGE_OFFSET_MASK) > PAGE_SIZE - sizeof(pVM->selm.s.Tss))
+    if ((RT_UOFFSETOF(VM, selm.s.Tss) & PAGE_OFFSET_MASK) > PAGE_SIZE - sizeof(pVM->selm.s.Tss))
     {
         printf("error! SELM:Tss is crossing a page!\n");
         rc++;
     }
     PRINT_OFFSET(VM, selm.s.TssTrap08);
-    if ((RT_OFFSETOF(VM, selm.s.TssTrap08) & PAGE_OFFSET_MASK) > PAGE_SIZE - sizeof(pVM->selm.s.TssTrap08))
+    if ((RT_UOFFSETOF(VM, selm.s.TssTrap08) & PAGE_OFFSET_MASK) > PAGE_SIZE - sizeof(pVM->selm.s.TssTrap08))
     {
         printf("error! SELM:TssTrap08 is crossing a page!\n");
         rc++;
@@ -277,6 +285,9 @@ int main()
     CHECK_MEMBER_ALIGNMENT(VM, aCpus[0].cpum.s.pvApicBase, 8);
 #endif
 
+    CHECK_MEMBER_ALIGNMENT(VM, aCpus[0].iem.s.DataTlb, 64);
+    CHECK_MEMBER_ALIGNMENT(VM, aCpus[0].iem.s.CodeTlb, 64);
+
     CHECK_MEMBER_ALIGNMENT(VMCPU, vmm.s.u64CallRing3Arg, 8);
 #if defined(RT_OS_WINDOWS) && defined(RT_ARCH_AMD64)
     CHECK_MEMBER_ALIGNMENT(VMCPU, vmm.s.CallRing3JmpBufR0, 16);
@@ -285,20 +296,22 @@ int main()
     CHECK_MEMBER_ALIGNMENT(VM, vmm.s.u64LastYield, 8);
     CHECK_MEMBER_ALIGNMENT(VM, vmm.s.StatRunRC, 8);
     CHECK_MEMBER_ALIGNMENT(VM, StatTotalQemuToGC, 8);
+#ifdef VBOX_WITH_REM
     CHECK_MEMBER_ALIGNMENT(VM, rem.s.uPendingExcptCR2, 8);
     CHECK_MEMBER_ALIGNMENT(VM, rem.s.StatsInQEMU, 8);
     CHECK_MEMBER_ALIGNMENT(VM, rem.s.Env, 64);
+#endif
 
     /* the VMCPUs are page aligned TLB hit reasons. */
     CHECK_MEMBER_ALIGNMENT(VM, aCpus, 4096);
     CHECK_SIZE_ALIGNMENT(VMCPU, 4096);
 
     /* cpumctx */
-    CHECK_MEMBER_ALIGNMENT(CPUMCTX, fpu, 32);
     CHECK_MEMBER_ALIGNMENT(CPUMCTX, rax, 32);
     CHECK_MEMBER_ALIGNMENT(CPUMCTX, idtr.pIdt, 8);
     CHECK_MEMBER_ALIGNMENT(CPUMCTX, gdtr.pGdt, 8);
     CHECK_MEMBER_ALIGNMENT(CPUMCTX, SysEnter, 8);
+    CHECK_MEMBER_ALIGNMENT(CPUMCTX, hwvirt, 8);
     CHECK_CPUMCTXCORE(rax);
     CHECK_CPUMCTXCORE(rcx);
     CHECK_CPUMCTXCORE(rdx);
@@ -326,7 +339,7 @@ int main()
 
 #if HC_ARCH_BITS == 32
     /* CPUMHOSTCTX - lss pair */
-    if (RT_OFFSETOF(CPUMHOSTCTX, esp) + 4 != RT_OFFSETOF(CPUMHOSTCTX, ss))
+    if (RT_UOFFSETOF(CPUMHOSTCTX, esp) + 4 != RT_UOFFSETOF(CPUMHOSTCTX, ss))
     {
         printf("error! CPUMHOSTCTX lss has been split up!\n");
         rc++;
@@ -368,7 +381,7 @@ int main()
     CHECK_MEMBER_ALIGNMENT(PGMPOOLPAGE, GCPhys, sizeof(RTGCPHYS));
     CHECK_SIZE(PGMPAGE, 16);
     CHECK_MEMBER_ALIGNMENT(PGMRAMRANGE, aPages, 16);
-    CHECK_MEMBER_ALIGNMENT(PGMMMIO2RANGE, RamRange, 16);
+    CHECK_MEMBER_ALIGNMENT(PGMREGMMIORANGE, RamRange, 16);
 
     /* rem */
     CHECK_MEMBER_ALIGNMENT(REM, aGCPtrInvalidatedPages, 8);
@@ -404,14 +417,21 @@ int main()
 
     /* hm - 32-bit gcc won't align uint64_t naturally, so check. */
     CHECK_MEMBER_ALIGNMENT(HM, uMaxAsid, 8);
-    CHECK_MEMBER_ALIGNMENT(HM, vmx.u64HostCr4, 8);
-    CHECK_MEMBER_ALIGNMENT(HM, vmx.Msrs.u64FeatureCtrl, 8);
-    CHECK_MEMBER_ALIGNMENT(HM, StatTprPatchSuccess, 8);
-    CHECK_MEMBER_ALIGNMENT(HMCPU, StatEntry, 8);
-    CHECK_MEMBER_ALIGNMENT(HMCPU, vmx.HCPhysVmcs, sizeof(RTHCPHYS));
-    CHECK_MEMBER_ALIGNMENT(HMCPU, vmx.u32PinCtls, 8);
-    CHECK_MEMBER_ALIGNMENT(HMCPU, DisState, 8);
+    CHECK_MEMBER_ALIGNMENT(HM, vmx, 8);
+    CHECK_MEMBER_ALIGNMENT(HM, vmx.Msrs, 8);
+    CHECK_MEMBER_ALIGNMENT(HM, svm, 8);
+    CHECK_MEMBER_ALIGNMENT(HM, PatchTree, 8);
+    CHECK_MEMBER_ALIGNMENT(HM, aPatches, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, vmx, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, vmx.pfnStartVM, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, vmx.HCPhysVmcs, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, vmx.LastError, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, svm, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, svm.pfnVMRun, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, Event, 8);
     CHECK_MEMBER_ALIGNMENT(HMCPU, Event.u64IntInfo, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, DisState, 8);
+    CHECK_MEMBER_ALIGNMENT(HMCPU, StatEntry, 8);
 
     /* Make sure the set is large enough and has the correct size. */
     CHECK_SIZE(VMCPUSET, 32);

@@ -1,3 +1,4 @@
+/* $Id: info.c $ */
 /** @file
  *
  * VirtualBox Windows Guest Shared Folders
@@ -6,7 +7,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -112,10 +113,12 @@ NTSTATUS VBoxMRxQueryDirectory(IN OUT PRX_CONTEXT RxContext)
 
     if (Template->Length)
     {
-        ULONG ParsedPathSize, len;
+        ULONG ParsedPathSize, cch;
 
-        /* Calculate length required for parsed path. */
-        ParsedPathSize = sizeof(SHFLSTRING) + DirectoryName->Length + Template->Length + 3 * sizeof(WCHAR);
+        /* Calculate size required for parsed path: dir + \ + template + 0. */
+        ParsedPathSize = SHFLSTRING_HEADER_SIZE + Template->Length + sizeof(WCHAR);
+        if (DirectoryName->Length)
+            ParsedPathSize += DirectoryName->Length + sizeof(WCHAR);
         Log(("VBOXSF: MrxQueryDirectory: ParsedPathSize = %d\n", ParsedPathSize));
 
         ParsedPath = (PSHFLSTRING)vbsfAllocNonPagedMem(ParsedPathSize);
@@ -125,30 +128,35 @@ NTSTATUS VBoxMRxQueryDirectory(IN OUT PRX_CONTEXT RxContext)
             goto end;
         }
 
-        RtlZeroMemory(ParsedPath, ParsedPathSize);
         if (!ShflStringInitBuffer(ParsedPath, ParsedPathSize))
         {
             Status = STATUS_INSUFFICIENT_RESOURCES;
             goto end;
         }
 
-        ParsedPath->u16Size = DirectoryName->Length + Template->Length + sizeof(WCHAR);
-        ParsedPath->u16Length = ParsedPath->u16Size - sizeof(WCHAR); /* Without terminating null. */
-
-        len = 0;
+        cch = 0;
         if (DirectoryName->Length)
         {
             /* Copy directory name into ParsedPath. */
             RtlCopyMemory(ParsedPath->String.ucs2, DirectoryName->Buffer, DirectoryName->Length);
-            len = DirectoryName->Length / sizeof(WCHAR);
+            cch += DirectoryName->Length / sizeof(WCHAR);
 
             /* Add terminating backslash. */
-            ParsedPath->String.ucs2[len] = L'\\';
-            len++;
-            ParsedPath->u16Length += sizeof(WCHAR);
-            ParsedPath->u16Size += sizeof(WCHAR);
+            ParsedPath->String.ucs2[cch] = L'\\';
+            cch++;
         }
-        RtlCopyMemory (&ParsedPath->String.ucs2[len], Template->Buffer, Template->Length);
+
+        RtlCopyMemory (&ParsedPath->String.ucs2[cch], Template->Buffer, Template->Length);
+        cch += Template->Length / sizeof(WCHAR);
+
+        /* Add terminating nul. */
+        ParsedPath->String.ucs2[cch] = 0;
+
+        /* cch is the number of chars without trailing nul. */
+        ParsedPath->u16Length = (uint16_t)(cch * sizeof(WCHAR));
+
+        AssertMsg(ParsedPath->u16Length + sizeof(WCHAR) == ParsedPath->u16Size,
+                  ("u16Length %d, u16Size %d\n", ParsedPath->u16Length, ParsedPath->u16Size));
 
         Log(("VBOXSF: MrxQueryDirectory: ParsedPath = %.*ls\n",
              ParsedPath->u16Length / sizeof(WCHAR), ParsedPath->String.ucs2));
@@ -156,12 +164,12 @@ NTSTATUS VBoxMRxQueryDirectory(IN OUT PRX_CONTEXT RxContext)
 
     cFiles = 0;
 
-    /* vboxCallDirInfo requires a pointer to uint32_t. */
+    /* VbglR0SfDirInfo requires a pointer to uint32_t. */
     u32BufSize = cbHGCMBuffer;
 
     Log(("VBOXSF: MrxQueryDirectory: CallDirInfo: File = 0x%08x, Flags = 0x%08x, Index = %d, u32BufSize = %d\n",
          pVBoxFobx->hFile, fSFFlags, index, u32BufSize));
-    vboxRC = vboxCallDirInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
+    vboxRC = VbglR0SfDirInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
                              ParsedPath, fSFFlags, index, &u32BufSize, (PSHFLDIRINFO)pHGCMBuffer, &cFiles);
     Log(("VBOXSF: MrxQueryDirectory: u32BufSize after CallDirInfo = %d, rc = %Rrc\n",
          u32BufSize, vboxRC));
@@ -234,7 +242,7 @@ NTSTATUS VBoxMRxQueryDirectory(IN OUT PRX_CONTEXT RxContext)
 
     while ((*pLengthRemaining) && (cFiles > 0) && (pDirEntry != NULL))
     {
-        int cbEntry = RT_OFFSETOF(SHFLDIRINFO, name.String) + pDirEntry->name.u16Size;
+        int cbEntry = RT_UOFFSETOF(SHFLDIRINFO, name.String) + pDirEntry->name.u16Size;
 
         if (cbEntry > cbHGCMBuffer)
         {
@@ -341,7 +349,7 @@ NTSTATUS VBoxMRxQueryDirectory(IN OUT PRX_CONTEXT RxContext)
                     pInfo->AllocationSize.QuadPart = pDirEntry->Info.cbAllocated;
                     pInfo->EndOfFile.QuadPart      = pDirEntry->Info.cbObject;
                     pInfo->EaSize                  = 0;
-                    pInfo->ShortNameLength         = 0; /* @todo ? */
+                    pInfo->ShortNameLength         = 0; /** @todo ? */
                     pInfo->FileIndex               = index;
                     pInfo->FileAttributes          = VBoxToNTFileAttributes(pDirEntry->Info.Attr.fMode);
 
@@ -389,7 +397,7 @@ NTSTATUS VBoxMRxQueryDirectory(IN OUT PRX_CONTEXT RxContext)
                     pInfo->AllocationSize.QuadPart = pDirEntry->Info.cbAllocated;
                     pInfo->EndOfFile.QuadPart      = pDirEntry->Info.cbObject;
                     pInfo->EaSize                  = 0;
-                    pInfo->ShortNameLength         = 0; /* @todo ? */
+                    pInfo->ShortNameLength         = 0; /** @todo ? */
                     pInfo->EaSize                  = 0;
                     pInfo->FileId.QuadPart         = 0;
                     pInfo->FileAttributes          = VBoxToNTFileAttributes(pDirEntry->Info.Attr.fMode);
@@ -583,7 +591,7 @@ NTSTATUS VBoxMRxQueryVolumeInfo(IN OUT PRX_CONTEXT RxContext)
                 break;
             }
 
-            vboxRC = vboxCallFSInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
+            vboxRC = VbglR0SfFsInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
                                     SHFL_INFO_GET | SHFL_INFO_VOLUME, &cbHGCMBuffer, (PSHFLDIRINFO)pHGCMBuffer);
 
             if (vboxRC != VINF_SUCCESS)
@@ -756,7 +764,7 @@ NTSTATUS VBoxMRxQueryVolumeInfo(IN OUT PRX_CONTEXT RxContext)
                 break;
             }
 
-            vboxRC = vboxCallFSInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
+            vboxRC = VbglR0SfFsInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
                                     SHFL_INFO_GET | SHFL_INFO_VOLUME, &cbHGCMBuffer, (PSHFLDIRINFO)pHGCMBuffer);
 
             if (vboxRC != VINF_SUCCESS)
@@ -1089,7 +1097,7 @@ NTSTATUS VBoxMRxQueryFileInfo(IN PRX_CONTEXT RxContext)
             return STATUS_INSUFFICIENT_RESOURCES;
 
         Assert(pVBoxFobx && pNetRootExtension && pDeviceExtension);
-        vboxRC = vboxCallFSInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
+        vboxRC = VbglR0SfFsInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
                                 SHFL_INFO_GET | SHFL_INFO_FILE, &cbHGCMBuffer, (PSHFLDIRINFO)pHGCMBuffer);
 
         if (vboxRC != VINF_SUCCESS)
@@ -1137,7 +1145,7 @@ NTSTATUS VBoxMRxQueryFileInfo(IN PRX_CONTEXT RxContext)
                 {
                     pInfo->AllocationSize.QuadPart = pFileEntry->cbAllocated;
                     pInfo->EndOfFile.QuadPart      = pFileEntry->cbObject;
-                    pInfo->NumberOfLinks           = 1; /* @todo 0? */
+                    pInfo->NumberOfLinks           = 1; /** @todo 0? */
                     pInfo->DeletePending           = FALSE;
 
                     if (pFileEntry->Attr.fMode & RTFS_DOS_DIRECTORY)
@@ -1420,7 +1428,7 @@ NTSTATUS VBoxMRxSetFileInfo(IN PRX_CONTEXT RxContext)
             }
 
             Assert(pVBoxFobx && pNetRootExtension && pDeviceExtension);
-            vboxRC = vboxCallFSInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
+            vboxRC = VbglR0SfFsInfo(&pDeviceExtension->hgcmClient, &pNetRootExtension->map, pVBoxFobx->hFile,
                                     SHFL_INFO_SET | SHFL_INFO_FILE, &cbBuffer, (PSHFLDIRINFO)pSHFLFileInfo);
 
             if (vboxRC != VINF_SUCCESS)
@@ -1462,10 +1470,11 @@ NTSTATUS VBoxMRxSetFileInfo(IN PRX_CONTEXT RxContext)
 
         case FilePositionInformation:
         {
+#ifdef LOG_ENABLED
             PFILE_POSITION_INFORMATION pInfo = (PFILE_POSITION_INFORMATION)pInfoBuffer;
-
             Log(("VBOXSF: MrxSetFileInfo: FilePositionInformation: CurrentByteOffset = 0x%RX64. Unsupported!\n",
                  pInfo->CurrentByteOffset.QuadPart));
+#endif
 
             Status = STATUS_INVALID_PARAMETER;
             break;
@@ -1514,10 +1523,11 @@ NTSTATUS VBoxMRxSetFileInfo(IN PRX_CONTEXT RxContext)
 
         case FileLinkInformation:
         {
+#ifdef LOG_ENABLED
             PFILE_LINK_INFORMATION pInfo = (PFILE_LINK_INFORMATION )pInfoBuffer;
-
             Log(("VBOXSF: MrxSetFileInfo: FileLinkInformation: ReplaceIfExists = %d, RootDirectory = 0x%x = [%.*ls]. Not implemented!\n",
                  pInfo->ReplaceIfExists, pInfo->RootDirectory, pInfo->FileNameLength / sizeof(WCHAR), pInfo->FileName));
+#endif
 
             Status = STATUS_NOT_IMPLEMENTED;
             break;
@@ -1525,10 +1535,11 @@ NTSTATUS VBoxMRxSetFileInfo(IN PRX_CONTEXT RxContext)
 
         case FileRenameInformation:
         {
+#ifdef LOG_ENABLED
             PFILE_RENAME_INFORMATION pInfo = (PFILE_RENAME_INFORMATION)pInfoBuffer;
-
             Log(("VBOXSF: MrxSetFileInfo: FileRenameInformation: ReplaceIfExists = %d, RootDirectory = 0x%x = [%.*ls]\n",
                  pInfo->ReplaceIfExists, pInfo->RootDirectory, pInfo->FileNameLength / sizeof(WCHAR), pInfo->FileName));
+#endif
 
             Status = vbsfRename(RxContext, FileRenameInformation, pInfoBuffer, RxContext->Info.Length);
             break;
@@ -1551,6 +1562,7 @@ end:
 
 NTSTATUS VBoxMRxSetFileInfoAtCleanup(IN PRX_CONTEXT RxContext)
 {
+    RT_NOREF(RxContext);
     Log(("VBOXSF: MRxSetFileInfoAtCleanup\n"));
     return STATUS_SUCCESS;
 }

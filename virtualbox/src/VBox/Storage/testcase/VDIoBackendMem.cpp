@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,7 +15,7 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-#define LOGGROUP LOGGROUP_DEFAULT /** @todo: Log group */
+#define LOGGROUP LOGGROUP_DEFAULT /** @todo Log group */
 #include <iprt/err.h>
 #include <iprt/log.h>
 #include <iprt/assert.h>
@@ -74,7 +74,7 @@ typedef struct VDIOBACKENDMEM
     volatile uint32_t cReqsWaiting;
 } VDIOBACKENDMEM;
 
-static int vdIoBackendMemThread(RTTHREAD hThread, void *pvUser);
+static DECLCALLBACK(int) vdIoBackendMemThread(RTTHREAD hThread, void *pvUser);
 
 /**
  * Pokes the I/O thread that something interesting happened.
@@ -155,12 +155,12 @@ int VDIoBackendMemTransfer(PVDIOBACKENDMEM pIoBackend, PVDMEMDISK pMemDisk,
     if (enmTxDir != VDIOTXDIR_FLUSH)
         RTSgBufSegArrayCreate(pSgBuf, NULL, &cSegs, cbTransfer);
 
-    pReq = (PVDIOBACKENDREQ)RTMemAlloc(RT_OFFSETOF(VDIOBACKENDREQ, aSegs[cSegs]));
+    pReq = (PVDIOBACKENDREQ)RTMemAlloc(RT_UOFFSETOF_DYN(VDIOBACKENDREQ, aSegs[cSegs]));
     if (!pReq)
         return VERR_NO_MEMORY;
 
     RTCircBufAcquireWriteBlock(pIoBackend->pRequestRing, sizeof(PVDIOBACKENDREQ), (void **)&ppReq, &cbData);
-    if (!pReq)
+    if (!ppReq)
     {
         RTMemFree(pReq);
         return VERR_NO_MEMORY;
@@ -196,9 +196,10 @@ int VDIoBackendMemTransfer(PVDIOBACKENDMEM pIoBackend, PVDMEMDISK pMemDisk,
  * @param hThread    The thread handle.
  * @param pvUser     Opaque user data.
  */
-static int vdIoBackendMemThread(RTTHREAD hThread, void *pvUser)
+static DECLCALLBACK(int) vdIoBackendMemThread(RTTHREAD hThread, void *pvUser)
 {
     PVDIOBACKENDMEM pIoBackend = (PVDIOBACKENDMEM)pvUser;
+    RT_NOREF1(hThread);
 
     while (pIoBackend->fRunning)
     {

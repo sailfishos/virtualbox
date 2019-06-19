@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_USBPROXY
 #include <VBox/usb.h>
 #include <VBox/usbfilter.h>
@@ -33,19 +33,31 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** A dummy name used early during the construction phase to avoid log crashes. */
 static char g_szDummyName[] = "proxy xxxx:yyyy";
 
-
+/**
+ * Array of supported proxy backends.
+ */
+static PCUSBPROXYBACK g_aUsbProxies[] =
+{
+    &g_USBProxyDeviceHost,
+    &g_USBProxyDeviceVRDP,
+    &g_USBProxyDeviceUsbIp
+};
 
 /* Synchronously obtain a standard USB descriptor for a device, used in order
  * to grab configuration descriptors when we first add the device
  */
 static void *GetStdDescSync(PUSBPROXYDEV pProxyDev, uint8_t iDescType, uint8_t iIdx, uint16_t LangId, uint16_t cbHint)
 {
+#define GET_DESC_RETRIES 6
+    int cRetries = 0;
+    uint16_t cbInitialHint = cbHint;
+
     LogFlow(("GetStdDescSync: pProxyDev=%s\n", pProxyDev->pUsbIns->pszName));
     for (;;)
     {
@@ -55,20 +67,20 @@ static void *GetStdDescSync(PUSBPROXYDEV pProxyDev, uint8_t iDescType, uint8_t i
         int rc = VINF_SUCCESS;
         VUSBURB Urb;
         AssertCompile(RT_SIZEOFMEMB(VUSBURB, abData) >= _4K);
-        Urb.u32Magic = VUSBURB_MAGIC;
-        Urb.enmState = VUSBURBSTATE_IN_FLIGHT;
-        Urb.pszDesc = (char*)"URB sync";
-        memset(&Urb.VUsb, 0, sizeof(Urb.VUsb));
-        memset(&Urb.Hci, 0, sizeof(Urb.Hci));
+        Urb.u32Magic      = VUSBURB_MAGIC;
+        Urb.enmState      = VUSBURBSTATE_IN_FLIGHT;
+        Urb.pszDesc       = (char*)"URB sync";
+        Urb.pHci          = NULL;
+        Urb.paTds         = NULL;
         Urb.Dev.pvPrivate = NULL;
-        Urb.Dev.pNext = NULL;
-        Urb.pUsbIns = pProxyDev->pUsbIns;
-        Urb.DstAddress = 0;
-        Urb.EndPt = 0;
-        Urb.enmType = VUSBXFERTYPE_MSG;
-        Urb.enmDir = VUSBDIRECTION_IN;
-        Urb.fShortNotOk = false;
-        Urb.enmStatus = VUSBSTATUS_INVALID;
+        Urb.Dev.pNext     = NULL;
+        Urb.DstAddress    = 0;
+        Urb.EndPt         = 0;
+        Urb.enmType       = VUSBXFERTYPE_MSG;
+        Urb.enmDir        = VUSBDIRECTION_IN;
+        Urb.fShortNotOk   = false;
+        Urb.enmStatus     = VUSBSTATUS_INVALID;
+        Urb.pVUsb         = NULL;
         cbHint = RT_MIN(cbHint, sizeof(Urb.abData) - sizeof(VUSBSETUP));
         Urb.cbData = cbHint + sizeof(VUSBSETUP);
 
@@ -79,45 +91,50 @@ static void *GetStdDescSync(PUSBPROXYDEV pProxyDev, uint8_t iDescType, uint8_t i
         pSetup->wIndex = LangId;
         pSetup->wLength = cbHint;
 
+        uint8_t *pbDesc = (uint8_t *)(pSetup + 1);
+        uint32_t cbDesc = 0;
+        PVUSBURB pUrbReaped = NULL;
+
         rc = pProxyDev->pOps->pfnUrbQueue(pProxyDev, &Urb);
         if (RT_FAILURE(rc))
-            break;
+        {
+            Log(("GetStdDescSync: pfnUrbReap failed, rc=%d\n", rc));
+            goto err;
+        }
 
         /* Don't wait forever, it's just a simple request that should
            return immediately. Since we're executing in the EMT thread
            it's important not to get stuck here. (Some of the builtin
-           iMac devices may not refuse respond for instance.) */
-        PVUSBURB pUrbReaped = pProxyDev->pOps->pfnUrbReap(pProxyDev, 10000 /* ms */);
+           iMac devices may refuse to respond for instance.) */
+        pUrbReaped = pProxyDev->pOps->pfnUrbReap(pProxyDev, 5000 /* ms */);
         if (!pUrbReaped)
         {
             rc = pProxyDev->pOps->pfnUrbCancel(pProxyDev, &Urb);
             AssertRC(rc);
-            /** @todo: This breaks the comment above... */
+            /** @todo This breaks the comment above... */
             pUrbReaped = pProxyDev->pOps->pfnUrbReap(pProxyDev, RT_INDEFINITE_WAIT);
         }
         if (pUrbReaped != &Urb)
         {
             Log(("GetStdDescSync: pfnUrbReap failed, pUrbReaped=%p\n", pUrbReaped));
-            break;
+            goto err;
         }
 
         if (Urb.enmStatus != VUSBSTATUS_OK)
         {
             Log(("GetStdDescSync: Urb.enmStatus=%d\n", Urb.enmStatus));
-            break;
+            goto err;
         }
 
         /*
          * Check the length, config descriptors have total_length field
          */
-        uint8_t *pbDesc = (uint8_t *)(pSetup + 1);
-        uint32_t cbDesc;
         if (iDescType == VUSB_DT_CONFIG)
         {
             if (Urb.cbData < sizeof(VUSBSETUP) + 4)
             {
                 Log(("GetStdDescSync: Urb.cbData=%#x (min 4)\n", Urb.cbData));
-                break;
+                goto err;
             }
             cbDesc = RT_LE2H_U16(((uint16_t *)pbDesc)[1]);
         }
@@ -126,7 +143,7 @@ static void *GetStdDescSync(PUSBPROXYDEV pProxyDev, uint8_t iDescType, uint8_t i
             if (Urb.cbData < sizeof(VUSBSETUP) + 1)
             {
                 Log(("GetStdDescSync: Urb.cbData=%#x (min 1)\n", Urb.cbData));
-                break;
+                goto err;
             }
             cbDesc = ((uint8_t *)pbDesc)[0];
         }
@@ -137,14 +154,28 @@ static void *GetStdDescSync(PUSBPROXYDEV pProxyDev, uint8_t iDescType, uint8_t i
             &&  cbDesc > Urb.cbData - sizeof(VUSBSETUP))
         {
             cbHint = cbDesc;
+            Log(("GetStdDescSync: Part descriptor, Urb.cbData=%u, cbDesc=%u cbHint=%u\n", Urb.cbData, cbDesc, cbHint));
+
             if (cbHint > sizeof(Urb.abData))
-            {
-                AssertMsgFailed(("cbHint=%u\n", cbHint));
-                break;
-            }
-            continue;
+                Log(("GetStdDescSync: cbHint=%u, Urb.abData=%u\n", cbHint, sizeof(Urb.abData)));
+
+            goto err;
         }
-        Assert(cbDesc <= Urb.cbData - sizeof(VUSBSETUP));
+
+        if (cbDesc > Urb.cbData - sizeof(VUSBSETUP))
+        {
+            Log(("GetStdDescSync: Descriptor length too short, cbDesc=%u, Urb.cbData=%u\n", cbDesc, Urb.cbData));
+            goto err;
+        }
+
+        if (   cbInitialHint != cbHint
+            && (   cbDesc != cbHint
+                || Urb.cbData < cbInitialHint) )
+        {
+            Log(("GetStdDescSync: Descriptor length incorrect, cbDesc=%u, Urb.cbData=%u, cbHint=%u\n", cbDesc, Urb.cbData, cbHint));
+            goto err;
+        }
+
 #ifdef LOG_ENABLED
         vusbUrbTrace(&Urb, "GetStdDescSync", true);
 #endif
@@ -153,7 +184,22 @@ static void *GetStdDescSync(PUSBPROXYDEV pProxyDev, uint8_t iDescType, uint8_t i
          * Fine, we got everything return a heap duplicate of the descriptor.
          */
         return RTMemDup(pbDesc, cbDesc);
+
+err:
+        cRetries++;
+        if (cRetries < GET_DESC_RETRIES)
+        {
+            Log(("GetStdDescSync: Retrying %u/%u\n", cRetries, GET_DESC_RETRIES));
+            RTThreadSleep(100);
+            continue;
+        }
+        else
+        {
+            Log(("GetStdDescSync: Retries exceeded %u/%u. Giving up.\n", cRetries, GET_DESC_RETRIES));
+            break;
+        }
     }
+
     return NULL;
 }
 
@@ -272,7 +318,7 @@ static int count_descriptors(struct desc_counts *cnt, uint8_t *buf, size_t len)
     return 1;
 }
 
-/* Given the pointer to an interface or endpoint descriptor, find any following
+/* Given the pointer to a configuration/interface/endpoint descriptor, find any following
  * non-standard (vendor or class) descriptors.
  */
 static const void *collect_stray_bits(uint8_t *this_desc, uint8_t *end, uint16_t *cbExtra)
@@ -280,10 +326,10 @@ static const void *collect_stray_bits(uint8_t *this_desc, uint8_t *end, uint16_t
     uint8_t *tmp, *buf;
     uint8_t type;
 
-    Assert(*(this_desc + 1) == VUSB_DT_INTERFACE || *(this_desc + 1) == VUSB_DT_ENDPOINT);
+    Assert(*(this_desc + 1) == VUSB_DT_INTERFACE || *(this_desc + 1) == VUSB_DT_ENDPOINT || *(this_desc + 1) == VUSB_DT_CONFIG);
     buf = this_desc;
 
-    /* Skip the current interface/endpoint descriptor. */
+    /* Skip the current configuration/interface/endpoint descriptor. */
     buf += *(uint8_t *)buf;
 
     /* Loop until we find another descriptor we understand. */
@@ -310,7 +356,6 @@ static int copy_interface(PVUSBINTERFACE pIf, uint8_t ifnum,
     PVUSBDESCINTERFACEEX cur_if = NULL;
     uint32_t altmap[4] = {0,};
     uint8_t *tmp, *end = buf + len;
-    uint8_t *orig_desc = buf;
     uint8_t alt;
     int state;
     size_t num_ep = 0;
@@ -422,6 +467,7 @@ static bool copy_config(PUSBPROXYDEV pProxyDev, uint8_t idx, PVUSBDESCCONFIGEX o
     size_t tot_len;
     size_t cbIface;
     uint32_t i, x;
+    uint8_t *tmp, *end;
 
     descs = GetStdDescSync(pProxyDev, VUSB_DT_CONFIG, idx, 0, VUSB_DT_CONFIG_MIN_LEN);
     if ( descs == NULL ) {
@@ -468,6 +514,19 @@ static bool copy_config(PUSBPROXYDEV pProxyDev, uint8_t idx, PVUSBDESCCONFIGEX o
     out->Core.iConfiguration = cfg->iConfiguration;
     out->Core.bmAttributes = cfg->bmAttributes;
     out->Core.MaxPower = cfg->MaxPower;
+
+    tmp = (uint8_t *)out->pvOriginal;
+    end = tmp + tot_len;
+
+    /* Point to additional configuration descriptor bytes, if any. */
+    AssertCompile(sizeof(out->Core) == VUSB_DT_CONFIG_MIN_LEN);
+    if (out->Core.bLength - VUSB_DT_CONFIG_MIN_LEN > 0)
+        out->pvMore = tmp + VUSB_DT_CONFIG_MIN_LEN;
+    else
+        out->pvMore = NULL;
+
+    /* Typically there might be an interface association descriptor here. */
+    out->pvClass = collect_stray_bits(tmp, end, &out->cbClass);
 
     for(i=0; i < 4; i++)
         for(x=0; x < 32; x++)
@@ -521,7 +580,7 @@ static void usbProxyDevEditOutMaskedIfs(PUSBPROXYDEV pProxyDev)
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbReset
+ * @interface_method_impl{PDMUSBREG,pfnUsbReset}
  *
  * USB Device Proxy: Call OS specific code to reset the device.
  */
@@ -540,7 +599,7 @@ static DECLCALLBACK(int) usbProxyDevReset(PPDMUSBINS pUsbIns, bool fResetOnLinux
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbGetDescriptorCache
+ * @interface_method_impl{PDMUSBREG,pfnUsbGetDescriptorCache}
  */
 static DECLCALLBACK(PCPDMUSBDESCCACHE) usbProxyDevGetDescriptorCache(PPDMUSBINS pUsbIns)
 {
@@ -550,7 +609,7 @@ static DECLCALLBACK(PCPDMUSBDESCCACHE) usbProxyDevGetDescriptorCache(PPDMUSBINS 
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbSetConfiguration
+ * @interface_method_impl{PDMUSBREG,pfnUsbSetConfiguration}
  *
  * USB Device Proxy: Release claimed interfaces, tell the OS+device about the config change, claim the new interfaces.
  */
@@ -623,7 +682,7 @@ static DECLCALLBACK(int) usbProxyDevSetConfiguration(PPDMUSBINS pUsbIns, uint8_t
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbSetInterface
+ * @interface_method_impl{PDMUSBREG,pfnUsbSetInterface}
  *
  * USB Device Proxy: Call OS specific code to select alternate interface settings.
  */
@@ -638,7 +697,7 @@ static DECLCALLBACK(int) usbProxyDevSetInterface(PPDMUSBINS pUsbIns, uint8_t bIn
 
 
 /**
- * @copydoc PDMUSBREG::pfnUsbClearHaltedEndpoint
+ * @interface_method_impl{PDMUSBREG,pfnUsbClearHaltedEndpoint}
  *
  * USB Device Proxy: Call OS specific code to clear the endpoint.
  */
@@ -653,7 +712,7 @@ static DECLCALLBACK(int) usbProxyDevClearHaltedEndpoint(PPDMUSBINS pUsbIns, unsi
 
 
 /**
- * @copydoc PDMUSBREG::pfnUrbQueue
+ * @interface_method_impl{PDMUSBREG,pfnUrbQueue}
  *
  * USB Device Proxy: Call OS specific code.
  */
@@ -671,7 +730,7 @@ static DECLCALLBACK(int) usbProxyDevUrbQueue(PPDMUSBINS pUsbIns, PVUSBURB pUrb)
 
 
 /**
- * @copydoc PDMUSBREG::pfnUrbCancel
+ * @interface_method_impl{PDMUSBREG,pfnUrbCancel}
  *
  * USB Device Proxy: Call OS specific code.
  */
@@ -683,7 +742,7 @@ static DECLCALLBACK(int) usbProxyDevUrbCancel(PPDMUSBINS pUsbIns, PVUSBURB pUrb)
 
 
 /**
- * @copydoc PDMUSBREG::pfnUrbReap
+ * @interface_method_impl{PDMUSBREG,pfnUrbReap}
  *
  * USB Device Proxy: Call OS specific code.
  */
@@ -700,7 +759,7 @@ static DECLCALLBACK(PVUSBURB) usbProxyDevUrbReap(PPDMUSBINS pUsbIns, RTMSINTERVA
 
 
 /**
- * @copydoc PDMUSBREG::pfnWakeup
+ * @interface_method_impl{PDMUSBREG,pfnWakeup}
  *
  * USB Device Proxy: Call OS specific code.
  */
@@ -712,9 +771,10 @@ static DECLCALLBACK(int) usbProxyDevWakeup(PPDMUSBINS pUsbIns)
 }
 
 
-/** @copydoc PDMUSBREG::pfnDestruct */
+/** @interface_method_impl{PDMUSBREG,pfnDestruct} */
 static DECLCALLBACK(void) usbProxyDestruct(PPDMUSBINS pUsbIns)
 {
+    PDMUSB_CHECK_VERSIONS_RETURN_VOID(pUsbIns);
     PUSBPROXYDEV pThis = PDMINS_2_DATA(pUsbIns, PUSBPROXYDEV);
     Log(("usbProxyDestruct: destroying pProxyDev=%s\n", pUsbIns->pszName));
 
@@ -809,9 +869,11 @@ static int usbProxyQueryNum(PUSBFILTER pFilter, USBFILTERIDX enmFieldIdx, PCFGMN
 }
 
 
-/** @copydoc PDMUSBREG::pfnConstruct */
+/** @interface_method_impl{PDMUSBREG,pfnConstruct} */
 static DECLCALLBACK(int) usbProxyConstruct(PPDMUSBINS pUsbIns, int iInstance, PCFGMNODE pCfg, PCFGMNODE pCfgGlobal)
 {
+    PDMUSB_CHECK_VERSIONS_RETURN(pUsbIns);
+    RT_NOREF(iInstance);
     PUSBPROXYDEV pThis = PDMINS_2_DATA(pUsbIns, PUSBPROXYDEV);
     LogFlow(("usbProxyConstruct: pUsbIns=%p iInstance=%d\n", pUsbIns, iInstance));
 
@@ -832,8 +894,8 @@ static DECLCALLBACK(int) usbProxyConstruct(PPDMUSBINS pUsbIns, int iInstance, PC
     int rc = CFGMR3QueryString(pCfg, "Address", szAddress, sizeof(szAddress));
     AssertRCReturn(rc, rc);
 
-    bool fRemote;
-    rc = CFGMR3QueryBool(pCfg, "Remote", &fRemote);
+    char szBackend[64];
+    rc = CFGMR3QueryString(pCfg, "Backend", szBackend, sizeof(szBackend));
     AssertRCReturn(rc, rc);
 
     void *pvBackend;
@@ -843,10 +905,18 @@ static DECLCALLBACK(int) usbProxyConstruct(PPDMUSBINS pUsbIns, int iInstance, PC
     /*
      * Select backend and open the device.
      */
-    if (!fRemote)
-        pThis->pOps = &g_USBProxyDeviceHost;
-    else
-        pThis->pOps = &g_USBProxyDeviceVRDP;
+    rc = VERR_NOT_FOUND;
+    for (unsigned i = 0; i < RT_ELEMENTS(g_aUsbProxies); i++)
+    {
+        if (!RTStrICmp(szBackend, g_aUsbProxies[i]->pszName))
+        {
+            pThis->pOps = g_aUsbProxies[i];
+            rc = VINF_SUCCESS;
+            break;
+        }
+    }
+    if (RT_FAILURE(rc))
+        return PDMUSB_SET_ERROR(pUsbIns, rc, N_("USBProxy: Failed to find backend"));
 
     pThis->pvInstanceDataR3 = RTMemAllocZ(pThis->pOps->cbBackend);
     if (!pThis->pvInstanceDataR3)
@@ -854,7 +924,10 @@ static DECLCALLBACK(int) usbProxyConstruct(PPDMUSBINS pUsbIns, int iInstance, PC
 
     rc = pThis->pOps->pfnOpen(pThis, szAddress, pvBackend);
     if (RT_FAILURE(rc))
+    {
+        LogRel(("usbProxyConstruct: Failed to open '%s', rc=%Rrc\n", szAddress, rc));
         return rc;
+    }
     pThis->fOpened = true;
 
     /*
@@ -999,6 +1072,15 @@ static DECLCALLBACK(int) usbProxyConstruct(PPDMUSBINS pUsbIns, int iInstance, PC
     else
         AssertRCReturn(rc, rc);
 
+    bool fEditAudioSyncEp;
+    rc = CFGMR3QueryBool(pCfg, "EditAudioSyncEp", &fEditAudioSyncEp);
+    if (rc == VERR_CFGM_VALUE_NOT_FOUND)
+        rc = CFGMR3QueryBool(pCfgGlobalDev, "EditAudioSyncEp", &fEditAudioSyncEp);
+    if (rc == VERR_CFGM_VALUE_NOT_FOUND)
+        fEditAudioSyncEp = true;    /* NB: On by default! */
+    else
+        AssertRCReturn(rc, rc);
+
     /*
      * If we're masking interfaces, edit the descriptors.
      */
@@ -1024,6 +1106,9 @@ static DECLCALLBACK(int) usbProxyConstruct(PPDMUSBINS pUsbIns, int iInstance, PC
                      * While isochronous has a max of 1023 bytes.
                      */
                     PVUSBDESCENDPOINTEX paEps = (PVUSBDESCENDPOINTEX)paIfs[iIf].paSettings[iAlt].paEndpoints;
+                    if (!paEps)
+                        continue;
+
                     for (unsigned iEp = 0; iEp < paIfs[iIf].paSettings[iAlt].Core.bNumEndpoints; iEp++)
                     {
                         const uint16_t cbMax = (paEps[iEp].Core.bmAttributes & 3) == 1 /* isoc */
@@ -1052,6 +1137,51 @@ static DECLCALLBACK(int) usbProxyConstruct(PPDMUSBINS pUsbIns, int iInstance, PC
         fEdited = true;
     }
 
+
+    /*
+     * Turn asynchronous audio endpoints into synchronous ones, see @bugref{8769}
+     */
+    if (fEditAudioSyncEp)
+    {
+        PVUSBDESCCONFIGEX paCfgs = pThis->paCfgDescs;
+        for (unsigned iCfg = 0; iCfg < pThis->DevDesc.bNumConfigurations; iCfg++)
+        {
+            PVUSBINTERFACE paIfs = (PVUSBINTERFACE)paCfgs[iCfg].paIfs;
+            for (unsigned iIf = 0; iIf < paCfgs[iCfg].Core.bNumInterfaces; iIf++)
+                for (uint32_t iAlt = 0; iAlt < paIfs[iIf].cSettings; iAlt++)
+                {
+                    /* If not an audio class interface, skip. */
+                    if (paIfs[iIf].paSettings[iAlt].Core.bInterfaceClass != 1)
+                        continue;
+
+                    /* If not a streaming interface, skip. */
+                    if (paIfs[iIf].paSettings[iAlt].Core.bInterfaceSubClass != 2)
+                        continue;
+
+                    PVUSBDESCENDPOINTEX paEps = (PVUSBDESCENDPOINTEX)paIfs[iIf].paSettings[iAlt].paEndpoints;
+                    if (!paEps)
+                        continue;
+
+                    for (unsigned iEp = 0; iEp < paIfs[iIf].paSettings[iAlt].Core.bNumEndpoints; iEp++)
+                    {
+                        /* isoch/asynch/data*/
+                        if ((paEps[iEp].Core.bmAttributes == 5) && (paEps[iEp].Core.bLength == 9))
+                        {
+                            uint8_t *pbExtra = (uint8_t *)paEps[iEp].pvMore;    /* unconst*/
+                            if (pbExtra[1] == 0)
+                                continue;   /* If bSynchAddress is zero, leave the descriptor alone. */
+
+                            Log(("usb-proxy: pProxyDev=%s async audio with bmAttr=%02X [%02X, %02X] on EP %02X\n",
+                                 pUsbIns->pszName, paEps[iEp].Core.bmAttributes, pbExtra[0], pbExtra[1], paEps[iEp].Core.bEndpointAddress));
+                            paEps[iEp].Core.bmAttributes = 0xD; /* isoch/synch/data*/
+                            pbExtra[1] = 0; /* Clear bSynchAddress. */
+                            fEdited = true;
+                            LogRel(("VUSB: Modified '%s' async audio endpoint 0x%02x\n", pUsbIns->pszName, paEps[iEp].Core.bEndpointAddress));
+                        }
+                    }
+                }
+        }
+    }
 
     /*
      * Init the PDM/VUSB descriptor cache.

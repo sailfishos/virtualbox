@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2018 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-linux-kernel.h"
 #include "internal/iprt.h"
 
@@ -56,9 +56,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Timer state machine.
  *
@@ -198,9 +198,9 @@ typedef struct RTTIMERLINUXSTARTONCPUARGS
 typedef RTTIMERLINUXSTARTONCPUARGS *PRTTIMERLINUXSTARTONCPUARGS;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef CONFIG_SMP
 static DECLCALLBACK(void) rtTimerLinuxMpEvent(RTMPEVENT enmEvent, RTCPUID idCpu, void *pvUser);
 #endif
@@ -361,7 +361,13 @@ static void rtTimerLnxStartSubTimer(PRTTIMERLNXSUBTIMER pSubTimer, uint64_t u64N
         pSubTimer->u.Std.fFirstAfterChg = true;
 #ifdef CONFIG_SMP
         if (fPinned)
+        {
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
+            mod_timer(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
+# else
             mod_timer_pinned(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
+# endif
+        }
         else
 #endif
             mod_timer(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
@@ -455,7 +461,7 @@ static void rtTimerLnxDestroyIt(PRTTIMER pTimer)
     /*
      * Finally, free the resources.
      */
-    RTMemFreeEx(pTimer, RT_OFFSETOF(RTTIMER, aSubTimers[pTimer->cCpus]));
+    RTMemFreeEx(pTimer, RT_UOFFSETOF_DYN(RTTIMER, aSubTimers[pTimer->cCpus]));
     if (hSpinlock != NIL_RTSPINLOCK)
         RTSpinlockDestroy(hSpinlock);
 }
@@ -709,6 +715,16 @@ static enum hrtimer_restart rtTimerLinuxHrCallback(struct hrtimer *pHrTimer)
 #endif /* RTTIMER_LINUX_WITH_HRTIMER */
 
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+/**
+ * Timer callback function for standard timers.
+ *
+ * @param   pLnxTimer   Pointer to the Linux timer structure.
+ */
+static void rtTimerLinuxStdCallback(struct timer_list *pLnxTimer)
+{
+    PRTTIMERLNXSUBTIMER pSubTimer = from_timer(pSubTimer, pLnxTimer, u.Std.LnxTimer);
+#else
 /**
  * Timer callback function for standard timers.
  *
@@ -717,6 +733,7 @@ static enum hrtimer_restart rtTimerLinuxHrCallback(struct hrtimer *pHrTimer)
 static void rtTimerLinuxStdCallback(unsigned long ulUser)
 {
     PRTTIMERLNXSUBTIMER pSubTimer = (PRTTIMERLNXSUBTIMER)ulUser;
+#endif
     PRTTIMER            pTimer    = pSubTimer->pParent;
 
     RTTIMERLNX_LOG(("stdcallback %p\n", pTimer));
@@ -796,7 +813,13 @@ static void rtTimerLinuxStdCallback(unsigned long ulUser)
         {
 #ifdef CONFIG_SMP
             if (pTimer->fSpecificCpu || pTimer->fAllCpus)
+            {
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
+                mod_timer(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
+# else
                 mod_timer_pinned(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
+# endif
+            }
             else
 #endif
                 mod_timer(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
@@ -853,7 +876,13 @@ static void rtTimerLinuxStdCallback(unsigned long ulUser)
 
 #ifdef CONFIG_SMP
                     if (pTimer->fSpecificCpu || pTimer->fAllCpus)
+                    {
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
+                        mod_timer(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
+# else
                         mod_timer_pinned(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
+# endif
+                    }
                     else
 #endif
                         mod_timer(&pSubTimer->u.Std.LnxTimer, pSubTimer->u.Std.ulNextJiffies);
@@ -1177,6 +1206,7 @@ static DECLCALLBACK(void) rtTimerLnxStartOnSpecificCpu(RTCPUID idCpu, void *pvUs
 {
     PRTTIMERLINUXSTARTONCPUARGS pArgs = (PRTTIMERLINUXSTARTONCPUARGS)pvUser2;
     PRTTIMER pTimer = (PRTTIMER)pvUser1;
+    RT_NOREF_PV(idCpu);
     rtTimerLnxStartSubTimer(&pTimer->aSubTimers[0], pArgs->u64Now, pArgs->u64First, true /*fPinned*/, pTimer->fHighRes);
 }
 
@@ -1185,6 +1215,7 @@ RTDECL(int) RTTimerStart(PRTTIMER pTimer, uint64_t u64First)
 {
     RTTIMERLINUXSTARTONCPUARGS Args;
     int rc2;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /*
      * Validate.
@@ -1202,7 +1233,11 @@ RTDECL(int) RTTimerStart(PRTTIMER pTimer, uint64_t u64First)
      * Omni timer?
      */
     if (pTimer->fAllCpus)
-        return rtTimerLnxOmniStart(pTimer, &Args);
+    {
+        rc2 = rtTimerLnxOmniStart(pTimer, &Args);
+        IPRT_LINUX_RESTORE_EFL_AC();
+        return rc2;
+    }
 #endif
 
     /*
@@ -1233,6 +1268,7 @@ RTDECL(int) RTTimerStart(PRTTIMER pTimer, uint64_t u64First)
                             return rc2;
                         }
                     }
+                    IPRT_LINUX_RESTORE_EFL_AC();
                     return VINF_SUCCESS;
                 }
                 break;
@@ -1242,12 +1278,14 @@ RTDECL(int) RTTimerStart(PRTTIMER pTimer, uint64_t u64First)
                 if (rtTimerLnxCmpXchgState(&pTimer->aSubTimers[0].enmState, RTTIMERLNXSTATE_CB_RESTARTING, enmState))
                 {
                     ASMAtomicWriteBool(&pTimer->fSuspended, false);
+                    IPRT_LINUX_RESTORE_EFL_AC();
                     return VINF_SUCCESS;
                 }
                 break;
 
             default:
                 AssertMsgFailed(("%d\n", enmState));
+                IPRT_LINUX_RESTORE_EFL_AC();
                 return VERR_INTERNAL_ERROR_4;
         }
         ASMNopPause();
@@ -1328,6 +1366,7 @@ RTDECL(int) RTTimerStop(PRTTIMER pTimer)
     /*
      * Validate.
      */
+    IPRT_LINUX_SAVE_EFL_AC();
     AssertPtrReturn(pTimer, VERR_INVALID_HANDLE);
     AssertReturn(pTimer->u32Magic == RTTIMER_MAGIC, VERR_INVALID_HANDLE);
     RTTIMERLNX_LOG(("stop %p\n", pTimer));
@@ -1336,6 +1375,8 @@ RTDECL(int) RTTimerStop(PRTTIMER pTimer)
         return VERR_TIMER_SUSPENDED;
 
     rtTimerLnxStop(pTimer, false /*fForDestroy*/);
+
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 RT_EXPORT_SYMBOL(RTTimerStop);
@@ -1345,6 +1386,7 @@ RTDECL(int) RTTimerChangeInterval(PRTTIMER pTimer, uint64_t u64NanoInterval)
 {
     unsigned long cJiffies;
     unsigned long flFlags;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /*
      * Validate.
@@ -1352,6 +1394,8 @@ RTDECL(int) RTTimerChangeInterval(PRTTIMER pTimer, uint64_t u64NanoInterval)
     AssertPtrReturn(pTimer, VERR_INVALID_HANDLE);
     AssertReturn(pTimer->u32Magic == RTTIMER_MAGIC, VERR_INVALID_HANDLE);
     AssertReturn(u64NanoInterval, VERR_INVALID_PARAMETER);
+    AssertReturn(u64NanoInterval < UINT64_MAX / 8, VERR_INVALID_PARAMETER);
+    AssertReturn(pTimer->u64NanoInterval, VERR_INVALID_STATE);
     RTTIMERLNX_LOG(("change %p %llu\n", pTimer, u64NanoInterval));
 
 #ifdef RTTIMER_LINUX_WITH_HRTIMER
@@ -1362,6 +1406,7 @@ RTDECL(int) RTTimerChangeInterval(PRTTIMER pTimer, uint64_t u64NanoInterval)
     if (pTimer->fHighRes)
     {
         ASMAtomicWriteU64(&pTimer->u64NanoInterval, u64NanoInterval);
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VINF_SUCCESS;
     }
 #endif
@@ -1382,6 +1427,7 @@ RTDECL(int) RTTimerChangeInterval(PRTTIMER pTimer, uint64_t u64NanoInterval)
     pTimer->cJiffies = cJiffies;
     ASMAtomicWriteU64(&pTimer->u64NanoInterval, u64NanoInterval);
     spin_unlock_irqrestore(&pTimer->ChgIntLock, flFlags);
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 RT_EXPORT_SYMBOL(RTTimerChangeInterval);
@@ -1390,6 +1436,7 @@ RT_EXPORT_SYMBOL(RTTimerChangeInterval);
 RTDECL(int) RTTimerDestroy(PRTTIMER pTimer)
 {
     bool fCanDestroy;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     /*
      * Validate. It's ok to pass NULL pointer.
@@ -1440,7 +1487,7 @@ RTDECL(int) RTTimerDestroy(PRTTIMER pTimer)
         }
 
         if (pTimer->cCpus > 1)
-            RTSpinlockReleaseNoInts(pTimer->hSpinlock);
+            RTSpinlockRelease(pTimer->hSpinlock);
     }
 
     if (fCanDestroy)
@@ -1457,6 +1504,7 @@ RTDECL(int) RTTimerDestroy(PRTTIMER pTimer)
             rtTimerLnxDestroyIt(pTimer);
     }
 
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 RT_EXPORT_SYMBOL(RTTimerDestroy);
@@ -1468,6 +1516,7 @@ RTDECL(int) RTTimerCreateEx(PRTTIMER *ppTimer, uint64_t u64NanoInterval, uint32_
     RTCPUID     iCpu;
     unsigned    cCpus;
     int         rc;
+    IPRT_LINUX_SAVE_EFL_AC();
 
     rtR0LnxWorkqueueFlush();                /* for 2.4 */
     *ppTimer = NULL;
@@ -1476,11 +1525,17 @@ RTDECL(int) RTTimerCreateEx(PRTTIMER *ppTimer, uint64_t u64NanoInterval, uint32_
      * Validate flags.
      */
     if (!RTTIMER_FLAGS_ARE_VALID(fFlags))
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_INVALID_PARAMETER;
+    }
     if (    (fFlags & RTTIMER_FLAGS_CPU_SPECIFIC)
         &&  (fFlags & RTTIMER_FLAGS_CPU_ALL) != RTTIMER_FLAGS_CPU_ALL
         &&  !RTMpIsCpuPossible(RTMpCpuIdFromSetIndex(fFlags & RTTIMER_FLAGS_CPU_MASK)))
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return VERR_CPU_NOT_FOUND;
+    }
 
     /*
      * Allocate the timer handler.
@@ -1491,14 +1546,17 @@ RTDECL(int) RTTimerCreateEx(PRTTIMER *ppTimer, uint64_t u64NanoInterval, uint32_
     {
         cCpus = RTMpGetMaxCpuId() + 1;
         Assert(cCpus <= RTCPUSET_MAX_CPUS); /* On linux we have a 1:1 relationship between cpuid and set index. */
-        AssertReturn(u64NanoInterval, VERR_NOT_IMPLEMENTED); /* We don't implement single shot on all cpus, sorry. */
+        AssertReturnStmt(u64NanoInterval, IPRT_LINUX_RESTORE_EFL_AC(), VERR_NOT_IMPLEMENTED); /* We don't implement single shot on all cpus, sorry. */
     }
 #endif
 
-    rc = RTMemAllocEx(RT_OFFSETOF(RTTIMER, aSubTimers[cCpus]), 0,
+    rc = RTMemAllocEx(RT_UOFFSETOF_DYN(RTTIMER, aSubTimers[cCpus]), 0,
                       RTMEMALLOCEX_FLAGS_ZEROED | RTMEMALLOCEX_FLAGS_ANY_CTX_FREE, (void **)&pTimer);
     if (RT_FAILURE(rc))
+    {
+        IPRT_LINUX_RESTORE_EFL_AC();
         return rc;
+    }
 
     /*
      * Initialize it.
@@ -1537,9 +1595,17 @@ RTDECL(int) RTTimerCreateEx(PRTTIMER *ppTimer, uint64_t u64NanoInterval, uint32_
         else
 #endif
         {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 15, 0)
+            timer_setup(&pTimer->aSubTimers[iCpu].u.Std.LnxTimer, rtTimerLinuxStdCallback, TIMER_PINNED);
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
+            init_timer_pinned(&pTimer->aSubTimers[iCpu].u.Std.LnxTimer);
+#else
             init_timer(&pTimer->aSubTimers[iCpu].u.Std.LnxTimer);
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0)
             pTimer->aSubTimers[iCpu].u.Std.LnxTimer.data        = (unsigned long)&pTimer->aSubTimers[iCpu];
             pTimer->aSubTimers[iCpu].u.Std.LnxTimer.function    = rtTimerLinuxStdCallback;
+#endif
             pTimer->aSubTimers[iCpu].u.Std.LnxTimer.expires     = jiffies;
             pTimer->aSubTimers[iCpu].u.Std.u64NextTS            = 0;
         }
@@ -1565,6 +1631,7 @@ RTDECL(int) RTTimerCreateEx(PRTTIMER *ppTimer, uint64_t u64NanoInterval, uint32_
         if (RT_FAILURE(rc))
         {
             RTTimerDestroy(pTimer);
+            IPRT_LINUX_RESTORE_EFL_AC();
             return rc;
         }
     }
@@ -1572,6 +1639,7 @@ RTDECL(int) RTTimerCreateEx(PRTTIMER *ppTimer, uint64_t u64NanoInterval, uint32_
 
     RTTIMERLNX_LOG(("create %p hires=%d fFlags=%#x cCpus=%u\n", pTimer, pTimer->fHighRes, fFlags, cCpus));
     *ppTimer = pTimer;
+    IPRT_LINUX_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 RT_EXPORT_SYMBOL(RTTimerCreateEx);
@@ -1582,20 +1650,24 @@ RTDECL(uint32_t) RTTimerGetSystemGranularity(void)
 #if 0 /** @todo Not sure if this is what we want or not... Add new API for
        *        querying the resolution of the high res timers? */
     struct timespec Ts;
-    int rc = hrtimer_get_res(CLOCK_MONOTONIC, &Ts);
+    int rc;
+    IPRT_LINUX_SAVE_EFL_AC();
+    rc = hrtimer_get_res(CLOCK_MONOTONIC, &Ts);
+    IPRT_LINUX_RESTORE_EFL_AC();
     if (!rc)
     {
         Assert(!Ts.tv_sec);
         return Ts.tv_nsec;
     }
 #endif
-    return 1000000000 / HZ; /* ns */
+    return RT_NS_1SEC / HZ; /* ns */
 }
 RT_EXPORT_SYMBOL(RTTimerGetSystemGranularity);
 
 
 RTDECL(int) RTTimerRequestSystemGranularity(uint32_t u32Request, uint32_t *pu32Granted)
 {
+    RT_NOREF_PV(u32Request); RT_NOREF_PV(*pu32Granted);
     return VERR_NOT_SUPPORTED;
 }
 RT_EXPORT_SYMBOL(RTTimerRequestSystemGranularity);
@@ -1603,6 +1675,7 @@ RT_EXPORT_SYMBOL(RTTimerRequestSystemGranularity);
 
 RTDECL(int) RTTimerReleaseSystemGranularity(uint32_t u32Granted)
 {
+    RT_NOREF_PV(u32Granted);
     return VERR_NOT_SUPPORTED;
 }
 RT_EXPORT_SYMBOL(RTTimerReleaseSystemGranularity);

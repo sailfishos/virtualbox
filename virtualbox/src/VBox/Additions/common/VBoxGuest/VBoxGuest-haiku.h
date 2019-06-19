@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 /*
@@ -176,16 +185,17 @@ struct vboxguest_module_info
     int (*_RTTimerRequestSystemGranularity)(uint32_t u32Request, uint32_t *pu32Granted);
     void (*_RTSpinlockAcquire)(RTSPINLOCK Spinlock);
     void (*_RTSpinlockRelease)(RTSPINLOCK Spinlock);
-    void (*_RTSpinlockReleaseNoInts)(RTSPINLOCK Spinlock);
     void* (*_RTMemTmpAllocTag)(size_t cb, const char *pszTag);
     void (*_RTMemTmpFree)(void *pv);
     PRTLOGGER(*_RTLogDefaultInstance)(void);
-    PRTLOGGER(*_RTLogRelDefaultInstance)(void);
+    PRTLOGGER(*_RTLogDefaultInstanceEx)(uint32_t fFlagsAndGroup);
+    PRTLOGGER(*_RTLogRelGetDefaultInstance)(void);
+    PRTLOGGER(*_RTLogRelGetDefaultInstanceEx)(uint32_t fFlagsAndGroup);
     int (*_RTErrConvertToErrno)(int iErr);
-    int (*_VBoxGuestCommonIOCtl)(unsigned iFunction, PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
-                                 void *pvData, size_t cbData, size_t *pcbDataReturned);
-    int (*_VBoxGuestCreateUserSession)(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION *ppSession);
-    void (*_VBoxGuestCloseSession)(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
+    int (*_VGDrvCommonIoCtl)(unsigned iFunction, PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
+                             void *pvData, size_t cbData, size_t *pcbDataReturned);
+    int (*_VGDrvCommonCreateUserSession)(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION *ppSession);
+    void (*_VGDrvCommonCloseSession)(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
     void* (*_VBoxGuestIDCOpen)(uint32_t *pu32Version);
     int (*_VBoxGuestIDCClose)(void *pvSession);
     int (*_VBoxGuestIDCCall)(void *pvSession, unsigned iCmd, void *pvData, size_t cbData, size_t *pcbDataReturned);
@@ -222,5 +232,5 @@ struct vboxguest_module_info
 extern struct vboxguest_module_info *g_VBoxGuest;
 #endif
 
-#endif /* ___VBoxGuest_haiku_h */
+#endif /* !___VBoxGuest_haiku_h */
 

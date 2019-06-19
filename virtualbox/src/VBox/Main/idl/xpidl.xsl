@@ -5,7 +5,7 @@
  *  A template to generate a XPCOM IDL compatible interface definition file
  *  from the generic interface definition expressed in XML.
 
-    Copyright (C) 2006-2014 Oracle Corporation
+    Copyright (C) 2006-2016 Oracle Corporation
 
     This file is part of VirtualBox Open Source Edition (OSE), as
     available from http://www.virtualbox.org. This file is free software;
@@ -21,56 +21,7 @@
 
 <xsl:strip-space elements="*"/>
 
-
-<!--
-//  helper definitions
-/////////////////////////////////////////////////////////////////////////////
--->
-
-<!--
- *  capitalizes the first letter
--->
-<xsl:template name="capitalize">
-  <xsl:param name="str" select="."/>
-  <xsl:value-of select="
-    concat(
-      translate(substring($str,1,1),'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ'),
-      substring($str,2)
-    )
-  "/>
-</xsl:template>
-
-<!--
- *  uncapitalizes the first letter only if the second one is not capital
- *  otherwise leaves the string unchanged
--->
-<xsl:template name="uncapitalize">
-  <xsl:param name="str" select="."/>
-  <xsl:choose>
-    <xsl:when test="not(contains('ABCDEFGHIJKLMNOPQRSTUVWXYZ', substring($str,2,1)))">
-      <xsl:value-of select="
-        concat(
-          translate(substring($str,1,1),'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz'),
-          substring($str,2)
-        )
-      "/>
-    </xsl:when>
-    <xsl:otherwise>
-      <xsl:value-of select="string($str)"/>
-    </xsl:otherwise>
-  </xsl:choose>
-</xsl:template>
-
-<!--
- *  translates the string to uppercase
--->
-<xsl:template name="uppercase">
-  <xsl:param name="str" select="."/>
-  <xsl:value-of select="
-    translate($str,'abcdefghijklmnopqrstuvwxyz','ABCDEFGHIJKLMNOPQRSTUVWXYZ')
-  "/>
-</xsl:template>
-
+<xsl:include href="typemap-shared.inc.xsl"/>
 
 <!--
 //  templates
@@ -196,27 +147,40 @@
   <xsl:text>#endif // !VBOX_EXTERN_C&#x0A;</xsl:text>
   <!-- result codes -->
   <xsl:text>// result codes declared in API spec&#x0A;</xsl:text>
-  <xsl:for-each select="result">
+  <xsl:for-each select="application/result">
     <xsl:apply-templates select="."/>
   </xsl:for-each>
   <xsl:text>%}&#x0A;&#x0A;</xsl:text>
   <!-- forward declarations -->
-  <xsl:apply-templates select="if | interface" mode="forward"/>
+  <xsl:apply-templates select="application/if | application/interface" mode="forward"/>
   <xsl:text>&#x0A;</xsl:text>
   <!-- all enums go first -->
-  <xsl:apply-templates select="enum | if/enum"/>
-  <!-- everything else but result codes and enums -->
-  <xsl:apply-templates select="*[not(self::result or self::enum) and
-                                 not(self::if[result] or self::if[enum])]"/>
+  <xsl:apply-templates select="application/enum | application/if/enum"/>
+  <!-- everything else but result codes and enums
+  <xsl:apply-templates select="*[not(self::application/result or self::application/enum) and
+                                 not(self::application[result] or self::application/if[enum])]"/> -->
+  <!-- the modules (i.e. everything else) -->
+  <xsl:apply-templates select="application/interface | application/if[interface]
+                                   | application/module | application/if[module]"/>
   <!-- -->
 </xsl:template>
 
+
+ <!--
+ *  applications
+-->
+<xsl:template match="application">
+  <xsl:apply-templates/>
+</xsl:template>
+<xsl:template match="application" mode="forward">
+  <xsl:apply-templates mode="forward"/>
+</xsl:template>
 
 <!--
  *  result codes
 -->
 <xsl:template match="result">
-  <xsl:value-of select="concat('#define ',@name,' ',@value)"/>
+  <xsl:value-of select="concat('#define ',@name,' ((nsresult)',@value, ')')"/>
   <xsl:text>&#x0A;</xsl:text>
 </xsl:template>
 
@@ -239,23 +203,43 @@
     scriptable
 ]
 <xsl:text>interface </xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:variable name="name" select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text> : </xsl:text>
   <xsl:choose>
       <xsl:when test="@extends='$unknown'">nsISupports</xsl:when>
       <xsl:when test="@extends='$errorinfo'">nsIException</xsl:when>
       <xsl:otherwise><xsl:value-of select="@extends"/></xsl:otherwise>
   </xsl:choose>
-  <xsl:text>&#x0A;{&#x0A;</xsl:text>
+  <xsl:call-template name="xsltprocNewlineOutputHack"/>
+  <xsl:text>{&#x0A;</xsl:text>
   <!-- attributes (properties) -->
   <xsl:apply-templates select="attribute"/>
+  <xsl:variable name="reservedAttributes" select="@reservedAttributes"/>
+  <xsl:if test="$reservedAttributes > 0">
+    <!-- tricky way to do a "for" loop without recursion -->
+    <xsl:for-each select="(//*)[position() &lt;= $reservedAttributes]">
+      <xsl:text>    readonly attribute unsigned long InternalAndReservedAttribute</xsl:text>
+      <xsl:value-of select="concat(position(), $name)"/>
+      <xsl:text>;&#x0A;&#x0A;</xsl:text>
+    </xsl:for-each>
+  </xsl:if>
   <!-- methods -->
   <xsl:apply-templates select="method"/>
+  <xsl:variable name="reservedMethods" select="@reservedMethods"/>
+  <xsl:if test="$reservedMethods > 0">
+    <!-- tricky way to do a "for" loop without recursion -->
+    <xsl:for-each select="(//*)[position() &lt;= $reservedMethods]">
+      <xsl:text>    void InternalAndReservedMethod</xsl:text>
+      <xsl:value-of select="concat(position(), $name)"/>
+      <xsl:text>();&#x0A;&#x0A;</xsl:text>
+    </xsl:for-each>
+  </xsl:if>
   <!-- 'if' enclosed elements, unsorted -->
   <xsl:apply-templates select="if"/>
   <!-- -->
   <xsl:text>}; /* interface </xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text> */&#x0A;&#x0A;</xsl:text>
   <!-- Interface implementation forwarder macro -->
   <xsl:text>/* Interface implementation forwarder macro */&#x0A;</xsl:text>
@@ -266,28 +250,28 @@
   <xsl:apply-templates select="if" mode="forwarder"/>
   <!-- 2) COM_FORWARD_Interface_TO(smth) -->
   <xsl:text>#define COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO(smth) NS_FORWARD_</xsl:text>
-  <xsl:call-template name="uppercase">
-    <xsl:with-param name="str" select="@name"/>
+  <xsl:call-template name="string-to-upper">
+    <xsl:with-param name="str" select="$name"/>
   </xsl:call-template>
   <xsl:text> (smth)&#x0A;</xsl:text>
   <!-- 3) COM_FORWARD_Interface_TO_OBJ(obj) -->
   <xsl:text>#define COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO_OBJ(obj) COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO ((obj)->)&#x0A;</xsl:text>
   <!-- 4) COM_FORWARD_Interface_TO_BASE(base) -->
   <xsl:text>#define COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO_BASE(base) COM_FORWARD_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>_TO (base::)&#x0A;&#x0A;</xsl:text>
   <!-- -->
   <xsl:text>// for compatibility with Win32&#x0A;</xsl:text>
   <xsl:text>VBOX_EXTERN_C const nsID IID_</xsl:text>
-  <xsl:value-of select="@name"/>
+  <xsl:value-of select="$name"/>
   <xsl:text>;&#x0A;</xsl:text>
   <xsl:text>%}&#x0A;&#x0A;</xsl:text>
   <!-- end -->
@@ -664,7 +648,7 @@
   <xsl:value-of select="@name"/>
   <xsl:text>:&#x0A;</xsl:text>
   <xsl:text>#define NS_</xsl:text>
-  <xsl:call-template name="uppercase">
+  <xsl:call-template name="string-to-upper">
     <xsl:with-param name="str" select="@name"/>
   </xsl:call-template>
   <xsl:text>_CID { \&#x0A;</xsl:text>
@@ -682,7 +666,7 @@
   <xsl:text>, 0x</xsl:text><xsl:value-of select="substring(@uuid,35,2)"/>
   <xsl:text> } \&#x0A;}&#x0A;</xsl:text>
   <xsl:text>#define NS_</xsl:text>
-  <xsl:call-template name="uppercase">
+  <xsl:call-template name="string-to-upper">
     <xsl:with-param name="str" select="@name"/>
   </xsl:call-template>
   <!-- Contract ID -->
@@ -914,15 +898,15 @@
           <xsl:choose>
             <!-- enum types -->
             <xsl:when test="
-              (ancestor::library/enum[@name=current()]) or
-              (ancestor::library/if[@target=$self_target]/enum[@name=current()])
+              (ancestor::library/application/enum[@name=current()]) or
+              (ancestor::library/application/if[@target=$self_target]/enum[@name=current()])
             ">
               <xsl:text>PRUint32</xsl:text>
             </xsl:when>
             <!-- custom interface types -->
             <xsl:when test="
-              (ancestor::library/interface[@name=current()]) or
-               (ancestor::library/if[@target=$self_target]/interface[@name=current()])
+              (ancestor::library/application/interface[@name=current()]) or
+               (ancestor::library/application/if[@target=$self_target]/interface[@name=current()])
             ">
               <xsl:value-of select="."/>
             </xsl:when>
@@ -1036,15 +1020,15 @@
           <xsl:choose>
             <!-- enum types -->
             <xsl:when test="
-              (ancestor::library/enum[@name=current()]) or
-              (ancestor::library/if[@target=$self_target]/enum[@name=current()])
+              (ancestor::library/application/enum[@name=current()]) or
+              (ancestor::library/application/if[@target=$self_target]/enum[@name=current()])
             ">
               <xsl:text>PRUint32</xsl:text>
             </xsl:when>
             <!-- custom interface types -->
             <xsl:when test="
-              (ancestor::library/interface[@name=current()]) or
-              (ancestor::library/if[@target=$self_target]/interface[@name=current()])
+              (ancestor::library/application/interface[@name=current()]) or
+              (ancestor::library/application/if[@target=$self_target]/interface[@name=current()])
             ">
               <xsl:value-of select="."/>
               <xsl:text> *</xsl:text>
@@ -1056,6 +1040,16 @@
     </xsl:otherwise>
   </xsl:choose>
 </xsl:template>
+
+<!-- Filters for switch off VBoxSDS definitions -->
+
+<xsl:template match="application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']//module/class" />
+
+<xsl:template match="application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']/if//interface
+| application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']//interface" />
+
+<xsl:template match="application[@uuid='ec0e78e8-fa43-43e8-ac0a-02c784c4a4fa']//interface" mode="forward" />
+
 
 </xsl:stylesheet>
 

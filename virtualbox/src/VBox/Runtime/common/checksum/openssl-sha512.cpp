@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 
 #include <openssl/sha.h>
@@ -36,6 +36,8 @@
 #include <iprt/sha.h>
 
 #include <iprt/assert.h>
+#include <iprt/string.h>
+
 
 AssertCompile(RT_SIZEOFMEMB(RTSHA512CONTEXT, abPadding) >= RT_SIZEOFMEMB(RTSHA512CONTEXT, Private));
 
@@ -48,6 +50,20 @@ RTDECL(void) RTSha512(const void *pvBuf, size_t cbBuf, uint8_t pabDigest[RTSHA51
     RTSha512Final(&Ctx, pabDigest);
 }
 RT_EXPORT_SYMBOL(RTSha512);
+
+
+RTDECL(bool) RTSha512Check(const void *pvBuf, size_t cbBuf, uint8_t const pabDigest[RTSHA512_HASH_SIZE])
+{
+    RTSHA512CONTEXT Ctx;
+    RTSha512Init(&Ctx);
+    RTSha512Update(&Ctx, pvBuf, cbBuf);
+    uint8_t abActualDigest[RTSHA512_HASH_SIZE];
+    RTSha512Final(&Ctx, abActualDigest);
+    bool fRet = memcmp(pabDigest, abActualDigest, RTSHA512_HASH_SIZE) == 0;
+    RT_ZERO(abActualDigest);
+    return fRet;
+}
+RT_EXPORT_SYMBOL(RTSha512Check);
 
 
 RTDECL(void) RTSha512Init(PRTSHA512CONTEXT pCtx)
@@ -87,6 +103,20 @@ RTDECL(void) RTSha384(const void *pvBuf, size_t cbBuf, uint8_t pabDigest[RTSHA38
 RT_EXPORT_SYMBOL(RTSha384);
 
 
+RTDECL(bool) RTSha384Check(const void *pvBuf, size_t cbBuf, uint8_t const pabDigest[RTSHA384_HASH_SIZE])
+{
+    RTSHA384CONTEXT Ctx;
+    RTSha384Init(&Ctx);
+    RTSha384Update(&Ctx, pvBuf, cbBuf);
+    uint8_t abActualDigest[RTSHA384_HASH_SIZE];
+    RTSha384Final(&Ctx, abActualDigest);
+    bool fRet = memcmp(pabDigest, abActualDigest, RTSHA384_HASH_SIZE) == 0;
+    RT_ZERO(abActualDigest);
+    return fRet;
+}
+RT_EXPORT_SYMBOL(RTSha384Check);
+
+
 RTDECL(void) RTSha384Init(PRTSHA384CONTEXT pCtx)
 {
     SHA384_Init(&pCtx->Private);
@@ -106,5 +136,4 @@ RTDECL(void) RTSha384Final(PRTSHA384CONTEXT pCtx, uint8_t pabDigest[32])
     SHA384_Final((unsigned char *)&pabDigest[0], &pCtx->Private);
 }
 RT_EXPORT_SYMBOL(RTSha384Final);
-
 

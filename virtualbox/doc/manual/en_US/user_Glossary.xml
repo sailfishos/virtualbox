@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <glossary id="Glossary">
   <glossdiv>
     <title>A</title>
@@ -116,16 +116,6 @@
         built-in DHCP server that delivers an IP addresses to a virtual
         machine when networking is configured to NAT; see <xref
         linkend="networkingdetails" />.</para>
-      </glossdef>
-    </glossentry>
-
-    <glossentry>
-      <glossterm>DKMS</glossterm>
-
-      <glossdef>
-        <para>Dynamic Kernel Module Support. A framework that simplifies
-        installing and updating external kernel modules on Linux machines; see
-        <xref linkend="externalkernelmodules" />.</para>
       </glossdef>
     </glossentry>
   </glossdiv>
@@ -468,6 +458,15 @@
 
   <glossdiv>
     <title>X</title>
+
+    <glossentry>
+      <glossterm>xHCI</glossterm>
+
+      <glossdef>
+        <para>eXtended Host Controller Interface, the interface that
+        implements the USB 3.0 standard.</para>
+      </glossdef>
+    </glossentry>
 
     <glossentry>
       <glossterm>XML</glossterm>

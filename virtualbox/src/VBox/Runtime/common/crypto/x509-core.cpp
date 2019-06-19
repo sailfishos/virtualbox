@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/crypto/x509.h>
 
@@ -126,58 +126,115 @@ RTDECL(int) RTCrX509AlgorithmIdentifier_CompareWithString(PCRTCRX509ALGORITHMIDE
 }
 
 
-RTDECL(int) RTCrX509AlgorithmIdentifier_CompareDigestAndEncryptedDigest(PCRTCRX509ALGORITHMIDENTIFIER pDigest,
-                                                                        PCRTCRX509ALGORITHMIDENTIFIER pEncryptedDigest)
+RTDECL(int) RTCrX509AlgorithmIdentifier_CompareDigestOidAndEncryptedDigestOid(const char *pszDigestOid,
+                                                                              const char *pszEncryptedDigestOid)
 {
     /* common */
-    if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_MD5))
+    if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD5))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_MD5_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD5_WITH_RSA))
             return 0;
     }
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA1))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA1))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA1_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA1_WITH_RSA))
             return 0;
     }
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA256))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA256))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA256_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA256_WITH_RSA))
             return 0;
     }
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA512))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA512))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA512_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA512_WITH_RSA))
             return 0;
     }
     /* Less common. */
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_MD2))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD2))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_MD2_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD2_WITH_RSA))
             return 0;
     }
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_MD4))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD4))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_MD4_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD4_WITH_RSA))
             return 0;
     }
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA384))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA384))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA384_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA384_WITH_RSA))
             return 0;
     }
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA224))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA224))
     {
-        if (!strcmp(pEncryptedDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_SHA224_WITH_RSA))
+        if (!strcmp(pszEncryptedDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA224_WITH_RSA))
             return 0;
     }
-    else if (!strcmp(pDigest->Algorithm.szObjId, RTCRX509ALGORITHMIDENTIFIERID_WHIRLPOOL))
+    else if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_WHIRLPOOL))
     {
         /* ?? */
     }
     else
         return -1;
     return 1;
+}
+
+RTDECL(int) RTCrX509AlgorithmIdentifier_CompareDigestAndEncryptedDigest(PCRTCRX509ALGORITHMIDENTIFIER pDigest,
+                                                                        PCRTCRX509ALGORITHMIDENTIFIER pEncryptedDigest)
+{
+    return RTCrX509AlgorithmIdentifier_CompareDigestOidAndEncryptedDigestOid(pDigest->Algorithm.szObjId,
+                                                                             pEncryptedDigest->Algorithm.szObjId);
+}
+
+
+RTDECL(const char *) RTCrX509AlgorithmIdentifier_CombineEncryptionOidAndDigestOid(const char *pszEncryptionOid,
+                                                                                  const char *pszDigestOid)
+{
+    /* RSA: */
+    if (!strcmp(pszEncryptionOid, RTCRX509ALGORITHMIDENTIFIERID_RSA))
+    {
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD5)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD5_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_MD5_WITH_RSA;
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA1)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA1_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_SHA1_WITH_RSA;
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA256)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA256_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_SHA256_WITH_RSA;
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA512)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA512_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_SHA512_WITH_RSA;
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD2)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD2_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_MD2_WITH_RSA;
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD4)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_MD4_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_MD4_WITH_RSA;
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA384)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA384_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_SHA384_WITH_RSA;
+        if (   !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA224)
+            || !strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_SHA224_WITH_RSA))
+            return RTCRX509ALGORITHMIDENTIFIERID_SHA224_WITH_RSA;
+
+        /* if (!strcmp(pszDigestOid, RTCRX509ALGORITHMIDENTIFIERID_WHIRLPOOL))
+            return ???; */
+    }
+    else if (RTCrX509AlgorithmIdentifier_CompareDigestOidAndEncryptedDigestOid(pszDigestOid, pszEncryptionOid) == 0)
+        return pszEncryptionOid;
+
+    AssertMsgFailed(("enc=%s hash=%s\n", pszEncryptionOid, pszDigestOid));
+    return NULL;
+}
+
+
+RTDECL(const char *) RTCrX509AlgorithmIdentifier_CombineEncryptionAndDigest(PCRTCRX509ALGORITHMIDENTIFIER pEncryption,
+                                                                            PCRTCRX509ALGORITHMIDENTIFIER pDigest)
+{
+    return RTCrX509AlgorithmIdentifier_CombineEncryptionOidAndDigestOid(pEncryption->Algorithm.szObjId,
+                                                                        pDigest->Algorithm.szObjId);
 }
 
 
@@ -550,10 +607,10 @@ RTDECL(bool) RTCrX509RelativeDistinguishedName_MatchByRfc5280(PCRTCRX509RELATIVE
          */
         for (uint32_t iLeft = 0; iLeft < cItems; iLeft++)
         {
-            PCRTCRX509ATTRIBUTETYPEANDVALUE pLeftAttr = &pLeft->paItems[iLeft];
+            PCRTCRX509ATTRIBUTETYPEANDVALUE pLeftAttr = pLeft->papItems[iLeft];
             bool fFound = false;
             for (uint32_t iRight = 0; iRight < cItems; iRight++)
-                if (RTCrX509AttributeTypeAndValue_MatchAsRdnByRfc5280(pLeftAttr, &pRight->paItems[iRight]))
+                if (RTCrX509AttributeTypeAndValue_MatchAsRdnByRfc5280(pLeftAttr, pRight->papItems[iRight]))
                 {
                     fFound = true;
                     break;
@@ -579,7 +636,7 @@ RTDECL(bool) RTCrX509Name_MatchByRfc5280(PCRTCRX509NAME pLeft, PCRTCRX509NAME pR
     {
         /* Require exact order. */
         for (uint32_t iRdn = 0; iRdn < cItems; iRdn++)
-            if (!RTCrX509RelativeDistinguishedName_MatchByRfc5280(&pLeft->paItems[iRdn], &pRight->paItems[iRdn]))
+            if (!RTCrX509RelativeDistinguishedName_MatchByRfc5280(pLeft->papItems[iRdn], pRight->papItems[iRdn]))
                 return false;
         return true;
     }
@@ -600,22 +657,22 @@ RTDECL(bool) RTCrX509Name_ConstraintMatch(PCRTCRX509NAME pConstraint, PCRTCRX509
          */
         for (uint32_t i = 0; pConstraint->cItems; i++)
         {
-            PCRTCRX509RELATIVEDISTINGUISHEDNAME pConstrRdns = &pConstraint->paItems[i];
-            PCRTCRX509RELATIVEDISTINGUISHEDNAME pNameRdns   = &pName->paItems[i];
+            PCRTCRX509RELATIVEDISTINGUISHEDNAME pConstrRdns = pConstraint->papItems[i];
+            PCRTCRX509RELATIVEDISTINGUISHEDNAME pNameRdns   = pName->papItems[i];
 
             /*
              * Walk the constraint attribute & value array.
              */
             for (uint32_t iConstrAttrib = 0; iConstrAttrib < pConstrRdns->cItems; iConstrAttrib++)
             {
-                PCRTCRX509ATTRIBUTETYPEANDVALUE pConstrAttrib = &pConstrRdns->paItems[iConstrAttrib];
+                PCRTCRX509ATTRIBUTETYPEANDVALUE pConstrAttrib = pConstrRdns->papItems[iConstrAttrib];
 
                 /*
                  * Find matching attribute & value in the name.
                  */
                 bool fFound = false;
                 for (uint32_t iNameAttrib = 0; iNameAttrib < pNameRdns->cItems; iNameAttrib++)
-                    if (RTCrX509AttributeTypeAndValue_MatchAsRdnByRfc5280(pConstrAttrib, &pNameRdns->paItems[iNameAttrib]))
+                    if (RTCrX509AttributeTypeAndValue_MatchAsRdnByRfc5280(pConstrAttrib, pNameRdns->papItems[iNameAttrib]))
                     {
                         fFound = true;
                         break;
@@ -633,7 +690,7 @@ RTDECL(bool) RTCrX509Name_ConstraintMatch(PCRTCRX509NAME pConstraint, PCRTCRX509
 /**
  * Mapping between X.500 object IDs and short and long names.
  *
- * See RFC-1327, ...
+ * See RFC-1327, RFC-4519 ...
  */
 static struct
 {
@@ -645,18 +702,41 @@ static struct
 {
     {   "0.9.2342.19200300.100.1.3",  RT_STR_TUPLE("Mail"),                 "Rfc822Mailbox" },
     {   "0.9.2342.19200300.100.1.25", RT_STR_TUPLE("DC"),                   "DomainComponent" },
-    {   "1.2.840.113549.1.9.1",       RT_STR_TUPLE("Email"),                "EmailAddress" },
+    {   "1.2.840.113549.1.9.1",       RT_STR_TUPLE("Email") /*nonstandard*/,"EmailAddress" },
     {   "2.5.4.3",                    RT_STR_TUPLE("CN"),                   "CommonName" },
-    {   "2.5.4.4",                    RT_STR_TUPLE("S"),                    "Surname" },
+    {   "2.5.4.4",                    RT_STR_TUPLE("SN"),                   "Surname" },
+    {   "2.5.4.5",                    RT_STR_TUPLE("SRN") /*nonstandard*/,  "SerialNumber" },
     {   "2.5.4.6",                    RT_STR_TUPLE("C"),                    "CountryName" },
     {   "2.5.4.7",                    RT_STR_TUPLE("L"),                    "LocalityName" },
-    {   "2.5.4.8",                    RT_STR_TUPLE("ST"),                   "StatOrProviceName" },
+    {   "2.5.4.8",                    RT_STR_TUPLE("ST"),                   "StateOrProviceName" },
+    {   "2.5.4.9",                    RT_STR_TUPLE("street"),               "Street" },
     {   "2.5.4.10",                   RT_STR_TUPLE("O"),                    "OrganizationName" },
-    {   "2.5.4.11",                   RT_STR_TUPLE("OU"),                   "OrganizationUnitName" },
-    {   "2.5.4.42",                   RT_STR_TUPLE("G"),                    "GivenName" },
-    {   "2.5.4.43",                   RT_STR_TUPLE("I"),                    "Initials" },
-    {   "2.5.4.44",                   RT_STR_TUPLE("GQ"),                   "GenerationQualifier" },
+    {   "2.5.4.11",                   RT_STR_TUPLE("OU"),                   "OrganizationalUnitName" },
+    {   "2.5.4.12",                   RT_STR_TUPLE("title"),                "Title" },
+    {   "2.5.4.13",                   RT_STR_TUPLE("desc"),                 "Description" },
+    {   "2.5.4.15",                   RT_STR_TUPLE("BC") /*nonstandard*/,   "BusinessCategory" },
+    {   "2.5.4.17",                   RT_STR_TUPLE("ZIP") /*nonstandard*/,  "PostalCode" },
+    {   "2.5.4.18",                   RT_STR_TUPLE("POBox") /*nonstandard*/,"PostOfficeBox" },
+    {   "2.5.4.20",                   RT_STR_TUPLE("PN") /*nonstandard*/,   "TelephoneNumber" },
+    {   "2.5.4.33",                   RT_STR_TUPLE("RO") /*nonstandard*/,   "RoleOccupant" },
+    {   "2.5.4.34",                   RT_STR_TUPLE("SA") /*nonstandard*/,   "StreetAddress" },
+    {   "2.5.4.41",                   RT_STR_TUPLE("N") /*nonstandard*/,    "Name" },
+    {   "2.5.4.42",                   RT_STR_TUPLE("GN"),                   "GivenName" },
+    {   "2.5.4.43",                   RT_STR_TUPLE("I") /*nonstandard*/,    "Initials" },
+    {   "2.5.4.44",                   RT_STR_TUPLE("GQ") /*nonstandard*/,   "GenerationQualifier" },
+    {   "2.5.4.46",                   RT_STR_TUPLE("DNQ") /*nonstandard*/,  "DNQualifier" },
+    {   "2.5.4.51",                   RT_STR_TUPLE("HID") /*nonstandard*/,  "HouseIdentifier" },
 };
+
+
+RTDECL(const char *) RTCrX509Name_GetShortRdn(PCRTASN1OBJID pRdnId)
+{
+    uint32_t iName = RT_ELEMENTS(g_aRdnMap);
+    while (iName-- > 0)
+        if (RTAsn1ObjId_CompareWithString(pRdnId, g_aRdnMap[iName].pszOid) == 0)
+            return g_aRdnMap[iName].pszShortNm;
+    return NULL;
+}
 
 
 RTDECL(bool) RTCrX509Name_MatchWithString(PCRTCRX509NAME pThis, const char *pszString)
@@ -669,10 +749,10 @@ RTDECL(bool) RTCrX509Name_MatchWithString(PCRTCRX509NAME pThis, const char *pszS
      */
     for (uint32_t i = 0; i < pThis->cItems; i++)
     {
-        PCRTCRX509RELATIVEDISTINGUISHEDNAME pRdn = &pThis->paItems[i];
+        PCRTCRX509RELATIVEDISTINGUISHEDNAME pRdn = pThis->papItems[i];
         for (uint32_t j = 0; j < pRdn->cItems; j++)
         {
-            PCRTCRX509ATTRIBUTETYPEANDVALUE pComponent = &pRdn->paItems[j];
+            PCRTCRX509ATTRIBUTETYPEANDVALUE pComponent = pRdn->papItems[j];
 
             /*
              * Must be a string.
@@ -748,10 +828,10 @@ RTDECL(int) RTCrX509Name_FormatAsString(PCRTCRX509NAME pThis, char *pszBuf, size
     int    rc  = VINF_SUCCESS;
     for (uint32_t i = 0; i < pThis->cItems; i++)
     {
-        PCRTCRX509RELATIVEDISTINGUISHEDNAME pRdn = &pThis->paItems[i];
+        PCRTCRX509RELATIVEDISTINGUISHEDNAME pRdn = pThis->papItems[i];
         for (uint32_t j = 0; j < pRdn->cItems; j++)
         {
-            PCRTCRX509ATTRIBUTETYPEANDVALUE pComponent = &pRdn->paItems[j];
+            PCRTCRX509ATTRIBUTETYPEANDVALUE pComponent = pRdn->papItems[j];
 
             /*
              * Must be a string.
@@ -1250,7 +1330,8 @@ RTDECL(bool) RTCrX509GeneralSubtree_ConstraintMatch(PCRTCRX509GENERALSUBTREE pCo
 static void rtCrx509TbsCertificate_AddKeyUsageFlags(PRTCRX509TBSCERTIFICATE pThis, PCRTCRX509EXTENSION pExtension)
 {
     AssertReturnVoid(pExtension->enmValue == RTCRX509EXTENSIONVALUE_BIT_STRING);
-    AssertReturnVoid(pExtension->ExtnValue.pEncapsulated->cb <= 2);
+    /* 3 = 1 byte for unused bit count, followed by one or two bytes containing actual bits. RFC-5280 defines bits 0 thru 8. */
+    AssertReturnVoid(pExtension->ExtnValue.pEncapsulated->cb <= 3);
     pThis->T3.fKeyUsage |= (uint32_t)RTAsn1BitString_GetAsUInt64((PCRTASN1BITSTRING)pExtension->ExtnValue.pEncapsulated);
 }
 
@@ -1263,12 +1344,12 @@ static void rtCrx509TbsCertificate_AddExtKeyUsageFlags(PRTCRX509TBSCERTIFICATE p
     while (i-- > 0)
     {
 
-        if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_ANY_EXTENDED_KEY_USAGE_OID) == 0)
+        if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_ANY_EXTENDED_KEY_USAGE_OID) == 0)
             pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_ANY;
-        else if (RTAsn1ObjId_StartsWith(&pObjIds->paItems[i], RTCRX509_ID_KP_OID))
+        else if (RTAsn1ObjId_StartsWith(pObjIds->papItems[i], RTCRX509_ID_KP_OID))
         {
-            if (RTAsn1ObjIdCountComponents(&pObjIds->paItems[i]) == 9)
-                switch (RTAsn1ObjIdGetLastComponentsAsUInt32(&pObjIds->paItems[i]))
+            if (RTAsn1ObjIdCountComponents(pObjIds->papItems[i]) == 9)
+                switch (RTAsn1ObjIdGetLastComponentsAsUInt32(pObjIds->papItems[i]))
                 {
                     case  1: pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_SERVER_AUTH; break;
                     case  2: pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_CLIENT_AUTH; break;
@@ -1288,40 +1369,40 @@ static void rtCrx509TbsCertificate_AddExtKeyUsageFlags(PRTCRX509TBSCERTIFICATE p
             else
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_OTHER;
         }
-        else if (RTAsn1ObjId_StartsWith(&pObjIds->paItems[i], RTCRX509_APPLE_EKU_APPLE_EXTENDED_KEY_USAGE_OID))
+        else if (RTAsn1ObjId_StartsWith(pObjIds->papItems[i], RTCRX509_APPLE_EKU_APPLE_EXTENDED_KEY_USAGE_OID))
         {
-            if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_APPLE_EKU_CODE_SIGNING_OID) == 0)
+            if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_APPLE_EKU_CODE_SIGNING_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_APPLE_CODE_SIGNING;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_APPLE_EKU_CODE_SIGNING_DEVELOPMENT_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_APPLE_EKU_CODE_SIGNING_DEVELOPMENT_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_APPLE_CODE_SIGNING_DEVELOPMENT;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_APPLE_EKU_SOFTWARE_UPDATE_SIGNING_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_APPLE_EKU_SOFTWARE_UPDATE_SIGNING_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_APPLE_SOFTWARE_UPDATE_SIGNING;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_APPLE_EKU_CODE_SIGNING_THRID_PARTY_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_APPLE_EKU_CODE_SIGNING_THRID_PARTY_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_APPLE_CODE_SIGNING_THIRD_PARTY;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_APPLE_EKU_RESOURCE_SIGNING_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_APPLE_EKU_RESOURCE_SIGNING_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_APPLE_RESOURCE_SIGNING;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_APPLE_EKU_SYSTEM_IDENTITY_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_APPLE_EKU_SYSTEM_IDENTITY_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_APPLE_SYSTEM_IDENTITY;
             else
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_OTHER;
         }
-        else if (RTAsn1ObjId_StartsWith(&pObjIds->paItems[i], "1.3.6.1.4.1.311"))
+        else if (RTAsn1ObjId_StartsWith(pObjIds->papItems[i], "1.3.6.1.4.1.311"))
         {
-            if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_TIMESTAMP_SIGNING_OID) == 0)
+            if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_TIMESTAMP_SIGNING_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_TIMESTAMP_SIGNING;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_NT5_CRYPTO_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_NT5_CRYPTO_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_NT5_CRYPTO;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_OEM_WHQL_CRYPTO_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_OEM_WHQL_CRYPTO_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_OEM_WHQL_CRYPTO;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_EMBEDDED_NT_CRYPTO_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_EMBEDDED_NT_CRYPTO_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_EMBEDDED_NT_CRYPTO;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_KERNEL_MODE_CODE_SIGNING_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_KERNEL_MODE_CODE_SIGNING_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_KERNEL_MODE_CODE_SIGNING;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_LIFETIME_SIGNING_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_LIFETIME_SIGNING_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_LIFETIME_SIGNING;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_DRM_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_DRM_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_DRM;
-            else if (RTAsn1ObjId_CompareWithString(&pObjIds->paItems[i], RTCRX509_MS_EKU_DRM_INDIVIDUALIZATION_OID) == 0)
+            else if (RTAsn1ObjId_CompareWithString(pObjIds->papItems[i], RTCRX509_MS_EKU_DRM_INDIVIDUALIZATION_OID) == 0)
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_MS_DRM_INDIVIDUALIZATION;
             else
                 pThis->T3.fExtKeyUsage |= RTCRX509CERT_EKU_F_OTHER;
@@ -1374,85 +1455,85 @@ RTDECL(int) RTCrX509TbsCertificate_ReprocessExtensions(PRTCRX509TBSCERTIFICATE p
      */
     for (uint32_t i = 0; i < pThis->T3.Extensions.cItems; i++)
     {
-        PCRTASN1OBJID       pExtnId   = &pThis->T3.Extensions.paItems[i].ExtnId;
-        PCRTASN1OCTETSTRING pExtValue = &pThis->T3.Extensions.paItems[i].ExtnValue;
+        PCRTASN1OBJID       pExtnId   = &pThis->T3.Extensions.papItems[i]->ExtnId;
+        PCRTASN1OCTETSTRING pExtValue = &pThis->T3.Extensions.papItems[i]->ExtnValue;
         if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_KEY_USAGE_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_KEY_USAGE);
-            rtCrx509TbsCertificate_AddKeyUsageFlags(pThis, &pThis->T3.Extensions.paItems[i]);
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_BIT_STRING);
+            rtCrx509TbsCertificate_AddKeyUsageFlags(pThis, pThis->T3.Extensions.papItems[i]);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_BIT_STRING);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_EXT_KEY_USAGE_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_EXT_KEY_USAGE);
-            rtCrx509TbsCertificate_AddExtKeyUsageFlags(pThis, &pThis->T3.Extensions.paItems[i]);
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_SEQ_OF_OBJ_IDS);
+            rtCrx509TbsCertificate_AddExtKeyUsageFlags(pThis, pThis->T3.Extensions.papItems[i]);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_SEQ_OF_OBJ_IDS);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_AUTHORITY_KEY_IDENTIFIER_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_AUTHORITY_KEY_IDENTIFIER);
             pThis->T3.pAuthorityKeyIdentifier = (PCRTCRX509AUTHORITYKEYIDENTIFIER)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_AUTHORITY_KEY_IDENTIFIER);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_AUTHORITY_KEY_IDENTIFIER);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_OLD_AUTHORITY_KEY_IDENTIFIER_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_OLD_AUTHORITY_KEY_IDENTIFIER);
             pThis->T3.pOldAuthorityKeyIdentifier = (PCRTCRX509OLDAUTHORITYKEYIDENTIFIER)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_OLD_AUTHORITY_KEY_IDENTIFIER);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_OLD_AUTHORITY_KEY_IDENTIFIER);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_SUBJECT_KEY_IDENTIFIER_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_SUBJECT_KEY_IDENTIFIER);
             pThis->T3.pSubjectKeyIdentifier = (PCRTASN1OCTETSTRING)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_OCTET_STRING);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_OCTET_STRING);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_SUBJECT_ALT_NAME_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_SUBJECT_ALT_NAME);
             pThis->T3.pAltSubjectName = (PCRTCRX509GENERALNAMES)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_GENERAL_NAMES);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_GENERAL_NAMES);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_ISSUER_ALT_NAME_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_ISSUER_ALT_NAME);
             pThis->T3.pAltIssuerName = (PCRTCRX509GENERALNAMES)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_GENERAL_NAMES);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_GENERAL_NAMES);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_CERTIFICATE_POLICIES_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_CERTIFICATE_POLICIES);
             pThis->T3.pCertificatePolicies = (PCRTCRX509CERTIFICATEPOLICIES)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_CERTIFICATE_POLICIES);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_CERTIFICATE_POLICIES);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_POLICY_MAPPINGS_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_POLICY_MAPPINGS);
             pThis->T3.pPolicyMappings = (PCRTCRX509POLICYMAPPINGS)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_POLICY_MAPPINGS);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_POLICY_MAPPINGS);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_BASIC_CONSTRAINTS_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_BASIC_CONSTRAINTS);
             pThis->T3.pBasicConstraints = (PCRTCRX509BASICCONSTRAINTS)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_BASIC_CONSTRAINTS);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_BASIC_CONSTRAINTS);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_NAME_CONSTRAINTS_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_NAME_CONSTRAINTS);
             pThis->T3.pNameConstraints = (PCRTCRX509NAMECONSTRAINTS)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_NAME_CONSTRAINTS);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_NAME_CONSTRAINTS);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_POLICY_CONSTRAINTS_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_POLICY_CONSTRAINTS);
             pThis->T3.pPolicyConstraints = (PCRTCRX509POLICYCONSTRAINTS)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_POLICY_CONSTRAINTS);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_POLICY_CONSTRAINTS);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_INHIBIT_ANY_POLICY_OID) == 0)
         {
             CHECK_SET_PRESENT_RET_ON_DUP(pThis, pErrInfo, RTCRX509TBSCERTIFICATE_F_PRESENT_INHIBIT_ANY_POLICY);
             pThis->T3.pInhibitAnyPolicy = (PCRTASN1INTEGER)pExtValue->pEncapsulated;
-            Assert(pThis->T3.Extensions.paItems[i].enmValue == RTCRX509EXTENSIONVALUE_INTEGER);
+            Assert(pThis->T3.Extensions.papItems[i]->enmValue == RTCRX509EXTENSIONVALUE_INTEGER);
         }
         else if (RTAsn1ObjId_CompareWithString(pExtnId, RTCRX509_ID_CE_ACCEPTABLE_CERT_POLICIES_OID) == 0)
             pThis->T3.fFlags |= RTCRX509TBSCERTIFICATE_F_PRESENT_ACCEPTABLE_CERT_POLICIES;
@@ -1491,14 +1572,14 @@ RTDECL(bool) RTCrX509Certificate_MatchSubjectOrAltSubjectByRfc5280(PCRTCRX509CER
     if (RTCrX509Extensions_IsPresent(&pThis->TbsCertificate.T3.Extensions))
         for (uint32_t i = 0; i < pThis->TbsCertificate.T3.Extensions.cItems; i++)
         {
-            PCRTCRX509EXTENSION pExt = &pThis->TbsCertificate.T3.Extensions.paItems[i];
+            PCRTCRX509EXTENSION pExt = pThis->TbsCertificate.T3.Extensions.papItems[i];
             if (   pExt->enmValue == RTCRX509EXTENSIONVALUE_GENERAL_NAMES
                 && RTAsn1ObjId_CompareWithString(&pExt->ExtnId, RTCRX509_ID_CE_SUBJECT_ALT_NAME_OID))
             {
                 PCRTCRX509GENERALNAMES pGeneralNames = (PCRTCRX509GENERALNAMES)pExt->ExtnValue.pEncapsulated;
                 for (uint32_t j = 0; j < pGeneralNames->cItems; j++)
-                    if (   RTCRX509GENERALNAME_IS_DIRECTORY_NAME(&pGeneralNames->paItems[j])
-                        && RTCrX509Name_MatchByRfc5280(&pGeneralNames->paItems[j].u.pT4->DirectoryName, pName))
+                    if (   RTCRX509GENERALNAME_IS_DIRECTORY_NAME(pGeneralNames->papItems[j])
+                        && RTCrX509Name_MatchByRfc5280(&pGeneralNames->papItems[j]->u.pT4->DirectoryName, pName))
                         return true;
             }
         }
@@ -1526,9 +1607,8 @@ RTCrX509Certificates_FindByIssuerAndSerialNumber(PCRTCRX509CERTIFICATES pCertifi
                                                  PCRTCRX509NAME pIssuer, PCRTASN1INTEGER pSerialNumber)
 {
     for (uint32_t i = 0; i < pCertificates->cItems; i++)
-        if (RTCrX509Certificate_MatchIssuerAndSerialNumber(&pCertificates->paItems[i], pIssuer, pSerialNumber))
-            return &pCertificates->paItems[i];
+        if (RTCrX509Certificate_MatchIssuerAndSerialNumber(pCertificates->papItems[i], pIssuer, pSerialNumber))
+            return pCertificates->papItems[i];
     return NULL;
 }
-
 

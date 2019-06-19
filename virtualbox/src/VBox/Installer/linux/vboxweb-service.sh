@@ -1,8 +1,11 @@
 #!/bin/sh
-#
+# $Id: vboxweb-service.sh $
+## @file
 # VirtualBox web service API daemon init script.
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+
+#
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -13,7 +16,7 @@
 # hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
 #
 
-# chkconfig: 35 35 65
+# chkconfig: 345 35 65
 # description: VirtualBox web service API
 #
 ### BEGIN INIT INFO
@@ -26,8 +29,8 @@
 ### END INIT INFO
 
 PATH=$PATH:/bin:/sbin:/usr/sbin
+SCRIPTNAME=vboxweb-service.sh
 
-[ -f /etc/debian_release -a -f /lib/lsb/init-functions ] || NOLSB=yes
 [ -f /etc/vbox/vbox.cfg ] && . /etc/vbox/vbox.cfg
 
 if [ -n "$INSTALL_DIR" ]; then
@@ -44,94 +47,42 @@ fi
 
 [ -r /etc/default/virtualbox ] && . /etc/default/virtualbox
 
-system=unknown
-if [ -f /etc/redhat-release ]; then
-    system=redhat
-    PIDFILE="/var/lock/subsys/vboxweb-service"
-elif [ -f /etc/SuSE-release ]; then
-    system=suse
-    PIDFILE="/var/lock/subsys/vboxweb-service"
-elif [ -f /etc/debian_version ]; then
-    system=debian
-    PIDFILE="/var/run/vboxweb-service"
-elif [ -f /etc/gentoo-release ]; then
-    system=gentoo
-    PIDFILE="/var/run/vboxweb-service"
-elif [ -f /etc/arch-release ]; then
-     system=arch
-     PIDFILE="/var/run/vboxweb-service"
-elif [ -f /etc/slackware-version ]; then
-    system=slackware
-    PIDFILE="/var/run/vboxweb-service"
-elif [ -f /etc/lfs-release ]; then
-    system=lfs
-    PIDFILE="/var/run/vboxweb-service.pid"
-else
-    system=other
-    if [ -d /var/run -a -w /var/run ]; then
-        PIDFILE="/var/run/vboxweb-service"
-    fi
+PIDFILE="/var/run/${SCRIPTNAME}"
+
+# Preamble for Gentoo
+if [ "`which $0`" = "/sbin/rc" ]; then
+    shift
 fi
 
-if [ -z "$NOLSB" ]; then
-    . /lib/lsb/init-functions
-    fail_msg() {
-        echo ""
-        log_failure_msg "$1"
-    }
-    succ_msg() {
-        log_success_msg " done."
-    }
-    begin_msg() {
-        log_daemon_msg "$@"
-    }
-fi
+begin_msg()
+{
+    test -n "${2}" && echo "${SCRIPTNAME}: ${1}."
+    logger -t "${SCRIPTNAME}" "${1}."
+}
 
-if [ "$system" = "redhat" ]; then
-    . /etc/init.d/functions
-    if [ -n "$NOLSB" ]; then
-        start_daemon() {
-            usr="$1"
-            shift
-            daemon --user $usr $@
-        }
-        fail_msg() {
-            echo_failure
-            echo
-        }
-        succ_msg() {
-            echo_success
-            echo
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
-fi
+succ_msg()
+{
+    logger -t "${SCRIPTNAME}" "${1}."
+}
 
-if [ "$system" = "suse" ]; then
-    . /etc/rc.status
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            rc_failed 1
-            rc_status -v
-        }
-        succ_msg() {
-            rc_reset
-            rc_status -v
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
-fi
+fail_msg()
+{
+    echo "${SCRIPTNAME}: failed: ${1}." >&2
+    logger -t "${SCRIPTNAME}" "failed: ${1}."
+}
 
-if [ "$system" = "debian" ]; then
+start_daemon() {
+    usr="$1"
+    shift
+    su - $usr -c "$*"
+}
+
+killproc() {
+    killall $1
+    rm -f $PIDFILE
+}
+
+if which start-stop-daemon >/dev/null 2>&1; then
     start_daemon() {
         usr="$1"
         shift
@@ -139,138 +90,10 @@ if [ "$system" = "debian" ]; then
         shift
         start-stop-daemon --background --chuid $usr --start --exec $bin -- $@
     }
+
     killproc() {
         start-stop-daemon --stop --exec $@
     }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-       }
-    fi
-fi
-
-if [ "$system" = "gentoo" ]; then
-    if [ -f /sbin/functions.sh ]; then
-        . /sbin/functions.sh
-    elif [ -f /etc/init.d/functions.sh ]; then
-        . /etc/init.d/functions.sh
-    fi
-    start_daemon() {
-        usr="$1"
-        shift
-        bin="$1"
-        shift
-        start-stop-daemon --background --chuid $usr --start --exec $bin -- $@
-    }
-    killproc() {
-        start-stop-daemon --stop --exec $@
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-        if [ "`which $0`" = "/sbin/rc" ]; then
-            shift
-        fi
-    fi
-fi
-
-if [ "$system" = "arch" ]; then
-    USECOLOR=yes
-    . /etc/rc.d/functions
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-        test $? -eq 0 && add_daemon rc.`basename $2`
-    }
-    killproc() {
-        killall $@
-        rm_daemon `basename $@`
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            stat_fail
-        }
-        succ_msg() {
-            stat_done
-        }
-        begin_msg() {
-            stat_busy "$1"
-        }
-    fi
-fi
-
-if [ "$system" = "slackware" ]; then
-    killproc() {
-        killall $1
-        rm -f $PIDFILE
-    }
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-    }
-fi
-
-if [ "$system" = "lfs" ]; then
-    . /etc/rc.d/init.d/functions
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo_failure
-        }
-        succ_msg() {
-            echo_ok
-        }
-        begin_msg() {
-            echo $1
-        }
-    fi
-    start_daemon() {
-        usr="$1"
-        shift
-        su - $usr -c "$*"
-    }
-    status() {
-        statusproc $1
-    }
-fi
-
-if [ "$system" = "other" ]; then
-    if [ -n "$NOLSB" ]; then
-        fail_msg() {
-            echo " ...fail!"
-        }
-        succ_msg() {
-            echo " ...done."
-        }
-        begin_msg() {
-            echo -n "$1"
-        }
-    fi
 fi
 
 vboxdrvrunning() {
@@ -287,7 +110,7 @@ check_single_user() {
 start() {
     if ! test -f $PIDFILE; then
         [ -z "$VBOXWEB_USER" ] && exit 0
-        begin_msg "Starting VirtualBox web service";
+        begin_msg "Starting VirtualBox web service" console;
         check_single_user $VBOXWEB_USER
         vboxdrvrunning || {
             fail_msg "VirtualBox kernel module not loaded!"
@@ -333,10 +156,10 @@ start() {
         if [ -n "$PID" ]; then
             echo "$PID" > $PIDFILE
             RETVAL=0
-            succ_msg
+            succ_msg "VirtualBox web service started"
         else
             RETVAL=1
-            fail_msg
+            fail_msg "VirtualBox web service failed to start"
         fi
     fi
     return $RETVAL
@@ -344,14 +167,16 @@ start() {
 
 stop() {
     if test -f $PIDFILE; then
-        begin_msg "Stopping VirtualBox web service";
+        begin_msg "Stopping VirtualBox web service" console;
         killproc $binary
         RETVAL=$?
+        # Be careful: wait 1 second, making sure that everything is cleaned up.
+        sleep 1
         if ! pidof $binary > /dev/null 2>&1; then
             rm -f $PIDFILE
-            succ_msg
+            succ_msg "VirtualBox web service stopped"
         else
-            fail_msg
+            fail_msg "VirtualBox web service failed to stop"
         fi
     fi
     return $RETVAL

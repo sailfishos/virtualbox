@@ -1,10 +1,10 @@
 /* $Id: ConsoleVRDPServer.cpp $ */
 /** @file
- * VBox Console VRDP Helper class
+ * VBox Console VRDP helper class.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,12 +15,17 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#define LOG_GROUP LOG_GROUP_MAIN_CONSOLE
+#include "LoggingNew.h"
+
 #include "ConsoleVRDPServer.h"
 #include "ConsoleImpl.h"
 #include "DisplayImpl.h"
 #include "KeyboardImpl.h"
 #include "MouseImpl.h"
-#include "AudioSnifferInterface.h"
+#ifdef VBOX_WITH_VRDE_AUDIO
+#include "DrvAudioVRDE.h"
+#endif
 #ifdef VBOX_WITH_EXTPACK
 # include "ExtPackManagerImpl.h"
 #endif
@@ -32,7 +37,6 @@
 
 #include "Global.h"
 #include "AutoCaller.h"
-#include "Logging.h"
 
 #include <iprt/asm.h>
 #include <iprt/alloca.h>
@@ -46,10 +50,15 @@
 #include <VBox/com/listeners.h>
 #include <VBox/HostServices/VBoxCrOpenGLSvc.h>
 
+
 class VRDPConsoleListener
 {
 public:
     VRDPConsoleListener()
+    {
+    }
+
+    virtual ~VRDPConsoleListener()
     {
     }
 
@@ -83,7 +92,7 @@ public:
                 mpscev->COMGETTER(Height)(&height);
                 mpscev->COMGETTER(Shape)(ComSafeArrayAsOutParam(shape));
 
-                OnMousePointerShapeChange(visible, alpha, xHot, yHot, width, height, ComSafeArrayAsInParam(shape));
+                m_server->onMousePointerShapeChange(visible, alpha, xHot, yHot, width, height, ComSafeArrayAsInParam(shape));
                 break;
             }
             case VBoxEventType_OnMouseCapabilityChanged:
@@ -122,8 +131,6 @@ public:
     }
 
 private:
-    STDMETHOD(OnMousePointerShapeChange)(BOOL visible, BOOL alpha, ULONG xHot, ULONG yHot,
-                                         ULONG width, ULONG height, ComSafeArrayIn(BYTE,shape));
     ConsoleVRDPServer *m_server;
 };
 
@@ -192,12 +199,13 @@ void dumpPointer(const uint8_t *pu8Shape, uint32_t width, uint32_t height, bool 
 #define dumpPointer(a, b, c, d) do {} while (0)
 #endif /* DEBUG_sunlover */
 
-static void findTopLeftBorder(const uint8_t *pu8AndMask, const uint8_t *pu8XorMask, uint32_t width, uint32_t height, uint32_t *pxSkip, uint32_t *pySkip)
+static void findTopLeftBorder(const uint8_t *pu8AndMask, const uint8_t *pu8XorMask, uint32_t width,
+                              uint32_t height, uint32_t *pxSkip, uint32_t *pySkip)
 {
     /*
      * Find the top border of the AND mask. First assign to special value.
      */
-    uint32_t ySkipAnd = ~0;
+    uint32_t ySkipAnd = UINT32_MAX;
 
     const uint8_t *pu8And = pu8AndMask;
     const uint32_t cbAndRow = (width + 7) / 8;
@@ -238,7 +246,7 @@ static void findTopLeftBorder(const uint8_t *pu8AndMask, const uint8_t *pu8XorMa
     /*
      * Find the left border of the AND mask.
      */
-    uint32_t xSkipAnd = ~0;
+    uint32_t xSkipAnd = UINT32_MAX;
 
     /* For all bit columns. */
     for (x = 0; x < width && xSkipAnd == ~(uint32_t)0; x++)
@@ -264,7 +272,7 @@ static void findTopLeftBorder(const uint8_t *pu8AndMask, const uint8_t *pu8XorMa
     /*
      * Find the XOR mask top border.
      */
-    uint32_t ySkipXor = ~0;
+    uint32_t ySkipXor = UINT32_MAX;
 
     uint32_t *pu32XorStart = (uint32_t *)pu8XorMask;
 
@@ -352,175 +360,174 @@ static void mousePointerGenerateANDMask(uint8_t *pu8DstAndMask, int cbDstAndMask
     }
 }
 
-STDMETHODIMP VRDPConsoleListener::OnMousePointerShapeChange(BOOL visible,
-                                                            BOOL alpha,
-                                                            ULONG xHot,
-                                                            ULONG yHot,
-                                                            ULONG width,
-                                                            ULONG height,
-                                                            ComSafeArrayIn(BYTE,inShape))
+void ConsoleVRDPServer::onMousePointerShapeChange(BOOL visible,
+                                                  BOOL alpha,
+                                                  ULONG xHot,
+                                                  ULONG yHot,
+                                                  ULONG width,
+                                                  ULONG height,
+                                                  ComSafeArrayIn(BYTE,inShape))
 {
-    LogSunlover(("VRDPConsoleListener::OnMousePointerShapeChange: %d, %d, %lux%lu, @%lu,%lu\n", visible, alpha, width, height, xHot, yHot));
+    Log9(("VRDPConsoleListener::OnMousePointerShapeChange: %d, %d, %lux%lu, @%lu,%lu\n",
+          visible, alpha, width, height, xHot, yHot));
 
-    if (m_server)
+    com::SafeArray <BYTE> aShape(ComSafeArrayInArg(inShape));
+    if (aShape.size() == 0)
     {
-        com::SafeArray <BYTE> aShape(ComSafeArrayInArg(inShape));
-        if (aShape.size() == 0)
+        if (!visible)
         {
-            if (!visible)
-            {
-                m_server->MousePointerHide();
-            }
-        }
-        else if (width != 0 && height != 0)
-        {
-            uint8_t* shape = aShape.raw();
-
-            dumpPointer(shape, width, height, true);
-
-            if (m_server->MousePointer(alpha, xHot, yHot, width, height, shape) == VINF_SUCCESS)
-            {
-                return S_OK;
-            }
-
-            /* Pointer consists of 1 bpp AND and 24 BPP XOR masks.
-             * 'shape' AND mask followed by XOR mask.
-             * XOR mask contains 32 bit (lsb)BGR0(msb) values.
-             *
-             * We convert this to RDP color format which consist of
-             * one bpp AND mask and 24 BPP (BGR) color XOR image.
-             *
-             * RDP clients expect 8 aligned width and height of
-             * pointer (preferably 32x32).
-             *
-             * They even contain bugs which do not appear for
-             * 32x32 pointers but would appear for a 41x32 one.
-             *
-             * So set pointer size to 32x32. This can be done safely
-             * because most pointers are 32x32.
-             */
-
-            int cbDstAndMask = (((width + 7) / 8) * height + 3) & ~3;
-
-            uint8_t *pu8AndMask = shape;
-            uint8_t *pu8XorMask = shape + cbDstAndMask;
-
-            if (alpha)
-            {
-                pu8AndMask = (uint8_t*)alloca(cbDstAndMask);
-
-                mousePointerGenerateANDMask(pu8AndMask, cbDstAndMask, pu8XorMask, width, height);
-            }
-
-            /* Windows guest alpha pointers are wider than 32 pixels.
-             * Try to find out the top-left border of the pointer and
-             * then copy only meaningful bits. All complete top rows
-             * and all complete left columns where (AND == 1 && XOR == 0)
-             * are skipped. Hot spot is adjusted.
-             */
-            uint32_t ySkip = 0; /* How many rows to skip at the top. */
-            uint32_t xSkip = 0; /* How many columns to skip at the left. */
-
-            findTopLeftBorder(pu8AndMask, pu8XorMask, width, height, &xSkip, &ySkip);
-
-            /* Must not skip the hot spot. */
-            xSkip = RT_MIN(xSkip, xHot);
-            ySkip = RT_MIN(ySkip, yHot);
-
-            /*
-             * Compute size and allocate memory for the pointer.
-             */
-            const uint32_t dstwidth = 32;
-            const uint32_t dstheight = 32;
-
-            VRDECOLORPOINTER *pointer = NULL;
-
-            uint32_t dstmaskwidth = (dstwidth + 7) / 8;
-
-            uint32_t rdpmaskwidth = dstmaskwidth;
-            uint32_t rdpmasklen = dstheight * rdpmaskwidth;
-
-            uint32_t rdpdatawidth = dstwidth * 3;
-            uint32_t rdpdatalen = dstheight * rdpdatawidth;
-
-            pointer = (VRDECOLORPOINTER *)RTMemTmpAlloc(sizeof(VRDECOLORPOINTER) + rdpmasklen + rdpdatalen);
-
-            if (pointer)
-            {
-                uint8_t *maskarray = (uint8_t*)pointer + sizeof(VRDECOLORPOINTER);
-                uint8_t *dataarray = maskarray + rdpmasklen;
-
-                memset(maskarray, 0xFF, rdpmasklen);
-                memset(dataarray, 0x00, rdpdatalen);
-
-                uint32_t srcmaskwidth = (width + 7) / 8;
-                uint32_t srcdatawidth = width * 4;
-
-                /* Copy AND mask. */
-                uint8_t *src = pu8AndMask + ySkip * srcmaskwidth;
-                uint8_t *dst = maskarray + (dstheight - 1) * rdpmaskwidth;
-
-                uint32_t minheight = RT_MIN(height - ySkip, dstheight);
-                uint32_t minwidth = RT_MIN(width - xSkip, dstwidth);
-
-                unsigned x, y;
-
-                for (y = 0; y < minheight; y++)
-                {
-                    for (x = 0; x < minwidth; x++)
-                    {
-                        uint32_t byteIndex = (x + xSkip) / 8;
-                        uint32_t bitIndex = (x + xSkip) % 8;
-
-                        bool bit = (src[byteIndex] & (1 << (7 - bitIndex))) != 0;
-
-                        if (!bit)
-                        {
-                            byteIndex = x / 8;
-                            bitIndex = x % 8;
-
-                            dst[byteIndex] &= ~(1 << (7 - bitIndex));
-                        }
-                    }
-
-                    src += srcmaskwidth;
-                    dst -= rdpmaskwidth;
-                }
-
-                /* Point src to XOR mask */
-                src = pu8XorMask + ySkip * srcdatawidth;
-                dst = dataarray + (dstheight - 1) * rdpdatawidth;
-
-                for (y = 0; y < minheight ; y++)
-                {
-                    for (x = 0; x < minwidth; x++)
-                    {
-                        memcpy(dst + x * 3, &src[4 * (x + xSkip)], 3);
-                    }
-
-                    src += srcdatawidth;
-                    dst -= rdpdatawidth;
-                }
-
-                pointer->u16HotX = (uint16_t)(xHot - xSkip);
-                pointer->u16HotY = (uint16_t)(yHot - ySkip);
-
-                pointer->u16Width = (uint16_t)dstwidth;
-                pointer->u16Height = (uint16_t)dstheight;
-
-                pointer->u16MaskLen = (uint16_t)rdpmasklen;
-                pointer->u16DataLen = (uint16_t)rdpdatalen;
-
-                dumpPointer((uint8_t*)pointer + sizeof(*pointer), dstwidth, dstheight, false);
-
-                m_server->MousePointerUpdate(pointer);
-
-                RTMemTmpFree(pointer);
-            }
+            MousePointerHide();
         }
     }
+    else if (width != 0 && height != 0)
+    {
+        uint8_t* shape = aShape.raw();
 
-    return S_OK;
+        dumpPointer(shape, width, height, true);
+
+        /* Try the new interface. */
+        if (MousePointer(alpha, xHot, yHot, width, height, shape) == VINF_SUCCESS)
+        {
+            return;
+        }
+
+        /* Continue with the old interface. */
+
+        /* Pointer consists of 1 bpp AND and 24 BPP XOR masks.
+         * 'shape' AND mask followed by XOR mask.
+         * XOR mask contains 32 bit (lsb)BGR0(msb) values.
+         *
+         * We convert this to RDP color format which consist of
+         * one bpp AND mask and 24 BPP (BGR) color XOR image.
+         *
+         * RDP clients expect 8 aligned width and height of
+         * pointer (preferably 32x32).
+         *
+         * They even contain bugs which do not appear for
+         * 32x32 pointers but would appear for a 41x32 one.
+         *
+         * So set pointer size to 32x32. This can be done safely
+         * because most pointers are 32x32.
+         */
+
+        int cbDstAndMask = (((width + 7) / 8) * height + 3) & ~3;
+
+        uint8_t *pu8AndMask = shape;
+        uint8_t *pu8XorMask = shape + cbDstAndMask;
+
+        if (alpha)
+        {
+            pu8AndMask = (uint8_t*)alloca(cbDstAndMask);
+
+            mousePointerGenerateANDMask(pu8AndMask, cbDstAndMask, pu8XorMask, width, height);
+        }
+
+        /* Windows guest alpha pointers are wider than 32 pixels.
+         * Try to find out the top-left border of the pointer and
+         * then copy only meaningful bits. All complete top rows
+         * and all complete left columns where (AND == 1 && XOR == 0)
+         * are skipped. Hot spot is adjusted.
+         */
+        uint32_t ySkip = 0; /* How many rows to skip at the top. */
+        uint32_t xSkip = 0; /* How many columns to skip at the left. */
+
+        findTopLeftBorder(pu8AndMask, pu8XorMask, width, height, &xSkip, &ySkip);
+
+        /* Must not skip the hot spot. */
+        xSkip = RT_MIN(xSkip, xHot);
+        ySkip = RT_MIN(ySkip, yHot);
+
+        /*
+         * Compute size and allocate memory for the pointer.
+         */
+        const uint32_t dstwidth = 32;
+        const uint32_t dstheight = 32;
+
+        VRDECOLORPOINTER *pointer = NULL;
+
+        uint32_t dstmaskwidth = (dstwidth + 7) / 8;
+
+        uint32_t rdpmaskwidth = dstmaskwidth;
+        uint32_t rdpmasklen = dstheight * rdpmaskwidth;
+
+        uint32_t rdpdatawidth = dstwidth * 3;
+        uint32_t rdpdatalen = dstheight * rdpdatawidth;
+
+        pointer = (VRDECOLORPOINTER *)RTMemTmpAlloc(sizeof(VRDECOLORPOINTER) + rdpmasklen + rdpdatalen);
+
+        if (pointer)
+        {
+            uint8_t *maskarray = (uint8_t*)pointer + sizeof(VRDECOLORPOINTER);
+            uint8_t *dataarray = maskarray + rdpmasklen;
+
+            memset(maskarray, 0xFF, rdpmasklen);
+            memset(dataarray, 0x00, rdpdatalen);
+
+            uint32_t srcmaskwidth = (width + 7) / 8;
+            uint32_t srcdatawidth = width * 4;
+
+            /* Copy AND mask. */
+            uint8_t *src = pu8AndMask + ySkip * srcmaskwidth;
+            uint8_t *dst = maskarray + (dstheight - 1) * rdpmaskwidth;
+
+            uint32_t minheight = RT_MIN(height - ySkip, dstheight);
+            uint32_t minwidth = RT_MIN(width - xSkip, dstwidth);
+
+            unsigned x, y;
+
+            for (y = 0; y < minheight; y++)
+            {
+                for (x = 0; x < minwidth; x++)
+                {
+                    uint32_t byteIndex = (x + xSkip) / 8;
+                    uint32_t bitIndex = (x + xSkip) % 8;
+
+                    bool bit = (src[byteIndex] & (1 << (7 - bitIndex))) != 0;
+
+                    if (!bit)
+                    {
+                        byteIndex = x / 8;
+                        bitIndex = x % 8;
+
+                        dst[byteIndex] &= ~(1 << (7 - bitIndex));
+                    }
+                }
+
+                src += srcmaskwidth;
+                dst -= rdpmaskwidth;
+            }
+
+            /* Point src to XOR mask */
+            src = pu8XorMask + ySkip * srcdatawidth;
+            dst = dataarray + (dstheight - 1) * rdpdatawidth;
+
+            for (y = 0; y < minheight ; y++)
+            {
+                for (x = 0; x < minwidth; x++)
+                {
+                    memcpy(dst + x * 3, &src[4 * (x + xSkip)], 3);
+                }
+
+                src += srcdatawidth;
+                dst -= rdpdatawidth;
+            }
+
+            pointer->u16HotX = (uint16_t)(xHot - xSkip);
+            pointer->u16HotY = (uint16_t)(yHot - ySkip);
+
+            pointer->u16Width = (uint16_t)dstwidth;
+            pointer->u16Height = (uint16_t)dstheight;
+
+            pointer->u16MaskLen = (uint16_t)rdpmasklen;
+            pointer->u16DataLen = (uint16_t)rdpdatalen;
+
+            dumpPointer((uint8_t*)pointer + sizeof(*pointer), dstwidth, dstheight, false);
+
+            MousePointerUpdate(pointer);
+
+            RTMemTmpFree(pointer);
+        }
+    }
 }
 
 
@@ -552,7 +559,8 @@ VRDECALLBACKS_4 ConsoleVRDPServer::mCallbacks =
     ConsoleVRDPServer::VRDECallbackAudioIn
 };
 
-DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback, uint32_t index, void *pvBuffer, uint32_t cbBuffer, uint32_t *pcbOut)
+DECLCALLBACK(int) ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback, uint32_t index, void *pvBuffer,
+                                                               uint32_t cbBuffer, uint32_t *pcbOut)
 {
     ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
 
@@ -581,7 +589,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
         case VRDE_QP_NETWORK_ADDRESS:
         {
             com::Bstr bstr;
-            server->mConsole->getVRDEServer()->GetVRDEProperty(Bstr("TCP/Address").raw(), bstr.asOutParam());
+            server->mConsole->i_getVRDEServer()->GetVRDEProperty(Bstr("TCP/Address").raw(), bstr.asOutParam());
 
             /* The server expects UTF8. */
             com::Utf8Str address = bstr;
@@ -612,7 +620,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
         {
             ULONG cMonitors = 1;
 
-            server->mConsole->machine()->COMGETTER(MonitorCount)(&cMonitors);
+            server->mConsole->i_machine()->COMGETTER(MonitorCount)(&cMonitors);
 
             if (cbBuffer >= sizeof(uint32_t))
             {
@@ -630,7 +638,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
         case VRDE_QP_NETWORK_PORT_RANGE:
         {
             com::Bstr bstr;
-            HRESULT hrc = server->mConsole->getVRDEServer()->GetVRDEProperty(Bstr("TCP/Ports").raw(), bstr.asOutParam());
+            HRESULT hrc = server->mConsole->i_getVRDEServer()->GetVRDEProperty(Bstr("TCP/Ports").raw(), bstr.asOutParam());
 
             if (hrc != S_OK)
             {
@@ -647,9 +655,9 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
 
             size_t cbPortRange = portRange.length() + 1;
 
-            if (cbPortRange >= 0x10000)
+            if (cbPortRange >= _64K)
             {
-                /* More than 64K seems to be an  invalid port range string. */
+                /* More than 64K seems to be an invalid port range string. */
                 rc = VERR_TOO_MUCH_DATA;
                 break;
             }
@@ -670,7 +678,8 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
         case VRDE_QP_VIDEO_CHANNEL:
         {
             com::Bstr bstr;
-            HRESULT hrc = server->mConsole->getVRDEServer()->GetVRDEProperty(Bstr("VideoChannel/Enabled").raw(), bstr.asOutParam());
+            HRESULT hrc = server->mConsole->i_getVRDEServer()->GetVRDEProperty(Bstr("VideoChannel/Enabled").raw(),
+                                                                             bstr.asOutParam());
 
             if (hrc != S_OK)
             {
@@ -698,7 +707,8 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
         case VRDE_QP_VIDEO_CHANNEL_QUALITY:
         {
             com::Bstr bstr;
-            HRESULT hrc = server->mConsole->getVRDEServer()->GetVRDEProperty(Bstr("VideoChannel/Quality").raw(), bstr.asOutParam());
+            HRESULT hrc = server->mConsole->i_getVRDEServer()->GetVRDEProperty(Bstr("VideoChannel/Quality").raw(),
+                                                                             bstr.asOutParam());
 
             if (hrc != S_OK)
             {
@@ -727,7 +737,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
             ULONG ulSunFlsh = 1;
 
             com::Bstr bstr;
-            HRESULT hrc = server->mConsole->machine()->GetExtraData(Bstr("VRDP/SunFlsh").raw(),
+            HRESULT hrc = server->mConsole->i_machine()->GetExtraData(Bstr("VRDP/SunFlsh").raw(),
                                                                     bstr.asOutParam());
             if (hrc == S_OK && !bstr.isEmpty())
             {
@@ -759,7 +769,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
                 break;
             }
 
-            size_t cbInfo = cbBuffer - RT_OFFSETOF(VRDEFEATURE, achInfo);
+            size_t cbInfo = cbBuffer - RT_UOFFSETOF(VRDEFEATURE, achInfo);
 
             VRDEFEATURE *pFeature = (VRDEFEATURE *)pvBuffer;
 
@@ -783,23 +793,23 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
                 || RTStrICmp(pFeature->achInfo, "Client/DisableClipboard") == 0
                )
             {
-                /* @todo these features should be per client. */
+                /** @todo these features should be per client. */
                 NOREF(pFeature->u32ClientId);
 
                 /* These features are mapped to "VRDE/Feature/NAME" extra data. */
                 com::Utf8Str extraData("VRDE/Feature/");
                 extraData += pFeature->achInfo;
 
-                HRESULT hrc = server->mConsole->machine()->GetExtraData(com::Bstr(extraData).raw(),
-                                                                        bstrValue.asOutParam());
+                HRESULT hrc = server->mConsole->i_machine()->GetExtraData(com::Bstr(extraData).raw(),
+                                                                          bstrValue.asOutParam());
                 if (FAILED(hrc) || bstrValue.isEmpty())
                 {
                     /* Also try the old "VRDP/Feature/NAME" */
                     extraData = "VRDP/Feature/";
                     extraData += pFeature->achInfo;
 
-                    hrc = server->mConsole->machine()->GetExtraData(com::Bstr(extraData).raw(),
-                                                                    bstrValue.asOutParam());
+                    hrc = server->mConsole->i_machine()->GetExtraData(com::Bstr(extraData).raw(),
+                                                                      bstrValue.asOutParam());
                     if (FAILED(hrc))
                     {
                         rc = VERR_NOT_SUPPORTED;
@@ -810,7 +820,8 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
             {
                 /* Generic properties. */
                 const char *pszPropertyName = &pFeature->achInfo[9];
-                HRESULT hrc = server->mConsole->getVRDEServer()->GetVRDEProperty(Bstr(pszPropertyName).raw(), bstrValue.asOutParam());
+                HRESULT hrc = server->mConsole->i_getVRDEServer()->GetVRDEProperty(Bstr(pszPropertyName).raw(),
+                                                                                   bstrValue.asOutParam());
                 if (FAILED(hrc))
                 {
                     rc = VERR_NOT_SUPPORTED;
@@ -860,7 +871,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
                 *pcbOut = sizeof(uint32_t);
             }
 
-            server->mConsole->onVRDEServerInfoChange();
+            server->mConsole->i_onVRDEServerInfoChange();
         } break;
 
         case VRDE_SP_CLIENT_STATUS:
@@ -892,7 +903,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
 
             Log(("VRDE_SP_CLIENT_STATUS [%s]\n", pStatus->achStatus));
 
-            server->mConsole->VRDPClientStatusChange(pStatus->u32ClientId, pStatus->achStatus);
+            server->mConsole->i_VRDPClientStatusChange(pStatus->u32ClientId, pStatus->achStatus);
 
             rc = VINF_SUCCESS;
 
@@ -901,7 +912,7 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
                 *pcbOut = cbBuffer;
             }
 
-            server->mConsole->onVRDEServerInfoChange();
+            server->mConsole->i_onVRDEServerInfoChange();
         } break;
 
         default:
@@ -911,18 +922,19 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackQueryProperty(void *pvCallback
     return rc;
 }
 
-DECLCALLBACK(int) ConsoleVRDPServer::VRDPCallbackClientLogon(void *pvCallback, uint32_t u32ClientId, const char *pszUser, const char *pszPassword, const char *pszDomain)
+DECLCALLBACK(int) ConsoleVRDPServer::VRDPCallbackClientLogon(void *pvCallback, uint32_t u32ClientId, const char *pszUser,
+                                                             const char *pszPassword, const char *pszDomain)
 {
     ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
 
-    return server->mConsole->VRDPClientLogon(u32ClientId, pszUser, pszPassword, pszDomain);
+    return server->mConsole->i_VRDPClientLogon(u32ClientId, pszUser, pszPassword, pszDomain);
 }
 
 DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackClientConnect(void *pvCallback, uint32_t u32ClientId)
 {
     ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
 
-    server->mConsole->VRDPClientConnect(u32ClientId);
+    server->mConsole->i_VRDPClientConnect(u32ClientId);
 
     /* Should the server report usage of an interface for each client?
      * Similar to Intercept.
@@ -935,39 +947,39 @@ DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackClientConnect(void *pvCallback
     }
 }
 
-DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackClientDisconnect(void *pvCallback, uint32_t u32ClientId, uint32_t fu32Intercepted)
+DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackClientDisconnect(void *pvCallback, uint32_t u32ClientId,
+                                                                   uint32_t fu32Intercepted)
 {
-    ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
+    ConsoleVRDPServer *pServer = static_cast<ConsoleVRDPServer*>(pvCallback);
+    AssertPtrReturnVoid(pServer);
 
-    server->mConsole->VRDPClientDisconnect(u32ClientId, fu32Intercepted);
+    pServer->mConsole->i_VRDPClientDisconnect(u32ClientId, fu32Intercepted);
 
-    if (ASMAtomicReadU32(&server->mu32AudioInputClientId) == u32ClientId)
+    if (ASMAtomicReadU32(&pServer->mu32AudioInputClientId) == u32ClientId)
     {
-        Log(("AUDIOIN: disconnected client %u\n", u32ClientId));
-        ASMAtomicWriteU32(&server->mu32AudioInputClientId, 0);
+        LogFunc(("Disconnected client %u\n", u32ClientId));
+        ASMAtomicWriteU32(&pServer->mu32AudioInputClientId, 0);
 
-        PPDMIAUDIOSNIFFERPORT pPort = server->mConsole->getAudioSniffer()->getAudioSnifferPort();
-        if (pPort)
-        {
-             pPort->pfnAudioInputIntercept(pPort, false);
-        }
-        else
-        {
-            AssertFailed();
-        }
+#ifdef VBOX_WITH_VRDE_AUDIO
+        AudioVRDE *pVRDE = pServer->mConsole->i_getAudioVRDE();
+        if (pVRDE)
+            pVRDE->onVRDEInputIntercept(false /* fIntercept */);
+#endif
     }
 
-    int c = ASMAtomicDecS32(&server->mcClients);
-    if (c == 0)
+    int32_t cClients = ASMAtomicDecS32(&pServer->mcClients);
+    if (cClients == 0)
     {
         /* Features which should be enabled only if there is a client. */
-        server->remote3DRedirect(false);
+        pServer->remote3DRedirect(false);
     }
 }
 
-DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackIntercept(void *pvCallback, uint32_t u32ClientId, uint32_t fu32Intercept, void **ppvIntercept)
+DECLCALLBACK(int) ConsoleVRDPServer::VRDPCallbackIntercept(void *pvCallback, uint32_t u32ClientId, uint32_t fu32Intercept,
+                                                           void **ppvIntercept)
 {
-    ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
+    ConsoleVRDPServer *pServer = static_cast<ConsoleVRDPServer*>(pvCallback);
+    AssertPtrReturn(pServer, VERR_INVALID_POINTER);
 
     LogFlowFunc(("%x\n", fu32Intercept));
 
@@ -977,58 +989,49 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackIntercept(void *pvCallback, ui
     {
         case VRDE_CLIENT_INTERCEPT_AUDIO:
         {
-            server->mConsole->VRDPInterceptAudio(u32ClientId);
+            pServer->mConsole->i_VRDPInterceptAudio(u32ClientId);
             if (ppvIntercept)
             {
-                *ppvIntercept = server;
+                *ppvIntercept = pServer;
             }
             rc = VINF_SUCCESS;
         } break;
 
         case VRDE_CLIENT_INTERCEPT_USB:
         {
-            server->mConsole->VRDPInterceptUSB(u32ClientId, ppvIntercept);
+            pServer->mConsole->i_VRDPInterceptUSB(u32ClientId, ppvIntercept);
             rc = VINF_SUCCESS;
         } break;
 
         case VRDE_CLIENT_INTERCEPT_CLIPBOARD:
         {
-            server->mConsole->VRDPInterceptClipboard(u32ClientId);
+            pServer->mConsole->i_VRDPInterceptClipboard(u32ClientId);
             if (ppvIntercept)
             {
-                *ppvIntercept = server;
+                *ppvIntercept = pServer;
             }
             rc = VINF_SUCCESS;
         } break;
 
         case VRDE_CLIENT_INTERCEPT_AUDIO_INPUT:
         {
-            /* This request is processed internally by the ConsoleVRDPServer.
+            /*
+             * This request is processed internally by the ConsoleVRDPServer.
              * Only one client is allowed to intercept audio input.
              */
-            if (ASMAtomicCmpXchgU32(&server->mu32AudioInputClientId, u32ClientId, 0) == true)
+            if (ASMAtomicCmpXchgU32(&pServer->mu32AudioInputClientId, u32ClientId, 0) == true)
             {
-                Log(("AUDIOIN: connected client %u\n", u32ClientId));
+                LogFunc(("Intercepting audio input by client %RU32\n", u32ClientId));
 
-                PPDMIAUDIOSNIFFERPORT pPort = server->mConsole->getAudioSniffer()->getAudioSnifferPort();
-                if (pPort)
-                {
-                     pPort->pfnAudioInputIntercept(pPort, true);
-                     if (ppvIntercept)
-                     {
-                         *ppvIntercept = server;
-                     }
-                }
-                else
-                {
-                    AssertFailed();
-                    ASMAtomicWriteU32(&server->mu32AudioInputClientId, 0);
-                    rc = VERR_NOT_SUPPORTED;
-                }
+#ifdef VBOX_WITH_VRDE_AUDIO
+                AudioVRDE *pVRDE = pServer->mConsole->i_getAudioVRDE();
+                if (pVRDE)
+                    pVRDE->onVRDEInputIntercept(true /* fIntercept */);
+#endif
             }
             else
             {
-                Log(("AUDIOIN: ignored client %u, active client %u\n", u32ClientId, server->mu32AudioInputClientId));
+                Log(("AUDIOIN: ignored client %RU32, active client %RU32\n", u32ClientId, pServer->mu32AudioInputClientId));
                 rc = VERR_NOT_SUPPORTED;
             }
         } break;
@@ -1040,8 +1043,10 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackIntercept(void *pvCallback, ui
     return rc;
 }
 
-DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackUSB(void *pvCallback, void *pvIntercept, uint32_t u32ClientId, uint8_t u8Code, const void *pvRet, uint32_t cbRet)
+DECLCALLBACK(int) ConsoleVRDPServer::VRDPCallbackUSB(void *pvCallback, void *pvIntercept, uint32_t u32ClientId,
+                                                     uint8_t u8Code, const void *pvRet, uint32_t cbRet)
 {
+    RT_NOREF(pvCallback);
 #ifdef VBOX_WITH_USB
     return USBClientResponseCallback(pvIntercept, u32ClientId, u8Code, pvRet, cbRet);
 #else
@@ -1049,84 +1054,79 @@ DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackUSB(void *pvCallback, void *pv
 #endif
 }
 
-DECLCALLBACK(int)  ConsoleVRDPServer::VRDPCallbackClipboard(void *pvCallback, void *pvIntercept, uint32_t u32ClientId, uint32_t u32Function, uint32_t u32Format, const void *pvData, uint32_t cbData)
+DECLCALLBACK(int) ConsoleVRDPServer::VRDPCallbackClipboard(void *pvCallback, void *pvIntercept, uint32_t u32ClientId,
+                                                           uint32_t u32Function, uint32_t u32Format,
+                                                           const void *pvData, uint32_t cbData)
 {
+    RT_NOREF(pvCallback);
     return ClipboardCallback(pvIntercept, u32ClientId, u32Function, u32Format, pvData, cbData);
 }
 
-DECLCALLBACK(bool) ConsoleVRDPServer::VRDPCallbackFramebufferQuery(void *pvCallback, unsigned uScreenId, VRDEFRAMEBUFFERINFO *pInfo)
+DECLCALLBACK(bool) ConsoleVRDPServer::VRDPCallbackFramebufferQuery(void *pvCallback, unsigned uScreenId,
+                                                                   VRDEFRAMEBUFFERINFO *pInfo)
 {
     ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
 
     bool fAvailable = false;
 
-    IFramebuffer *pfb = NULL;
-    LONG xOrigin = 0;
-    LONG yOrigin = 0;
-
-    server->mConsole->getDisplay()->GetFramebuffer(uScreenId, &pfb, &xOrigin, &yOrigin);
-
-    if (pfb)
+    /* Obtain the new screen bitmap. */
+    HRESULT hr = server->mConsole->i_getDisplay()->QuerySourceBitmap(uScreenId, server->maSourceBitmaps[uScreenId].asOutParam());
+    if (SUCCEEDED(hr))
     {
-        pfb->Lock ();
+        LONG xOrigin = 0;
+        LONG yOrigin = 0;
+        BYTE *pAddress = NULL;
+        ULONG ulWidth = 0;
+        ULONG ulHeight = 0;
+        ULONG ulBitsPerPixel = 0;
+        ULONG ulBytesPerLine = 0;
+        BitmapFormat_T bitmapFormat = BitmapFormat_Opaque;
 
-        /* Query framebuffer parameters. */
-        ULONG lineSize = 0;
-        pfb->COMGETTER(BytesPerLine)(&lineSize);
+        hr = server->maSourceBitmaps[uScreenId]->QueryBitmapInfo(&pAddress,
+                                                                 &ulWidth,
+                                                                 &ulHeight,
+                                                                 &ulBitsPerPixel,
+                                                                 &ulBytesPerLine,
+                                                                 &bitmapFormat);
 
-        ULONG bitsPerPixel = 0;
-        pfb->COMGETTER(BitsPerPixel)(&bitsPerPixel);
+        if (SUCCEEDED(hr))
+        {
+            ULONG dummy;
+            GuestMonitorStatus_T monitorStatus;
+            hr = server->mConsole->i_getDisplay()->GetScreenResolution(uScreenId, &dummy, &dummy, &dummy,
+                                                                       &xOrigin, &yOrigin, &monitorStatus);
 
-        BYTE *address = NULL;
-        pfb->COMGETTER(Address)(&address);
+            if (SUCCEEDED(hr))
+            {
+                /* Now fill the information as requested by the caller. */
+                pInfo->pu8Bits = pAddress;
+                pInfo->xOrigin = xOrigin;
+                pInfo->yOrigin = yOrigin;
+                pInfo->cWidth = ulWidth;
+                pInfo->cHeight = ulHeight;
+                pInfo->cBitsPerPixel = ulBitsPerPixel;
+                pInfo->cbLine = ulBytesPerLine;
 
-        ULONG height = 0;
-        pfb->COMGETTER(Height)(&height);
-
-        ULONG width = 0;
-        pfb->COMGETTER(Width)(&width);
-
-        /* Now fill the information as requested by the caller. */
-        pInfo->pu8Bits = address;
-        pInfo->xOrigin = xOrigin;
-        pInfo->yOrigin = yOrigin;
-        pInfo->cWidth = width;
-        pInfo->cHeight = height;
-        pInfo->cBitsPerPixel = bitsPerPixel;
-        pInfo->cbLine = lineSize;
-
-        pfb->Unlock();
-
-        fAvailable = true;
+                fAvailable = true;
+            }
+        }
     }
-
-    if (server->maFramebuffers[uScreenId])
-    {
-        server->maFramebuffers[uScreenId]->Release();
-    }
-    server->maFramebuffers[uScreenId] = pfb;
 
     return fAvailable;
 }
 
 DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackFramebufferLock(void *pvCallback, unsigned uScreenId)
 {
-    ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
-
-    if (server->maFramebuffers[uScreenId])
-    {
-        server->maFramebuffers[uScreenId]->Lock();
-    }
+    NOREF(pvCallback);
+    NOREF(uScreenId);
+    /* Do nothing */
 }
 
 DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackFramebufferUnlock(void *pvCallback, unsigned uScreenId)
 {
-    ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
-
-    if (server->maFramebuffers[uScreenId])
-    {
-        server->maFramebuffers[uScreenId]->Unlock();
-    }
+    NOREF(pvCallback);
+    NOREF(uScreenId);
+    /* Do nothing */
 }
 
 static void fixKbdLockStatus(VRDPInputSynch *pInputSynch, IKeyboard *pKeyboard)
@@ -1158,7 +1158,7 @@ DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackInput(void *pvCallback, int ty
         {
             if (cbInput == sizeof(VRDEINPUTSCANCODE))
             {
-                IKeyboard *pKeyboard = pConsole->getKeyboard();
+                IKeyboard *pKeyboard = pConsole->i_getKeyboard();
 
                 const VRDEINPUTSCANCODE *pInputScancode = (VRDEINPUTSCANCODE *)pvInput;
 
@@ -1219,12 +1219,13 @@ DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackInput(void *pvCallback, int ty
 
                 if (server->m_fGuestWantsAbsolute)
                 {
-                    pConsole->getMouse()->PutMouseEventAbsolute(pInputPoint->x + 1, pInputPoint->y + 1, iWheel, 0 /* Horizontal wheel */, mouseButtons);
+                    pConsole->i_getMouse()->PutMouseEventAbsolute(pInputPoint->x + 1, pInputPoint->y + 1, iWheel,
+                                                                  0 /* Horizontal wheel */, mouseButtons);
                 } else
                 {
-                    pConsole->getMouse()->PutMouseEvent(pInputPoint->x - server->m_mousex,
-                                                         pInputPoint->y - server->m_mousey,
-                                                         iWheel, 0 /* Horizontal wheel */, mouseButtons);
+                    pConsole->i_getMouse()->PutMouseEvent(pInputPoint->x - server->m_mousex,
+                                                          pInputPoint->y - server->m_mousey,
+                                                          iWheel, 0 /* Horizontal wheel */, mouseButtons);
                     server->m_mousex = pInputPoint->x;
                     server->m_mousey = pInputPoint->y;
                 }
@@ -1233,7 +1234,7 @@ DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackInput(void *pvCallback, int ty
 
         case VRDE_INPUT_CAD:
         {
-            pConsole->getKeyboard()->PutCAD();
+            pConsole->i_getKeyboard()->PutCAD();
         } break;
 
         case VRDE_INPUT_RESET:
@@ -1245,7 +1246,7 @@ DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackInput(void *pvCallback, int ty
         {
             if (cbInput == sizeof(VRDEINPUTSYNCH))
             {
-                IKeyboard *pKeyboard = pConsole->getKeyboard();
+                IKeyboard *pKeyboard = pConsole->i_getKeyboard();
 
                 const VRDEINPUTSYNCH *pInputSynch = (VRDEINPUTSYNCH *)pvInput;
 
@@ -1276,13 +1277,14 @@ DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackInput(void *pvCallback, int ty
     }
 }
 
-DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackVideoModeHint(void *pvCallback, unsigned cWidth, unsigned cHeight, unsigned cBitsPerPixel, unsigned uScreenId)
+DECLCALLBACK(void) ConsoleVRDPServer::VRDPCallbackVideoModeHint(void *pvCallback, unsigned cWidth, unsigned cHeight,
+                                                                unsigned cBitsPerPixel, unsigned uScreenId)
 {
     ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
 
-    server->mConsole->getDisplay()->SetVideoModeHint(uScreenId, TRUE /*=enabled*/,
-                                                     FALSE /*=changeOrigin*/, 0/*=OriginX*/, 0/*=OriginY*/,
-                                                     cWidth, cHeight, cBitsPerPixel);
+    server->mConsole->i_getDisplay()->SetVideoModeHint(uScreenId, TRUE /*=enabled*/,
+                                                       FALSE /*=changeOrigin*/, 0/*=OriginX*/, 0/*=OriginY*/,
+                                                       cWidth, cHeight, cBitsPerPixel);
 }
 
 DECLCALLBACK(void) ConsoleVRDPServer::VRDECallbackAudioIn(void *pvCallback,
@@ -1292,39 +1294,38 @@ DECLCALLBACK(void) ConsoleVRDPServer::VRDECallbackAudioIn(void *pvCallback,
                                                           const void *pvData,
                                                           uint32_t cbData)
 {
-    ConsoleVRDPServer *server = static_cast<ConsoleVRDPServer*>(pvCallback);
+    RT_NOREF(u32ClientId);
+    ConsoleVRDPServer *pServer = static_cast<ConsoleVRDPServer*>(pvCallback);
+    AssertPtrReturnVoid(pServer);
 
-    PPDMIAUDIOSNIFFERPORT pPort = server->mConsole->getAudioSniffer()->getAudioSnifferPort();
+#ifdef VBOX_WITH_VRDE_AUDIO
+    AudioVRDE *pVRDE = pServer->mConsole->i_getAudioVRDE();
+    if (!pVRDE) /* Nothing to do, bail out early. */
+        return;
 
     switch (u32Event)
     {
         case VRDE_AUDIOIN_BEGIN:
         {
-            const VRDEAUDIOINBEGIN *pParms = (const VRDEAUDIOINBEGIN *)pvData;
-
-            pPort->pfnAudioInputEventBegin (pPort, pvCtx,
-                                            VRDE_AUDIO_FMT_SAMPLE_FREQ(pParms->fmt),
-                                            VRDE_AUDIO_FMT_CHANNELS(pParms->fmt),
-                                            VRDE_AUDIO_FMT_BITS_PER_SAMPLE(pParms->fmt),
-                                            VRDE_AUDIO_FMT_SIGNED(pParms->fmt)
-                                           );
-        } break;
+            pVRDE->onVRDEInputBegin(pvCtx, (PVRDEAUDIOINBEGIN)pvData);
+            break;
+        }
 
         case VRDE_AUDIOIN_DATA:
-        {
-            pPort->pfnAudioInputEventData (pPort, pvCtx, pvData, cbData);
-        } break;
+            pVRDE->onVRDEInputData(pvCtx, pvData, cbData);
+            break;
 
         case VRDE_AUDIOIN_END:
-        {
-            pPort->pfnAudioInputEventEnd (pPort, pvCtx);
-        } break;
+            pVRDE->onVRDEInputEnd(pvCtx);
+            break;
 
         default:
-            return;
+            break;
     }
+#else
+    RT_NOREF(pvCtx, u32Event, pvData, cbData);
+#endif /* VBOX_WITH_VRDE_AUDIO */
 }
-
 
 ConsoleVRDPServer::ConsoleVRDPServer(Console *console)
 {
@@ -1335,7 +1336,6 @@ ConsoleVRDPServer::ConsoleVRDPServer(Console *console)
 
     mcClipboardRefs = 0;
     mpfnClipboardCallback = NULL;
-
 #ifdef VBOX_WITH_USB
     mUSBBackends.pHead = NULL;
     mUSBBackends.pTail = NULL;
@@ -1365,8 +1365,6 @@ ConsoleVRDPServer::ConsoleVRDPServer(Console *console)
     m_InputSynch.fClientCapsLock   = false;
     m_InputSynch.fClientScrollLock = false;
 
-    RT_ZERO(maFramebuffers);
-
     {
         ComPtr<IEventSource> es;
         console->COMGETTER(EventSource)(es.asOutParam());
@@ -1383,7 +1381,9 @@ ConsoleVRDPServer::ConsoleVRDPServer(Console *console)
 
     mVRDPBindPort = -1;
 
-    mAuthLibrary = 0;
+#ifndef VBOX_WITH_VRDEAUTH_IN_VBOXSVC
+    RT_ZERO(mAuthLibCtx);
+#endif
 
     mu32AudioInputClientId = 0;
     mcClients = 0;
@@ -1424,13 +1424,9 @@ ConsoleVRDPServer::~ConsoleVRDPServer()
     }
 
     unsigned i;
-    for (i = 0; i < RT_ELEMENTS(maFramebuffers); i++)
+    for (i = 0; i < RT_ELEMENTS(maSourceBitmaps); i++)
     {
-        if (maFramebuffers[i])
-        {
-            maFramebuffers[i]->Release();
-            maFramebuffers[i] = NULL;
-        }
+        maSourceBitmaps[i].setNull();
     }
 
     if (mEmWebcam)
@@ -1456,7 +1452,7 @@ int ConsoleVRDPServer::Launch(void)
 {
     LogFlowThisFunc(("\n"));
 
-    IVRDEServer *server = mConsole->getVRDEServer();
+    IVRDEServer *server = mConsole->i_getVRDEServer();
     AssertReturn(server, VERR_INTERNAL_ERROR_2);
 
     /*
@@ -1487,8 +1483,8 @@ int ConsoleVRDPServer::Launch(void)
     else
     {
 #ifdef VBOX_WITH_EXTPACK
-        ExtPackManager *pExtPackMgr = mConsole->getExtPackManager();
-        vrc = pExtPackMgr->getVrdeLibraryPathForExtPack(&strExtPack, &strVrdeLibrary);
+        ExtPackManager *pExtPackMgr = mConsole->i_getExtPackManager();
+        vrc = pExtPackMgr->i_getVrdeLibraryPathForExtPack(&strExtPack, &strVrdeLibrary);
 #else
         vrc = VERR_FILE_NOT_FOUND;
 #endif
@@ -1749,6 +1745,11 @@ int ConsoleVRDPServer::Launch(void)
 #ifdef VBOX_WITH_USB
                 remoteUSBThreadStart();
 #endif
+
+                /*
+                 * Re-init the server current state, which is usually obtained from events.
+                 */
+                fetchCurrentState();
             }
             else
             {
@@ -1763,6 +1764,28 @@ int ConsoleVRDPServer::Launch(void)
     return vrc;
 }
 
+void ConsoleVRDPServer::fetchCurrentState(void)
+{
+    ComPtr<IMousePointerShape> mps;
+    mConsole->i_getMouse()->COMGETTER(PointerShape)(mps.asOutParam());
+    if (!mps.isNull())
+    {
+        BOOL  visible, alpha;
+        ULONG hotX, hotY, width, height;
+        com::SafeArray <BYTE> shape;
+
+        mps->COMGETTER(Visible)(&visible);
+        mps->COMGETTER(Alpha)(&alpha);
+        mps->COMGETTER(HotX)(&hotX);
+        mps->COMGETTER(HotY)(&hotY);
+        mps->COMGETTER(Width)(&width);
+        mps->COMGETTER(Height)(&height);
+        mps->COMGETTER(Shape)(ComSafeArrayAsOutParam(shape));
+
+        onMousePointerShapeChange(visible, alpha, hotX, hotY, width, height, ComSafeArrayAsInParam(shape));
+    }
+}
+
 typedef struct H3DORInstance
 {
     ConsoleVRDPServer *pThis;
@@ -1773,6 +1796,7 @@ typedef struct H3DORInstance
     uint32_t h;
     bool fCreated;
     bool fFallback;
+    bool fTopDown;
 } H3DORInstance;
 
 #define H3DORLOG Log
@@ -1801,6 +1825,12 @@ typedef struct H3DORInstance
         if (RTStrICmp(pszFormat, H3DOR_FMT_RGBA_TOPDOWN) == 0)
         {
             /* Accept it. */
+            p->fTopDown = true;
+        }
+        else if (RTStrICmp(pszFormat, H3DOR_FMT_RGBA) == 0)
+        {
+            /* Accept it. */
+            p->fTopDown = false;
         }
         else
         {
@@ -1821,10 +1851,10 @@ typedef struct H3DORInstance
     H3DORLOG(("H3DORGeometry: ins %p %d,%d %dx%d\n", pvInstance, x, y, w, h));
 
     H3DORInstance *p = (H3DORInstance *)pvInstance;
-    Assert(p);
-    Assert(p->pThis);
+    AssertPtrReturnVoid(p);
+    AssertPtrReturnVoid(p->pThis);
 
-    /* @todo find out what to do if size changes to 0x0 from non zero */
+    /** @todo find out what to do if size changes to 0x0 from non zero */
     if (w == 0 || h == 0)
     {
         /* Do nothing. */
@@ -1874,7 +1904,7 @@ typedef struct H3DORInstance
     if (!p->hImageBitmap)
     {
         /* Create a new bitmap handle. */
-        uint32_t u32ScreenId = 0; /* @todo clip to corresponding screens.
+        uint32_t u32ScreenId = 0; /** @todo clip to corresponding screens.
                                    * Clipping can be done here or in VRDP server.
                                    * If VRDP does clipping, then uScreenId parameter
                                    * is not necessary and coords must be global.
@@ -1944,8 +1974,8 @@ typedef struct H3DORInstance
     H3DORLOG(("H3DORVisibleRegion: ins %p %d\n", pvInstance, cRects));
 
     H3DORInstance *p = (H3DORInstance *)pvInstance;
-    Assert(p);
-    Assert(p->pThis);
+    AssertPtrReturnVoid(p);
+    AssertPtrReturnVoid(p->pThis);
 
     if (cRects == 0)
     {
@@ -1975,8 +2005,8 @@ typedef struct H3DORInstance
     H3DORLOG(("H3DORFrame: ins %p %p %d\n", pvInstance, pvData, cbData));
 
     H3DORInstance *p = (H3DORInstance *)pvInstance;
-    Assert(p);
-    Assert(p->pThis);
+    AssertPtrReturnVoid(p);
+    AssertPtrReturnVoid(p->pThis);
 
     /* Currently only a topdown BGR0 bitmap format is supported. */
     VRDEIMAGEBITMAP image;
@@ -1986,7 +2016,11 @@ typedef struct H3DORInstance
     image.pvData = pvData;
     image.cbData = cbData;
     image.pvScanLine0 = (uint8_t *)pvData + (p->h - 1) * p->w * 4;
-    image.iScanDelta = -4 * p->w;
+    image.iScanDelta = 4 * p->w;
+    if (p->fTopDown)
+    {
+        image.iScanDelta = -image.iScanDelta;
+    }
 
     p->pThis->m_interfaceImage.VRDEImageUpdate (p->hImageBitmap,
                                                 p->x,
@@ -2004,11 +2038,12 @@ typedef struct H3DORInstance
     H3DORLOG(("H3DOREnd: ins %p\n", pvInstance));
 
     H3DORInstance *p = (H3DORInstance *)pvInstance;
-    Assert(p);
-    Assert(p->pThis);
+    AssertPtrReturnVoid(p);
+    AssertPtrReturnVoid(p->pThis);
 
     p->pThis->m_interfaceImage.VRDEImageHandleClose(p->hImageBitmap);
 
+    RT_ZERO(*p);
     RTMemFree(p);
 
     H3DORLOG(("H3DOREnd: ins %p completed\n", pvInstance));
@@ -2017,6 +2052,7 @@ typedef struct H3DORInstance
 /* static */ DECLCALLBACK(int) ConsoleVRDPServer::H3DORContextProperty(const void *pvContext, uint32_t index,
                                                                        void *pvBuffer, uint32_t cbBuffer, uint32_t *pcbOut)
 {
+    RT_NOREF(pvContext, pvBuffer);
     int rc = VINF_SUCCESS;
 
     H3DORLOG(("H3DORContextProperty: index %d\n", index));
@@ -2024,11 +2060,17 @@ typedef struct H3DORInstance
     if (index == H3DOR_PROP_FORMATS)
     {
         /* Return a comma separated list of supported formats. */
-        static const char *pszSupportedFormats = H3DOR_FMT_RGBA_TOPDOWN;
-        uint32_t cbOut = (uint32_t)strlen(pszSupportedFormats) + 1;
+        uint32_t cbOut =   (uint32_t)strlen(H3DOR_FMT_RGBA_TOPDOWN) + 1
+                         + (uint32_t)strlen(H3DOR_FMT_RGBA) + 1;
         if (cbOut <= cbBuffer)
         {
-            memcpy(pvBuffer, pszSupportedFormats, cbOut);
+            char *pch = (char *)pvBuffer;
+            memcpy(pch, H3DOR_FMT_RGBA_TOPDOWN, strlen(H3DOR_FMT_RGBA_TOPDOWN));
+            pch += strlen(H3DOR_FMT_RGBA_TOPDOWN);
+            *pch++ = ',';
+            memcpy(pch, H3DOR_FMT_RGBA, strlen(H3DOR_FMT_RGBA));
+            pch += strlen(H3DOR_FMT_RGBA);
+            *pch++ = '\0';
         }
         else
         {
@@ -2055,7 +2097,7 @@ void ConsoleVRDPServer::remote3DRedirect(bool fEnable)
 
     /* Check if 3D redirection has been enabled. It is enabled by default. */
     com::Bstr bstr;
-    HRESULT hrc = mConsole->getVRDEServer()->GetVRDEProperty(Bstr("H3DRedirect/Enabled").raw(), bstr.asOutParam());
+    HRESULT hrc = mConsole->i_getVRDEServer()->GetVRDEProperty(Bstr("H3DRedirect/Enabled").raw(), bstr.asOutParam());
 
     com::Utf8Str value = hrc == S_OK? bstr: "";
 
@@ -2086,25 +2128,16 @@ void ConsoleVRDPServer::remote3DRedirect(bool fEnable)
         RT_ZERO(outputRedirect);
     }
 
-    VBOXHGCMSVCPARM parm;
+#if defined(VBOX_WITH_HGCM) && defined(VBOX_WITH_CROGL)
+    VBOXCRCMDCTL_HGCM data;
+    data.Hdr.enmType = VBOXCRCMDCTL_TYPE_HGCM;
+    data.Hdr.u32Function = SHCRGL_HOST_FN_SET_OUTPUT_REDIRECT;
 
-    parm.type = VBOX_HGCM_SVC_PARM_PTR;
-    parm.u.pointer.addr = &outputRedirect;
-    parm.u.pointer.size = sizeof(outputRedirect);
+    data.aParms[0].type = VBOX_HGCM_SVC_PARM_PTR;
+    data.aParms[0].u.pointer.addr = &outputRedirect;
+    data.aParms[0].u.pointer.size = sizeof(outputRedirect);
 
-    VMMDev *pVMMDev = mConsole->getVMMDev();
-
-    if (!pVMMDev)
-    {
-        AssertMsgFailed(("remote3DRedirect no vmmdev\n"));
-        return;
-    }
-
-    int rc = pVMMDev->hgcmHostCall("VBoxSharedCrOpenGL",
-                                   SHCRGL_HOST_FN_SET_OUTPUT_REDIRECT,
-                                   SHCRGL_CPARMS_SET_OUTPUT_REDIRECT,
-                                   &parm);
-
+    int rc = mConsole->i_getDisplay()->i_crCtlSubmitSync(&data.Hdr, sizeof (data));
     if (!RT_SUCCESS(rc))
     {
         Log(("SHCRGL_HOST_FN_SET_CONSOLE failed with %Rrc\n", rc));
@@ -2112,6 +2145,10 @@ void ConsoleVRDPServer::remote3DRedirect(bool fEnable)
     }
 
     LogRel(("VRDE: %s 3D redirect.\n", fEnable? "Enabled": "Disabled"));
+# ifdef DEBUG_misha
+    AssertFailed();
+# endif
+#endif
 
     return;
 }
@@ -2123,10 +2160,11 @@ void ConsoleVRDPServer::remote3DRedirect(bool fEnable)
                                                                      void *pvData,
                                                                      uint32_t cbData)
 {
+    RT_NOREF(hVideo);
     H3DORLOG(("H3DOR: VRDEImageCbNotify: pvContext %p, pvUser %p, hVideo %p, u32Id %u, pvData %p, cbData %d\n",
               pvContext, pvUser, hVideo, u32Id, pvData, cbData));
 
-    ConsoleVRDPServer *pServer = static_cast<ConsoleVRDPServer*>(pvContext);
+    ConsoleVRDPServer *pServer = static_cast<ConsoleVRDPServer*>(pvContext); NOREF(pServer);
     H3DORInstance *p = (H3DORInstance *)pvUser;
     Assert(p);
     Assert(p->pThis);
@@ -2146,7 +2184,7 @@ void ConsoleVRDPServer::remote3DRedirect(bool fEnable)
 
         if (u32StreamId != 0)
         {
-            p->fCreated = true; // @todo not needed?
+            p->fCreated = true; /// @todo not needed?
         }
         else
         {
@@ -2166,7 +2204,7 @@ void ConsoleVRDPServer::remote3DRedirect(bool fEnable)
 {
 #ifdef VBOX_WITH_USB_CARDREADER
     ConsoleVRDPServer *pThis = static_cast<ConsoleVRDPServer*>(pvContext);
-    UsbCardReader *pReader = pThis->mConsole->getUsbCardReader();
+    UsbCardReader *pReader = pThis->mConsole->i_getUsbCardReader();
     return pReader->VRDENotify(u32Id, pvData, cbData);
 #else
     NOREF(pvContext);
@@ -2186,7 +2224,7 @@ void ConsoleVRDPServer::remote3DRedirect(bool fEnable)
 {
 #ifdef VBOX_WITH_USB_CARDREADER
     ConsoleVRDPServer *pThis = static_cast<ConsoleVRDPServer*>(pvContext);
-    UsbCardReader *pReader = pThis->mConsole->getUsbCardReader();
+    UsbCardReader *pReader = pThis->mConsole->i_getUsbCardReader();
     return pReader->VRDEResponse(rcRequest, pvUser, u32Function, pvData, cbData);
 #else
     NOREF(pvContext);
@@ -2306,7 +2344,7 @@ void ConsoleVRDPServer::tsmfUnlock(void)
 
     if (RT_SUCCESS(rc))
     {
-        /* @todo contexts should be in a list for accounting. */
+        /** @todo contexts should be in a list for accounting. */
         *ppvChannel = pHostChCtx;
     }
     else
@@ -2437,6 +2475,7 @@ void ConsoleVRDPServer::tsmfUnlock(void)
                                                                          uint32_t cbData,
                                                                          uint32_t *pcbDataReturned)
 {
+    RT_NOREF(pvParm, cbParm, pvData, cbData);
     LogFlowFunc(("u32Code %u\n", u32Code));
 
     if (!pvChannel)
@@ -2486,7 +2525,7 @@ void ConsoleVRDPServer::setupTSMF(void)
     parms.iface.u.pointer.addr = &hostChannelInterface;
     parms.iface.u.pointer.size = sizeof(hostChannelInterface);
 
-    VMMDev *pVMMDev = mConsole->getVMMDev();
+    VMMDev *pVMMDev = mConsole->i_getVMMDev();
 
     if (!pVMMDev)
     {
@@ -2510,7 +2549,7 @@ void ConsoleVRDPServer::setupTSMF(void)
     return;
 }
 
-/* @todo these defines must be in a header, which is used by guest component as well. */
+/** @todo these defines must be in a header, which is used by guest component as well. */
 #define VBOX_TSMF_HCH_CREATE_ACCEPTED (VBOX_HOST_CHANNEL_EVENT_USER + 0)
 #define VBOX_TSMF_HCH_CREATE_DECLINED (VBOX_HOST_CHANNEL_EVENT_USER + 1)
 #define VBOX_TSMF_HCH_DISCONNECTED    (VBOX_HOST_CHANNEL_EVENT_USER + 2)
@@ -2521,6 +2560,7 @@ void ConsoleVRDPServer::setupTSMF(void)
                                                                     const void *pvParm,
                                                                     uint32_t cbParm)
 {
+    RT_NOREF(cbParm);
     int rc = VINF_SUCCESS;
 
     ConsoleVRDPServer *pThis = static_cast<ConsoleVRDPServer*>(pvContext);
@@ -2796,7 +2836,7 @@ int ConsoleVRDPServer::VideoInControl(void *pvUser, const VRDEVIDEOINDEVICEHANDL
 
             if (pHeader->u16EventId == VRDEINPUT_EVENTID_TOUCH)
             {
-                IMouse *pMouse = pThis->mConsole->getMouse();
+                IMouse *pMouse = pThis->mConsole->i_getMouse();
 
                 VRDEINPUT_TOUCH_EVENT_PDU *p = (VRDEINPUT_TOUCH_EVENT_PDU *)pHeader;
 
@@ -2848,7 +2888,7 @@ int ConsoleVRDPServer::VideoInControl(void *pvUser, const VRDEVIDEOINDEVICEHANDL
             }
             else if (pHeader->u16EventId == VRDEINPUT_EVENTID_DISMISS_HOVERING_CONTACT)
             {
-                /* @todo */
+                /** @todo */
             }
             else
             {
@@ -2990,15 +3030,9 @@ void ConsoleVRDPServer::Stop(void)
         }
     }
 
-    mpfnAuthEntry = NULL;
-    mpfnAuthEntry2 = NULL;
-    mpfnAuthEntry3 = NULL;
-
-    if (mAuthLibrary)
-    {
-        RTLdrClose(mAuthLibrary);
-        mAuthLibrary = 0;
-    }
+#ifndef VBOX_WITH_VRDEAUTH_IN_VBOXSVC
+    AuthLibUnload(&mAuthLibCtx);
+#endif
 }
 
 /* Worker thread for Remote USB. The thread polls the clients for
@@ -3117,164 +3151,57 @@ void ConsoleVRDPServer::remoteUSBThreadStop(void)
 }
 #endif /* VBOX_WITH_USB */
 
-typedef struct AuthCtx
+AuthResult ConsoleVRDPServer::Authenticate(const Guid &uuid, AuthGuestJudgement guestJudgement,
+                                           const char *pszUser, const char *pszPassword, const char *pszDomain,
+                                           uint32_t u32ClientId)
 {
-    AuthResult result;
+    LogFlowFunc(("uuid = %RTuuid, guestJudgement = %d, pszUser = %s, pszPassword = %s, pszDomain = %s, u32ClientId = %d\n",
+                 uuid.raw(), guestJudgement, pszUser, pszPassword, pszDomain, u32ClientId));
 
-    PAUTHENTRY3 pfnAuthEntry3;
-    PAUTHENTRY2 pfnAuthEntry2;
-    PAUTHENTRY  pfnAuthEntry;
-
-    const char         *pszCaller;
-    PAUTHUUID          pUuid;
-    AuthGuestJudgement guestJudgement;
-    const char         *pszUser;
-    const char         *pszPassword;
-    const char         *pszDomain;
-    int                fLogon;
-    unsigned           clientId;
-} AuthCtx;
-
-static DECLCALLBACK(int) authThread(RTTHREAD self, void *pvUser)
-{
-    AuthCtx *pCtx = (AuthCtx *)pvUser;
-
-    if (pCtx->pfnAuthEntry3)
-    {
-        pCtx->result = pCtx->pfnAuthEntry3(pCtx->pszCaller, pCtx->pUuid, pCtx->guestJudgement,
-                                           pCtx->pszUser, pCtx->pszPassword, pCtx->pszDomain,
-                                           pCtx->fLogon, pCtx->clientId);
-    }
-    else if (pCtx->pfnAuthEntry2)
-    {
-        pCtx->result = pCtx->pfnAuthEntry2(pCtx->pUuid, pCtx->guestJudgement,
-                                           pCtx->pszUser, pCtx->pszPassword, pCtx->pszDomain,
-                                           pCtx->fLogon, pCtx->clientId);
-    }
-    else if (pCtx->pfnAuthEntry)
-    {
-        pCtx->result = pCtx->pfnAuthEntry(pCtx->pUuid, pCtx->guestJudgement,
-                                          pCtx->pszUser, pCtx->pszPassword, pCtx->pszDomain);
-    }
-    return VINF_SUCCESS;
-}
-
-static AuthResult authCall(AuthCtx *pCtx)
-{
     AuthResult result = AuthResultAccessDenied;
 
-    /* Use a separate thread because external modules might need a lot of stack space. */
-    RTTHREAD thread = NIL_RTTHREAD;
-    int rc = RTThreadCreate(&thread, authThread, pCtx, 512*_1K,
-                            RTTHREADTYPE_DEFAULT, RTTHREADFLAGS_WAITABLE, "VRDEAuth");
-    LogFlow(("authCall: RTThreadCreate %Rrc\n", rc));
-
-    if (RT_SUCCESS(rc))
+#ifdef VBOX_WITH_VRDEAUTH_IN_VBOXSVC
+    try
     {
-        rc = RTThreadWait(thread, RT_INDEFINITE_WAIT, NULL);
-        LogFlow(("authCall: RTThreadWait %Rrc\n", rc));
-    }
+        /* Init auth parameters. Order is important. */
+        SafeArray<BSTR> authParams;
+        Bstr("VRDEAUTH"          ).detachTo(authParams.appendedRaw());
+        Bstr(uuid.toUtf16()      ).detachTo(authParams.appendedRaw());
+        BstrFmt("%u", guestJudgement).detachTo(authParams.appendedRaw());
+        Bstr(pszUser             ).detachTo(authParams.appendedRaw());
+        Bstr(pszPassword         ).detachTo(authParams.appendedRaw());
+        Bstr(pszDomain           ).detachTo(authParams.appendedRaw());
+        BstrFmt("%u", u32ClientId).detachTo(authParams.appendedRaw());
 
-    if (RT_SUCCESS(rc))
+        Bstr authResult;
+        HRESULT hr = mConsole->mControl->AuthenticateExternal(ComSafeArrayAsInParam(authParams),
+                                                              authResult.asOutParam());
+        LogFlowFunc(("%Rhrc [%ls]\n", hr, authResult.raw()));
+
+        size_t cbPassword = RTUtf16Len((PRTUTF16)authParams[4]) * sizeof(RTUTF16);
+        if (cbPassword)
+            RTMemWipeThoroughly(authParams[4], cbPassword, 10 /* cPasses */);
+
+        if (SUCCEEDED(hr) && authResult == "granted")
+            result = AuthResultAccessGranted;
+    }
+    catch (std::bad_alloc &)
     {
-        /* Only update the result if the thread finished without errors. */
-        result = pCtx->result;
     }
-    else
-    {
-        LogRel(("AUTH: unable to execute the auth thread %Rrc\n", rc));
-    }
-
-    return result;
-}
-
-AuthResult ConsoleVRDPServer::Authenticate(const Guid &uuid, AuthGuestJudgement guestJudgement,
-                                                const char *pszUser, const char *pszPassword, const char *pszDomain,
-                                                uint32_t u32ClientId)
-{
-    AUTHUUID rawuuid;
-
-    memcpy(rawuuid, uuid.raw(), sizeof(rawuuid));
-
-    LogFlow(("ConsoleVRDPServer::Authenticate: uuid = %RTuuid, guestJudgement = %d, pszUser = %s, pszPassword = %s, pszDomain = %s, u32ClientId = %d\n",
-             rawuuid, guestJudgement, pszUser, pszPassword, pszDomain, u32ClientId));
-
+#else
     /*
      * Called only from VRDP input thread. So thread safety is not required.
      */
 
-    if (!mAuthLibrary)
+    if (!mAuthLibCtx.hAuthLibrary)
     {
         /* Load the external authentication library. */
         Bstr authLibrary;
-        mConsole->getVRDEServer()->COMGETTER(AuthLibrary)(authLibrary.asOutParam());
+        mConsole->i_getVRDEServer()->COMGETTER(AuthLibrary)(authLibrary.asOutParam());
 
         Utf8Str filename = authLibrary;
 
-        LogRel(("AUTH: loading external authentication library '%ls'\n", authLibrary.raw()));
-
-        int rc;
-        if (RTPathHavePath(filename.c_str()))
-            rc = RTLdrLoad(filename.c_str(), &mAuthLibrary);
-        else
-        {
-            rc = RTLdrLoadAppPriv(filename.c_str(), &mAuthLibrary);
-            if (RT_FAILURE(rc))
-            {
-                /* Backward compatibility with old default 'VRDPAuth' name.
-                 * Try to load new default 'VBoxAuth' instead.
-                 */
-                if (filename == "VRDPAuth")
-                {
-                    LogRel(("AUTH: ConsoleVRDPServer::Authenticate: loading external authentication library VBoxAuth\n"));
-                    rc = RTLdrLoadAppPriv("VBoxAuth", &mAuthLibrary);
-                }
-            }
-        }
-
-        if (RT_FAILURE(rc))
-            LogRel(("AUTH: Failed to load external authentication library. Error code: %Rrc\n", rc));
-
-        if (RT_SUCCESS(rc))
-        {
-            typedef struct AuthEntryInfoStruct
-            {
-                const char *pszName;
-                void **ppvAddress;
-
-            } AuthEntryInfo;
-            AuthEntryInfo entries[] =
-            {
-                { AUTHENTRY3_NAME, (void **)&mpfnAuthEntry3 },
-                { AUTHENTRY2_NAME, (void **)&mpfnAuthEntry2 },
-                { AUTHENTRY_NAME,  (void **)&mpfnAuthEntry },
-                { NULL, NULL }
-            };
-
-            /* Get the entry point. */
-            AuthEntryInfo *pEntryInfo = &entries[0];
-            while (pEntryInfo->pszName)
-            {
-                *pEntryInfo->ppvAddress = NULL;
-
-                int rc2 = RTLdrGetSymbol(mAuthLibrary, pEntryInfo->pszName, pEntryInfo->ppvAddress);
-                if (RT_SUCCESS(rc2))
-                {
-                    /* Found an entry point. */
-                    LogRel(("AUTH: Using entry point '%s'.\n", pEntryInfo->pszName));
-                    rc = VINF_SUCCESS;
-                    break;
-                }
-
-                if (rc2 != VERR_SYMBOL_NOT_FOUND)
-                {
-                    LogRel(("AUTH: Could not resolve import '%s'. Error code: %Rrc\n", pEntryInfo->pszName, rc2));
-                }
-                rc = rc2;
-
-                pEntryInfo++;
-            }
-        }
+        int rc = AuthLibLoad(&mAuthLibCtx, filename.c_str());
 
         if (RT_FAILURE(rc))
         {
@@ -3283,37 +3210,15 @@ AuthResult ConsoleVRDPServer::Authenticate(const Guid &uuid, AuthGuestJudgement 
                                filename.c_str(),
                                rc);
 
-            mpfnAuthEntry = NULL;
-            mpfnAuthEntry2 = NULL;
-            mpfnAuthEntry3 = NULL;
-
-            if (mAuthLibrary)
-            {
-                RTLdrClose(mAuthLibrary);
-                mAuthLibrary = 0;
-            }
-
             return AuthResultAccessDenied;
         }
     }
 
-    Assert(mAuthLibrary && (mpfnAuthEntry || mpfnAuthEntry2 || mpfnAuthEntry3));
-
-    AuthCtx ctx;
-    ctx.result         = AuthResultAccessDenied; /* Denied by default. */
-    ctx.pfnAuthEntry3  = mpfnAuthEntry3;
-    ctx.pfnAuthEntry2  = mpfnAuthEntry2;
-    ctx.pfnAuthEntry   = mpfnAuthEntry;
-    ctx.pszCaller      = "vrde";
-    ctx.pUuid          = &rawuuid;
-    ctx.guestJudgement = guestJudgement;
-    ctx.pszUser        = pszUser;
-    ctx.pszPassword    = pszPassword;
-    ctx.pszDomain      = pszDomain;
-    ctx.fLogon         = true;
-    ctx.clientId       = u32ClientId;
-
-    AuthResult result = authCall(&ctx);
+    result = AuthLibAuthenticate(&mAuthLibCtx,
+                                 uuid.raw(), guestJudgement,
+                                 pszUser, pszPassword, pszDomain,
+                                 u32ClientId);
+#endif /* !VBOX_WITH_VRDEAUTH_IN_VBOXSVC */
 
     switch (result)
     {
@@ -3331,37 +3236,36 @@ AuthResult ConsoleVRDPServer::Authenticate(const Guid &uuid, AuthGuestJudgement 
             result = AuthResultAccessDenied;
     }
 
-    LogFlow(("ConsoleVRDPServer::Authenticate: result = %d\n", result));
+    LogFlowFunc(("result = %d\n", result));
 
     return result;
 }
 
 void ConsoleVRDPServer::AuthDisconnect(const Guid &uuid, uint32_t u32ClientId)
 {
-    AUTHUUID rawuuid;
-
-    memcpy(rawuuid, uuid.raw(), sizeof(rawuuid));
-
     LogFlow(("ConsoleVRDPServer::AuthDisconnect: uuid = %RTuuid, u32ClientId = %d\n",
-             rawuuid, u32ClientId));
+             uuid.raw(), u32ClientId));
 
-    Assert(mAuthLibrary && (mpfnAuthEntry || mpfnAuthEntry2 || mpfnAuthEntry3));
+#ifdef VBOX_WITH_VRDEAUTH_IN_VBOXSVC
+    try
+    {
+        /* Init auth parameters. Order is important. */
+        SafeArray<BSTR> authParams;
+        Bstr("VRDEAUTHDISCONNECT").detachTo(authParams.appendedRaw());
+        Bstr(uuid.toUtf16()      ).detachTo(authParams.appendedRaw());
+        BstrFmt("%u", u32ClientId).detachTo(authParams.appendedRaw());
 
-    AuthCtx ctx;
-    ctx.result         = AuthResultAccessDenied; /* Not used. */
-    ctx.pfnAuthEntry3  = mpfnAuthEntry3;
-    ctx.pfnAuthEntry2  = mpfnAuthEntry2;
-    ctx.pfnAuthEntry   = NULL;                   /* Does not use disconnect notification. */
-    ctx.pszCaller      = "vrde";
-    ctx.pUuid          = &rawuuid;
-    ctx.guestJudgement = AuthGuestNotAsked;
-    ctx.pszUser        = NULL;
-    ctx.pszPassword    = NULL;
-    ctx.pszDomain      = NULL;
-    ctx.fLogon         = false;
-    ctx.clientId       = u32ClientId;
-
-    authCall(&ctx);
+        Bstr authResult;
+        HRESULT hr = mConsole->mControl->AuthenticateExternal(ComSafeArrayAsInParam(authParams),
+                                                              authResult.asOutParam());
+        LogFlowFunc(("%Rhrc [%ls]\n", hr, authResult.raw())); NOREF(hr);
+    }
+    catch (std::bad_alloc &)
+    {
+    }
+#else
+    AuthLibDisconnect(&mAuthLibCtx, uuid.raw(), u32ClientId);
+#endif /* !VBOX_WITH_VRDEAUTH_IN_VBOXSVC */
 }
 
 int ConsoleVRDPServer::lockConsoleVRDPServer(void)
@@ -3428,6 +3332,7 @@ DECLCALLBACK(int) ConsoleVRDPServer::ClipboardServiceExtension(void *pvExtension
                                                                void *pvParms,
                                                                uint32_t cbParms)
 {
+    RT_NOREF(cbParms);
     LogFlowFunc(("pvExtension = %p, u32Function = %d, pvParms = %p, cbParms = %d\n",
                  pvExtension, u32Function, pvParms, cbParms));
 
@@ -3497,6 +3402,7 @@ DECLCALLBACK(int) ConsoleVRDPServer::ClipboardServiceExtension(void *pvExtension
 
 void ConsoleVRDPServer::ClipboardCreate(uint32_t u32ClientId)
 {
+    RT_NOREF(u32ClientId);
     int rc = lockConsoleVRDPServer();
 
     if (RT_SUCCESS(rc))
@@ -3517,6 +3423,7 @@ void ConsoleVRDPServer::ClipboardCreate(uint32_t u32ClientId)
 
 void ConsoleVRDPServer::ClipboardDelete(uint32_t u32ClientId)
 {
+    RT_NOREF(u32ClientId);
     int rc = lockConsoleVRDPServer();
 
     if (RT_SUCCESS(rc))
@@ -3809,10 +3716,10 @@ void ConsoleVRDPServer::SendResize(void)
 void ConsoleVRDPServer::SendUpdateBitmap(unsigned uScreenId, uint32_t x, uint32_t y, uint32_t w, uint32_t h) const
 {
     VRDEORDERHDR update;
-    update.x = x;
-    update.y = y;
-    update.w = w;
-    update.h = h;
+    update.x = (uint16_t)x;
+    update.y = (uint16_t)y;
+    update.w = (uint16_t)w;
+    update.h = (uint16_t)h;
     if (mpEntryPoints && mhServer)
     {
         mpEntryPoints->VRDEUpdate(mhServer, uScreenId, &update, sizeof(update));
@@ -3843,7 +3750,6 @@ void ConsoleVRDPServer::SendUSBRequest(uint32_t u32ClientId, void *pvParms, uint
     }
 }
 
-/* @todo rc not needed? */
 int ConsoleVRDPServer::SendAudioInputBegin(void **ppvUserCtx,
                                            void *pvContext,
                                            uint32_t cSamples,
@@ -3851,30 +3757,36 @@ int ConsoleVRDPServer::SendAudioInputBegin(void **ppvUserCtx,
                                            uint32_t cChannels,
                                            uint32_t cBits)
 {
-    if (mpEntryPoints && mhServer && mpEntryPoints->VRDEAudioInOpen)
+    if (   mhServer
+        && mpEntryPoints && mpEntryPoints->VRDEAudioInOpen)
     {
         uint32_t u32ClientId = ASMAtomicReadU32(&mu32AudioInputClientId);
         if (u32ClientId != 0) /* 0 would mean broadcast to all clients. */
         {
             VRDEAUDIOFORMAT audioFormat = VRDE_AUDIO_FMT_MAKE(iSampleHz, cChannels, cBits, 0);
-            mpEntryPoints->VRDEAudioInOpen (mhServer,
-                                            pvContext,
-                                            u32ClientId,
-                                            audioFormat,
-                                            cSamples);
-            *ppvUserCtx = NULL; /* This is the ConsoleVRDPServer context.
-                                 * Currently not used because only one client is allowed to
-                                 * do audio input and the client id is saved by the ConsoleVRDPServer.
-                                 */
-
+            mpEntryPoints->VRDEAudioInOpen(mhServer,
+                                           pvContext,
+                                           u32ClientId,
+                                           audioFormat,
+                                           cSamples);
+            if (ppvUserCtx)
+                *ppvUserCtx = NULL; /* This is the ConsoleVRDPServer context.
+                                     * Currently not used because only one client is allowed to
+                                     * do audio input and the client ID is saved by the ConsoleVRDPServer.
+                                     */
             return VINF_SUCCESS;
         }
     }
+
+    /*
+     * Not supported or no client connected.
+     */
     return VERR_NOT_SUPPORTED;
 }
 
 void ConsoleVRDPServer::SendAudioInputEnd(void *pvUserCtx)
 {
+    RT_NOREF(pvUserCtx);
     if (mpEntryPoints && mhServer && mpEntryPoints->VRDEAudioInClose)
     {
         uint32_t u32ClientId = ASMAtomicReadU32(&mu32AudioInputClientId);
@@ -3884,7 +3796,6 @@ void ConsoleVRDPServer::SendAudioInputEnd(void *pvUserCtx)
         }
     }
 }
-
 
 void ConsoleVRDPServer::QueryInfo(uint32_t index, void *pvBuffer, uint32_t cbBuffer, uint32_t *pcbOut) const
 {
@@ -4039,21 +3950,15 @@ void VRDEServerInfo::uninit()
 /////////////////////////////////////////////////////////////////////////////
 
 #define IMPL_GETTER_BOOL(_aType, _aName, _aIndex)                         \
-    STDMETHODIMP VRDEServerInfo::COMGETTER(_aName)(_aType *a##_aName)  \
+    HRESULT VRDEServerInfo::get##_aName(_aType *a##_aName)                \
     {                                                                     \
-        if (!a##_aName)                                                   \
-            return E_POINTER;                                             \
-                                                                          \
-        AutoCaller autoCaller(this);                                      \
-        if (FAILED(autoCaller.rc())) return autoCaller.rc();              \
-                                                                          \
-        /* todo: Not sure if a AutoReadLock would be sufficient. */       \
+        /** @todo Not sure if a AutoReadLock would be sufficient. */       \
         AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);                  \
                                                                           \
         uint32_t value;                                                   \
         uint32_t cbOut = 0;                                               \
                                                                           \
-        mParent->consoleVRDPServer()->QueryInfo                           \
+        mParent->i_consoleVRDPServer()->QueryInfo                         \
             (_aIndex, &value, sizeof(value), &cbOut);                     \
                                                                           \
         *a##_aName = cbOut? !!value: FALSE;                               \
@@ -4063,21 +3968,15 @@ void VRDEServerInfo::uninit()
     extern void IMPL_GETTER_BOOL_DUMMY(void)
 
 #define IMPL_GETTER_SCALAR(_aType, _aName, _aIndex, _aValueMask)          \
-    STDMETHODIMP VRDEServerInfo::COMGETTER(_aName)(_aType *a##_aName)  \
+    HRESULT VRDEServerInfo::get##_aName(_aType *a##_aName)                \
     {                                                                     \
-        if (!a##_aName)                                                   \
-            return E_POINTER;                                             \
-                                                                          \
-        AutoCaller autoCaller(this);                                      \
-        if (FAILED(autoCaller.rc())) return autoCaller.rc();              \
-                                                                          \
-        /* todo: Not sure if a AutoReadLock would be sufficient. */       \
+        /** @todo Not sure if a AutoReadLock would be sufficient. */       \
         AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);                  \
                                                                           \
         _aType value;                                                     \
         uint32_t cbOut = 0;                                               \
                                                                           \
-        mParent->consoleVRDPServer()->QueryInfo                           \
+        mParent->i_consoleVRDPServer()->QueryInfo                         \
             (_aIndex, &value, sizeof(value), &cbOut);                     \
                                                                           \
         if (_aValueMask) value &= (_aValueMask);                          \
@@ -4087,27 +3986,20 @@ void VRDEServerInfo::uninit()
     }                                                                     \
     extern void IMPL_GETTER_SCALAR_DUMMY(void)
 
-#define IMPL_GETTER_BSTR(_aType, _aName, _aIndex)                         \
-    STDMETHODIMP VRDEServerInfo::COMGETTER(_aName)(_aType *a##_aName)  \
+#define IMPL_GETTER_UTF8STR(_aType, _aName, _aIndex)                      \
+    HRESULT VRDEServerInfo::get##_aName(_aType &a##_aName)                \
     {                                                                     \
-        if (!a##_aName)                                                   \
-            return E_POINTER;                                             \
-                                                                          \
-        AutoCaller autoCaller(this);                                      \
-        if (FAILED(autoCaller.rc())) return autoCaller.rc();              \
-                                                                          \
-        /* todo: Not sure if a AutoReadLock would be sufficient. */       \
+        /** @todo Not sure if a AutoReadLock would be sufficient. */       \
         AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);                  \
                                                                           \
         uint32_t cbOut = 0;                                               \
                                                                           \
-        mParent->consoleVRDPServer()->QueryInfo                           \
+        mParent->i_consoleVRDPServer()->QueryInfo                         \
             (_aIndex, NULL, 0, &cbOut);                                   \
                                                                           \
         if (cbOut == 0)                                                   \
         {                                                                 \
-            Bstr str("");                                                 \
-            str.cloneTo(a##_aName);                                       \
+            a##_aName = Utf8Str::Empty;                                   \
             return S_OK;                                                  \
         }                                                                 \
                                                                           \
@@ -4121,12 +4013,10 @@ void VRDEServerInfo::uninit()
             return E_OUTOFMEMORY;                                         \
         }                                                                 \
                                                                           \
-        mParent->consoleVRDPServer()->QueryInfo                           \
+        mParent->i_consoleVRDPServer()->QueryInfo                         \
             (_aIndex, pchBuffer, cbOut, &cbOut);                          \
                                                                           \
-        Bstr str(pchBuffer);                                              \
-                                                                          \
-        str.cloneTo(a##_aName);                                           \
+        a##_aName = pchBuffer;                                            \
                                                                           \
         RTMemTmpFree(pchBuffer);                                          \
                                                                           \
@@ -4143,14 +4033,14 @@ IMPL_GETTER_SCALAR (LONG64,  BytesSent,          VRDE_QI_BYTES_SENT,            
 IMPL_GETTER_SCALAR (LONG64,  BytesSentTotal,     VRDE_QI_BYTES_SENT_TOTAL,      INT64_MAX);
 IMPL_GETTER_SCALAR (LONG64,  BytesReceived,      VRDE_QI_BYTES_RECEIVED,        INT64_MAX);
 IMPL_GETTER_SCALAR (LONG64,  BytesReceivedTotal, VRDE_QI_BYTES_RECEIVED_TOTAL,  INT64_MAX);
-IMPL_GETTER_BSTR   (BSTR,    User,               VRDE_QI_USER);
-IMPL_GETTER_BSTR   (BSTR,    Domain,             VRDE_QI_DOMAIN);
-IMPL_GETTER_BSTR   (BSTR,    ClientName,         VRDE_QI_CLIENT_NAME);
-IMPL_GETTER_BSTR   (BSTR,    ClientIP,           VRDE_QI_CLIENT_IP);
+IMPL_GETTER_UTF8STR(Utf8Str, User,               VRDE_QI_USER);
+IMPL_GETTER_UTF8STR(Utf8Str, Domain,             VRDE_QI_DOMAIN);
+IMPL_GETTER_UTF8STR(Utf8Str, ClientName,         VRDE_QI_CLIENT_NAME);
+IMPL_GETTER_UTF8STR(Utf8Str, ClientIP,           VRDE_QI_CLIENT_IP);
 IMPL_GETTER_SCALAR (ULONG,   ClientVersion,      VRDE_QI_CLIENT_VERSION,        0);
 IMPL_GETTER_SCALAR (ULONG,   EncryptionStyle,    VRDE_QI_ENCRYPTION_STYLE,      0);
 
-#undef IMPL_GETTER_BSTR
+#undef IMPL_GETTER_UTF8STR
 #undef IMPL_GETTER_SCALAR
 #undef IMPL_GETTER_BOOL
 /* vi: set tabstop=4 shiftwidth=4 expandtab: */

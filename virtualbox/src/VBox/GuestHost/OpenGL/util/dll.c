@@ -15,11 +15,19 @@
 #endif
 
 #if defined(IRIX) || defined(IRIX64) || defined(Linux) || defined(FreeBSD) || defined(AIX) || defined(DARWIN) || defined(SunOS) || defined(OSF1)
+# include <iprt/assert.h>
+# include <iprt/err.h>
+# include <iprt/log.h>
+# include <iprt/path.h>
 #include <dlfcn.h>
 #endif
 
 #ifdef WINDOWS
+# ifdef VBOX
+#  include <iprt/win/shlwapi.h>
+# else
 #include <Shlwapi.h>
+# endif
 #endif
 
 #ifdef DARWIN
@@ -215,15 +223,14 @@ CRDLL *crDLLOpen( const char *dllname, int resolveGlobal )
         szwPath[cwcPath] = '\\';
         ++cwcPath;
     }
-
-    if (!MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, dllname, -1, &szwPath[cwcPath], MAX_PATH - cwcPath))
-    {
-        DWORD winEr = GetLastError();
-        crError("MultiByteToWideChar failed err %d", winEr);
-        SetLastError(winEr);
-        return NULL;
-    }
-# endif // CR_NO_GL_SYSTEM_PATH
+# endif /* CR_NO_GL_SYSTEM_PATH */
+	if (!MultiByteToWideChar(CP_ACP, MB_PRECOMPOSED, dllname, -1, &szwPath[cwcPath], MAX_PATH - cwcPath))
+	{
+		DWORD winEr = GetLastError();
+		crError("MultiByteToWideChar failed err %d", winEr);
+		SetLastError(winEr);
+		return NULL;
+	}
 #endif
 
 	dll = (CRDLL *) crAlloc( sizeof( CRDLL ) );
@@ -270,11 +277,24 @@ CRDLL *crDLLOpen( const char *dllname, int resolveGlobal )
 		break;
 	};
 #elif defined(IRIX) || defined(IRIX64) || defined(Linux) || defined(FreeBSD) || defined(AIX) || defined(SunOS) || defined(OSF1)
-	if (resolveGlobal)
-		dll->hinstLib = dlopen( dllname, RTLD_LAZY | RTLD_GLOBAL );
-	else
-		dll->hinstLib = dlopen( dllname, RTLD_LAZY );
-	dll_err = (char*) dlerror();
+	{
+		int flags = RTLD_LAZY;
+		if (resolveGlobal)
+		   flags |= RTLD_GLOBAL;
+		dll->hinstLib = dlopen( dllname, flags );
+# ifndef IN_GUEST
+		/* GCC address sanitiser breaks DT_RPATH. */
+		if (!dll->hinstLib) do {
+			char szPath[RTPATH_MAX];
+			int rc = RTPathSharedLibs(szPath, sizeof(szPath));
+			AssertLogRelMsgRCBreak(rc, ("RTPathSharedLibs() failed: %Rrc\n", rc));
+			rc = RTPathAppend(szPath, sizeof(szPath), dllname);
+			AssertLogRelMsgRCBreak(rc, ("RTPathAppend() failed: %Rrc\n", rc));
+			dll->hinstLib = dlopen( szPath, flags );
+		} while(0);
+# endif
+		dll_err = (char*) dlerror();
+	}
 #else
 #error DSO
 #endif
@@ -286,6 +306,8 @@ CRDLL *crDLLOpen( const char *dllname, int resolveGlobal )
 			crDebug( "DLL_ERROR(%s): %s", dllname, dll_err );
 		}
 		crError( "DLL Loader couldn't find/open %s", dllname );
+                crFree(dll);
+                dll = NULL;
 	}
 	return dll;
 }
@@ -323,7 +345,7 @@ CRDLLFunc crDLLGetNoError( CRDLL *dll, const char *symname )
 	return (CRDLLFunc) NSAddressOfSymbol( nssym );
 
 #elif defined(IRIX) || defined(IRIX64) || defined(Linux) || defined(FreeBSD) || defined(AIX) || defined(SunOS) || defined(OSF1)
-	return (CRDLLFunc) dlsym( dll->hinstLib, symname );
+	return (CRDLLFunc)(uintptr_t)dlsym( dll->hinstLib, symname );
 #else
 #error CR DLL ARCHITETECTURE
 #endif

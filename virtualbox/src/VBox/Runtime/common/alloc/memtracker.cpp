@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/memtracker.h>
 #include "internal/iprt.h"
 
@@ -51,9 +51,9 @@
 #include "internal/strhash.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to a memory tracker instance */
 typedef struct RTMEMTRACKERINT *PRTMEMTRACKERINT;
 
@@ -193,9 +193,9 @@ typedef struct RTMEMTRACKEROUTPUT
 typedef RTMEMTRACKEROUTPUT *PRTMEMTRACKEROUTPUT;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Pointer to the default memory tracker. */
 static PRTMEMTRACKERINT g_pDefaultTracker = NULL;
 
@@ -401,7 +401,7 @@ DECLINLINE(PRTMEMTRACKERTAG) rtMemTrackerGetTag(PRTMEMTRACKERINT pTracker, PRTME
      */
     if (RT_UNLIKELY(!pTag))
     {
-        pTag = (PRTMEMTRACKERTAG)RTMemAllocZVar(RT_OFFSETOF(RTMEMTRACKERTAG, szTag[cchTag + 1]));
+        pTag = (PRTMEMTRACKERTAG)RTMemAllocZVar(RT_UOFFSETOF_DYN(RTMEMTRACKERTAG, szTag[cchTag + 1]));
         if (pTag)
         {
             pTag->Core.Key = uHash;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP_DRV
 #define SUPDRV_AGNOSTIC
 #include "SUPDrvInternal.h"
@@ -46,9 +46,9 @@
 #include <iprt/uuid.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to a user tracer module registration record. */
 typedef struct SUPDRVTRACERUMOD *PSUPDRVTRACERUMOD;
 
@@ -157,9 +157,9 @@ typedef struct SUPDRVTRACERUMOD
 #define SUPDRVTRACERUMOD_MAGIC UINT32_C(0x00080486)
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Simple SUPR0Printf-style logging.  */
 #ifdef DEBUG_bird
 # define LOG_TRACER(a_Args)  SUPR0Printf a_Args
@@ -168,16 +168,16 @@ typedef struct SUPDRVTRACERUMOD
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The address of the current probe fire routine for kernel mode. */
 PFNRT       g_pfnSupdrvProbeFireKernel = supdrvTracerProbeFireStub;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void supdrvVtgReleaseObjectCopy(PSUPDRVDEVEXT pDevExt, PSUPDRVVTGCOPY pThis);
 
 
@@ -248,7 +248,6 @@ static int supdrvVtgValidateString(const char *psz)
  * @param   pVtgHdr             The header.
  * @param   uVtgHdrAddr         The address where the header is actually
  *                              loaded.
- * @param   cbVtgObj            The alleged size of the header.
  * @param   pbImage             The image base, if available.
  * @param   cbImage             The image size, if available.
  * @param   fUmod               Whether this is a user module.
@@ -339,6 +338,7 @@ static int supdrvVtgValidateHdr(PVTGOBJHDR pVtgHdr, RTUINTPTR uVtgHdrAddr, const
                         u64Tmp, pVtgHdr->uProbeLocs.u64, pVtgHdr->uProbeLocsEnd.u64);
             return VERR_SUPDRV_VTG_BAD_HDR_TOO_MUCH;
         }
+        /*SUPR0Printf("supdrvVtgValidateHdr: cbProbeLocs %#x -> %#x\n", pVtgHdr->cbProbeLocs, (uint32_t)u64Tmp);*/
         pVtgHdr->cbProbeLocs  = (uint32_t)u64Tmp;
 
         u64Tmp = pVtgHdr->uProbeLocs.u64 - uVtgHdrAddr;
@@ -355,6 +355,7 @@ static int supdrvVtgValidateHdr(PVTGOBJHDR pVtgHdr, RTUINTPTR uVtgHdrAddr, const
             && !fUmod)
         {
             uint64_t offDelta = uVtgHdrAddr - pVtgHdr->u64VtgObjSectionStart;
+            /*SUPR0Printf("supdrvVtgValidateHdr: offDelta=%#llx\n", offDelta);*/
             pVtgHdr->uProbeLocs.u64        += offDelta;
             pVtgHdr->uProbeLocsEnd.u64     += offDelta;
             u64Tmp += offDelta;
@@ -366,6 +367,7 @@ static int supdrvVtgValidateHdr(PVTGOBJHDR pVtgHdr, RTUINTPTR uVtgHdrAddr, const
                         u64Tmp, pVtgHdr->uProbeLocs.u64, uVtgHdrAddr);
             return VERR_SUPDRV_VTG_BAD_HDR_PTR;
         }
+        /*SUPR0Printf("supdrvVtgValidateHdr: offProbeLocs %#x -> %#x\n", pVtgHdr->offProbeLocs, (int32_t)u64Tmp);*/
         pVtgHdr->offProbeLocs = (int32_t)u64Tmp;
     }
 
@@ -373,7 +375,10 @@ static int supdrvVtgValidateHdr(PVTGOBJHDR pVtgHdr, RTUINTPTR uVtgHdrAddr, const
      * The non-area description fields.
      */
     if (memcmp(pVtgHdr->szMagic, VTGOBJHDR_MAGIC, sizeof(pVtgHdr->szMagic)))
+    {
+        SUPR0Printf("supdrvVtgValidateHdr: %p: %.16Rhxs\n", pVtgHdr, pVtgHdr->szMagic);
         return VERR_SUPDRV_VTG_MAGIC;
+    }
     if (   pVtgHdr->cBits != ARCH_BITS
         && (   !fUmod
             || (   pVtgHdr->cBits != 32
@@ -532,6 +537,8 @@ static int supdrvVtgValidate(PVTGOBJHDR pVtgHdr, RTUINTPTR uVtgHdrAddr, const ui
         MY_VALIDATE_ATTR(pProvider->AttrNames);
         MY_VALIDATE_ATTR(pProvider->AttrArguments);
         MY_CHECK_RET(pProvider->bReserved == 0, VERR_SUPDRV_VTG_BAD_PROVIDER);
+        MY_CHECK_RET(pProvider->cProbesEnabled == 0, VERR_SUPDRV_VTG_BAD_PROVIDER);
+        MY_CHECK_RET(pProvider->uSettingsSerialNo == 0, VERR_SUPDRV_VTG_BAD_PROVIDER);
     }
 
     /*
@@ -861,7 +868,7 @@ static void supdrvTracerRemoveAllProviders(PSUPDRVDEVEXT pDevExt)
  * Registers the VTG tracepoint providers of a driver.
  *
  * @returns VBox status code.
- * @param   pszName             The driver name.
+ * @param   pDevExt             The device instance data.
  * @param   pVtgHdr             The VTG object header.
  * @param   pImage              The image if applicable.
  * @param   pSession            The session if applicable.
@@ -946,7 +953,7 @@ static int supdrvTracerRegisterVtgObj(PSUPDRVDEVEXT pDevExt, PVTGOBJHDR pVtgHdr,
         const char      *pszName = supdrvVtgGetString(pVtgHdr, pDesc->offName);
         size_t const     cchName = strlen(pszName) + (pUmod ? 16 : 0);
 
-        pProv = (PSUPDRVTPPROVIDER)RTMemAllocZ(RT_OFFSETOF(SUPDRVTPPROVIDER, szName[cchName + 1 + cchModName + 1]));
+        pProv = (PSUPDRVTPPROVIDER)RTMemAllocZ(RT_UOFFSETOF_DYN(SUPDRVTPPROVIDER, szName[cchName + 1 + cchModName + 1]));
         if (pProv)
         {
             pProv->Core.pszName         = &pProv->szName[0];
@@ -1096,7 +1103,6 @@ SUPR0DECL(int) SUPR0TracerRegisterDrv(PSUPDRVSESSION pSession, PVTGOBJHDR pVtgHd
  * Deregister the VTG tracepoint providers of a driver.
  *
  * @param   pSession            The support driver session handle.
- * @param   pVtgHdr             The VTG header.
  */
 SUPR0DECL(void) SUPR0TracerDeregisterDrv(PSUPDRVSESSION pSession)
 {
@@ -1716,11 +1722,11 @@ static int supdrvVtgCreateObjectCopy(PSUPDRVDEVEXT pDevExt, PCVTGOBJHDR pVtgHdr,
      * Calculate the space required, allocate and copy in the data.
      */
     int             rc;
-    size_t const    cProbeLocs   = pVtgHdr->cbProbeLocs / (pVtgHdr->cBits == 32 ? sizeof(VTGPROBELOC32) : sizeof(VTGPROBELOC64));
-    size_t const    cbProbeLocs  = cProbeLocs * sizeof(VTGPROBELOC);
-    size_t const    offProbeLocs = RT_ALIGN(pVtgHdr->cbObj, 8);
+    uint32_t const  cProbeLocs   = pVtgHdr->cbProbeLocs / (pVtgHdr->cBits == 32 ? sizeof(VTGPROBELOC32) : sizeof(VTGPROBELOC64));
+    uint32_t const  cbProbeLocs  = cProbeLocs * sizeof(VTGPROBELOC);
+    uint32_t const  offProbeLocs = RT_ALIGN(pVtgHdr->cbObj, 8);
     size_t const    cb           = offProbeLocs + cbProbeLocs + cbStrTab + 1;
-    PSUPDRVVTGCOPY  pThis = (PSUPDRVVTGCOPY)RTMemAlloc(RT_OFFSETOF(SUPDRVVTGCOPY, Hdr) + cb);
+    PSUPDRVVTGCOPY  pThis = (PSUPDRVVTGCOPY)RTMemAlloc(RT_UOFFSETOF(SUPDRVVTGCOPY, Hdr) + cb);
     if (!pThis)
         return VERR_NO_MEMORY;
 
@@ -2012,7 +2018,7 @@ int  VBOXCALL   supdrvIOCtl_TracerUmodRegister(PSUPDRVDEVEXT pDevExt, PSUPDRVSES
     /*
      * Allocate the tracker data we keep in the session.
      */
-    pUmod = (PSUPDRVTRACERUMOD)RTMemAllocZ(  RT_OFFSETOF(SUPDRVTRACERUMOD, aProbeLocs[cProbeLocs])
+    pUmod = (PSUPDRVTRACERUMOD)RTMemAllocZ(  RT_UOFFSETOF_DYN(SUPDRVTRACERUMOD, aProbeLocs[cProbeLocs])
                                            + (Hdr.cbProbeEnabled / sizeof(uint32_t) * sizeof(SUPDRVPROBEINFO)) );
     if (!pUmod)
         return VERR_NO_MEMORY;

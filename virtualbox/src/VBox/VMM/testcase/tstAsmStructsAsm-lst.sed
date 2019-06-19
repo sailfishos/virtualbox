@@ -1,3 +1,20 @@
+# $Id: tstAsmStructsAsm-lst.sed $
+## @file
+# For testing assembly struct when using yasm.
+#
+
+#
+# Copyright (C) 2006-2017 Oracle Corporation
+#
+# This file is part of VirtualBox Open Source Edition (OSE), as
+# available from http://www.virtualbox.org. This file is free software;
+# you can redistribute it and/or modify it under the terms of the GNU
+# General Public License (GPL) as published by the Free Software
+# Foundation, in version 2 as it comes in the "COPYING" file of the
+# VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+# hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+#
+
 #
 # Strip stuff lines and spaces we don't care about.
 #
@@ -22,6 +39,7 @@ s/[[:space:]][[:space:]]*/ /g
 /^[[:alpha:]_][[:alnum:]_]*_size EQU \$ - .*$/b struct_equ
 /<gap>/b member
 /^\.[[:alpha:]_][[:alnum:]_.:]* res.*$/b member_two
+/^\.[[:alpha:]_][[:alnum:]_.:]*:$/b member_alias
 b error
 b member_two
 
@@ -68,6 +86,12 @@ s/\n//m
 
 b end
 
+#
+# Alias member like Host.cr0Fpu in 64-bit.  Drop it.
+#
+:member_alias
+d
+b end
 
 :error
 s/^/\nSed script logic error!\nBuffer: /

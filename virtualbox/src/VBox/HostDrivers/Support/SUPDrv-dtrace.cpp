@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP_DRV
 #include "SUPDrvInternal.h"
 
@@ -46,7 +46,17 @@
 #ifdef RT_OS_DARWIN
 # include VBOX_PATH_MACOSX_DTRACE_H
 #elif defined(RT_OS_LINUX)
-/* DTrace experiments with the Unbreakable Enterprise Kernel (UEK)
+/* Avoid type and define conflicts. */
+# undef UINT8_MAX
+# undef UINT16_MAX
+# undef UINT32_MAX
+# undef UINT64_MAX
+# undef INT64_MAX
+# undef INT64_MIN
+# define intptr_t dtrace_intptr_t
+
+# if 0
+/* DTrace experiments with the Unbreakable Enterprise Kernel (UEK2)
    (Oracle Linux).
    1. The dtrace.h here is from the dtrace module source, not
       /usr/include/sys/dtrace.h nor /usr/include/dtrace.h.
@@ -57,16 +67,29 @@
       | sed -e 's/^......../0x/' -e 's/ A __crc_/\t/' \
             -e 's/$/\tdrivers\/dtrace\/dtrace\tEXPORT_SYMBOL/' \
       >> Module.symvers
+      Update: Althernative workaround (active), resolve symbols dynamically.
    3. No tracepoints in vboxdrv, vboxnet* or vboxpci yet.  This requires yasm
       and VBoxTpG and build time. */
-# undef UINT8_MAX
-# undef UINT16_MAX
-# undef UINT32_MAX
-# undef UINT64_MAX
-# undef INT64_MAX
-# undef INT64_MIN
-# define intptr_t dtrace_intptr_t
-# include "dtrace.h"
+#  include "dtrace.h"
+# else
+/* DTrace experiments with the Unbreakable Enterprise Kernel (UEKR3)
+   (Oracle Linux).
+   1. To generate the missing entries for the dtrace module in Module.symvers
+      of UEK:
+      nm /lib/modules/....../kernel/drivers/dtrace/dtrace.ko  \
+      | grep _crc_ \
+      | sed -e 's/^......../0x/' -e 's/ A __crc_/\t/' \
+            -e 's/$/\tdrivers\/dtrace\/dtrace\tEXPORT_SYMBOL/' \
+      >> Module.symvers
+      Update: Althernative workaround (active), resolve symbols dynamically.
+   2. No tracepoints in vboxdrv, vboxnet* or vboxpci yet.  This requires yasm
+      and VBoxTpG and build time. */
+#  include <dtrace/provider.h>
+#  include <dtrace/enabling.h> /* Missing from provider.h. */
+#  include <dtrace/arg.h> /* Missing from provider.h. */
+# endif
+# include <linux/kallsyms.h>
+/** Status code fixer (UEK uses linux convension unlike the others). */
 # define FIX_UEK_RC(a_rc) (-(a_rc))
 #else
 # include <sys/dtrace.h>
@@ -84,9 +107,28 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/** @name Macros for preserving EFLAGS.AC (despair / paranoid)
+ * @remarks We have to restore it unconditionally on darwin.
+ * @{ */
+#if defined(RT_OS_DARWIN) \
+ || (    defined(RT_OS_LINUX) \
+     && (defined(CONFIG_X86_SMAP) || defined(RT_STRICT) || defined(IPRT_WITH_EFLAGS_AC_PRESERVING) ) )
+# include <iprt/asm-amd64-x86.h>
+# include <iprt/x86.h>
+# define SUPDRV_SAVE_EFL_AC()          RTCCUINTREG const fSavedEfl = ASMGetFlags();
+# define SUPDRV_RESTORE_EFL_AC()       ASMSetFlags(fSavedEfl)
+# define SUPDRV_RESTORE_EFL_ONLY_AC()  ASMChangeFlags(~X86_EFL_AC, fSavedEfl & X86_EFL_AC)
+#else
+# define SUPDRV_SAVE_EFL_AC()          do { } while (0)
+# define SUPDRV_RESTORE_EFL_AC()       do { } while (0)
+# define SUPDRV_RESTORE_EFL_ONLY_AC()  do { } while (0)
+#endif
+/** @} */
+
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /* Seems there is some return code difference here. Keep the return code and
    case it to whatever the host desires. */
 #ifdef RT_OS_DARWIN
@@ -148,9 +190,9 @@ typedef struct VBDTSTACKDATA
 typedef VBDTSTACKDATA *PVBDTSTACKDATA;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The first magic value. */
 #define SUPDRVDT_STACK_DATA_MAGIC1      RT_MAKE_U32_FROM_U8('S', 'U', 'P', 'D')
 /** The second magic value. */
@@ -188,11 +230,11 @@ typedef VBDTSTACKDATA *PVBDTSTACKDATA;
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
-#ifdef RT_OS_DARWIN
-/** @name DTrace kernel interface used on Darwin
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+#if defined(RT_OS_DARWIN) || defined(RT_OS_LINUX)
+/** @name DTrace kernel interface used on Darwin and Linux.
  * @{ */
 static void        (* g_pfnDTraceProbeFire)(dtrace_id_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 static dtrace_id_t (* g_pfnDTraceProbeCreate)(dtrace_provider_id_t, const char *, const char *, const char *, int, void *);
@@ -410,6 +452,7 @@ static void     vboxDtPOps_Provide(void *pvProv, const dtrace_probedesc_t *pDtPr
 static int      vboxDtPOps_Enable(void *pvProv, dtrace_id_t idProbe, void *pvProbe)
 {
     PSUPDRVVDTPROVIDERCORE  pProv   = (PSUPDRVVDTPROVIDERCORE)pvProv;
+    RT_NOREF(idProbe);
     LOG_DTRACE(("%s: %p / %p - %#x / %p\n", __FUNCTION__, pProv, pProv->TracerData.DTrace.idProvider, idProbe, pvProbe));
     AssertPtrReturn(pProv->TracerData.DTrace.idProvider, EINVAL);
 
@@ -427,6 +470,8 @@ static int      vboxDtPOps_Enable(void *pvProv, dtrace_id_t idProbe, void *pvPro
             {
                 pProbeLocEn->fEnabled = 1;
                 ASMAtomicIncU32(&pProv->pacProbeEnabled[idxProbe]);
+                ASMAtomicIncU32(&pProv->pDesc->cProbesEnabled);
+                ASMAtomicIncU32(&pProv->pDesc->uSettingsSerialNo);
             }
         }
         else
@@ -436,6 +481,8 @@ static int      vboxDtPOps_Enable(void *pvProv, dtrace_id_t idProbe, void *pvPro
             {
                 pProv->paR0ProbeLocs[idxProbeLoc].fEnabled = 1;
                 ASMAtomicIncU32(&pProv->paR0Probes[idxProbe].cEnabled);
+                ASMAtomicIncU32(&pProv->pDesc->cProbesEnabled);
+                ASMAtomicIncU32(&pProv->pDesc->uSettingsSerialNo);
             }
 
             /* Update user mode structure. */
@@ -455,6 +502,7 @@ static void     vboxDtPOps_Disable(void *pvProv, dtrace_id_t idProbe, void *pvPr
 {
     PSUPDRVVDTPROVIDERCORE  pProv  = (PSUPDRVVDTPROVIDERCORE)pvProv;
     AssertPtrReturnVoid(pProv);
+    RT_NOREF(idProbe);
     LOG_DTRACE(("%s: %p / %p - %#x / %p\n", __FUNCTION__, pProv, pProv->TracerData.DTrace.idProvider, idProbe, pvProbe));
     AssertPtrReturnVoid(pProv->TracerData.DTrace.idProvider);
 
@@ -472,6 +520,8 @@ static void     vboxDtPOps_Disable(void *pvProv, dtrace_id_t idProbe, void *pvPr
             {
                 pProbeLocEn->fEnabled = 0;
                 ASMAtomicDecU32(&pProv->pacProbeEnabled[idxProbe]);
+                ASMAtomicIncU32(&pProv->pDesc->cProbesEnabled);
+                ASMAtomicIncU32(&pProv->pDesc->uSettingsSerialNo);
             }
         }
         else
@@ -481,6 +531,8 @@ static void     vboxDtPOps_Disable(void *pvProv, dtrace_id_t idProbe, void *pvPr
             {
                 pProv->paR0ProbeLocs[idxProbeLoc].fEnabled = 0;
                 ASMAtomicDecU32(&pProv->paR0Probes[idxProbe].cEnabled);
+                ASMAtomicDecU32(&pProv->pDesc->cProbesEnabled);
+                ASMAtomicIncU32(&pProv->pDesc->uSettingsSerialNo);
             }
 
             /* Update user mode structure. */
@@ -499,6 +551,7 @@ static void     vboxDtPOps_GetArgDesc(void *pvProv, dtrace_id_t idProbe, void *p
 {
     PSUPDRVVDTPROVIDERCORE  pProv  = (PSUPDRVVDTPROVIDERCORE)pvProv;
     unsigned                uArg   = pArgDesc->dtargd_ndx;
+    RT_NOREF(idProbe);
 
     pArgDesc->dtargd_ndx = DTRACE_ARGNONE;
     AssertPtrReturnVoid(pProv);
@@ -569,6 +622,7 @@ static uint64_t vboxDtPOps_GetArgVal(void *pvProv, dtrace_id_t idProbe, void *pv
 {
     PSUPDRVVDTPROVIDERCORE  pProv = (PSUPDRVVDTPROVIDERCORE)pvProv;
     AssertPtrReturn(pProv, UINT64_MAX);
+    RT_NOREF(idProbe, cFrames);
     LOG_DTRACE(("%s: %p / %p - %#x / %p iArg=%d cFrames=%u\n", __FUNCTION__, pProv, pProv->TracerData.DTrace.idProvider, idProbe, pvProbe, iArg, cFrames));
     AssertReturn(iArg >= 5, UINT64_MAX);
     if (pProv->TracerData.DTrace.fZombie)
@@ -737,6 +791,7 @@ static DECLCALLBACK(void) vboxDtTOps_ProbeFireKernel(struct VTGPROBELOC *pVtgPro
     AssertPtrReturnVoid(pVtgProbeLoc->pProbe);
     AssertPtrReturnVoid(pVtgProbeLoc->pszFunction);
 
+    SUPDRV_SAVE_EFL_AC();
     VBDT_SETUP_STACK_DATA(kVBoxDtCaller_ProbeFireKernel);
 
     pStackData->u.ProbeFireKernel.pauStackArgs  = &uArg4 + 1;
@@ -780,6 +835,7 @@ static DECLCALLBACK(void) vboxDtTOps_ProbeFireKernel(struct VTGPROBELOC *pVtgPro
 #endif
 
     VBDT_CLEAR_STACK_DATA();
+    SUPDRV_RESTORE_EFL_AC();
     LOG_DTRACE(("%s: returns\n", __FUNCTION__));
 }
 
@@ -790,10 +846,12 @@ static DECLCALLBACK(void) vboxDtTOps_ProbeFireKernel(struct VTGPROBELOC *pVtgPro
 static DECLCALLBACK(void) vboxDtTOps_ProbeFireUser(PCSUPDRVTRACERREG pThis, PSUPDRVSESSION pSession, PCSUPDRVTRACERUSRCTX pCtx,
                                                    PCVTGOBJHDR pVtgHdr, PCVTGPROBELOC pProbeLocRO)
 {
+    RT_NOREF(pThis, pSession);
     LOG_DTRACE(("%s: %p / %p\n", __FUNCTION__, pCtx, pCtx->idProbe));
     AssertPtrReturnVoid(pProbeLocRO);
     AssertPtrReturnVoid(pVtgHdr);
 
+    SUPDRV_SAVE_EFL_AC();
     VBDT_SETUP_STACK_DATA(kVBoxDtCaller_ProbeFireUser);
 
     if (pCtx->cBits == 32)
@@ -863,6 +921,7 @@ static DECLCALLBACK(void) vboxDtTOps_ProbeFireUser(PCSUPDRVTRACERREG pThis, PSUP
         AssertFailed();
 
     VBDT_CLEAR_STACK_DATA();
+    SUPDRV_RESTORE_EFL_AC();
     LOG_DTRACE(("%s: returns\n", __FUNCTION__));
 }
 
@@ -906,6 +965,7 @@ static DECLCALLBACK(void) vboxDtTOps_TracerClose(PCSUPDRVTRACERREG pThis, PSUPDR
  */
 static DECLCALLBACK(int) vboxDtTOps_ProviderRegister(PCSUPDRVTRACERREG pThis, PSUPDRVVDTPROVIDERCORE pCore)
 {
+    RT_NOREF(pThis);
     LOG_DTRACE(("%s: %p %s/%s\n", __FUNCTION__, pThis, pCore->pszModName, pCore->pszName));
     AssertReturn(pCore->TracerData.DTrace.idProvider == 0, VERR_INTERNAL_ERROR_3);
 
@@ -920,6 +980,7 @@ static DECLCALLBACK(int) vboxDtTOps_ProviderRegister(PCSUPDRVTRACERREG pThis, PS
     /* Note! DTrace may call us back before dtrace_register returns, so we
              have to point it to pCore->TracerData.DTrace.idProvider. */
     AssertCompile(sizeof(dtrace_provider_id_t) == sizeof(pCore->TracerData.DTrace.idProvider));
+    SUPDRV_SAVE_EFL_AC();
     int rc = dtrace_register(pCore->pszName,
                              &DtAttrs,
                              DTRACE_PRIV_KERNEL,
@@ -927,6 +988,7 @@ static DECLCALLBACK(int) vboxDtTOps_ProviderRegister(PCSUPDRVTRACERREG pThis, PS
                              &g_vboxDtVtgProvOps,
                              pCore,
                              &pCore->TracerData.DTrace.idProvider);
+    SUPDRV_RESTORE_EFL_AC();
     if (!rc)
     {
         LOG_DTRACE(("%s: idProvider=%p\n", __FUNCTION__, pCore->TracerData.DTrace.idProvider));
@@ -950,11 +1012,14 @@ static DECLCALLBACK(int) vboxDtTOps_ProviderRegister(PCSUPDRVTRACERREG pThis, PS
 static DECLCALLBACK(int) vboxDtTOps_ProviderDeregister(PCSUPDRVTRACERREG pThis, PSUPDRVVDTPROVIDERCORE pCore)
 {
     uintptr_t idProvider = pCore->TracerData.DTrace.idProvider;
+    RT_NOREF(pThis);
     LOG_DTRACE(("%s: %p / %p\n", __FUNCTION__, pThis, idProvider));
     AssertPtrReturn(idProvider, VERR_INTERNAL_ERROR_3);
 
+    SUPDRV_SAVE_EFL_AC();
     dtrace_invalidate(idProvider);
     int rc = dtrace_unregister(idProvider);
+    SUPDRV_RESTORE_EFL_AC();
     if (!rc)
     {
         pCore->TracerData.DTrace.idProvider = 0;
@@ -978,11 +1043,14 @@ static DECLCALLBACK(int) vboxDtTOps_ProviderDeregister(PCSUPDRVTRACERREG pThis, 
 static DECLCALLBACK(int) vboxDtTOps_ProviderDeregisterZombie(PCSUPDRVTRACERREG pThis, PSUPDRVVDTPROVIDERCORE pCore)
 {
     uintptr_t idProvider = pCore->TracerData.DTrace.idProvider;
+    RT_NOREF(pThis);
     LOG_DTRACE(("%s: %p / %p\n", __FUNCTION__, pThis, idProvider));
     AssertPtrReturn(idProvider, VERR_INTERNAL_ERROR_3);
     Assert(pCore->TracerData.DTrace.fZombie);
 
+    SUPDRV_SAVE_EFL_AC();
     int rc = dtrace_unregister(idProvider);
+    SUPDRV_RESTORE_EFL_AC();
     if (!rc)
     {
         pCore->TracerData.DTrace.idProvider = 0;
@@ -1022,15 +1090,14 @@ static SUPDRVTRACERREG g_VBoxDTraceReg =
 
 /**
  * Module initialization code.
- *
- * @param   hMod            Opque module handle.
  */
 const SUPDRVTRACERREG * VBOXCALL supdrvDTraceInit(void)
 {
-#ifdef RT_OS_DARWIN
+#if defined(RT_OS_DARWIN) || defined(RT_OS_LINUX)
     /*
      * Resolve the kernel symbols we need.
      */
+# ifndef RT_OS_LINUX
     RTDBGKRNLINFO hKrnlInfo;
     int rc = RTR0DbgKrnlInfoOpen(&hKrnlInfo, 0);
     if (RT_FAILURE(rc))
@@ -1038,6 +1105,7 @@ const SUPDRVTRACERREG * VBOXCALL supdrvDTraceInit(void)
         SUPR0Printf("supdrvDTraceInit: RTR0DbgKrnlInfoOpen failed with rc=%d.\n", rc);
         return NULL;
     }
+# endif
 
     static const struct
     {
@@ -1052,8 +1120,10 @@ const SUPDRVTRACERREG * VBOXCALL supdrvDTraceInit(void)
         { "dtrace_invalidate",   (PFNRT*)&dtrace_invalidate   },
         { "dtrace_unregister",   (PFNRT*)&dtrace_unregister   },
     };
-    for (unsigned i = 0; i < RT_ELEMENTS(s_aDTraceFunctions); i++)
+    unsigned i;
+    for (i = 0; i < RT_ELEMENTS(s_aDTraceFunctions); i++)
     {
+# ifndef RT_OS_LINUX
         rc = RTR0DbgKrnlInfoQuerySymbol(hKrnlInfo, NULL, s_aDTraceFunctions[i].pszName,
                                         (void **)s_aDTraceFunctions[i].ppfn);
         if (RT_FAILURE(rc))
@@ -1061,11 +1131,24 @@ const SUPDRVTRACERREG * VBOXCALL supdrvDTraceInit(void)
             SUPR0Printf("supdrvDTraceInit: Failed to resolved '%s' (rc=%Rrc, i=%u).\n", s_aDTraceFunctions[i].pszName, rc, i);
             break;
         }
+# else
+        unsigned long ulAddr = kallsyms_lookup_name(s_aDTraceFunctions[i].pszName);
+        if (!ulAddr)
+        {
+            SUPR0Printf("supdrvDTraceInit: Failed to resolved '%s' (i=%u).\n", s_aDTraceFunctions[i].pszName, i);
+            return NULL;
+        }
+        *s_aDTraceFunctions[i].ppfn = (PFNRT)ulAddr;
+# endif
     }
 
+# ifndef RT_OS_LINUX
     RTR0DbgKrnlInfoRelease(hKrnlInfo);
     if (RT_FAILURE(rc))
         return NULL;
+# else
+    /** @todo grab a reference to the dtrace module... */
+# endif
 #endif
 
     return &g_VBoxDTraceReg;

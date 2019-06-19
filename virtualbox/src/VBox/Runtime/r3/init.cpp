@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,15 +25,15 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DEFAULT
 #include <iprt/types.h>                 /* darwin: UINT32_C and others. */
 
 #ifdef RT_OS_WINDOWS
 # include <process.h>
-# include <Windows.h>
+# include <iprt/win/windows.h>
 #else
 # include <unistd.h>
 # ifndef RT_OS_OS2
@@ -74,9 +74,9 @@
 #include "internal/time.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The number of calls to RTR3Init*. */
 static int32_t volatile     g_cUsers = 0;
 /** Whether we're currently initializing the IPRT. */
@@ -142,12 +142,12 @@ RTDATADECL(bool) g_fRTAlignmentChecks = false;
 #endif
 
 
-#if defined(RT_OS_DARWIN) || defined(RT_OS_FREEBSD) || defined(RT_OS_HAIKU) \
+#if defined(RT_OS_DARWIN) || defined(RT_OS_FREEBSD) || defined(RT_OS_NETBSD) || defined(RT_OS_HAIKU) \
  || defined(RT_OS_LINUX)  || defined(RT_OS_OS2)     || defined(RT_OS_SOLARIS) /** @todo add host init hooks everywhere. */
 /* Stubs */
-DECLHIDDEN(int)  rtR3InitNativeFirst(uint32_t fFlags) { return VINF_SUCCESS; }
-DECLHIDDEN(int)  rtR3InitNativeFinal(uint32_t fFlags) { return VINF_SUCCESS; }
-DECLHIDDEN(void) rtR3InitNativeObtrusive(void) { }
+DECLHIDDEN(int)  rtR3InitNativeFirst(uint32_t fFlags)     { RT_NOREF_PV(fFlags); return VINF_SUCCESS; }
+DECLHIDDEN(int)  rtR3InitNativeFinal(uint32_t fFlags)     { RT_NOREF_PV(fFlags); return VINF_SUCCESS; }
+DECLHIDDEN(void) rtR3InitNativeObtrusive(uint32_t fFlags) { RT_NOREF_PV(fFlags); }
 #endif
 
 
@@ -167,7 +167,7 @@ static void rtR3ExitCallback(void)
         if (pLogger)
             RTLogFlush(pLogger);
 
-        pLogger = RTLogRelDefaultInstance();
+        pLogger = RTLogRelGetDefaultInstance();
         if (pLogger)
             RTLogFlush(pLogger);
     }
@@ -368,7 +368,7 @@ static void rtR3SigChildHandler(int iSignal)
 /**
  * rtR3Init worker.
  */
-static int rtR3InitBody(uint32_t fFlags, int cArgs, char ***papszArgs, const char *pszProgramPath)
+static int rtR3InitBody(uint32_t fFlags, int cArgs, char ***ppapszArgs, const char *pszProgramPath)
 {
     /*
      * Early native initialization.
@@ -429,25 +429,28 @@ static int rtR3InitBody(uint32_t fFlags, int cArgs, char ***papszArgs, const cha
     rc = rtThreadInit();
     AssertMsgRCReturn(rc, ("Failed to initialize threads, rc=%Rrc!\n", rc), rc);
 
+    /*
+     * The executable path before SUPLib (windows requirement).
+     */
+    rc = rtR3InitProgramPath(pszProgramPath);
+    AssertLogRelMsgRCReturn(rc, ("Failed to get executable directory path, rc=%Rrc!\n", rc), rc);
+
 #if !defined(IN_GUEST) && !defined(RT_NO_GIP)
+    /*
+     * Initialize SUPLib here so the GIP can get going as early as possible
+     * (improves accuracy for the first client).
+     */
     if (fFlags & RTR3INIT_FLAGS_SUPLIB)
     {
-        /*
-         * Init GIP first.
-         * (The more time for updates before real use, the better.)
-         */
         rc = SUPR3Init(NULL);
         AssertMsgRCReturn(rc, ("Failed to initializable the support library, rc=%Rrc!\n", rc), rc);
     }
 #endif
 
     /*
-     * The executable path, name and directory.  Convert arguments.
+     * Convert arguments.
      */
-    rc = rtR3InitProgramPath(pszProgramPath);
-    AssertLogRelMsgRCReturn(rc, ("Failed to get executable directory path, rc=%Rrc!\n", rc), rc);
-
-    rc = rtR3InitArgv(fFlags, cArgs, papszArgs);
+    rc = rtR3InitArgv(fFlags, cArgs, ppapszArgs);
     AssertLogRelMsgRCReturn(rc, ("Failed to convert the arguments, rc=%Rrc!\n", rc), rc);
 
 #if !defined(IN_GUEST) && !defined(RT_NO_GIP)
@@ -549,13 +552,14 @@ static int rtR3InitBody(uint32_t fFlags, int cArgs, char ***papszArgs, const cha
  * @param   pszProgramPath  The program path.  Pass NULL if we're to figure it
  *                          out ourselves.
  */
-static int rtR3Init(uint32_t fFlags, int cArgs, char ***papszArgs, const char *pszProgramPath)
+static int rtR3Init(uint32_t fFlags, int cArgs, char ***ppapszArgs, const char *pszProgramPath)
 {
     /* no entry log flow, because prefixes and thread may freak out. */
     Assert(!(fFlags & ~(  RTR3INIT_FLAGS_DLL
                         | RTR3INIT_FLAGS_SUPLIB
                         | RTR3INIT_FLAGS_UNOBTRUSIVE
-                        | RTR3INIT_FLAGS_UTF8_ARGV)));
+                        | RTR3INIT_FLAGS_UTF8_ARGV
+                        | RTR3INIT_FLAGS_STANDALONE_APP)));
     Assert(!(fFlags & RTR3INIT_FLAGS_DLL) || cArgs == 0);
 
     /*
@@ -576,20 +580,24 @@ static int rtR3Init(uint32_t fFlags, int cArgs, char ***papszArgs, const char *p
             g_fInitFlags |= RTR3INIT_FLAGS_SUPLIB;
         }
 #endif
+        g_fInitFlags |= fFlags & RTR3INIT_FLAGS_UTF8_ARGV;
 
         if (   !(fFlags      & RTR3INIT_FLAGS_UNOBTRUSIVE)
             && (g_fInitFlags & RTR3INIT_FLAGS_UNOBTRUSIVE))
         {
             g_fInitFlags &= ~RTR3INIT_FLAGS_UNOBTRUSIVE;
-            rtR3InitNativeObtrusive();
+            g_fInitFlags |= fFlags & RTR3INIT_FLAGS_STANDALONE_APP;
+            rtR3InitNativeObtrusive(g_fInitFlags | fFlags);
             rtThreadReInitObtrusive();
         }
+        else
+            Assert(!(fFlags & RTR3INIT_FLAGS_STANDALONE_APP) || (g_fInitFlags & RTR3INIT_FLAGS_STANDALONE_APP));
 
         int rc = VINF_SUCCESS;
         if (pszProgramPath)
             rc = rtR3InitProgramPath(pszProgramPath);
         if (RT_SUCCESS(rc))
-            rc = rtR3InitArgv(fFlags, cArgs, papszArgs);
+            rc = rtR3InitArgv(fFlags, cArgs, ppapszArgs);
         return rc;
     }
     ASMAtomicWriteBool(&g_fInitializing, true);
@@ -597,7 +605,7 @@ static int rtR3Init(uint32_t fFlags, int cArgs, char ***papszArgs, const char *p
     /*
      * Do the initialization.
      */
-    int rc = rtR3InitBody(fFlags, cArgs, papszArgs, pszProgramPath);
+    int rc = rtR3InitBody(fFlags, cArgs, ppapszArgs, pszProgramPath);
     if (RT_FAILURE(rc))
     {
         /* failure */
@@ -613,10 +621,10 @@ static int rtR3Init(uint32_t fFlags, int cArgs, char ***papszArgs, const char *p
 }
 
 
-RTR3DECL(int) RTR3InitExe(int cArgs, char ***papszArgs, uint32_t fFlags)
+RTR3DECL(int) RTR3InitExe(int cArgs, char ***ppapszArgs, uint32_t fFlags)
 {
     Assert(!(fFlags & RTR3INIT_FLAGS_DLL));
-    return rtR3Init(fFlags, cArgs, papszArgs, NULL);
+    return rtR3Init(fFlags, cArgs, ppapszArgs, NULL);
 }
 
 
@@ -634,10 +642,10 @@ RTR3DECL(int) RTR3InitDll(uint32_t fFlags)
 }
 
 
-RTR3DECL(int) RTR3InitEx(uint32_t iVersion, uint32_t fFlags, int cArgs, char ***papszArgs, const char *pszProgramPath)
+RTR3DECL(int) RTR3InitEx(uint32_t iVersion, uint32_t fFlags, int cArgs, char ***ppapszArgs, const char *pszProgramPath)
 {
     AssertReturn(iVersion == RTR3INIT_VER_CUR, VERR_NOT_SUPPORTED);
-    return rtR3Init(fFlags, cArgs, papszArgs, pszProgramPath);
+    return rtR3Init(fFlags, cArgs, ppapszArgs, pszProgramPath);
 }
 
 

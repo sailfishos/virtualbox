@@ -1,11 +1,10 @@
+/* $Id: UIGDetailsItem.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetailsItem class declaration
+ * VBox Qt GUI - UIGDetailsItem class declaration.
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -68,6 +67,9 @@ public:
 
     /* API: Parent stuff: */
     UIGDetailsItem* parentItem() const;
+
+    /** Returns the description of the item. */
+    virtual QString description() const = 0;
 
     /* API: Children stuff: */
     virtual void addItem(UIGDetailsItem *pItem) = 0;

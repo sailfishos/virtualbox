@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/intnet.h>
 #include <VBox/intnetinline.h>
 #include <VBox/vmm/pdmnetinline.h>
@@ -40,9 +41,9 @@
 #include "../Pcap.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static int      g_cErrors = 0;
 static uint64_t g_StartTS = 0;
 static uint32_t g_DhcpXID = 0;
@@ -562,7 +563,7 @@ static void doPacketSniffing(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession, PINTNE
                 }
                 else
                 {
-                    RTPrintf("tstIntNet-1: Bad GSO frame: %Rhxs\n", sizeof(*pGso), pGso);
+                    RTPrintf("tstIntNet-1: Bad GSO frame: %.*Rhxs\n", sizeof(*pGso), pGso);
                     STAM_REL_COUNTER_INC(&pBuf->cStatBadFrames);
                     g_cErrors++;
                 }
@@ -606,9 +607,10 @@ static void doPacketSniffing(INTNETIFHANDLE hIf, PSUPDRVSESSION pSession, PINTNE
  *
  * @returns VBox status code.
  *
- * @param   pszName     The buffer of IFNAMSIZ+1 length where to put the name.
+ * @param   pszName     The buffer where to put the name.
+ * @param   cbName      The buffer length.
  */
-static int getDefaultIfaceName(char *pszName)
+static int getDefaultIfaceName(char *pszName, size_t cbName)
 {
     FILE *fp = fopen("/proc/net/route", "r");
     char szBuf[1024];
@@ -632,9 +634,8 @@ static int getDefaultIfaceName(char *pszName)
             if (uAddr == 0 && uMask == 0)
             {
                 fclose(fp);
-                strncpy(pszName, szIfName, 16);
-                pszName[16] = 0;
-                return VINF_SUCCESS;
+                szIfName[sizeof(szIfName) - 1] = '\0';
+                return RTStrCopy(pszName, cbName, szIfName);
             }
         }
         fclose(fp);
@@ -649,6 +650,8 @@ static int getDefaultIfaceName(char *pszName)
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF(envp);
+
     /*
      * Init the runtime and parse the arguments.
      */
@@ -680,7 +683,7 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
      * Try to update the default interface by consulting the routing table.
      * If we fail we still have our reasonable default.
      */
-    getDefaultIfaceName(szIf);
+    getDefaultIfaceName(szIf, sizeof(szIf));
     const char *pszIf = szIf;
 #elif defined(RT_OS_SOLARIS)
     const char* pszIf = "rge0";
@@ -704,7 +707,6 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 
     int rc;
     int ch;
-    int iArg = 1;
     RTGETOPTUNION Value;
     RTGETOPTSTATE GetState;
     RTGetOptInit(&GetState, argc, argv, s_aOptions, RT_ELEMENTS(s_aOptions), 1, 0 /* fFlags */);
@@ -806,7 +808,7 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
                 return 1;
 
             case 'V':
-                RTPrintf("$Revision: 94787 $\n");
+                RTPrintf("$Revision: 128609 $\n");
                 return 0;
 
             default:
@@ -859,8 +861,8 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
     OpenReq.Hdr.u32Magic = SUPVMMR0REQHDR_MAGIC;
     OpenReq.Hdr.cbReq = sizeof(OpenReq);
     OpenReq.pSession = pSession;
-    strncpy(OpenReq.szNetwork, pszNetwork, sizeof(OpenReq.szNetwork));
-    strncpy(OpenReq.szTrunk, pszIf, sizeof(OpenReq.szTrunk));
+    RTStrCopy(OpenReq.szNetwork, sizeof(OpenReq.szNetwork), pszNetwork);
+    RTStrCopy(OpenReq.szTrunk, sizeof(OpenReq.szTrunk), pszIf);
     OpenReq.enmTrunkType = *pszIf ? kIntNetTrunkType_NetFlt : kIntNetTrunkType_WhateverNone;
     OpenReq.fFlags = fMacSharing ? INTNET_OPEN_FLAGS_SHARED_MAC_ON_WIRE : 0;
     OpenReq.cbSend = cbSend;

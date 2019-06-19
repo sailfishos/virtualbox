@@ -143,7 +143,7 @@ void init_vga_card(void)
     /* Switch to color mode and enable CPU access 480 lines. */
     outb(0x3C2, 0xC3);
     /* More than 64k 3C4/04. */
-    //@todo: 16-bit write
+    /// @todo 16-bit write
     outb(0x3C4, 0x04);
     outb(0x3C5, 0x02);
 
@@ -181,8 +181,37 @@ void init_bios_area(void)
     bda[BIOSMEM_CURRENT_MSR] = 0x09;
 }
 
+struct dcc {
+    uint8_t     n_ent;
+    uint8_t     version;
+    uint8_t     max_code;
+    uint8_t     reserved;
+    uint16_t    dccs[16];
+} dcc_table = {
+    16,
+    1,
+    7,
+    0
+};
+
+struct ssa {
+    uint16_t    size;
+    void __far  *dcc;
+    void __far  *sacs;
+    void __far  *pal;
+    void __far  *resvd[3];
+
+} secondary_save_area = {
+    sizeof(struct ssa),
+    &dcc_table
+};
+
 void __far *video_save_pointer_table[7] = {
-    &video_param_table
+    &video_param_table,
+    0,
+    0,
+    0,
+    &secondary_save_area
 };
 
 // ============================================================================================
@@ -334,7 +363,7 @@ static void vga_read_char_attr(uint8_t page, uint16_t STACK_BASED *chr_atr)
         address  = SCREEN_MEM_START(nbcols, nbrows, page) + (xcurs + ycurs * nbcols) * 2;
         *chr_atr = read_word(vga_modes[line].sstart, address);
     } else {
-        //@todo: graphics modes (not so easy - or useful!)
+        /// @todo graphics modes (not so easy - or useful!)
 #ifdef VGA_DEBUG
         unimplemented();
 #endif
@@ -599,7 +628,7 @@ static void biosfn_set_active_page(uint8_t page)
  biosfn_set_cursor_pos(page,cursor);
 }
 
-//@todo: Evaluate whether executing INT 10h is the right thing here
+/// @todo Evaluate whether executing INT 10h is the right thing here
 extern void vga_font_set(uint8_t function, uint8_t data);
 #pragma aux vga_font_set =  \
     "mov    ah, 11h"        \
@@ -611,6 +640,11 @@ extern void vga_font_set(uint8_t function, uint8_t data);
 // BIOS functions
 //
 // ============================================================================================
+
+/* CGA-compatible MSR (0x3D8) register values for first modes 0-7. */
+uint8_t cga_msr[8] = {
+    0x2C, 0x28, 0x2D, 0x29, 0x2A, 0x2E, 0x1E, 0x29
+};
 
 void biosfn_set_video_mode(uint8_t mode)
 {// mode: Bit 7 is 1 if no clear screen
@@ -632,6 +666,11 @@ void biosfn_set_video_mode(uint8_t mode)
 
  // The real mode
  mode=mode&0x7f;
+
+ // Display switching is not supported, and mono monitors aren't either.
+ // Requests to set mode 7 (mono) must set mode 0 instead (color).
+ if (mode == 7)
+     mode = 0;
 
  // find the entry in the video modes
  line=find_vga_entry(mode);
@@ -783,9 +822,11 @@ void biosfn_set_video_mode(uint8_t mode)
  write_byte(BIOSMEM_SEG,BIOSMEM_DCC_INDEX,0x08);    // 8 is VGA should be ok for now
  write_dword(BIOSMEM_SEG,BIOSMEM_VS_POINTER, (uint32_t)(void __far *)video_save_pointer_table);
 
- // FIXME
- write_byte(BIOSMEM_SEG,BIOSMEM_CURRENT_MSR,0x00); // Unavailable on vanilla vga, but...
- write_byte(BIOSMEM_SEG,BIOSMEM_CURRENT_PAL,0x00); // Unavailable on vanilla vga, but...
+ if (mode <= 7)
+ {
+     write_byte(BIOSMEM_SEG, BIOSMEM_CURRENT_MSR, cga_msr[mode]);           /* Like CGA reg. 0x3D8 */
+     write_byte(BIOSMEM_SEG, BIOSMEM_CURRENT_PAL, mode == 6 ? 0x3F : 0x30); /* Like CGA reg. 0x3D9*/
+ }
 
  // Set cursor shape
  if(vga_modes[line].class==TEXT)
@@ -1413,29 +1454,20 @@ static void biosfn_write_teletype(uint8_t car, uint8_t page, uint8_t attr, uint8
 
  switch(car)
   {
-   case 7:
+   case '\a':   // ASCII 0x07, BEL
     //FIXME should beep
     break;
 
-   case 8:
+   case '\b':   // ASCII 0x08, BS
     if(xcurs>0)xcurs--;
     break;
 
-   case '\r':
-    xcurs=0;
-    break;
-
-   case '\n':
+   case '\n':   // ASCII 0x0A, LF
     ycurs++;
     break;
 
-   case '\t':
-    do
-     {
-      biosfn_write_teletype(' ',page,attr,flag);
-      vga_get_cursor_pos(page,&dummy,&cursor);
-      xcurs=cursor&0x00ff;ycurs=(cursor&0xff00)>>8;
-     }while(xcurs%8==0);
+   case '\r':   // ASCII 0x0D, CR
+    xcurs=0;
     break;
 
    default:
@@ -1475,12 +1507,11 @@ static void biosfn_write_teletype(uint8_t car, uint8_t page, uint8_t attr, uint8
        }
      }
     xcurs++;
-  }
-
- // Do we need to wrap ?
- if(xcurs==nbcols)
-  {xcurs=0;
-   ycurs++;
+    // Do we need to wrap ?
+    if(xcurs==nbcols)
+     {xcurs=0;
+      ycurs++;
+     }
   }
 
  // Do we need to scroll ?
@@ -1760,7 +1791,7 @@ uint16_t biosfn_read_video_state_size2(uint16_t state)
     if (state & 4)
         size += 3 + 256 * 3 + 1;
 
-    //@todo: Is this supposed to be in 1-byte or 64-byte units?
+    /// @todo Is this supposed to be in 1-byte or 64-byte units?
     return size;
 }
 
@@ -2070,11 +2101,12 @@ void __cdecl printf(char *s, ...)
 }
 #endif
 
-//@todo: rearrange, call only from VBE module?
+/// @todo rearrange, call only from VBE module?
 extern void vbe_biosfn_return_controller_information(uint16_t STACK_BASED *AX, uint16_t ES, uint16_t DI);
 extern void vbe_biosfn_return_mode_information(uint16_t STACK_BASED *AX, uint16_t CX, uint16_t ES, uint16_t DI);
 extern void vbe_biosfn_set_mode(uint16_t STACK_BASED *AX, uint16_t BX, uint16_t ES, uint16_t DI);
 extern void vbe_biosfn_save_restore_state(uint16_t STACK_BASED *AX, uint16_t CX, uint16_t DX, uint16_t ES, uint16_t STACK_BASED *BX);
+extern void vbe_biosfn_get_set_scanline_length(uint16_t STACK_BASED *AX, uint16_t STACK_BASED *BX, uint16_t STACK_BASED *CX, uint16_t STACK_BASED *DX);
 
 // --------------------------------------------------------------------------------------------
 /*
@@ -2269,6 +2301,9 @@ void __cdecl int10_func(uint16_t DI, uint16_t SI, uint16_t BP, uint16_t SP, uint
           break;
          case 0x04:
           vbe_biosfn_save_restore_state(&AX, CX, DX, ES, &BX);
+          break;
+         case 0x06:
+          vbe_biosfn_get_set_scanline_length(&AX, &BX, &CX, &DX);
           break;
          case 0x09:
           //FIXME

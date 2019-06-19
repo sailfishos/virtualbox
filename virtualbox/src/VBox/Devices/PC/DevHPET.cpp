@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,9 +19,10 @@
  * and the Intel ICH9 datasheet.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_HPET
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/vmm/stam.h>
@@ -33,9 +34,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /*
  * Current limitations:
  *   - not entirely correct time of interrupt, i.e. never
@@ -76,8 +77,8 @@
 
 /** @name Interrupt type
  * @{ */
-#define HPET_TIMER_TYPE_LEVEL       1
-#define HPET_TIMER_TYPE_EDGE        0
+#define HPET_TIMER_TYPE_LEVEL       (1 << 1)
+#define HPET_TIMER_TYPE_EDGE        (0 << 1)
 /** @} */
 
 /** @name Delivery mode
@@ -177,9 +178,9 @@
     } while (0)
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * A HPET timer.
  */
@@ -413,7 +414,7 @@ static void hpetProgramTimer(HPETTIMER *pHpetTimer)
     /*
      * HACK ALERT! Avoid killing VM with interrupts.
      */
-#if 1 /** @todo: HACK, rethink, may have negative impact on the guest */
+#if 1 /** @todo HACK, rethink, may have negative impact on the guest */
     if (u64Diff == 0)
         u64Diff = 100000; /* 1 millisecond */
 #endif
@@ -445,9 +446,7 @@ static int hpetTimerRegRead32(HPET const *pThis, uint32_t iTimerNo, uint32_t iTi
     if (   iTimerNo >= HPET_CAP_GET_TIMERS(pThis->u32Capabilities)  /* The second check is only to satisfy Parfait; */
         || iTimerNo >= RT_ELEMENTS(pThis->aTimers) )                /* in practice, the number of configured timers */
     {                                                               /* will always be <= aTimers elements. */
-        static unsigned s_cOccurences = 0;
-        if (s_cOccurences++ < 10)
-            LogRel(("HPET: using timer above configured range: %d\n", iTimerNo));
+        LogRelMax(10, ("HPET: Using timer above configured range: %d\n", iTimerNo));
         *pu32Value = 0;
         return VINF_SUCCESS;
     }
@@ -483,9 +482,7 @@ static int hpetTimerRegRead32(HPET const *pThis, uint32_t iTimerNo, uint32_t iTi
 
         default:
         {
-            static unsigned s_cOccurences = 0;
-            if (s_cOccurences++ < 10)
-                LogRel(("invalid HPET register read %d on %d\n", iTimerReg, pHpetTimer->idxTimer));
+            LogRelMax(10, ("HPET: Invalid HPET register read %d on %d\n", iTimerReg, pHpetTimer->idxTimer));
             u32Value = 0;
             break;
         }
@@ -501,7 +498,8 @@ static int hpetTimerRegRead32(HPET const *pThis, uint32_t iTimerNo, uint32_t iTi
  * @returns Strict VBox status code.
  *
  * @param   pThis           The HPET state.
- * @param   idxReg          The register being written to.
+ * @param   iTimerNo        The timer being written to.
+ * @param   iTimerReg       The register being written to.
  * @param   u32NewValue     The value being written.
  *
  * @remarks The caller should not hold the device lock, unless it also holds
@@ -514,9 +512,7 @@ static int hpetTimerRegWrite32(HPET *pThis, uint32_t iTimerNo, uint32_t iTimerRe
     if (   iTimerNo >= HPET_CAP_GET_TIMERS(pThis->u32Capabilities)
         || iTimerNo >= RT_ELEMENTS(pThis->aTimers) )    /* Parfait - see above. */
     {
-        static unsigned s_cOccurences = 0;
-        if (s_cOccurences++ < 10)
-            LogRel(("HPET: using timer above configured range: %d\n", iTimerNo));
+        LogRelMax(10, ("HPET: Using timer above configured range: %d\n", iTimerNo));
         return VINF_SUCCESS;
     }
     HPETTIMER *pHpetTimer = &pThis->aTimers[iTimerNo];
@@ -545,9 +541,7 @@ static int hpetTimerRegWrite32(HPET *pThis, uint32_t iTimerNo, uint32_t iTimerRe
             }
             if ((u32NewValue & HPET_TN_INT_TYPE) == HPET_TIMER_TYPE_LEVEL)
             {
-                static unsigned s_cOccurences = 0;
-                if (s_cOccurences++ < 10)
-                    LogRel(("level-triggered config not yet supported\n"));
+                LogRelMax(10, ("HPET: Level-triggered config not yet supported\n"));
                 AssertFailed();
             }
 
@@ -558,10 +552,8 @@ static int hpetTimerRegWrite32(HPET *pThis, uint32_t iTimerNo, uint32_t iTimerRe
         }
 
         case HPET_TN_CFG + 4: /* Interrupt capabilities - read only. */
-        {
             Log(("write HPET_TN_CFG + 4, useless\n"));
             break;
-        }
 
         case HPET_TN_CMP: /* lower bits of comparator register */
         {
@@ -602,24 +594,16 @@ static int hpetTimerRegWrite32(HPET *pThis, uint32_t iTimerNo, uint32_t iTimerRe
         }
 
         case HPET_TN_ROUTE:
-        {
             Log(("write HPET_TN_ROUTE\n"));
             break;
-        }
 
         case HPET_TN_ROUTE + 4:
-        {
             Log(("write HPET_TN_ROUTE + 4\n"));
             break;
-        }
 
         default:
-        {
-            static unsigned s_cOccurences = 0;
-            if (s_cOccurences++ < 10)
-                LogRel(("invalid timer register write: %d\n", iTimerReg));
+            LogRelMax(10, ("HPET: Invalid timer register write: %d\n", iTimerReg));
             break;
-        }
     }
 
     return VINF_SUCCESS;
@@ -813,11 +797,7 @@ static int hpetConfigRegWrite32(HPET *pThis, uint32_t idxReg, uint32_t u32NewVal
         {
             Log(("write HPET_STATUS + 4: %x\n", u32NewValue));
             if (u32NewValue != 0)
-            {
-                static unsigned s_cOccurrences = 0;
-                if (s_cOccurrences++ < 10)
-                    LogRel(("Writing HPET_STATUS + 4 with non-zero, ignored\n"));
-            }
+                LogRelMax(10, ("HPET: Writing HPET_STATUS + 4 with non-zero, ignored\n"));
             break;
         }
 
@@ -840,12 +820,8 @@ static int hpetConfigRegWrite32(HPET *pThis, uint32_t idxReg, uint32_t u32NewVal
         }
 
         default:
-        {
-            static unsigned s_cOccurences = 0;
-            if (s_cOccurences++ < 10)
-                LogRel(("invalid HPET config write: %x\n", idxReg));
+            LogRelMax(10, ("HPET: Invalid HPET config write: %x\n", idxReg));
             break;
-        }
     }
 
     return rc;
@@ -1018,7 +994,7 @@ static uint32_t hpetR3TimerGetIrq(struct HPETTIMER const *pHpetTimer)
  */
 static void hpetR3TimerUpdateIrq(HPET *pThis, struct HPETTIMER *pHpetTimer)
 {
-    /** @todo: is it correct? */
+    /** @todo is it correct? */
     if (   !!(pHpetTimer->u64Config & HPET_TN_ENABLE)
         && !!(pThis->u64HpetConfig & HPET_CFG_ENABLE))
     {
@@ -1027,7 +1003,7 @@ static void hpetR3TimerUpdateIrq(HPET *pThis, struct HPETTIMER *pHpetTimer)
 
         /* ISR bits are only set in level-triggered mode. */
         if ((pHpetTimer->u64Config & HPET_TN_INT_TYPE) == HPET_TIMER_TYPE_LEVEL)
-            pThis->u64Isr |= (uint64_t)(1 << pHpetTimer->idxTimer);
+            pThis->u64Isr |= UINT64_C(1) << pHpetTimer->idxTimer;
 
         /* We trigger flip/flop in edge-triggered mode and do nothing in
            level-triggered mode yet. */
@@ -1035,7 +1011,7 @@ static void hpetR3TimerUpdateIrq(HPET *pThis, struct HPETTIMER *pHpetTimer)
             pThis->pHpetHlpR3->pfnSetIrq(pThis->CTX_SUFF(pDevIns), irq, PDM_IRQ_LEVEL_FLIP_FLOP);
         else
             AssertFailed();
-        /** @todo: implement IRQs in level-triggered mode */
+        /** @todo implement IRQs in level-triggered mode */
     }
 }
 
@@ -1333,10 +1309,10 @@ static DECLCALLBACK(void) hpetR3Reset(PPDMDEVINS pDevIns)
 static DECLCALLBACK(int) hpetR3Construct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
     PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
-    HPET   *pThis = PDMINS_2_DATA(pDevIns, HPET *);
+    HPET *pThis = PDMINS_2_DATA(pDevIns, HPET *);
 
     /* Only one HPET device now, as we use fixed MMIO region. */
-    Assert(iInstance == 0);
+    Assert(iInstance == 0); RT_NOREF(iInstance);
 
     /*
      * Initialize the device state.
@@ -1465,7 +1441,7 @@ const PDMDEVREG g_DeviceHPET =
     /* szName */
     "hpet",
     /* szRCMod */
-    "VBoxDDGC.gc",
+    "VBoxDDRC.rc",
     /* szR0Mod */
     "VBoxDDR0.r0",
     /* pszDescription */

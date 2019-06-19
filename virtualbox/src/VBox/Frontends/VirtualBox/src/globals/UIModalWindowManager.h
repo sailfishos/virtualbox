@@ -1,11 +1,10 @@
+/* $Id: UIModalWindowManager.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIModalWindowManager class declaration
+ * VBox Qt GUI - UIModalWindowManager class declaration.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,6 +29,11 @@
 class UIModalWindowManager : public QObject
 {
     Q_OBJECT;
+
+signals:
+
+    /** Notifies about stack changed. */
+    void sigStackChanged();
 
 public:
 

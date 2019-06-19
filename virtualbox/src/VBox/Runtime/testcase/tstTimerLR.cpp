@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/timer.h>
 #include <iprt/time.h>
 #include <iprt/thread.h>
@@ -37,9 +38,9 @@
 
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static volatile unsigned gcTicks;
 static volatile uint64_t gu64Min;
 static volatile uint64_t gu64Max;
@@ -47,6 +48,8 @@ static volatile uint64_t gu64Prev;
 
 static DECLCALLBACK(void) TimerLRCallback(RTTIMERLR hTimerLR, void *pvUser, uint64_t iTick)
 {
+    RT_NOREF_PV(hTimerLR); RT_NOREF_PV(pvUser); RT_NOREF_PV(iTick);
+
     gcTicks++;
 
     const uint64_t u64Now = RTTimeNanoTS();

@@ -1,5 +1,10 @@
+/* $Id: serial.c $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,6 +43,15 @@
  *
  */
 
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
+ */
+
 
 #include <stdint.h>
 #include "inlines.h"
@@ -56,7 +70,7 @@ void BIOSCALL int14_function(pusha_regs_t regs, uint16_t es, uint16_t ds, volati
         switch (regs.u.r8.ah) {
         case 0:
             outb(addr+3, inb(addr+3) | 0x80);
-            if (regs.u.r8.al & 0xE0 == 0) {
+            if ((regs.u.r8.al & 0xE0) == 0) {
                 outb(addr, 0x17);
                 outb(addr+1, 0x04);
             } else {

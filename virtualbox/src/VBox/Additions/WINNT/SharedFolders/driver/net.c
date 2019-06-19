@@ -1,12 +1,10 @@
+/* $Id: net.c $ */
 /** @file
- *
- * VirtualBox Windows Guest Shared Folders
- *
- * File System Driver network redirector subsystem routines
+ * VirtualBox Windows Guest Shared Folders - File System Driver network redirector subsystem routines
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,6 +19,7 @@
 
 NTSTATUS VBoxMRxUpdateNetRootState(IN OUT PMRX_NET_ROOT pNetRoot)
 {
+    RT_NOREF(pNetRoot);
     Log(("VBOXSF: MRxUpdateNetRootState\n"));
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -168,7 +167,6 @@ NTSTATUS VBoxMRxCreateVNetRoot(IN PMRX_CREATENETROOT_CONTEXT pCreateNetRootConte
         ULONG RootNameLength;
         int vboxRC;
         PSHFLSTRING ParsedPath = 0;
-        ULONG ParsedPathSize;
 
         Log(("VBOXSF: MRxCreateVNetRoot: initialize NET_ROOT\n"));
 
@@ -199,29 +197,17 @@ NTSTATUS VBoxMRxCreateVNetRoot(IN PMRX_CREATENETROOT_CONTEXT pCreateNetRootConte
             Log(("VBOXSF: MRxCreateVNetRoot: Initialize netroot length = %d, name = %.*ls\n",
                  RootNameLength, RootNameLength / sizeof(WCHAR), pRootName));
 
-            /* Calculate the length required for parsed path. */
-            ParsedPathSize = sizeof(SHFLSTRING) + RootNameLength + sizeof(WCHAR);
-            ParsedPath = (PSHFLSTRING)vbsfAllocNonPagedMem(ParsedPathSize);
-            if (!ParsedPath)
+            Status = vbsfShflStringFromUnicodeAlloc(&ParsedPath, pRootName, (uint16_t)RootNameLength);
+            if (Status != STATUS_SUCCESS)
             {
-                Status = STATUS_INSUFFICIENT_RESOURCES;
                 goto l_Exit;
             }
-            memset(ParsedPath, 0, ParsedPathSize);
-            if (!ShflStringInitBuffer(ParsedPath, ParsedPathSize))
-            {
-                vbsfFreeNonPagedMem(ParsedPath);
-                Status = STATUS_INSUFFICIENT_RESOURCES;
-                goto l_Exit;
-            }
-            ParsedPath->u16Length = ParsedPath->u16Size - sizeof(WCHAR); /* without terminating null */
-            RtlCopyMemory(ParsedPath->String.ucs2, pRootName, ParsedPath->u16Length);
 
-            vboxRC = vboxCallMapFolder(&pDeviceExtension->hgcmClient, ParsedPath, &pNetRootExtension->map);
+            vboxRC = VbglR0SfMapFolder(&pDeviceExtension->hgcmClient, ParsedPath, &pNetRootExtension->map);
             vbsfFreeNonPagedMem(ParsedPath);
             if (vboxRC != VINF_SUCCESS)
             {
-                Log(("VBOXSF: MRxCreateVNetRoot: vboxCallMapFolder failed with %d\n", vboxRC));
+                Log(("VBOXSF: MRxCreateVNetRoot: VbglR0SfMapFolder failed with %d\n", vboxRC));
                 Status = STATUS_BAD_NETWORK_NAME;
             }
             else
@@ -257,27 +243,26 @@ l_Exit:
     return Status;
 }
 
-NTSTATUS VBoxMRxFinalizeVNetRoot(IN PMRX_V_NET_ROOT pVNetRoot,
-                                 IN PBOOLEAN ForceDisconnect)
+NTSTATUS VBoxMRxFinalizeVNetRoot(IN PMRX_V_NET_ROOT pVNetRoot, IN PBOOLEAN ForceDisconnect)
 {
-    Log(("VBOXSF: MRxFinalizeVNetRoot: V_NET_ROOT %p, NET_ROOT %p\n",
-         pVNetRoot, pVNetRoot->pNetRoot));
+    RT_NOREF(pVNetRoot, ForceDisconnect);
+    Log(("VBOXSF: MRxFinalizeVNetRoot: V_NET_ROOT %p, NET_ROOT %p\n", pVNetRoot, pVNetRoot->pNetRoot));
 
     return STATUS_SUCCESS;
 }
 
-NTSTATUS VBoxMRxFinalizeNetRoot(IN PMRX_NET_ROOT pNetRoot,
-                                IN PBOOLEAN ForceDisconnect)
+NTSTATUS VBoxMRxFinalizeNetRoot(IN PMRX_NET_ROOT pNetRoot, IN PBOOLEAN ForceDisconnect)
 {
     PMRX_VBOX_NETROOT_EXTENSION pNetRootExtension = VBoxMRxGetNetRootExtension(pNetRoot);
+    RT_NOREF(pNetRoot, ForceDisconnect);
 
     Log(("VBOXSF: MRxFinalizeNetRoot: NET_ROOT %p\n", pNetRoot));
 
     if (pNetRootExtension->phgcmClient)
     {
-        int vboxRC = vboxCallUnmapFolder(pNetRootExtension->phgcmClient, &pNetRootExtension->map);
+        int vboxRC = VbglR0SfUnmapFolder(pNetRootExtension->phgcmClient, &pNetRootExtension->map);
         if (vboxRC != VINF_SUCCESS)
-            Log(("VBOXSF: MRxFinalizeVNetRoot: vboxCallMapFolder failed with %d\n",
+            Log(("VBOXSF: MRxFinalizeVNetRoot: VbglR0SfUnmapFolder failed with %d\n",
                  vboxRC));
         pNetRootExtension->phgcmClient = NULL;
     }
@@ -410,10 +395,10 @@ static VOID vbsfExecuteCreateSrvCall(PMRX_SRVCALL_CALLBACK_CONTEXT pCallbackCont
     SrvCalldownStructure->CallBack(SCCBC);
 }
 
-NTSTATUS VBoxMRxCreateSrvCall(PMRX_SRV_CALL pSrvCall,
-                              PMRX_SRVCALL_CALLBACK_CONTEXT pCallbackContext)
+NTSTATUS VBoxMRxCreateSrvCall(PMRX_SRV_CALL pSrvCall, PMRX_SRVCALL_CALLBACK_CONTEXT pCallbackContext)
 {
     PMRX_SRVCALLDOWN_STRUCTURE SrvCalldownStructure = (PMRX_SRVCALLDOWN_STRUCTURE)(pCallbackContext->SrvCalldownStructure);
+    RT_NOREF(pSrvCall);
 
     Log(("VBOXSF: MRxCreateSrvCall: %p.\n", pSrvCall));
 
@@ -446,9 +431,9 @@ NTSTATUS VBoxMRxCreateSrvCall(PMRX_SRV_CALL pSrvCall,
     return STATUS_PENDING;
 }
 
-NTSTATUS VBoxMRxFinalizeSrvCall (PMRX_SRV_CALL pSrvCall,
-                                 BOOLEAN Force)
+NTSTATUS VBoxMRxFinalizeSrvCall(PMRX_SRV_CALL pSrvCall, BOOLEAN Force)
 {
+    RT_NOREF(Force);
     Log(("VBOXSF: MRxFinalizeSrvCall %p, ctx = %p.\n", pSrvCall, pSrvCall->Context));
 
     pSrvCall->Context = NULL;
@@ -456,12 +441,9 @@ NTSTATUS VBoxMRxFinalizeSrvCall (PMRX_SRV_CALL pSrvCall,
     return STATUS_SUCCESS;
 }
 
-NTSTATUS VBoxMRxSrvCallWinnerNotify(IN PMRX_SRV_CALL pSrvCall,
-                                    IN BOOLEAN ThisMinirdrIsTheWinner,
-                                    IN OUT PVOID pSrvCallContext)
+NTSTATUS VBoxMRxSrvCallWinnerNotify(IN PMRX_SRV_CALL pSrvCall, IN BOOLEAN ThisMinirdrIsTheWinner, IN OUT PVOID pSrvCallContext)
 {
-    NTSTATUS Status = STATUS_SUCCESS;
-
+    RT_NOREF(ThisMinirdrIsTheWinner, pSrvCallContext);
     Log(("VBOXSF: MRxSrvCallWinnerNotify: pSrvCall %p, pSrvCall->Ctx %p, winner %d, context %p\n",
          pSrvCall, pSrvCall->Context, ThisMinirdrIsTheWinner, pSrvCallContext));
 

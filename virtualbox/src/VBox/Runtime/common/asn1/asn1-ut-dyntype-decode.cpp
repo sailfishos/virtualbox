@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -41,7 +42,7 @@ RTDECL(int) RTAsn1DynType_DecodeAsn1(PRTASN1CURSOR pCursor, uint32_t fFlags, PRT
 {
     RT_ZERO(*pDynType);
 
-    Assert(!(fFlags & RTASN1CURSOR_GET_F_IMPLICIT));
+    Assert(!(fFlags & RTASN1CURSOR_GET_F_IMPLICIT)); RT_NOREF_PV(fFlags);
     uint32_t        cbSavedLeft = pCursor->cbLeft;
     uint8_t const  *pbSavedCur  = pCursor->pbCur;
 

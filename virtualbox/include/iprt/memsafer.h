@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -107,7 +107,7 @@ RTDECL(int) RTMemSaferUnscramble(void *pv, size_t cb);
  *                      RTMEMSAFER_F_XXX.
  * @param   pszTag      Allocation tag used for statistics and such.
  */
-RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, const char *pszTag) RT_NO_THROW;
+RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, const char *pszTag) RT_NO_THROW_PROTO;
 
 /**
  * Allocates memory for sensitive data.
@@ -133,7 +133,7 @@ RTDECL(int) RTMemSaferAllocZExTag(void **ppvNew, size_t cb, uint32_t fFlags, con
  * @param   cb          Number of bytes to allocate.
  * @param   pszTag      Allocation tag used for statistics and such.
  */
-RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW;
+RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW_PROTO;
 
 /**
  * Allocates memory for sensitive data.
@@ -162,12 +162,12 @@ RTDECL(void *) RTMemSaferAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW;
  * @param   pvOld       The current allocation.
  * @param   cbNew       The size of the new allocation.
  * @param   ppvNew      Where to return the pointer to the new memory.
- * @param   a_fFlags    Flags for controlling the allocation, see
+ * @param   fFlags      Flags for controlling the allocation, see
  *                      RTMEMSAFER_F_XXX.  It is not permitted to drop saftely
  *                      requirments after the initial allocation.
  * @param   pszTag      Allocation tag used for statistics and such.
  */
-RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, void **ppvNew, uint32_t fFlags, const char *pszTag) RT_NO_THROW;
+RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, void **ppvNew, uint32_t fFlags, const char *pszTag) RT_NO_THROW_PROTO;
 
 /**
  * Reallocates memory allocated by RTMemSaferAllocZEx, RTMemSaferAllocZ,
@@ -206,7 +206,7 @@ RTDECL(int) RTMemSaferReallocZExTag(size_t cbOld, void *pvOld, size_t cbNew, voi
  * @param   cbNew       The size of the new allocation.
  * @param   pszTag      Allocation tag used for statistics and such.
  */
-RTDECL(void *) RTMemSaferReallocZTag(size_t cbOld, void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW;
+RTDECL(void *) RTMemSaferReallocZTag(size_t cbOld, void *pvOld, size_t cbNew, const char *pszTag) RT_NO_THROW_PROTO;
 
 /**
  * Reallocates memory allocated by RTMemSaferAllocZ or RTMemSaferAllocZTag.
@@ -235,7 +235,20 @@ RTDECL(void *) RTMemSaferReallocZTag(size_t cbOld, void *pvOld, size_t cbNew, co
  * @param   pv          The allocation.
  * @param   cb          The allocation size.
  */
-RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW;
+RTDECL(void) RTMemSaferFree(void *pv, size_t cb) RT_NO_THROW_PROTO;
+
+/**
+ * Gets the amount of memory allocated at @a pv.
+ *
+ * This can be used to check if the allocation was made using an RTMemSafer API.
+ *
+ * @returns Allocation size in bytes, 0 if not a RTMemSafer allocation.
+ * @param   pv          The alleged RTMemSafer allocation.
+ *
+ * @note    Not supported in all contexts and implementations of the API.
+ */
+RTDECL(size_t) RTMemSaferGetSize(void *pv) RT_NO_THROW_PROTO;
+
 
 /** @}  */
 RT_C_DECLS_END

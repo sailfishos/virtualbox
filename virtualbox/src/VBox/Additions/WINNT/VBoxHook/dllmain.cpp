@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,7 +16,8 @@
  */
 
 
-#include <Windows.h>
+#include <iprt/cdefs.h>
+#include <iprt/win/windows.h>
 
 
 /**
@@ -25,10 +26,11 @@
  * @returns type size or 0 if unknown type
  * @param   hDLLInst        Dll instance handle
  * @param   fdwReason       Callback reason
- * @param   lpvReserved     Reserved
+ * @param   pvReserved      Reserved
  */
-BOOL WINAPI DllMain(HINSTANCE hDLLInst, DWORD fdwReason, LPVOID lpvReserved)
+BOOL WINAPI DllMain(HINSTANCE hDLLInst, DWORD fdwReason, LPVOID pvReserved)
 {
+    RT_NOREF(hDLLInst, pvReserved);
     switch (fdwReason)
     {
         case DLL_PROCESS_ATTACH:

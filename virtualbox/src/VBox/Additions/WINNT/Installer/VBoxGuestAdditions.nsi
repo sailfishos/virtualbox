@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2012-2014 Oracle Corporation
+; Copyright (C) 2012-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -145,7 +145,7 @@ VIAddVersionKey "InternalName"      "${PRODUCT_OUTPUT}"
 !ifdef _DEBUG
   BrandingText "VirtualBox Windows Additions $%VBOX_VERSION_STRING% (r$%VBOX_SVN_REV%) - Debug Build"
 !else
-  BrandingText "VirtualBox Windows Additions $%VBOX_VERSION_STRING%"
+  BrandingText "VirtualBox Windows Additions $%VBOX_VERSION_STRING% r$%VBOX_SVN_REV%"
 !endif
 
 !ifdef VBOX_WITH_LICENSE_DISPLAY
@@ -233,8 +233,8 @@ Var g_bNoVBoxTrayExit                   ; Cmd line: Do not quit VBoxTray before 
 Var g_bNoVideoDrv                       ; Cmd line: Do not install the VBoxVideo driver
 Var g_bNoGuestDrv                       ; Cmd line: Do not install the VBoxGuest driver
 Var g_bNoMouseDrv                       ; Cmd line: Do not install the VBoxMouse driver
+Var g_bNoStartMenuEntries               ; Cmd line: Do not create start menu entries
 Var g_bWithAutoLogon                    ; Cmd line: Install VBoxGINA / VBoxCredProv for auto logon support
-Var g_bWithVBoxMMR                      ; Cmd line: Install VBoxMMR for media redirection support
 Var g_bWithD3D                          ; Cmd line: Install Direct3D support
 Var g_bOnlyExtract                      ; Cmd line: Only extract all files, do *not* install them. Only valid with param "/D" (target directory)
 Var g_bPostInstallStatus                ; Cmd line: Post the overall installation status to some external program (VBoxTray)
@@ -345,6 +345,10 @@ Function HandleCommandLine
         StrCpy $g_bNoMouseDrv "true"
         ${Break}
 
+      ${Case} '/no_startmenuentries' ; Not officially documented
+        StrCpy $g_bNoStartMenuEntries "true"
+        ${Break}
+
 !if $%VBOX_WITH_GUEST_INSTALL_HELPER% == "1"
       ; This switch tells our installer that it
       ; - should not quit VBoxTray during the update, because ...
@@ -381,12 +385,6 @@ Function HandleCommandLine
       ${Case} '/with_autologon'
         StrCpy $g_bWithAutoLogon "true"
         ${Break}
-
-!if $%VBOX_WITH_MMR% == "1"
-      ${Case} '/with_vboxmmr'
-        StrCpy $g_bWithVBoxMMR "true"
-        ${Break}
-!endif
 
 !if $%VBOX_WITH_CROGL% == "1"
       ${Case} '/with_d3d'
@@ -444,7 +442,6 @@ usage:
                     /uninstall$\t$\tJust uninstalls the Guest Additions and exits$\r$\n \
                     /with_autologon$\tInstalls auto-logon support$\r$\n \
                     /with_d3d$\tInstalls D3D support$\r$\n \
-                    /with_vboxmmr$\tInstalls multimedia redirection (MMR) support$\r$\n \
                     /with_wddm$\tInstalls the WDDM instead of the XPDM graphics driver$\r$\n \
                     /xres=X$\t$\tSets the guest's display resolution (width in pixels)$\r$\n \
                     /yres=Y$\t$\tSets the guest's display resolution (height in pixels)$\r$\n \
@@ -454,7 +451,7 @@ usage:
                     /S$\t$\tSilent install$\r$\n \
                     /D=<PATH>$\tSets the default install path$\r$\n \
                     $\r$\n \
-                    Note: Order of options and installer parameters are mandatory." /SD IDOK
+                    Note: Order of options and installer parameters is fixed, options first." /SD IDOK
 
   ; No stack restore needed, we're about to quit
   Quit
@@ -588,20 +585,6 @@ Function CheckForInstalledComponents
     StrCpy $g_bWithAutoLogon "true" ; Force update
   ${Else}
     ${LogVerbose} "Auto-logon support was not installed previously"
-  ${EndIf}
-
-  ; Check for installed MMR support and enable updating
-  ; those modules if needed
-  ${If}    ${FileExists} "$g_strSystemDir\VBoxMMR.exe"
-!if $%BUILD_TARGET_ARCH% == "amd64"
-  ${AndIf} ${FileExists} "$g_strSysWow64\VBoxMMRHook.dll"
-!else
-  ${AndIf} ${FileExists} "$g_strSystemDir\VBoxMMRHook.dll"
-!endif
-    ${LogVerbose} "MultiMedia Redirection support (MMR) was installed previously"
-    StrCpy $g_bWithVBoxMMR "true" ; Force update
-  ${Else}
-    ${LogVerbose} "MultiMedia Redirection support (MMR) support was not installed previously"
   ${EndIf}
 
   Pop $1
@@ -910,11 +893,12 @@ SectionEnd
 !ifdef USE_MUI
   ;Assign language strings to sections
   !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC01} $(VBOX_COMPONENT_MAIN_DESC)
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC02} $(VBOX_COMPONENT_AUTOLOGON_DESC)
-  !if $%VBOX_WITH_CROGL% == "1"
-    !insertmacro MUI_DESCRIPTION_TEXT ${SEC03} $(VBOX_COMPONENT_D3D_DESC)
-  !endif
+    !insertmacro MUI_DESCRIPTION_TEXT   ${SEC01} $(VBOX_COMPONENT_MAIN_DESC)
+    !insertmacro MUI_DESCRIPTION_TEXT   ${SEC02} $(VBOX_COMPONENT_AUTOLOGON_DESC)
+    !if $%VBOX_WITH_CROGL% == "1"
+      !insertmacro MUI_DESCRIPTION_TEXT ${SEC03} $(VBOX_COMPONENT_D3D_DESC)
+    !endif
+    !insertmacro MUI_DESCRIPTION_TEXT   ${SEC04} $(VBOX_COMPONENT_STARTMENU_DESC)
   !insertmacro MUI_FUNCTION_DESCRIPTION_END
 !endif ; USE_MUI
 
@@ -924,7 +908,8 @@ Section -Content
 
 SectionEnd
 
-Section -StartMenu
+; Start menu entries. Enabled by default and can be disabled by the user.
+Section /o $(VBOX_COMPONENT_STARTMENU) SEC04
 
   CreateDirectory "$SMPROGRAMS\${PRODUCT_NAME}"
   CreateShortCut "$SMPROGRAMS\${PRODUCT_NAME}\Website.lnk" "$INSTDIR\${PRODUCT_NAME}.url" "" "$INSTDIR\iexplore.ico"
@@ -955,6 +940,11 @@ Section -Post
 
   ; Tune TcpWindowSize for a better network throughput
   WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" "TcpWindowSize" 64240
+
+!ifdef _DEBUG
+  ${LogVerbose} "Enable Backdoor logging for debug build."
+  WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\VBoxGuest" "LoggingEnabled" 255
+!endif
 
   ; Add Sun Ray  client info keys
   ; Note: We only need 32-bit keys (HKLM\Software / HKLM\Software\Wow6432Node)
@@ -1104,8 +1094,8 @@ Function .onInit
   StrCpy $g_bNoVideoDrv "false"
   StrCpy $g_bNoGuestDrv "false"
   StrCpy $g_bNoMouseDrv "false"
+  StrCpy $g_bNoStartMenuEntries "false"
   StrCpy $g_bWithAutoLogon "false"
-  StrCpy $g_bWithVBoxMMR "false"
   StrCpy $g_bWithD3D "false"
   StrCpy $g_bOnlyExtract "false"
   StrCpy $g_bWithWDDM "false"
@@ -1194,10 +1184,16 @@ Function .onInit
 
   Call CheckForInstalledComponents
 
-  ; Set section bits
+  ;
+  ; Section 02
+  ;
   ${If} $g_bWithAutoLogon == "true" ; Auto-logon support
     !insertmacro SelectSection ${SEC02}
   ${EndIf}
+
+  ;
+  ; Section 03
+  ;
 !if $%VBOX_WITH_CROGL% == "1"
   ${If} $g_bWithD3D == "true" ; D3D support
     !insertmacro SelectSection ${SEC03}
@@ -1213,6 +1209,13 @@ Function .onInit
   ${OrIf} $g_strWinVersion == "10"
     IntOp $0 ${SF_SELECTED} | ${SF_RO}
     SectionSetFlags ${SEC03} $0
+  ${EndIf}
+
+  ;
+  ; Section 04
+  ;
+  ${If} $g_bNoStartMenuEntries == "false" ; Start menu entries
+    !insertmacro SelectSection ${SEC04}
   ${EndIf}
 
 !ifdef USE_MUI

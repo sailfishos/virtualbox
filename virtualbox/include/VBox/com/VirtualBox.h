@@ -8,12 +8,12 @@
  *       /src/VBox/Main/idl/VirtualBox.xidl, which contains all the VirtualBox
  *       interfaces; the include file is called VirtualBox.h on Windows hosts
  *       and VirtualBox_XPCOM.h on Linux hosts.  The build process places it in
- *       out/<platform>/bin/sdk/include, from where it gets
+ *       out/{platform}/bin/sdk/include, from where it gets
  *       included by the rest of the VirtualBox code.
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -37,13 +37,13 @@
 #define ___VBox_com_VirtualBox_h
 
 // generated VirtualBox COM library definition file
-#if !defined (VBOXCOM_NOINCLUDE)
-# if !defined (VBOX_WITH_XPCOM)
+#if !defined(VBOXCOM_NOINCLUDE)
+# if !defined(VBOX_WITH_XPCOM)
 #  include <VirtualBox.h>
 # else
 #  include <VirtualBox_XPCOM.h>
 # endif
-#endif // !defined (VBOXCOM_NOINCLUDE)
+#endif
 
 // for convenience
 #include "VBox/com/defs.h"

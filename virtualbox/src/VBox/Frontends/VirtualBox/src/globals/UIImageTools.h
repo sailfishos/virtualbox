@@ -1,11 +1,10 @@
+/* $Id: UIImageTools.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Declarations of utility classes and functions for image manipulation
+ * VBox Qt GUI - Declarations of utility classes and functions for image manipulation.
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,7 +28,6 @@ void blurImageHorizontal(const QImage &source, QImage &dest, int r);
 void blurImageVertical(const QImage &source, QImage &dest, int r);
 
 QPixmap betaLabel(const QSize &ls = QSize(80, 16));
-QPixmap betaLabelSleeve(const QSize &ls = QSize(80, 16));
 
 #endif /* !__UIImageTools_h__ */
 

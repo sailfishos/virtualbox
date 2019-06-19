@@ -1,12 +1,10 @@
 /* $Id: UIWizardFirstRunPageBasic.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardFirstRunPageBasic class implementation
+ * VBox Qt GUI - UIWizardFirstRunPageBasic class implementation.
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,20 +15,27 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QVBoxLayout>
-#include <QHBoxLayout>
+# include <QVBoxLayout>
+# include <QHBoxLayout>
 
 /* GUI includes: */
-#include "UIWizardFirstRunPageBasic.h"
-#include "UIWizardFirstRun.h"
-#include "UIIconPool.h"
-#include "VBoxGlobal.h"
-#include "UIMessageCenter.h"
-#include "VBoxMediaComboBox.h"
-#include "QIToolButton.h"
-#include "QIRichTextLabel.h"
-#include "UIMedium.h"
+# include "UIWizardFirstRunPageBasic.h"
+# include "UIWizardFirstRun.h"
+# include "UIIconPool.h"
+# include "VBoxGlobal.h"
+# include "UIMessageCenter.h"
+# include "VBoxMediaComboBox.h"
+# include "QIToolButton.h"
+# include "QIRichTextLabel.h"
+# include "UIMedium.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardFirstRunPage::UIWizardFirstRunPage(bool fBootHardDiskWasSet)
     : m_fBootHardDiskWasSet(fBootHardDiskWasSet)
@@ -62,8 +67,6 @@ UIWizardFirstRunPageBasic::UIWizardFirstRunPageBasic(const QString &strMachineId
     /* Create widgets: */
     QVBoxLayout *pMainLayout = new QVBoxLayout(this);
     {
-        pMainLayout->setContentsMargins(8, 0, 8, 0);
-        pMainLayout->setSpacing(10);
         m_pLabel = new QIRichTextLabel(this);
         QHBoxLayout *pSourceDiskLayout = new QHBoxLayout;
         {

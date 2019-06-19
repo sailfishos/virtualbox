@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,7 +19,7 @@
 #define ___VBOX_CREDPROV_PROVIDER_H___
 
 #include <credentialprovider.h>
-#include <Windows.h>
+#include <iprt/win/windows.h>
 #include <strsafe.h>
 
 #include <VBox/VBoxGuestLib.h>
@@ -54,10 +54,10 @@ public:
                                       __out DWORD *pdwDefault,
                                       __out BOOL *pfAutoLogonWithDefault);
     IFACEMETHODIMP GetCredentialAt(DWORD dwIndex,
-                                   __out ICredentialProviderCredential **ppcpc);
+                                   __out ICredentialProviderCredential **ppCredProvCredential);
     /** @} */
 
-    friend HRESULT VBoxCredProvProviderCreate(REFIID riid, __deref_out void **ppv);
+    friend HRESULT VBoxCredProvProviderCreate(REFIID riid, __deref_out void **ppvInterface);
 
 protected:
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define INCL_BASE
 #define INCL_ERRORS
 #include <os2.h>
@@ -35,10 +36,8 @@
 #ifdef IN_SUP_HARDENED_R3
 # undef DEBUG /* Warning: disables RT_STRICT */
 # define LOG_DISABLED
-  /** @todo RTLOGREL_DISABLED */
+# define RTLOG_REL_DISABLED
 # include <iprt/log.h>
-# undef LogRelIt
-# define LogRelIt(pvInst, fFlags, iGroup, fmtargs) do { } while (0)
 #endif
 
 #include <VBox/types.h>
@@ -57,9 +56,9 @@
 #include <stdlib.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** OS/2 Device name. */
 #define DEVICE_NAME     "/dev/vboxdrv$"
 
@@ -105,8 +104,6 @@ int suplibOsInit(PSUPLIBDATA pThis, bool fPreInited, bool fUnrestricted, SUPINIT
 }
 
 
-#ifndef IN_SUP_HARDENED_R3
-
 int suplibOsTerm(PSUPLIBDATA pThis)
 {
     /*
@@ -122,6 +119,8 @@ int suplibOsTerm(PSUPLIBDATA pThis)
     return 0;
 }
 
+
+#ifndef IN_SUP_HARDENED_R3
 
 int suplibOsInstall(void)
 {

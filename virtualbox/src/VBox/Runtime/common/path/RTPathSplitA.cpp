@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/path.h>
 
@@ -48,7 +48,7 @@ RTDECL(int) RTPathSplitATag(const char *pszPath, PRTPATHSPLIT *ppSplit, uint32_t
      * Note! No point in trying very hard to get it right.
      */
     size_t cbSplit = strlen(pszPath);
-    cbSplit += RT_OFFSETOF(RTPATHSPLIT, apszComps[cbSplit / 8]) + cbSplit / 8 + 8;
+    cbSplit += RT_UOFFSETOF_DYN(RTPATHSPLIT, apszComps[cbSplit / 8]) + cbSplit / 8 + 8;
     cbSplit = RT_ALIGN(cbSplit, 64);
     PRTPATHSPLIT pSplit = (PRTPATHSPLIT)RTMemAllocTag(cbSplit, pszTag);
     if (pSplit == NULL)

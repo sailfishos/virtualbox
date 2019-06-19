@@ -4,7 +4,7 @@
     <!--
             Language Definition Include for VirtualBox WiX script.
 
-            Copyright (C) 2011-2014 Oracle Corporation
+            Copyright (C) 2011-2016 Oracle Corporation
 
             This file is part of VirtualBox Open Source Edition (OSE), as
             available from http://www.virtualbox.org. This file is free software;
@@ -50,7 +50,10 @@
     <String Id="VB_Network">Pilotes [ProductName] pour le support réseau.</String>
     <String Id="VB_NetFltDriver">Pilote [ProductName] pour l'accès réseau par pont.</String>
     <String Id="VB_NetAdpDriver">Pilote de carte réseau virtuelle [ProductName] pour l'accès réseau privé hôte.</String>
-    <String Id="VB_Python">Python support for VirtualBox.</String>
+    <String Id="VB_NetLwfDriver">[ProductName] driver for NDIS6 Bridged Networking.</String>
+    <String Id="VB_NetAdp6Driver">[ProductName] virtual network adapter driver for NDIS6 Host-Only Networking.</String>
+
+  <String Id="VB_Python">Python support for VirtualBox.</String>
 
     <!---->
 
@@ -66,8 +69,8 @@
 
     <!---->
 
-    <String Id="WelcomeDlg_Header">Bienvenue dans l'assistent d'installation de [ProductName]</String>
-    <String Id="WelcomeDlg_Body">Cet assistent installera [ProductName] sur votre ordinateur. Appuyez sur Suivant pour continuer ou sur Annuler pour abondonner l'installation.</String>
+    <String Id="WelcomeDlg_Header">Bienvenue dans l'assistant d'installation de [ProductName]</String>
+    <String Id="WelcomeDlg_Body">Cet assistant installera [ProductName] sur votre ordinateur. Appuyez sur Suivant pour continuer ou sur Annuler pour abondonner l'installation.</String>
 
     <!---->
 
@@ -115,9 +118,20 @@
 
     <String Id="Customize2Dlg_Header">Personaliser</String>
     <String Id="Customize2Dlg_Desc">Veuillez choisir une des options suivantes:</String>
-    <String Id="Customize2Dlg_CreateShortcut">Créer un raccourci sur le bureau</String>
+    <String Id="Customize2Dlg_CreateStartMenuEntries">Créer des éléments dans le menu démarrer</String>
+    <String Id="Customize2Dlg_CreateDesktopShortcut">Créer un raccourci sur le bureau</String>
     <String Id="Customize2Dlg_CreateQuickLaunch">Créer un raccourci dans la barre de lancement rapide</String>
     <String Id="Customize2Dlg_RegisterFileExtensions">Inscription des associations de fichiers</String>
+
+    <!---->
+
+    <String Id="SelectionNetworkTypeDlg_CommonDescription">Veuillez choisir le type de pilotes réseau à utiliser :</String>
+    <String Id="SelectionNetworkTypeDlg_DescriptionNDIS5">NDIS5 network drivers.
+This is default for older versions of Windows (pre-Vista).</String>
+    <String Id="SelectionNetworkTypeDlg_DescriptionNDIS6">NDIS6 network drivers.
+This is default for newer versions of Windows (Vista and newer).</String>
+    <String Id="SelectionNetworkTypeDlg_RadioButtonNDIS5">Utiliser pilotes réseau NDIS5.</String>
+    <String Id="SelectionNetworkTypeDlg_RadioButtonNDIS6">Utiliser pilotes réseau NDIS6.</String>
 
     <!---->
 
@@ -144,21 +158,21 @@
 
     <!---->
 
-    <String Id="VerifyReadyDlg_ReadyToBegin">L'assistent est prêt à commencer l'installation [InstallMode].</String>
+    <String Id="VerifyReadyDlg_ReadyToBegin">L'assistant est prêt à commencer l'installation [InstallMode].</String>
     <String Id="VerifyReadyDlg_ClickInstall">Appuyez sur Installer pour commencer l'installation. Si vous désirez revoir ou modifier vos paramètres d'installation, appuyez sur Précédent. Appuyez sur Annuler pour abondoner l'installation.</String>
     <String Id="VerifyReadyDlg_ReadyToInstall">Prêt à installer</String>
 
     <!---->
 
-    <String Id="ExitDlg_ClickFinish">Veuillez appuyez sur Terminer pour quitter l'assistent d'installation.</String>
+    <String Id="ExitDlg_ClickFinish">Veuillez appuyez sur Terminer pour quitter l'assistant d'installation.</String>
     <String Id="ExitDlg_InstComplete">L'installation de [ProductName] est terminé.</String>
     <String Id="ExitDlg_StartVBox">Démarrer [ProductName] après l'installation</String>
 
     <!---->
 
-    <String Id="FatalErrorDlg_Header">L'assistent d'installation [ProductName] a terminé anormalement</String>
-    <String Id="FatalErrorDlg_Desc">L'installation de [ProductName] a été terminé en raison d'une erreur. Votre système n'a pas été modifié. Pour installer ce programme plus tard, veuillez relancer l'assistent.</String>
-    <String Id="FatalErrorDlg_Footer">Appuyez sur Terminer pour quitter l'assistent d'installation.</String>
+    <String Id="FatalErrorDlg_Header">L'assistant d'installation [ProductName] a terminé anormalement</String>
+    <String Id="FatalErrorDlg_Desc">L'installation de [ProductName] a été terminé en raison d'une erreur. Votre système n'a pas été modifié. Pour installer ce programme plus tard, veuillez relancer l'assistant.</String>
+    <String Id="FatalErrorDlg_Footer">Appuyez sur Terminer pour quitter l'assistant d'installation.</String>
 
     <!---->
 
@@ -168,18 +182,18 @@
 
     <!---->
 
-    <String Id="UserExitDlg_Header">L'assistent d'installation [ProductName] a été interrompu</String>
+    <String Id="UserExitDlg_Header">L'assistant d'installation [ProductName] a été interrompu</String>
     <String Id="UserExitDlg_Desc">L'installation de [ProductName] a été interrompu. Votre système n'a pas été modifié. Pour installer ce programme ultérieurement, veuillez relancer l'assistant.</String>
-    <String Id="UserExitDlg_Footer">Appuyez sur Terminer pour quitter l'assistent d'installation.</String>
+    <String Id="UserExitDlg_Footer">Appuyez sur Terminer pour quitter l'assistant d'installation.</String>
 
     <!---->
 
-    <String Id="ProgressDlg_PleaseWait">Veuillez patienter pendant que l'assistent installe [ProductName]. Ceci peut durer plusieurs minutes.</String>
+    <String Id="ProgressDlg_PleaseWait">Veuillez patienter pendant que l'assistant installe [ProductName]. Ceci peut durer plusieurs minutes.</String>
 
     <!---->
 
-    <String Id="ResumeDlg_Header">Continuant l'assistent d'installation [ProductName]</String>
-    <String Id="ResumeDlg_Desc">L'assistent d'installation completera l'installation de [ProductName] sur votre ordinateur. Appuyez sur Installer pour continuer ou sur Annuler pour abondonner l'assistent.</String>
+    <String Id="ResumeDlg_Header">Continuant l'assistant d'installation [ProductName]</String>
+    <String Id="ResumeDlg_Desc">L'assistant d'installation completera l'installation de [ProductName] sur votre ordinateur. Appuyez sur Installer pour continuer ou sur Annuler pour abondonner l'assistant.</String>
 
     <!---->
 
@@ -198,8 +212,8 @@
 
     <!---->
 
-    <String Id="MaintenanceWelcomeDlg_Header">Bienvenue dans l'assistent d'installation [ProductName]</String>
-    <String Id="MaintenanceWelcomeDlg_Desc">L'assistent d'installation vous permettra de réparer ou de supprimer de votre ordinateur l'installation actuelle de [ProductName]. Appuyez sur Suivant pour continuer ou sur Annuler pour abondonner l'assistant.</String>
+    <String Id="MaintenanceWelcomeDlg_Header">Bienvenue dans l'assistant d'installation [ProductName]</String>
+    <String Id="MaintenanceWelcomeDlg_Desc">L'assistant d'installation vous permettra de réparer ou de supprimer de votre ordinateur l'installation actuelle de [ProductName]. Appuyez sur Suivant pour continuer ou sur Annuler pour abondonner l'assistant.</String>
 
     <!---->
 
@@ -218,13 +232,13 @@
 
     <String Id="VerifyRemoveDlg_Header">Supprimer [ProductName]</String>
     <String Id="VerifyRemoveDlg_Desc">Vous avez choisi de supprimer l'application de votre ordinateur.</String>
-    <String Id="VerifyRemoveDlg_ClickRemove">Appuyez sur Désinstaller pour supprimer [ProductName] de votre ordinateur. Si vous désirez revoir ou modifier vos paramètres d'installation, appuyez sur Précédent. Appuyez sur Annuler pour quitter l'assistent.</String>
+    <String Id="VerifyRemoveDlg_ClickRemove">Appuyez sur Désinstaller pour supprimer [ProductName] de votre ordinateur. Si vous désirez revoir ou modifier vos paramètres d'installation, appuyez sur Précédent. Appuyez sur Annuler pour quitter l'assistant.</String>
 
     <!---->
 
     <String Id="VerifyRepairDlg_Header">Réparer [ProductName]</String>
-    <String Id="VerifyRepairDlg_ReadyToBegin">L'assistent d'installation est prêt à commencer la réparation de [ProductName].</String>
-    <String Id="VerifyRepairDlg_ClickRepair">Appuyez sur Réparer pour réparer l'installation de [ProductName]. Si vous désirez revoir ou modifier vos paramètres d'installation, appuyez sur Précédent. Appuyez sur Annuler pour quitter l'assistent.</String>
+    <String Id="VerifyRepairDlg_ReadyToBegin">L'assistant d'installation est prêt à commencer la réparation de [ProductName].</String>
+    <String Id="VerifyRepairDlg_ClickRepair">Appuyez sur Réparer pour réparer l'installation de [ProductName]. Si vous désirez revoir ou modifier vos paramètres d'installation, appuyez sur Précédent. Appuyez sur Annuler pour quitter l'assistant.</String>
 
     <!---->
 

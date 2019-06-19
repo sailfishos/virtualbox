@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,24 +24,34 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/mp.h>
 #include <iprt/cpuset.h>
 #include <iprt/err.h>
 #include <iprt/string.h>
 #include <iprt/test.h>
+#ifdef VBOX
+# include <VBox/sup.h>
+#endif
 
 
 
-int main()
+int main(int argc, char **argv)
 {
     RTTEST hTest;
     RTEXITCODE rcExit = RTTestInitAndCreate("tstRTMp-1", &hTest);
     if (rcExit != RTEXITCODE_SUCCESS)
         return rcExit;
     RTTestBanner(hTest);
+
+    NOREF(argc); NOREF(argv);
+#ifdef VBOX
+    if (argc > 1)
+        SUPR3Init(NULL);
+#endif
 
     /*
      * Present and possible CPUs.

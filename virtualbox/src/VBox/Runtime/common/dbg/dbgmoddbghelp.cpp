@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP   RTLOGGROUP_DBG
 #include <iprt/dbg.h>
 #include "internal/iprt.h"
@@ -42,14 +42,14 @@
 #include <iprt/string.h>
 #include "internal/dbgmod.h"
 
-#include <Windows.h>
+#include <iprt/win/windows.h>
 #include <Dbghelp.h>
 #include <iprt/win/lazy-dbghelp.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** For passing arguments to DbgHelp.dll callback. */
 typedef struct RTDBGMODBGHELPARGS
 {
@@ -116,7 +116,7 @@ static DECLCALLBACK(int) rtDbgModDbgHelp_SymbolByName(PRTDBGMODINT pMod, const c
                                                       PRTDBGSYMBOL pSymInfo)
 {
     RTDBGMOD hCnt = (RTDBGMOD)pMod->pvDbgPriv;
-    Assert(!pszSymbol[cchSymbol]);
+    Assert(!pszSymbol[cchSymbol]); RT_NOREF_PV(cchSymbol);
     return RTDbgModSymbolByName(hCnt, pszSymbol/*, cchSymbol*/, pSymInfo);
 }
 
@@ -215,7 +215,7 @@ static BOOL CALLBACK rtDbgModDbgHelpCopyLineNumberCallback(PSRCCODEINFOW pLineIn
 
     if (pLineInfo->Address < pArgs->uModAddr)
     {
-        Log((" %#018x %05u  %s  [SKIPPED - INVALID ADDRESS!]\n", pLineInfo->Address, pLineInfo->LineNumber));
+        Log((" %#018RX64 %05u  %s  [SKIPPED - INVALID ADDRESS!]\n", pLineInfo->Address, pLineInfo->LineNumber));
         return TRUE;
     }
 
@@ -255,7 +255,7 @@ static BOOL CALLBACK rtDbgModDbgHelpCopyLineNumberCallback(PSRCCODEINFOW pLineIn
      */
     int rc = RTDbgModLineAdd(pArgs->hCnt, pArgs->pszPrev, pLineInfo->LineNumber,
                              RTDBGSEGIDX_RVA, pLineInfo->Address - pArgs->uModAddr, NULL);
-    Log((" %#018x %05u  %s  [%Rrc]\n", pLineInfo->Address, pLineInfo->LineNumber, rc));
+    Log((" %#018RX64 %05u  %s  [%Rrc]\n", pLineInfo->Address, pLineInfo->LineNumber, pArgs->pszPrev, rc));
     NOREF(rc);
 
     return TRUE;
@@ -311,12 +311,12 @@ static BOOL CALLBACK rtDbgModDbgHelpCopySymbolsCallback(PSYMBOL_INFO pSymInfo, U
     RTDBGMODBGHELPARGS *pArgs = (RTDBGMODBGHELPARGS *)pvUser;
     if (pSymInfo->Address < pArgs->uModAddr) /* NT4 SP1 ntfs.dbg */
     {
-        Log(("  %#018x LB %#07x  %s  [SKIPPED - INVALID ADDRESS!]\n", pSymInfo->Address, cbSymbol, pSymInfo->Name));
+        Log(("  %#018RX64 LB %#07x  %s  [SKIPPED - INVALID ADDRESS!]\n", pSymInfo->Address, cbSymbol, pSymInfo->Name));
         return TRUE;
     }
     if (pSymInfo->NameLen >= RTDBG_SYMBOL_NAME_LENGTH)
     {
-        Log(("  %#018x LB %#07x  %s  [SKIPPED - TOO LONG (%u > %u)!]\n", pSymInfo->Address, cbSymbol, pSymInfo->Name,
+        Log(("  %#018RX64 LB %#07x  %s  [SKIPPED - TOO LONG (%u > %u)!]\n", pSymInfo->Address, cbSymbol, pSymInfo->Name,
              pSymInfo->NameLen, RTDBG_SYMBOL_NAME_LENGTH));
         return TRUE;
     }
@@ -324,7 +324,7 @@ static BOOL CALLBACK rtDbgModDbgHelpCopySymbolsCallback(PSYMBOL_INFO pSymInfo, U
     /* ASSUMES the symbol name is ASCII. */
     int rc = RTDbgModSymbolAdd(pArgs->hCnt, pSymInfo->Name, RTDBGSEGIDX_RVA,
                                pSymInfo->Address - pArgs->uModAddr, cbSymbol, 0, NULL);
-    Log(("  %#018x LB %#07x  %s  [%Rrc]\n", pSymInfo->Address, cbSymbol, pSymInfo->Name, rc));
+    Log(("  %#018RX64 LB %#07x  %s  [%Rrc]\n", pSymInfo->Address, cbSymbol, pSymInfo->Name, rc));
     NOREF(rc);
 
     return TRUE;
@@ -363,6 +363,7 @@ static int rtDbgModDbgHelpCopySymbols(PRTDBGMODINT pMod, RTDBGMOD hCnt, HANDLE h
 static DECLCALLBACK(int) rtDbgModDbgHelpAddSegmentsCallback(RTLDRMOD hLdrMod, PCRTLDRSEG pSeg, void *pvUser)
 {
     RTDBGMODBGHELPARGS *pArgs = (RTDBGMODBGHELPARGS *)pvUser;
+    RT_NOREF_PV(hLdrMod);
 
     Log(("Segment %.*s: LinkAddress=%#llx RVA=%#llx cb=%#llx\n",
          pSeg->cchName, pSeg->pszName, (uint64_t)pSeg->LinkAddress, (uint64_t)pSeg->RVA, pSeg->cb));

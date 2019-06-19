@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -196,10 +196,22 @@ static bool vboxSvcClipboardReturnMsg (VBOXCLIPBOARDCLIENTDATA *pClient, VBOXHGC
     }
     else if (pClient->fMsgReadData)
     {
+        uint32_t fFormat = 0;
+
         LogRelFlow(("vboxSvcClipboardReturnMsg: ReadData %02X\n", pClient->u32RequestedFormat));
+        if (pClient->u32RequestedFormat & VBOX_SHARED_CLIPBOARD_FMT_UNICODETEXT)
+            fFormat = VBOX_SHARED_CLIPBOARD_FMT_UNICODETEXT;
+        else if (pClient->u32RequestedFormat & VBOX_SHARED_CLIPBOARD_FMT_BITMAP)
+            fFormat = VBOX_SHARED_CLIPBOARD_FMT_BITMAP;
+        else if (pClient->u32RequestedFormat & VBOX_SHARED_CLIPBOARD_FMT_HTML)
+            fFormat = VBOX_SHARED_CLIPBOARD_FMT_HTML;
+        else
+            AssertStmt(pClient->u32RequestedFormat == 0, pClient->u32RequestedFormat = 0);
+        pClient->u32RequestedFormat &= ~fFormat;
         VBoxHGCMParmUInt32Set (&paParms[0], VBOX_SHARED_CLIPBOARD_HOST_MSG_READ_DATA);
-        VBoxHGCMParmUInt32Set (&paParms[1], pClient->u32RequestedFormat);
-        pClient->fMsgReadData = false;
+        VBoxHGCMParmUInt32Set (&paParms[1], fFormat);
+        if (pClient->u32RequestedFormat == 0)
+            pClient->fMsgReadData = false;
     }
     else if (pClient->fMsgFormats)
     {
@@ -748,6 +760,7 @@ static DECLCALLBACK(int) svcHostCall (void *,
     return rc;
 }
 
+#ifndef UNIT_TEST
 /**
  * SSM descriptor table for the VBOXCLIPBOARDCLIENTDATA structure.
  */
@@ -760,11 +773,12 @@ static SSMFIELD const g_aClipboardClientDataFields[] =
     SSMFIELD_ENTRY(VBOXCLIPBOARDCLIENTDATA, u32RequestedFormat),
     SSMFIELD_ENTRY_TERM()
 };
+#endif
 
 static DECLCALLBACK(int) svcSaveState(void *, uint32_t u32ClientID, void *pvClient, PSSMHANDLE pSSM)
 {
 #ifndef UNIT_TEST
-    /* 
+    /*
      * When the state will be restored, pending requests will be reissued
      * by VMMDev. The service therefore must save state as if there were no
      * pending request.
@@ -779,7 +793,10 @@ static DECLCALLBACK(int) svcSaveState(void *, uint32_t u32ClientID, void *pvClie
     SSMR3PutU32 (pSSM, UINT32_C (0x80000002));
     int rc = SSMR3PutStructEx (pSSM, pClient, sizeof(*pClient), 0 /*fFlags*/, &g_aClipboardClientDataFields[0], NULL);
     AssertRCReturn (rc, rc);
-#endif /* !UNIT_TEST */
+
+#else  /* UNIT_TEST */
+    RT_NOREF3(u32ClientID, pvClient, pSSM);
+#endif /* UNIT_TEST */
     return VINF_SUCCESS;
 }
 
@@ -848,7 +865,7 @@ static DECLCALLBACK(int) svcLoadState(void *, uint32_t u32ClientID, void *pvClie
         rc = SSMR3GetStructEx (pSSM, pClient, sizeof(*pClient), 0 /*fFlags*/, &g_aClipboardClientDataFields[0], NULL);
         AssertRCReturn (rc, rc);
     }
-    else if (lenOrVer == (SSMR3HandleHostBits (pSSM) == 64 ? 72 : 48))
+    else if (lenOrVer == (SSMR3HandleHostBits (pSSM) == 64 ? 72U : 48U))
     {
         /**
          * SSM descriptor table for the CLIPSAVEDSTATEDATA structure.
@@ -859,7 +876,7 @@ static DECLCALLBACK(int) svcLoadState(void *, uint32_t u32ClientID, void *pvClie
             SSMFIELD_ENTRY_IGN_HCPTR(       CLIPSAVEDSTATEDATA, pPrev),
             SSMFIELD_ENTRY_IGN_HCPTR(       CLIPSAVEDSTATEDATA, pCtx),
             SSMFIELD_ENTRY(                 CLIPSAVEDSTATEDATA, u32ClientID),
-            SSMFIELD_ENTRY_CUSTOM(fMsgQuit+fMsgReadData+fMsgFormats, RT_OFFSETOF(CLIPSAVEDSTATEDATA, u32ClientID) + 4, 4),
+            SSMFIELD_ENTRY_CUSTOM(fMsgQuit + fMsgReadData + fMsgFormats, RT_UOFFSETOF(CLIPSAVEDSTATEDATA, u32ClientID) + 4, 4),
             SSMFIELD_ENTRY_IGN_HCPTR(       CLIPSAVEDSTATEDATA, async.callHandle),
             SSMFIELD_ENTRY_IGN_HCPTR(       CLIPSAVEDSTATEDATA, async.paParms),
             SSMFIELD_ENTRY_IGNORE(          CLIPSAVEDSTATEDATA, data.pv),
@@ -898,12 +915,15 @@ static DECLCALLBACK(int) svcLoadState(void *, uint32_t u32ClientID, void *pvClie
     /* Actual host data are to be reported to guest (SYNC). */
     vboxClipboardSync (pClient);
 
-#endif /* !UNIT_TEST */
+#else  /* UNIT_TEST*/
+    RT_NOREF3(u32ClientID, pvClient, pSSM);
+#endif /* UNIT_TEST */
     return VINF_SUCCESS;
 }
 
 static DECLCALLBACK(int) extCallback (uint32_t u32Function, uint32_t u32Format, void *pvData, uint32_t cbData)
 {
+    RT_NOREF2(pvData, cbData);
     if (g_pClient != NULL)
     {
         switch (u32Function)

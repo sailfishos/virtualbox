@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-haiku-kernel.h"
 
 #include <iprt/mp.h>
@@ -40,6 +40,18 @@
 RTDECL(RTCPUID) RTMpCpuId(void)
 {
     return smp_get_current_cpu();
+}
+
+
+RTDECL(int) RTMpCurSetIndex(void)
+{
+    return smp_get_current_cpu();
+}
+
+
+RTDECL(int) RTMpCurSetIndexAndId(PRTCPUID pidCpu)
+{
+    return *pidCpu = smp_get_current_cpu();
 }
 
 
@@ -91,7 +103,7 @@ RTDECL(RTCPUID) RTMpGetCount(void)
 RTDECL(bool) RTMpIsCpuOnline(RTCPUID idCpu)
 {
     return idCpu < smp_get_num_cpus();
-    /** @todo: FixMe && !CPU_ABSENT(idCpu) */
+    /** @todo FixMe && !CPU_ABSENT(idCpu) */
 }
 
 
@@ -214,5 +226,11 @@ RTDECL(int) RTMpOnSpecific(RTCPUID idCpu, PFNRTMPWORKER pfnWorker, void *pvUser1
     return Args.cHits == 1
            ? VINF_SUCCESS
            : VERR_CPU_NOT_FOUND;
+}
+
+
+RTDECL(bool) RTMpOnAllIsConcurrentSafe(void)
+{
+    return true;
 }
 

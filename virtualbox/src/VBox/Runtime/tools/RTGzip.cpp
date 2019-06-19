@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/zip.h>
 
 #include <iprt/buildconfig.h>
@@ -43,9 +43,9 @@
 #include <iprt/zip.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Gzip command options.
  */
@@ -68,9 +68,9 @@ typedef struct RTGZIPCMDOPTS
     /** The current input filename (for deletion and messages). */
     const char     *pszInput;
 } RTGZIPCMDOPTS;
-/** Pointer to GZIP options.   */
+/** Pointer to GZIP options. */
 typedef RTGZIPCMDOPTS *PRTGZIPCMDOPTS;
-/** Pointer to const GZIP options.   */
+/** Pointer to const GZIP options. */
 typedef RTGZIPCMDOPTS const *PCRTGZIPCMDOPTS;
 
 
@@ -84,6 +84,7 @@ typedef RTGZIPCMDOPTS const *PCRTGZIPCMDOPTS;
 static bool gzipIsStdHandleATty(RTHANDLESTD enmStdHandle)
 {
     /** @todo Add isatty() to IPRT. */
+    RT_NOREF1(enmStdHandle);
     return false;
 }
 
@@ -137,7 +138,7 @@ static RTEXITCODE gzipPushFlushAndClose(PRTVFSIOSTREAM phVfsSrc, PCRTGZIPCMDOPTS
     *phVfsSrc = NIL_RTVFSIOSTREAM;
 
     int rc = RTVfsIoStrmFlush(*phVfsDst);
-    if (RT_FAILURE(rc))
+    if (RT_FAILURE(rc) && rc != VERR_INVALID_PARAMETER)
         rcExit = RTMsgErrorExit(RTEXITCODE_FAILURE, "Failed to flush the output file: %Rrc", rc);
     RTVfsIoStrmRelease(*phVfsDst);
     *phVfsDst = NIL_RTVFSIOSTREAM;
@@ -188,7 +189,7 @@ static RTEXITCODE gzipCompressFile(PRTVFSIOSTREAM phVfsSrc, PCRTGZIPCMDOPTS pOpt
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "RTZipGzipCompressIoStream failed: %Rrc", rc);
 
     uint32_t cRefs = RTVfsIoStrmRelease(*phVfsDst);
-    Assert(cRefs > 0);
+    Assert(cRefs > 0); RT_NOREF_PV(cRefs);
     *phVfsDst = hVfsGzip;
 
     return gzipPushFlushAndClose(phVfsSrc, pOpts, phVfsDst);
@@ -207,14 +208,28 @@ static RTEXITCODE gzipSetupDecompressor(PRTVFSIOSTREAM phVfsSrc)
     /*
      * Attach the decompressor to the input stream.
      */
+    uint32_t fFlags = 0;
+    fFlags |= RTZIPGZIPDECOMP_F_ALLOW_ZLIB_HDR;
     RTVFSIOSTREAM hVfsGunzip;
-    int rc = RTZipGzipDecompressIoStream(*phVfsSrc, 0 /*fFlags*/, &hVfsGunzip);
+    int rc = RTZipGzipDecompressIoStream(*phVfsSrc, fFlags, &hVfsGunzip);
     if (RT_FAILURE(rc))
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "RTZipGzipDecompressIoStream failed: %Rrc", rc);
 
     uint32_t cRefs = RTVfsIoStrmRelease(*phVfsSrc);
-    Assert(cRefs > 0);
+    Assert(cRefs > 0); RT_NOREF_PV(cRefs);
     *phVfsSrc = hVfsGunzip;
+
+#if 0
+    /* This is a good place for testing stuff. */
+    rc = RTVfsCreateReadAheadForIoStream(*phVfsSrc, 0, 16, _4K+1, &hVfsGunzip);
+    AssertRC(rc);
+    if (RT_SUCCESS(rc))
+    {
+        uint32_t cRefs = RTVfsIoStrmRelease(*phVfsSrc);
+        Assert(cRefs > 0);
+        *phVfsSrc = hVfsGunzip;
+    }
+#endif
 
     return RTEXITCODE_SUCCESS;
 }
@@ -246,6 +261,8 @@ static RTEXITCODE gzipDecompressFile(PRTVFSIOSTREAM phVfsSrc, PCRTGZIPCMDOPTS pO
  */
 static RTEXITCODE gzipTestFile(PRTVFSIOSTREAM phVfsSrc, PCRTGZIPCMDOPTS pOpts)
 {
+    RT_NOREF_PV(pOpts);
+
     /*
      * Read the whole stream.
      */
@@ -269,6 +286,7 @@ static RTEXITCODE gzipTestFile(PRTVFSIOSTREAM phVfsSrc, PCRTGZIPCMDOPTS pOpts)
 
 static RTEXITCODE gzipListFile(PRTVFSIOSTREAM phVfsSrc, PCRTGZIPCMDOPTS pOpts)
 {
+    RT_NOREF2(phVfsSrc, pOpts);
     return RTMsgErrorExit(RTEXITCODE_FAILURE, "Listing has not been implemented");
 }
 
@@ -388,20 +406,12 @@ static RTEXITCODE gzipOpenInput(const char *pszFile, PRTGZIPCMDOPTS pOpts, PRTVF
     }
     else
     {
-        const char *pszError;
-        rc = RTVfsChainOpenIoStream(pszFile, RTFILE_O_READ | RTFILE_O_OPEN | RTFILE_O_DENY_WRITE, phVfsIos, &pszError);
+        uint32_t        offError = 0;
+        RTERRINFOSTATIC ErrInfo;
+        rc = RTVfsChainOpenIoStream(pszFile, RTFILE_O_READ | RTFILE_O_OPEN | RTFILE_O_DENY_WRITE,
+                                    phVfsIos, &offError, RTErrInfoInitStatic(&ErrInfo));
         if (RT_FAILURE(rc))
-        {
-            if (pszError && *pszError)
-                return RTMsgErrorExit(RTEXITCODE_FAILURE,
-                                      "RTVfsChainOpenIoStream failed with rc=%Rrc:\n"
-                                      "    '%s'\n",
-                                      "     %*s^\n",
-                                      rc, pszFile, pszError - pszFile, "");
-            return RTMsgErrorExit(RTEXITCODE_FAILURE,
-                                  "RTVfsChainOpenIoStream failed with rc=%Rrc: '%s'",
-                                  rc, pszFile);
-        }
+            return RTVfsChainMsgErrorExitFailure("RTVfsChainOpenIoStream", pszFile, rc, offError, &ErrInfo.Core);
     }
 
     return RTEXITCODE_SUCCESS;
@@ -470,7 +480,7 @@ RTEXITCODE RTZipGzipCmd(unsigned cArgs, char **papszArgs)
 
     RTEXITCODE  rcExit      = RTEXITCODE_SUCCESS;
     unsigned    cProcessed  = 0;
-    RTVFSIOSTREAM hVfsStdOut= NIL_RTVFSIOSTREAM;
+    //RTVFSIOSTREAM hVfsStdOut= NIL_RTVFSIOSTREAM;
 
     RTGETOPTSTATE GetState;
     int rc = RTGetOptInit(&GetState, cArgs, papszArgs, s_aOptions, RT_ELEMENTS(s_aOptions), 1,
@@ -493,14 +503,17 @@ RTEXITCODE RTZipGzipCmd(unsigned cArgs, char **papszArgs)
                     return rcExit;
                 ValueUnion.psz = "-";
                 Opts.fStdOut = true;
-                /* Fall thru. */
+                RT_FALL_THRU();
             case VINF_GETOPT_NOT_OPTION:
             {
                 if (!*Opts.pszSuff && !Opts.fStdOut)
                     return RTMsgErrorExit(RTEXITCODE_SYNTAX, "The --suffix option specified an empty string");
                 if (!Opts.fStdOut && RTVfsChainIsSpec(ValueUnion.psz))
                     return RTMsgErrorExit(RTEXITCODE_SYNTAX, "Must use standard out with VFS chain specifications");
-                if (Opts.fName)
+                if (   Opts.fName
+                    && !Opts.fList
+                    && !Opts.fTest
+                    && !Opts.fDecompress)
                     return RTMsgErrorExit(RTEXITCODE_SYNTAX, "The --name option has not yet been implemented. Use --no-name.");
                 if (Opts.fAscii)
                     return RTMsgErrorExit(RTEXITCODE_SYNTAX, "The --ascii option has not yet been implemented.");

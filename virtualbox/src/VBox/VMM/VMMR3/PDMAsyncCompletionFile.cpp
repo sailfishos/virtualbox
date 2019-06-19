@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM_ASYNC_COMPLETION
 #include "PDMInternal.h"
 #include <VBox/vmm/pdm.h>
@@ -44,9 +44,10 @@
 
 #include "PDMAsyncCompletionFileInternal.h"
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef VBOX_WITH_DEBUGGER
 static FNDBGCCMD pdmacEpFileErrorInject;
 # ifdef PDM_ASYNC_COMPLETION_FILE_WITH_DELAY
@@ -54,9 +55,10 @@ static FNDBGCCMD pdmacEpFileDelayInject;
 # endif
 #endif
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef VBOX_WITH_DEBUGGER
 static const DBGCVARDESC g_aInjectErrorArgs[] =
 {
@@ -296,7 +298,7 @@ int pdmacFileEpAddTask(PPDMASYNCCOMPLETIONENDPOINTFILE pEndpoint, PPDMACTASKFILE
     return VINF_SUCCESS;
 }
 
-void pdmacFileEpTaskCompleted(PPDMACTASKFILE pTask, void *pvUser, int rc)
+static DECLCALLBACK(void) pdmacFileEpTaskCompleted(PPDMACTASKFILE pTask, void *pvUser, int rc)
 {
     PPDMASYNCCOMPLETIONTASKFILE pTaskFile = (PPDMASYNCCOMPLETIONTASKFILE)pvUser;
 
@@ -506,7 +508,8 @@ int pdmacFileAioMgrCreate(PPDMASYNCCOMPLETIONEPCLASSFILE pEpClass, PPPDMACEPFILE
  * Destroys a async I/O manager.
  *
  * @returns nothing.
- * @param   pAioMgr    The async I/O manager to destroy.
+ * @param   pEpClassFile    Pointer to globals for the file endpoint class.
+ * @param   pAioMgr         The async I/O manager to destroy.
  */
 static void pdmacFileAioMgrDestroy(PPDMASYNCCOMPLETIONEPCLASSFILE pEpClassFile, PPDMACEPFILEMGR pAioMgr)
 {
@@ -535,6 +538,7 @@ static void pdmacFileAioMgrDestroy(PPDMASYNCCOMPLETIONEPCLASSFILE pEpClassFile, 
     /* Free the resources. */
     RTCritSectDelete(&pAioMgr->CritSectBlockingEvent);
     RTSemEventDestroy(pAioMgr->EventSem);
+    RTSemEventDestroy(pAioMgr->EventSemBlock);
     if (pAioMgr->enmMgrType != PDMACEPFILEMGRTYPE_SIMPLE)
         pdmacFileAioMgrNormalDestroy(pAioMgr);
 
@@ -587,24 +591,6 @@ static const char *pdmacFileBackendTypeToName(PDMACFILEEPBACKEND enmBackendType)
         return "NonBuffered";
 
     return NULL;
-}
-
-/**
- * Get the size of the given file.
- * Works for block devices too.
- *
- * @returns VBox status code.
- * @param   hFile    The file handle.
- * @param   pcbSize  Where to store the size of the file on success.
- */
-static int pdmacFileEpNativeGetSize(RTFILE hFile, uint64_t *pcbSize)
-{
-    uint64_t cbFile;
-    int rc = RTFileGetSize(hFile, &cbFile);
-    if (RT_SUCCESS(rc))
-        *pcbSize = cbFile;
-
-    return rc;
 }
 
 #ifdef VBOX_WITH_DEBUGGER
@@ -805,7 +791,7 @@ static DECLCALLBACK(void) pdmacR3TimerCallback(PVM pVM, PTMTIMER pTimer, void *p
 
 #endif /* VBOX_WITH_DEBUGGER */
 
-static int pdmacFileInitialize(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals, PCFGMNODE pCfgNode)
+static DECLCALLBACK(int) pdmacFileInitialize(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals, PCFGMNODE pCfgNode)
 {
     PPDMASYNCCOMPLETIONEPCLASSFILE pEpClassFile = (PPDMASYNCCOMPLETIONEPCLASSFILE)pClassGlobals;
     RTFILEAIOLIMITS                AioLimits; /** < Async I/O limitations. */
@@ -817,8 +803,7 @@ static int pdmacFileInitialize(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals, PCFGMNO
 #endif
     if (RT_FAILURE(rc))
     {
-        LogRel(("AIO: Async I/O manager not supported (rc=%Rrc). Falling back to simple manager\n",
-                rc));
+        LogRel(("AIO: Async I/O manager not supported (rc=%Rrc). Falling back to simple manager\n", rc));
         pEpClassFile->enmMgrTypeOverride = PDMACEPFILEMGRTYPE_SIMPLE;
         pEpClassFile->enmEpBackendDefault = PDMACFILEEPBACKEND_BUFFERED;
     }
@@ -839,7 +824,7 @@ static int pdmacFileInitialize(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals, PCFGMNO
             if (RT_FAILURE(rc))
                 return rc;
 
-            LogRel(("AIOMgr: Default manager type is \"%s\"\n", pdmacFileMgrTypeToName(pEpClassFile->enmMgrTypeOverride)));
+            LogRel(("AIOMgr: Default manager type is '%s'\n", pdmacFileMgrTypeToName(pEpClassFile->enmMgrTypeOverride)));
 
             /* Query default backend type */
             rc = CFGMR3QueryStringAllocDef(pCfgNode, "FileBackend", &pszVal, "NonBuffered");
@@ -850,7 +835,7 @@ static int pdmacFileInitialize(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals, PCFGMNO
             if (RT_FAILURE(rc))
                 return rc;
 
-            LogRel(("AIOMgr: Default file backend is \"%s\"\n", pdmacFileBackendTypeToName(pEpClassFile->enmEpBackendDefault)));
+            LogRel(("AIOMgr: Default file backend is '%s'\n", pdmacFileBackendTypeToName(pEpClassFile->enmEpBackendDefault)));
 
 #ifdef RT_OS_LINUX
             if (   pEpClassFile->enmMgrTypeOverride == PDMACEPFILEMGRTYPE_ASYNC
@@ -890,7 +875,7 @@ static int pdmacFileInitialize(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals, PCFGMNO
     return rc;
 }
 
-static void pdmacFileTerminate(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals)
+static DECLCALLBACK(void) pdmacFileTerminate(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals)
 {
     PPDMASYNCCOMPLETIONEPCLASSFILE pEpClassFile = (PPDMASYNCCOMPLETIONEPCLASSFILE)pClassGlobals;
 
@@ -904,8 +889,8 @@ static void pdmacFileTerminate(PPDMASYNCCOMPLETIONEPCLASS pClassGlobals)
     RTCritSectDelete(&pEpClassFile->CritSect);
 }
 
-static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
-                                 const char *pszUri, uint32_t fFlags)
+static DECLCALLBACK(int) pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
+                                               const char *pszUri, uint32_t fFlags)
 {
     PPDMASYNCCOMPLETIONENDPOINTFILE pEpFile = (PPDMASYNCCOMPLETIONENDPOINTFILE)pEndpoint;
     PPDMASYNCCOMPLETIONEPCLASSFILE pEpClassFile = (PPDMASYNCCOMPLETIONEPCLASSFILE)pEndpoint->pEpClass;
@@ -964,7 +949,7 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
         {
             uint64_t cbSize;
 
-            rc = pdmacFileEpNativeGetSize(hFile, &cbSize);
+            rc = RTFileGetSize(hFile, &cbSize);
 
             if (RT_SUCCESS(rc) && ((cbSize % 512) == 0))
                 fFileFlags |= RTFILE_O_NO_CACHE;
@@ -987,7 +972,7 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
     if (   rc == VERR_INVALID_FUNCTION
         || rc == VERR_INVALID_PARAMETER)
     {
-        LogRel(("pdmacFileEpInitialize: RTFileOpen %s / %08x failed with %Rrc\n",
+        LogRel(("AIOMgr: pdmacFileEpInitialize: RTFileOpen %s / %08x failed with %Rrc\n",
                pszUri, fFileFlags, rc));
         /*
          * Solaris doesn't support directio on ZFS so far. :-\
@@ -1013,7 +998,7 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
 
         if (RT_FAILURE(rc))
         {
-            LogRel(("pdmacFileEpInitialize: RTFileOpen %s / %08x failed AGAIN(!) with %Rrc\n",
+            LogRel(("AIOMgr: pdmacFileEpInitialize: RTFileOpen %s / %08x failed AGAIN(!) with %Rrc\n",
                         pszUri, fFileFlags, rc));
         }
     }
@@ -1022,7 +1007,7 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
     {
         pEpFile->fFlags = fFileFlags;
 
-        rc = pdmacFileEpNativeGetSize(pEpFile->hFile, (uint64_t *)&pEpFile->cbFile);
+        rc = RTFileGetSize(pEpFile->hFile, (uint64_t *)&pEpFile->cbFile);
         if (RT_SUCCESS(rc))
         {
             /* Initialize the segment cache */
@@ -1050,7 +1035,6 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
                 {
                     /* Simple mode. Every file has its own async I/O manager. */
                     rc = pdmacFileAioMgrCreate(pEpClassFile, &pAioMgr, PDMACEPFILEMGRTYPE_SIMPLE);
-                    AssertRC(rc);
                 }
                 else
                 {
@@ -1065,26 +1049,46 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
                     }
 
                     if (!pAioMgr)
-                    {
                         rc = pdmacFileAioMgrCreate(pEpClassFile, &pAioMgr, enmMgrType);
-                        AssertRC(rc);
-                    }
                 }
 
-                pEpFile->AioMgr.pTreeRangesLocked = (PAVLRFOFFTREE)RTMemAllocZ(sizeof(AVLRFOFFTREE));
-                if (!pEpFile->AioMgr.pTreeRangesLocked)
-                    rc = VERR_NO_MEMORY;
+                if (RT_SUCCESS(rc))
+                {
+                    pEpFile->AioMgr.pTreeRangesLocked = (PAVLRFOFFTREE)RTMemAllocZ(sizeof(AVLRFOFFTREE));
+                    if (!pEpFile->AioMgr.pTreeRangesLocked)
+                        rc = VERR_NO_MEMORY;
+                    else
+                    {
+                        pEpFile->enmState = PDMASYNCCOMPLETIONENDPOINTFILESTATE_ACTIVE;
+
+                        /* Assign the endpoint to the thread. */
+                        rc = pdmacFileAioMgrAddEndpoint(pAioMgr, pEpFile);
+                        if (RT_FAILURE(rc))
+                        {
+                            RTMemFree(pEpFile->AioMgr.pTreeRangesLocked);
+                            MMR3HeapFree(pEpFile->pTasksFreeHead);
+                        }
+                    }
+                }
+                else if (rc == VERR_FILE_AIO_INSUFFICIENT_EVENTS)
+                {
+                    PUVM pUVM = VMR3GetUVM(pEpClassFile->Core.pVM);
+#if defined(RT_OS_LINUX)
+                    rc = VMR3SetError(pUVM, rc, RT_SRC_POS,
+                                      N_("Failed to create I/O manager for VM due to insufficient resources on the host. "
+                                         "Either increase the amount of allowed events in /proc/sys/fs/aio-max-nr or enable "
+                                         "the host I/O cache"));
+#else
+                    rc = VMR3SetError(pUVM, rc, RT_SRC_POS,
+                                      N_("Failed to create I/O manager for VM due to insufficient resources on the host. "
+                                         "Enable the host I/O cache"));
+#endif
+                }
                 else
                 {
-                    pEpFile->enmState = PDMASYNCCOMPLETIONENDPOINTFILESTATE_ACTIVE;
-
-                    /* Assign the endpoint to the thread. */
-                    rc = pdmacFileAioMgrAddEndpoint(pAioMgr, pEpFile);
-                    if (RT_FAILURE(rc))
-                    {
-                        RTMemFree(pEpFile->AioMgr.pTreeRangesLocked);
-                        MMR3HeapFree(pEpFile->pTasksFreeHead);
-                    }
+                    PUVM pUVM = VMR3GetUVM(pEpClassFile->Core.pVM);
+                    rc = VMR3SetError(pUVM, rc, RT_SRC_POS,
+                                      N_("Failed to create I/O manager for VM due to an unknown error"));
                 }
             }
         }
@@ -1099,12 +1103,12 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
         STAMR3RegisterF(pEpClassFile->Core.pVM, &pEpFile->StatRead,
                        STAMTYPE_PROFILE_ADV, STAMVISIBILITY_ALWAYS,
                        STAMUNIT_TICKS_PER_CALL, "Time taken to read from the endpoint",
-                       "/PDM/AsyncCompletion/File/%s/Read", RTPathFilename(pEpFile->Core.pszUri));
+                       "/PDM/AsyncCompletion/File/%s/%d/Read", RTPathFilename(pEpFile->Core.pszUri), pEpFile->Core.iStatId);
 
         STAMR3RegisterF(pEpClassFile->Core.pVM, &pEpFile->StatWrite,
                        STAMTYPE_PROFILE_ADV, STAMVISIBILITY_ALWAYS,
                        STAMUNIT_TICKS_PER_CALL, "Time taken to write to the endpoint",
-                       "/PDM/AsyncCompletion/File/%s/Write", RTPathFilename(pEpFile->Core.pszUri));
+                       "/PDM/AsyncCompletion/File/%s/%d/Write", RTPathFilename(pEpFile->Core.pszUri), pEpFile->Core.iStatId);
     }
 #endif
 
@@ -1114,14 +1118,14 @@ static int pdmacFileEpInitialize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint,
     return rc;
 }
 
-static int pdmacFileEpRangesLockedDestroy(PAVLRFOFFNODECORE pNode, void *pvUser)
+static DECLCALLBACK(int) pdmacFileEpRangesLockedDestroy(PAVLRFOFFNODECORE pNode, void *pvUser)
 {
     NOREF(pNode); NOREF(pvUser);
     AssertMsgFailed(("The locked ranges tree should be empty at that point\n"));
     return VINF_SUCCESS;
 }
 
-static int pdmacFileEpClose(PPDMASYNCCOMPLETIONENDPOINT pEndpoint)
+static DECLCALLBACK(int) pdmacFileEpClose(PPDMASYNCCOMPLETIONENDPOINT pEndpoint)
 {
     PPDMASYNCCOMPLETIONENDPOINTFILE pEpFile      = (PPDMASYNCCOMPLETIONENDPOINTFILE)pEndpoint;
     PPDMASYNCCOMPLETIONEPCLASSFILE  pEpClassFile = (PPDMASYNCCOMPLETIONEPCLASSFILE)pEndpoint->pEpClass;
@@ -1149,6 +1153,8 @@ static int pdmacFileEpClose(PPDMASYNCCOMPLETIONENDPOINT pEndpoint)
 
     /* Destroy the locked ranges tree now. */
     RTAvlrFileOffsetDestroy(pEpFile->AioMgr.pTreeRangesLocked, pdmacFileEpRangesLockedDestroy, NULL);
+    RTMemFree(pEpFile->AioMgr.pTreeRangesLocked);
+    pEpFile->AioMgr.pTreeRangesLocked = NULL;
 
     RTFileClose(pEpFile->hFile);
 
@@ -1160,10 +1166,10 @@ static int pdmacFileEpClose(PPDMASYNCCOMPLETIONENDPOINT pEndpoint)
     return VINF_SUCCESS;
 }
 
-static int pdmacFileEpRead(PPDMASYNCCOMPLETIONTASK pTask,
-                           PPDMASYNCCOMPLETIONENDPOINT pEndpoint, RTFOFF off,
-                           PCRTSGSEG paSegments, size_t cSegments,
-                           size_t cbRead)
+static DECLCALLBACK(int) pdmacFileEpRead(PPDMASYNCCOMPLETIONTASK pTask,
+                                         PPDMASYNCCOMPLETIONENDPOINT pEndpoint, RTFOFF off,
+                                         PCRTSGSEG paSegments, size_t cSegments,
+                                         size_t cbRead)
 {
     PPDMASYNCCOMPLETIONENDPOINTFILE pEpFile = (PPDMASYNCCOMPLETIONENDPOINTFILE)pEndpoint;
 
@@ -1182,10 +1188,10 @@ static int pdmacFileEpRead(PPDMASYNCCOMPLETIONTASK pTask,
     return rc;
 }
 
-static int pdmacFileEpWrite(PPDMASYNCCOMPLETIONTASK pTask,
-                            PPDMASYNCCOMPLETIONENDPOINT pEndpoint, RTFOFF off,
-                            PCRTSGSEG paSegments, size_t cSegments,
-                            size_t cbWrite)
+static DECLCALLBACK(int) pdmacFileEpWrite(PPDMASYNCCOMPLETIONTASK pTask,
+                                          PPDMASYNCCOMPLETIONENDPOINT pEndpoint, RTFOFF off,
+                                          PCRTSGSEG paSegments, size_t cSegments,
+                                          size_t cbWrite)
 {
     PPDMASYNCCOMPLETIONENDPOINTFILE pEpFile = (PPDMASYNCCOMPLETIONENDPOINTFILE)pEndpoint;
 
@@ -1204,8 +1210,8 @@ static int pdmacFileEpWrite(PPDMASYNCCOMPLETIONTASK pTask,
     return rc;
 }
 
-static int pdmacFileEpFlush(PPDMASYNCCOMPLETIONTASK pTask,
-                            PPDMASYNCCOMPLETIONENDPOINT pEndpoint)
+static DECLCALLBACK(int) pdmacFileEpFlush(PPDMASYNCCOMPLETIONTASK pTask,
+                                          PPDMASYNCCOMPLETIONENDPOINT pEndpoint)
 {
     PPDMASYNCCOMPLETIONENDPOINTFILE pEpFile   = (PPDMASYNCCOMPLETIONENDPOINTFILE)pEndpoint;
     PPDMASYNCCOMPLETIONTASKFILE     pTaskFile = (PPDMASYNCCOMPLETIONTASKFILE)pTask;
@@ -1228,7 +1234,7 @@ static int pdmacFileEpFlush(PPDMASYNCCOMPLETIONTASK pTask,
     return VINF_AIO_TASK_PENDING;
 }
 
-static int pdmacFileEpGetSize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint, uint64_t *pcbSize)
+static DECLCALLBACK(int) pdmacFileEpGetSize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint, uint64_t *pcbSize)
 {
     PPDMASYNCCOMPLETIONENDPOINTFILE pEpFile = (PPDMASYNCCOMPLETIONENDPOINTFILE)pEndpoint;
 
@@ -1237,7 +1243,7 @@ static int pdmacFileEpGetSize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint, uint64_t *p
     return VINF_SUCCESS;
 }
 
-static int pdmacFileEpSetSize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint, uint64_t cbSize)
+static DECLCALLBACK(int) pdmacFileEpSetSize(PPDMASYNCCOMPLETIONENDPOINT pEndpoint, uint64_t cbSize)
 {
     int rc;
     PPDMASYNCCOMPLETIONENDPOINTFILE pEpFile = (PPDMASYNCCOMPLETIONENDPOINTFILE)pEndpoint;

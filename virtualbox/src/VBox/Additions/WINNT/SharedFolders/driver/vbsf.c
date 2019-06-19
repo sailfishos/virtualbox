@@ -1,12 +1,10 @@
 /* $Id: vbsf.c $ */
 /** @file
- * VirtualBox Windows Guest Shared Folders.
- *
- * File System Driver initialization and generic routines
+ * VirtualBox Windows Guest Shared Folders - File System Driver initialization and generic routines
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,6 +16,7 @@
  */
 
 #include "vbsf.h"
+
 
 /*
  * The current state of the driver.
@@ -43,13 +42,12 @@ PRDBSS_DEVICE_OBJECT VBoxMRxDeviceObject;
 
 static NTSTATUS VBoxMRxFsdDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
 {
-    NTSTATUS Status = STATUS_SUCCESS;
+    NTSTATUS Status;
+#ifdef LOG_ENABLED
     PIO_STACK_LOCATION IrpSp = IoGetCurrentIrpStackLocation(Irp);
-    UCHAR MajorFunctionCode = IrpSp->MajorFunction;
-    ULONG MinorFunctionCode = IrpSp->MinorFunction;
-
     Log(("VBOXSF: MRxFsdDispatch: major %d, minor %d: %s\n",
-         MajorFunctionCode, MinorFunctionCode, MajorFunctionString(MajorFunctionCode, MinorFunctionCode)));
+         IrpSp->MajorFunction, IrpSp->MinorFunction, MajorFunctionString(IrpSp->MajorFunction, IrpSp->MinorFunction)));
+#endif
 
     if (DeviceObject != (PDEVICE_OBJECT)VBoxMRxDeviceObject)
     {
@@ -64,9 +62,7 @@ static NTSTATUS VBoxMRxFsdDispatch(IN PDEVICE_OBJECT DeviceObject, IN PIRP Irp)
     }
 
     Status = RxFsdDispatch((PRDBSS_DEVICE_OBJECT)VBoxMRxDeviceObject, Irp);
-
-    Log(("VBOXSF: MRxFsdDispatch: Returned 0x%X\n",
-         Status));
+    Log(("VBOXSF: MRxFsdDispatch: Returned 0x%X\n", Status));
     return Status;
 }
 
@@ -81,10 +77,10 @@ static void VBoxMRxUnload(IN PDRIVER_OBJECT DriverObject)
     {
         PMRX_VBOX_DEVICE_EXTENSION pDeviceExtension;
         pDeviceExtension = (PMRX_VBOX_DEVICE_EXTENSION)((PBYTE)VBoxMRxDeviceObject + sizeof(RDBSS_DEVICE_OBJECT));
-        vboxDisconnect (&pDeviceExtension->hgcmClient);
+        VbglR0SfDisconnect(&pDeviceExtension->hgcmClient);
     }
 
-    vboxUninit();
+    VbglR0SfTerm();
 
     if (VBoxMRxDeviceObject)
     {
@@ -407,10 +403,10 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
     NTSTATUS Status;
     UNICODE_STRING VBoxMRxName;
     UNICODE_STRING UserModeDeviceName;
-    PMRX_VBOX_DEVICE_EXTENSION pDeviceExtension;
+    PMRX_VBOX_DEVICE_EXTENSION pDeviceExtension = NULL;
     ULONG i;
     int vboxRC;
-    VBSFCLIENT hgcmClient;
+    VBGLSFCLIENT hgcmClient;
 
     Log(("VBOXSF: DriverEntry: Driver object %p\n", DriverObject));
 
@@ -421,7 +417,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
     }
 
     /* Initialize VBox subsystem. */
-    vboxRC = vboxInit();
+    vboxRC = VbglR0SfInit();
     if (RT_FAILURE(vboxRC))
     {
         Log(("VBOXSF: DriverEntry: ERROR while initializing VBox subsystem (%Rrc)!\n", vboxRC));
@@ -430,12 +426,12 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
 
     /* Connect the HGCM client */
     RT_ZERO(hgcmClient);
-    vboxRC = vboxConnect(&hgcmClient);
+    vboxRC = VbglR0SfConnect(&hgcmClient);
     if (RT_FAILURE(vboxRC))
     {
         Log(("VBOXSF: DriverEntry: ERROR while connecting to host (%Rrc)!\n",
              vboxRC));
-        vboxUninit();
+        VbglR0SfTerm();
         return STATUS_UNSUCCESSFUL;
     }
 
@@ -479,7 +475,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
         if (Status!=STATUS_SUCCESS)
         {
             Log(("VBOXSF: DriverEntry: RxRegisterMinirdr failed: 0x%08X\n", Status ));
-            try_return(Status);
+            try_return((void)Status);
         }
 
         /* Init the device extension.
@@ -511,7 +507,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
         {
             Log(("VBOXSF: DriverEntry: IoCreateSymbolicLink: 0x%08X\n",
                  Status));
-            try_return(Status);
+            try_return((void)Status);
         }
         Log(("VBOXSF: DriverEntry: Symbolic link created.\n"));
 
@@ -535,6 +531,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
         goto failure;
     }
 
+    AssertPtr(pDeviceExtension);
     pDeviceExtension->hgcmClient = hgcmClient;
 
     /* The redirector driver must intercept the IOCTL to avoid VBOXSVR name resolution
@@ -545,7 +542,7 @@ NTSTATUS DriverEntry(IN PDRIVER_OBJECT  DriverObject,
     pDeviceExtension->pfnRDBSSDeviceControl = DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL];
     DriverObject->MajorFunction[IRP_MJ_DEVICE_CONTROL] = VBoxMRXDeviceControl;
 
-    /* @todo start the redirector here RxStartMiniRdr. */
+    /** @todo start the redirector here RxStartMiniRdr. */
 
     Log(("VBOXSF: DriverEntry: Init successful!\n"));
     return STATUS_SUCCESS;
@@ -554,8 +551,8 @@ failure:
 
     Log(("VBOXSF: DriverEntry: Failure! Status = 0x%08X\n", Status));
 
-    vboxDisconnect(&hgcmClient);
-    vboxUninit();
+    VbglR0SfDisconnect(&hgcmClient);
+    VbglR0SfTerm();
 
     if (VBoxMRxDeviceObject)
     {
@@ -570,6 +567,7 @@ NTSTATUS VBoxMRxStart(PRX_CONTEXT RxContext, IN OUT PRDBSS_DEVICE_OBJECT RxDevic
 {
     NTSTATUS Status;
     MRX_VBOX_STATE CurrentState;
+    RT_NOREF(RxContext, RxDeviceObject);
 
     Log(("VBOXSF: MRxStart\n"));
 
@@ -596,14 +594,15 @@ NTSTATUS VBoxMRxStart(PRX_CONTEXT RxContext, IN OUT PRDBSS_DEVICE_OBJECT RxDevic
 
 NTSTATUS VBoxMRxStop(PRX_CONTEXT RxContext, IN OUT PRDBSS_DEVICE_OBJECT RxDeviceObject)
 {
+    RT_NOREF(RxContext, RxDeviceObject);
     Log(("VBOXSF: MRxStop\n"));
     return STATUS_SUCCESS;
 }
 
 NTSTATUS VBoxMRxIoCtl(IN OUT PRX_CONTEXT RxContext)
 {
-    Log(("VBOXSF: MRxIoCtl: IoControlCode = 0x%08X\n",
-         RxContext->LowIoContext.ParamsFor.FsCtl.FsControlCode));
+    RT_NOREF(RxContext);
+    Log(("VBOXSF: MRxIoCtl: IoControlCode = 0x%08X\n", RxContext->LowIoContext.ParamsFor.FsCtl.FsControlCode));
     return STATUS_INVALID_DEVICE_REQUEST;
 }
 
@@ -633,6 +632,12 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
         case IRP_MJ_DEVICE_CONTROL:
         {
+            Log(("VBOXSF: MRxDevFcbXXXControlFile: IRP_MJ_DEVICE_CONTROL: InputBuffer %p/%d, OutputBuffer %p/%d\n",
+                 LowIoContext->ParamsFor.IoCtl.pInputBuffer,
+                 LowIoContext->ParamsFor.IoCtl.InputBufferLength,
+                 LowIoContext->ParamsFor.IoCtl.pOutputBuffer,
+                 LowIoContext->ParamsFor.IoCtl.OutputBufferLength));
+
             switch (LowIoContext->ParamsFor.IoCtl.IoControlCode)
             {
                 case IOCTL_MRX_VBOX_ADDCONN:
@@ -654,39 +659,39 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                     ULONG cbOut = LowIoContext->ParamsFor.IoCtl.OutputBufferLength;
                     uint8_t *pu8Out = (uint8_t *)LowIoContext->ParamsFor.IoCtl.pOutputBuffer;
 
+                    BOOLEAN fLocked = FALSE;
+
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETLIST\n"));
 
-                    if (!pDeviceExtension)
+                    RxContext->InformationToReturn = 0;
+
+                    if (   !pDeviceExtension
+                        || cbOut < _MRX_MAX_DRIVE_LETTERS)
                     {
-                        RxContext->InformationToReturn = 0;
+                        Status = STATUS_INVALID_PARAMETER;
                         break;
                     }
 
-                    if (cbOut >= _MRX_MAX_DRIVE_LETTERS && !pu8Out)
+                    Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETLIST: Copying local connections\n"));
+
+                    fLocked = ExTryToAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
+
+                    __try
                     {
-                        BOOLEAN fLocked = FALSE;
-
-                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETLIST: Copying local connections\n"));
-
-                        fLocked = ExTryToAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
-
                         RtlCopyMemory(pu8Out, pDeviceExtension->cLocalConnections, _MRX_MAX_DRIVE_LETTERS);
-
-                        if (fLocked)
-                        {
-                            ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
-                        }
-
                         RxContext->InformationToReturn = _MRX_MAX_DRIVE_LETTERS;
                     }
-                    else
+                    __except(EXCEPTION_EXECUTE_HANDLER)
                     {
-                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETLIST: cbOut is too small %d bytes\n",
-                             cbOut));
-                        RxContext->InformationToReturn = 0;
+                        Status = STATUS_INVALID_PARAMETER;
                     }
 
-                    Status = STATUS_SUCCESS;
+                    if (fLocked)
+                    {
+                        ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+                        fLocked = FALSE;
+                    }
+
                     break;
                 }
 
@@ -698,21 +703,25 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                     ULONG cbOut = LowIoContext->ParamsFor.IoCtl.OutputBufferLength;
                     uint8_t *pu8Out = (uint8_t *)LowIoContext->ParamsFor.IoCtl.pOutputBuffer;
 
+                    int vboxRC;
+                    SHFLMAPPING mappings[_MRX_MAX_DRIVE_LETTERS];
+                    uint32_t cMappings = RT_ELEMENTS(mappings);
+
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALLIST\n"));
 
                     RxContext->InformationToReturn = 0;
 
-                    if (!pDeviceExtension)
-                        break;
-
-                    if (cbOut >= _MRX_MAX_DRIVE_LETTERS && !pu8Out)
+                    if (   !pDeviceExtension
+                        || cbOut < _MRX_MAX_DRIVE_LETTERS)
                     {
-                        SHFLMAPPING mappings[_MRX_MAX_DRIVE_LETTERS];
-                        uint32_t cMappings = RT_ELEMENTS(mappings);
+                        Status = STATUS_INVALID_PARAMETER;
+                        break;
+                    }
 
-                        int vboxRC = vboxCallQueryMappings(&pDeviceExtension->hgcmClient, mappings, &cMappings);
-
-                        if (vboxRC == VINF_SUCCESS)
+                    vboxRC = VbglR0SfQueryMappings(&pDeviceExtension->hgcmClient, mappings, &cMappings);
+                    if (vboxRC == VINF_SUCCESS)
+                    {
+                        __try
                         {
                             uint32_t i;
 
@@ -726,15 +735,18 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
                             RxContext->InformationToReturn = _MRX_MAX_DRIVE_LETTERS;
                         }
-                        else
+                        __except(EXCEPTION_EXECUTE_HANDLER)
                         {
-                            Status = VBoxErrorToNTStatus(vboxRC);
-                            Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALLIST failed: 0x%08X\n",
-                                 Status));
+                            Status = STATUS_INVALID_PARAMETER;
                         }
                     }
+                    else
+                    {
+                        Status = VBoxErrorToNTStatus(vboxRC);
+                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALLIST failed: 0x%08X\n",
+                             Status));
+                    }
 
-                    Status = STATUS_SUCCESS;
                     break;
                 }
 
@@ -746,14 +758,17 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
                 {
                     ULONG cbConnectName = LowIoContext->ParamsFor.IoCtl.InputBufferLength;
                     PWCHAR pwcConnectName = (PWCHAR)LowIoContext->ParamsFor.IoCtl.pInputBuffer;
-
                     ULONG cbRemoteName = LowIoContext->ParamsFor.IoCtl.OutputBufferLength;
                     PWCHAR pwcRemoteName = (PWCHAR)LowIoContext->ParamsFor.IoCtl.pOutputBuffer;
 
-                    Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: ConnectName = %.*ls, Len = %d, RemoteName = 0x%p, Len = %d\n",
-                         cbConnectName / sizeof(WCHAR), pwcConnectName, cbConnectName, pwcRemoteName, cbRemoteName));
+                    BOOLEAN fMutexAcquired = FALSE;
 
-                    if (!pDeviceExtension)
+                    Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN\n"));
+
+                    RxContext->InformationToReturn = 0;
+
+                    if (   !pDeviceExtension
+                        || cbConnectName < sizeof(WCHAR))
                     {
                         Status = STATUS_INVALID_PARAMETER;
                         break;
@@ -761,58 +776,63 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
                     Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: Looking up connection name and connections\n"));
 
-                    if (cbConnectName > sizeof(WCHAR) && !pwcConnectName)
+                    __try
                     {
-                        ULONG cbLocalConnectionName;
-
                         uint32_t idx = *pwcConnectName - L'A';
 
-                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: Index = %d\n", idx));
+                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: ConnectName = %.*ls, Len = %d, Index = %d\n",
+                             cbConnectName / sizeof(WCHAR), pwcConnectName, cbConnectName, idx));
 
-                        if (idx >= RTL_NUMBER_OF(pDeviceExtension->wszLocalConnectionName))
+                        if (idx < RTL_NUMBER_OF(pDeviceExtension->wszLocalConnectionName))
                         {
-                            Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: Index is invalid!\n"));
-                            Status = STATUS_INVALID_PARAMETER;
-                            break;
-                        }
+                            ExAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
+                            fMutexAcquired = TRUE;
 
-                        ExAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
+                            if (pDeviceExtension->wszLocalConnectionName[idx])
+                            {
+                                ULONG cbLocalConnectionName = pDeviceExtension->wszLocalConnectionName[idx]->Length;
 
-                        if (!pDeviceExtension->wszLocalConnectionName[idx])
-                        {
-                            Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: LocalConnectionName is NULL!\n"));
-                            ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
-                            Status = STATUS_BAD_NETWORK_NAME;
-                            break;
-                        }
+                                Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: LocalConnectionName = %.*ls\n",
+                                     cbLocalConnectionName / sizeof(WCHAR), pDeviceExtension->wszLocalConnectionName[idx]->Buffer));
 
-                        cbLocalConnectionName = pDeviceExtension->wszLocalConnectionName[idx]->Length;
+                                if ((pDeviceExtension->cLocalConnections[idx]) && (cbLocalConnectionName <= cbRemoteName))
+                                {
+                                    RtlZeroMemory(pwcRemoteName, cbRemoteName);
+                                    RtlCopyMemory(pwcRemoteName,
+                                                  pDeviceExtension->wszLocalConnectionName[idx]->Buffer,
+                                                  cbLocalConnectionName);
 
-                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: LocalConnectionName = %.*ls\n",
-                             cbLocalConnectionName / sizeof(WCHAR), pDeviceExtension->wszLocalConnectionName[idx]->Buffer));
+                                    Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: Remote name = %.*ls, Len = %d\n",
+                                         cbLocalConnectionName / sizeof(WCHAR), pwcRemoteName, cbLocalConnectionName));
+                                }
+                                else
+                                {
+                                    Status = STATUS_BUFFER_TOO_SMALL;
+                                }
 
-                        if ((pDeviceExtension->cLocalConnections[idx]) && (cbLocalConnectionName <= cbRemoteName))
-                        {
-                            RtlZeroMemory(pwcRemoteName, cbRemoteName);
-                            RtlCopyMemory(pwcRemoteName, pDeviceExtension->wszLocalConnectionName[idx]->Buffer, cbLocalConnectionName);
-
-                            Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: Remote name = %.*ls, Len = %d\n",
-                                 cbLocalConnectionName / sizeof(WCHAR), pwcRemoteName, cbLocalConnectionName));
-
-                            RxContext->InformationToReturn = cbLocalConnectionName;
+                                RxContext->InformationToReturn = cbLocalConnectionName;
+                            }
+                            else
+                            {
+                                Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: LocalConnectionName is NULL!\n"));
+                                Status = STATUS_BAD_NETWORK_NAME;
+                            }
                         }
                         else
                         {
-                            Status = STATUS_BUFFER_TOO_SMALL;
-                            RxContext->InformationToReturn = cbLocalConnectionName;
+                            Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: Index is invalid!\n"));
+                            Status = STATUS_INVALID_PARAMETER;
                         }
-
-                        ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
                     }
-                    else
+                    __except(EXCEPTION_EXECUTE_HANDLER)
                     {
-                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETCONN: bad connect name!n"));
-                        Status = STATUS_BAD_NETWORK_NAME;
+                        Status = STATUS_INVALID_PARAMETER;
+                    }
+
+                    if (fMutexAcquired)
+                    {
+                        ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+                        fMutexAcquired = FALSE;
                     }
 
                     break;
@@ -820,52 +840,58 @@ NTSTATUS VBoxMRxDevFcbXXXControlFile(IN OUT PRX_CONTEXT RxContext)
 
                 case IOCTL_MRX_VBOX_GETGLOBALCONN:
                 {
-                    ULONG ReturnedSize = 0;
-
-                    uint8_t *pConnectId = (uint8_t *)LowIoContext->ParamsFor.IoCtl.pInputBuffer;
+                    ULONG cbConnectId = LowIoContext->ParamsFor.IoCtl.InputBufferLength;
+                    uint8_t *pu8ConnectId = (uint8_t *)LowIoContext->ParamsFor.IoCtl.pInputBuffer;
                     ULONG cbRemoteName = LowIoContext->ParamsFor.IoCtl.OutputBufferLength;
                     PWCHAR pwcRemoteName = (PWCHAR)LowIoContext->ParamsFor.IoCtl.pOutputBuffer;
 
                     int vboxRC;
                     PSHFLSTRING pString;
-                    uint32_t cbString;
 
-                    Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALCONN: Connection ID = %d, RemoteName = 0x%x, Len = %d\n",
-                         *pConnectId, pwcRemoteName, cbRemoteName));
+                    Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALCONN\n"));
 
-                    cbString = sizeof(SHFLSTRING) + cbRemoteName;
-                    pString = (PSHFLSTRING)vbsfAllocNonPagedMem(cbString);
-                    if (!pString)
+                    RxContext->InformationToReturn = 0;
+
+                    if (   !pDeviceExtension
+                        || cbConnectId < sizeof(uint8_t))
                     {
-                        Status = STATUS_INSUFFICIENT_RESOURCES;
-                        break;
-                    }
-                    memset(pString, 0, cbString);
-                    if (!ShflStringInitBuffer(pString, cbString))
-                    {
-                        vbsfFreeNonPagedMem(pString);
-                        Status = STATUS_BAD_NETWORK_NAME;
+                        Status = STATUS_INVALID_PARAMETER;
                         break;
                     }
 
-                    vboxRC = vboxCallQueryMapName(&pDeviceExtension->hgcmClient,
-                                                  (*pConnectId) & ~0x80 /** @todo fix properly */,
-                                                  pString, cbString);
-                    if (   vboxRC == VINF_SUCCESS
-                        && pString->u16Length < cbRemoteName)
+                    /* Allocate empty string where the host can store cbRemoteName bytes. */
+                    Status = vbsfShflStringFromUnicodeAlloc(&pString, NULL, (uint16_t)cbRemoteName);
+                    if (Status != STATUS_SUCCESS)
+                        break;
+
+                    __try
                     {
-                        ReturnedSize = pString->u16Length;
-                        RtlCopyMemory(pwcRemoteName, pString->String.ucs2, pString->u16Length);
-                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALCONN: Returned name = %.*ls, Len = %d\n",
-                             ReturnedSize / sizeof(WCHAR), pwcRemoteName, ReturnedSize));
-                        Status = STATUS_SUCCESS;
+                        Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALCONN: Connection ID = %d\n",
+                             *pu8ConnectId));
+
+                        vboxRC = VbglR0SfQueryMapName(&pDeviceExtension->hgcmClient,
+                                                      (*pu8ConnectId) & ~0x80 /** @todo fix properly */,
+                                                      pString, ShflStringSizeOfBuffer(pString));
+                        if (   vboxRC == VINF_SUCCESS
+                            && pString->u16Length < cbRemoteName)
+                        {
+                            RtlCopyMemory(pwcRemoteName, pString->String.ucs2, pString->u16Length);
+                            Log(("VBOXSF: MRxDevFcbXXXControlFile: IOCTL_MRX_VBOX_GETGLOBALCONN: Returned name = %.*ls, Len = %d\n",
+                                 pString->u16Length / sizeof(WCHAR), pwcRemoteName, pString->u16Length));
+                            RxContext->InformationToReturn = pString->u16Length;
+                        }
+                        else
+                        {
+                            Status = STATUS_BAD_NETWORK_NAME;
+                        }
                     }
-                    else
-                        Status = STATUS_BAD_NETWORK_NAME;
+                    __except(EXCEPTION_EXECUTE_HANDLER)
+                    {
+                        Status = STATUS_INVALID_PARAMETER;
+                    }
 
                     vbsfFreeNonPagedMem(pString);
 
-                    RxContext->InformationToReturn = ReturnedSize;
                     break;
                 }
 
@@ -1080,7 +1106,7 @@ static NTSTATUS vbsfVerifyConnectionName(PUNICODE_STRING ConnectionName)
                pwc += 2;
                cRemainingName -= 2;
 
-               /* @todo should also check that the drive letter corresponds to the name. */
+               /** @todo should also check that the drive letter corresponds to the name. */
                if (vboxIsPrefixOK(pwc, cRemainingName * sizeof (WCHAR)))
                    Status = STATUS_SUCCESS;
            }
@@ -1090,7 +1116,7 @@ static NTSTATUS vbsfVerifyConnectionName(PUNICODE_STRING ConnectionName)
     return Status;
 }
 
-static HANDLE vbsfOpenConnectionHandle(PUNICODE_STRING ConnectionName)
+static HANDLE vbsfOpenConnectionHandle(PUNICODE_STRING ConnectionName, NTSTATUS *prcNt)
 {
     NTSTATUS Status;
     IO_STATUS_BLOCK IoStatusBlock;
@@ -1128,8 +1154,9 @@ static HANDLE vbsfOpenConnectionHandle(PUNICODE_STRING ConnectionName)
     if (   Status != STATUS_SUCCESS
         || Handle == INVALID_HANDLE_VALUE)
     {
-        Log(("VBOXSF: vbsfOpenConnectionHandle: ZwCreateFile failed status 0x%08X or invalid handle!\n",
-             Status));
+        Log(("VBOXSF: vbsfOpenConnectionHandle: ZwCreateFile failed status 0x%08X or invalid handle!\n", Status));
+        if (prcNt)
+            *prcNt = !NT_SUCCESS(Status) ? Status : STATUS_UNSUCCESSFUL;
         Handle = INVALID_HANDLE_VALUE;
     }
 
@@ -1149,6 +1176,8 @@ NTSTATUS vbsfCreateConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
     HANDLE Handle;
     UNICODE_STRING FileName;
 
+    BOOLEAN fMutexAcquired = FALSE;
+
     Log(("VBOXSF: vbsfCreateConnection\n"));
 
     if (!BooleanFlagOn(RxContext->Flags, RX_CONTEXT_FLAG_WAIT))
@@ -1159,13 +1188,12 @@ NTSTATUS vbsfCreateConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
     }
 
     pDeviceExtension = VBoxMRxGetDeviceExtension(RxContext);
+    if (!pDeviceExtension)
+        return STATUS_INVALID_PARAMETER;
 
     LowIoContext = &RxContext->LowIoContext;
     cbConnectName = LowIoContext->ParamsFor.IoCtl.InputBufferLength;
     pwcConnectName = (PWCHAR)LowIoContext->ParamsFor.IoCtl.pInputBuffer;
-
-    if (!pDeviceExtension)
-        return STATUS_INVALID_PARAMETER;
 
     if (cbConnectName == 0 || !pwcConnectName)
     {
@@ -1173,92 +1201,107 @@ NTSTATUS vbsfCreateConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
         return STATUS_INVALID_PARAMETER;
     }
 
-    Log(("VBOXSF: vbsfCreateConnection: Name = %.*ls, Len = %d\n",
-         cbConnectName / sizeof(WCHAR), pwcConnectName, cbConnectName));
-
-    FileName.Buffer = pwcConnectName;
-    FileName.Length = (USHORT)cbConnectName;
-    FileName.MaximumLength = (USHORT)cbConnectName;
-
-    Handle = vbsfOpenConnectionHandle(&FileName);
-
-    if (Handle != INVALID_HANDLE_VALUE)
+    __try
     {
-        PWCHAR pwc;
-        ULONG i;
+        Log(("VBOXSF: vbsfCreateConnection: Name = %.*ls, Len = %d\n",
+             cbConnectName / sizeof(WCHAR), pwcConnectName, cbConnectName));
 
-        ZwClose(Handle);
+        FileName.Buffer = pwcConnectName;
+        FileName.Length = (USHORT)cbConnectName;
+        FileName.MaximumLength = (USHORT)cbConnectName;
 
-        /* Skip the "\Device\VBoxMiniRdr\;X:" of the string "\Device\VBoxMiniRdr\;X:\vboxsrv\sf" */
-        pwc = pwcConnectName;
-        for (i = 0; i < cbConnectName; i += sizeof(WCHAR))
+        Handle = vbsfOpenConnectionHandle(&FileName, NULL);
+
+        if (Handle != INVALID_HANDLE_VALUE)
         {
-            if (*pwc == L':')
-                break;
-            pwc++;
-        }
+            PWCHAR pwc;
+            ULONG i;
 
-        if (i >= sizeof(WCHAR) && i < cbConnectName)
-        {
-            pwc--; /* Go back to the drive letter, "X" for example. */
+            ZwClose(Handle);
 
-            if (*pwc >= L'A' && *pwc <= L'Z') /* Are we in range? */
+            /* Skip the "\Device\VBoxMiniRdr\;X:" of the string "\Device\VBoxMiniRdr\;X:\vboxsrv\sf" */
+            pwc = pwcConnectName;
+            for (i = 0; i < cbConnectName; i += sizeof(WCHAR))
             {
-                uint32_t idx = *pwc - L'A'; /* Get the index based on the driver letter numbers (26). */
+                if (*pwc == L':')
+                    break;
+                pwc++;
+            }
 
-                if (idx >= RTL_NUMBER_OF(pDeviceExtension->cLocalConnections))
+            if (i >= sizeof(WCHAR) && i < cbConnectName)
+            {
+                pwc--; /* Go back to the drive letter, "X" for example. */
+
+                if (*pwc >= L'A' && *pwc <= L'Z') /* Are we in range? */
                 {
-                    Log(("VBOXSF: vbsfCreateConnection: Index 0x%x is invalid!\n",
-                         idx));
-                    Status = STATUS_BAD_NETWORK_NAME;
-                }
-                else
-                {
-                    ExAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
+                    uint32_t idx = *pwc - L'A'; /* Get the index based on the driver letter numbers (26). */
 
-                    if (pDeviceExtension->wszLocalConnectionName[idx] != NULL)
+                    if (idx >= RTL_NUMBER_OF(pDeviceExtension->cLocalConnections))
                     {
-                        Log(("VBOXSF: vbsfCreateConnection: LocalConnectionName at index %d is NOT empty!\n",
+                        Log(("VBOXSF: vbsfCreateConnection: Index 0x%x is invalid!\n",
                              idx));
-                    }
-
-                    pDeviceExtension->wszLocalConnectionName[idx] = (PUNICODE_STRING)vbsfAllocNonPagedMem(sizeof(UNICODE_STRING) + cbConnectName);
-
-                    if (!pDeviceExtension->wszLocalConnectionName[idx])
-                    {
-                        Log(("VBOXSF: vbsfCreateConnection: LocalConnectionName at index %d NOT allocated!\n",
-                             idx));
-                        Status = STATUS_INSUFFICIENT_RESOURCES;
+                        Status = STATUS_BAD_NETWORK_NAME;
                     }
                     else
                     {
-                        PUNICODE_STRING pRemoteName = pDeviceExtension->wszLocalConnectionName[idx];
+                        ExAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
+                        fMutexAcquired = TRUE;
 
-                        pRemoteName->Buffer = (PWSTR)(pRemoteName + 1);
-                        pRemoteName->Length = (USHORT)(cbConnectName - i - sizeof(WCHAR));
-                        pRemoteName->MaximumLength = pRemoteName->Length;
-                        RtlCopyMemory(&pRemoteName->Buffer[0], pwc+2, pRemoteName->Length);
+                        if (pDeviceExtension->wszLocalConnectionName[idx] != NULL)
+                        {
+                            Log(("VBOXSF: vbsfCreateConnection: LocalConnectionName at index %d is NOT empty!\n",
+                                 idx));
+                        }
 
-                        Log(("VBOXSF: vbsfCreateConnection: RemoteName %.*ls, Len = %d\n",
-                             pRemoteName->Length / sizeof(WCHAR), pRemoteName->Buffer, pRemoteName->Length));
+                        pDeviceExtension->wszLocalConnectionName[idx] = (PUNICODE_STRING)vbsfAllocNonPagedMem(sizeof(UNICODE_STRING) + cbConnectName);
 
-                        pDeviceExtension->cLocalConnections[idx] = TRUE;
+                        if (!pDeviceExtension->wszLocalConnectionName[idx])
+                        {
+                            Log(("VBOXSF: vbsfCreateConnection: LocalConnectionName at index %d NOT allocated!\n",
+                                 idx));
+                            Status = STATUS_INSUFFICIENT_RESOURCES;
+                        }
+                        else
+                        {
+                            PUNICODE_STRING pRemoteName = pDeviceExtension->wszLocalConnectionName[idx];
+
+                            pRemoteName->Buffer = (PWSTR)(pRemoteName + 1);
+                            pRemoteName->Length = (USHORT)(cbConnectName - i - sizeof(WCHAR));
+                            pRemoteName->MaximumLength = pRemoteName->Length;
+                            RtlCopyMemory(&pRemoteName->Buffer[0], pwc+2, pRemoteName->Length);
+
+                            Log(("VBOXSF: vbsfCreateConnection: RemoteName %.*ls, Len = %d\n",
+                                 pRemoteName->Length / sizeof(WCHAR), pRemoteName->Buffer, pRemoteName->Length));
+
+                            pDeviceExtension->cLocalConnections[idx] = TRUE;
+                        }
+
+                        ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+                        fMutexAcquired = FALSE;
                     }
-
-                    ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
                 }
+            }
+            else
+            {
+                Log(("VBOXSF: vbsfCreateConnection: bad format\n"));
+                Status = STATUS_BAD_NETWORK_NAME;
             }
         }
         else
         {
-            Log(("VBOXSF: vbsfCreateConnection: bad format\n"));
+            Log(("VBOXSF: vbsfCreateConnection: connection was not found\n"));
             Status = STATUS_BAD_NETWORK_NAME;
         }
     }
-    else
+    __except(EXCEPTION_EXECUTE_HANDLER)
     {
-        Log(("VBOXSF: vbsfCreateConnection: connection was not found\n"));
-        Status = STATUS_BAD_NETWORK_NAME;
+        Status = STATUS_INVALID_PARAMETER;
+    }
+
+    if (fMutexAcquired)
+    {
+        ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+        fMutexAcquired = FALSE;
     }
 
     return Status;
@@ -1274,6 +1317,10 @@ NTSTATUS vbsfDeleteConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
     ULONG cbConnectName;
     PMRX_VBOX_DEVICE_EXTENSION pDeviceExtension;
 
+    BOOLEAN fMutexAcquired = FALSE;
+
+    Log(("VBOXSF: vbsfDeleteConnection\n"));
+
     if (!BooleanFlagOn(RxContext->Flags, RX_CONTEXT_FLAG_WAIT))
     {
         Log(("VBOXSF: vbsfDeleteConnection: post to file system process\n"));
@@ -1286,102 +1333,118 @@ NTSTATUS vbsfDeleteConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
     cbConnectName = LowIoContext->ParamsFor.IoCtl.InputBufferLength;
 
     pDeviceExtension = VBoxMRxGetDeviceExtension(RxContext);
+    if (!pDeviceExtension)
+        return STATUS_INVALID_PARAMETER;
 
-    Log(("VBOXSF: vbsfDeleteConnection: pwcConnectName = %.*ls\n",
-         cbConnectName / sizeof(WCHAR), pwcConnectName));
-
-    FileName.Buffer = pwcConnectName;
-    FileName.Length = (USHORT)cbConnectName;
-    FileName.MaximumLength = (USHORT)cbConnectName;
-
-    Handle = vbsfOpenConnectionHandle(&FileName);
-
-    if (Handle != INVALID_HANDLE_VALUE)
+    __try
     {
-        PFILE_OBJECT pFileObject;
-        Status = ObReferenceObjectByHandle(Handle, 0L, NULL, KernelMode, (PVOID *)&pFileObject, NULL);
+        Log(("VBOXSF: vbsfDeleteConnection: pwcConnectName = %.*ls\n",
+             cbConnectName / sizeof(WCHAR), pwcConnectName));
 
-        Log(("VBOXSF: vbsfDeleteConnection: ObReferenceObjectByHandle Status 0x%08X\n",
-             Status));
+        FileName.Buffer = pwcConnectName;
+        FileName.Length = (USHORT)cbConnectName;
+        FileName.MaximumLength = (USHORT)cbConnectName;
 
-        if (NT_SUCCESS(Status))
+        Handle = vbsfOpenConnectionHandle(&FileName, &Status);
+        if (Handle != INVALID_HANDLE_VALUE)
         {
-            PFOBX Fobx = (PFOBX)pFileObject->FsContext2;
-            Log(("VBOXSF: vbsfDeleteConnection: Fobx %p\n", Fobx));
+            PFILE_OBJECT pFileObject;
+            Status = ObReferenceObjectByHandle(Handle, 0L, NULL, KernelMode, (PVOID *)&pFileObject, NULL);
 
-            if (Fobx && NodeType(Fobx) == RDBSS_NTC_V_NETROOT)
+            Log(("VBOXSF: vbsfDeleteConnection: ObReferenceObjectByHandle Status 0x%08X\n",
+                 Status));
+
+            if (NT_SUCCESS(Status))
             {
-                PV_NET_ROOT VNetRoot = (PV_NET_ROOT)Fobx;
+                PFOBX Fobx = (PFOBX)pFileObject->FsContext2;
+                Log(("VBOXSF: vbsfDeleteConnection: Fobx %p\n", Fobx));
 
-                Status = RxFinalizeConnection(VNetRoot->NetRoot, VNetRoot, TRUE);
-            }
-            else
-            {
-                Log(("VBOXSF: vbsfDeleteConnection: wrong FsContext2\n"));
-                Status = STATUS_INVALID_DEVICE_REQUEST;
-            }
-
-            ObDereferenceObject(pFileObject);
-        }
-
-        ZwClose(Handle);
-    }
-
-    if (NT_SUCCESS(Status))
-    {
-        PWCHAR pwc;
-        ULONG i;
-
-        /* Skip the "\Device\VBoxMiniRdr\;X:" of the string "\Device\VBoxMiniRdr\;X:\vboxsrv\sf" */
-        pwc = pwcConnectName;
-        for (i = 0; i < cbConnectName; i += sizeof(WCHAR))
-        {
-            if (*pwc == L':')
-            {
-                break;
-            }
-            pwc++;
-        }
-
-        if (i >= sizeof(WCHAR) && i < cbConnectName)
-        {
-            pwc--;
-
-            if (*pwc >= L'A' && *pwc <= L'Z')
-            {
-                uint32_t idx = *pwc - L'A';
-
-                if (idx >= RTL_NUMBER_OF(pDeviceExtension->cLocalConnections))
+                if (Fobx && NodeType(Fobx) == RDBSS_NTC_V_NETROOT)
                 {
-                    Log(("VBOXSF: vbsfDeleteConnection: Index 0x%x is invalid!\n",
-                         idx));
-                    Status = STATUS_BAD_NETWORK_NAME;
+                    PV_NET_ROOT VNetRoot = (PV_NET_ROOT)Fobx;
+
+                    Status = RxFinalizeConnection(VNetRoot->NetRoot, VNetRoot, TRUE);
                 }
                 else
                 {
-                    ExAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
+                    Log(("VBOXSF: vbsfDeleteConnection: wrong FsContext2\n"));
+                    Status = STATUS_INVALID_DEVICE_REQUEST;
+                }
 
-                    pDeviceExtension->cLocalConnections[idx] = FALSE;
+                ObDereferenceObject(pFileObject);
+            }
 
-                    /* Free saved name */
-                    if (pDeviceExtension->wszLocalConnectionName[idx])
+            ZwClose(Handle);
+
+            if (NT_SUCCESS(Status))
+            {
+                PWCHAR pwc;
+                ULONG i;
+
+                /* Skip the "\Device\VBoxMiniRdr\;X:" of the string "\Device\VBoxMiniRdr\;X:\vboxsrv\sf" */
+                pwc = pwcConnectName;
+                for (i = 0; i < cbConnectName; i += sizeof(WCHAR))
+                {
+                    if (*pwc == L':')
                     {
-                        vbsfFreeNonPagedMem(pDeviceExtension->wszLocalConnectionName[idx]);
-                        pDeviceExtension->wszLocalConnectionName[idx] = NULL;
+                        break;
                     }
+                    pwc++;
+                }
 
-                    ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+                if (i >= sizeof(WCHAR) && i < cbConnectName)
+                {
+                    pwc--;
 
-                    Log(("VBOXSF: vbsfDeleteConnection: deleted index 0x%x\n",
-                         idx));
+                    if (*pwc >= L'A' && *pwc <= L'Z')
+                    {
+                        uint32_t idx = *pwc - L'A';
+
+                        if (idx >= RTL_NUMBER_OF(pDeviceExtension->cLocalConnections))
+                        {
+                            Log(("VBOXSF: vbsfDeleteConnection: Index 0x%x is invalid!\n",
+                                 idx));
+                            Status = STATUS_BAD_NETWORK_NAME;
+                        }
+                        else
+                        {
+                            ExAcquireFastMutex(&pDeviceExtension->mtxLocalCon);
+                            fMutexAcquired = TRUE;
+
+                            pDeviceExtension->cLocalConnections[idx] = FALSE;
+
+                            /* Free saved name */
+                            if (pDeviceExtension->wszLocalConnectionName[idx])
+                            {
+                                vbsfFreeNonPagedMem(pDeviceExtension->wszLocalConnectionName[idx]);
+                                pDeviceExtension->wszLocalConnectionName[idx] = NULL;
+                            }
+
+                            ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+                            fMutexAcquired = FALSE;
+
+                            Log(("VBOXSF: vbsfDeleteConnection: deleted index 0x%x\n",
+                                 idx));
+                        }
+                    }
+                }
+                else
+                {
+                    Log(("VBOXSF: vbsfCreateConnection: bad format\n"));
+                    Status = STATUS_BAD_NETWORK_NAME;
                 }
             }
         }
-        else
-        {
-            Log(("VBOXSF: vbsfCreateConnection: bad format\n"));
-            Status = STATUS_BAD_NETWORK_NAME;
-        }
+    }
+    __except(EXCEPTION_EXECUTE_HANDLER)
+    {
+        Status = STATUS_INVALID_PARAMETER;
+    }
+
+    if (fMutexAcquired)
+    {
+        ExReleaseFastMutex(&pDeviceExtension->mtxLocalCon);
+        fMutexAcquired = FALSE;
     }
 
     Log(("VBOXSF: vbsfDeleteConnection: Status 0x%08X\n", Status));
@@ -1390,37 +1453,126 @@ NTSTATUS vbsfDeleteConnection(IN PRX_CONTEXT RxContext, OUT PBOOLEAN PostToFsp)
 
 NTSTATUS VBoxMRxQueryEaInfo(IN OUT PRX_CONTEXT RxContext)
 {
-    Log(("VBOXSF: MRxQueryEaInfo: Ea buffer len remaining is %d\n",
-         RxContext->Info.LengthRemaining));
+    RT_NOREF(RxContext);
+    Log(("VBOXSF: MRxQueryEaInfo: Ea buffer len remaining is %d\n", RxContext->Info.LengthRemaining));
     return STATUS_SUCCESS;
 }
 
 NTSTATUS VBoxMRxSetEaInfo(IN OUT PRX_CONTEXT RxContext)
 {
+    RT_NOREF(RxContext);
     Log(("VBOXSF: MRxSetEaInfo\n"));
     return STATUS_NOT_IMPLEMENTED;
 }
 
-NTSTATUS VBoxMRxFsCtl (IN OUT PRX_CONTEXT RxContext)
+NTSTATUS VBoxMRxFsCtl(IN OUT PRX_CONTEXT RxContext)
 {
+    RT_NOREF(RxContext);
     Log(("VBOXSF: MRxFsCtl\n"));
     return STATUS_INVALID_DEVICE_REQUEST;
 }
 
 NTSTATUS VBoxMRxNotifyChangeDirectory(IN OUT PRX_CONTEXT RxContext)
 {
+    RT_NOREF(RxContext);
     Log(("VBOXSF: MRxNotifyChangeDirectory\n"));
     return STATUS_NOT_IMPLEMENTED;
 }
 
+static NTSTATUS vbsfQuerySdInfo(PVOID pvBuffer, ULONG cbBuffer, SECURITY_INFORMATION SecurityInformation, ULONG *pcbOut)
+{
+    /* What a public SMB share would return. */
+    static SID_IDENTIFIER_AUTHORITY sIA = SECURITY_NT_AUTHORITY;
+    #define SUB_AUTHORITY_COUNT 2
+    static const ULONG saSubAuthorityOwner[] = { SECURITY_NT_NON_UNIQUE, DOMAIN_USER_RID_GUEST   };
+    static const ULONG saSubAuthorityGroup[] = { SECURITY_NT_NON_UNIQUE, DOMAIN_GROUP_RID_GUESTS };
+
+    SECURITY_DESCRIPTOR_RELATIVE *pSD = (SECURITY_DESCRIPTOR_RELATIVE *)pvBuffer;
+    ULONG cbSD = 0; /* Size of returned security descriptor. */
+    ULONG cbAdd; /* How many bytes to add to the buffer for each component of the security descriptor. */
+
+    cbAdd = sizeof(SECURITY_DESCRIPTOR_RELATIVE);
+    if (cbSD + cbAdd <= cbBuffer)
+    {
+        pSD->Revision = SECURITY_DESCRIPTOR_REVISION1;
+        pSD->Sbz1     = 0;
+        pSD->Control  = SE_SELF_RELATIVE;
+        pSD->Owner    = 0;
+        pSD->Group    = 0;
+        pSD->Sacl     = 0;
+        pSD->Dacl     = 0;
+    }
+    cbSD += cbAdd;
+
+    if (SecurityInformation & OWNER_SECURITY_INFORMATION)
+    {
+        cbAdd = RT_UOFFSETOF(SID, SubAuthority) + SUB_AUTHORITY_COUNT * sizeof(ULONG);
+        if (cbSD + cbAdd <= cbBuffer)
+        {
+            SID *pSID = (SID *)((uint8_t *)pSD + cbSD);
+            pSID->Revision            = 1;
+            pSID->SubAuthorityCount   = SUB_AUTHORITY_COUNT;
+            pSID->IdentifierAuthority = sIA;
+            memcpy(pSID->SubAuthority, saSubAuthorityOwner, SUB_AUTHORITY_COUNT * sizeof(ULONG));
+
+            pSD->Owner = cbSD;
+        }
+        cbSD += cbAdd;
+    }
+
+    if (SecurityInformation & GROUP_SECURITY_INFORMATION)
+    {
+        cbAdd = RT_UOFFSETOF(SID, SubAuthority) + SUB_AUTHORITY_COUNT * sizeof(ULONG);
+        if (cbSD + cbAdd <= cbBuffer)
+        {
+            SID *pSID = (SID *)((uint8_t *)pSD + cbSD);
+            pSID->Revision            = 1;
+            pSID->SubAuthorityCount   = SUB_AUTHORITY_COUNT;
+            pSID->IdentifierAuthority = sIA;
+            memcpy(pSID->SubAuthority, saSubAuthorityGroup, SUB_AUTHORITY_COUNT * sizeof(ULONG));
+
+            pSD->Group = cbSD;
+        }
+        cbSD += cbAdd;
+    }
+
+    #undef SUB_AUTHORITY_COUNT
+
+    *pcbOut = cbSD;
+    return STATUS_SUCCESS;
+}
+
 NTSTATUS VBoxMRxQuerySdInfo(IN OUT PRX_CONTEXT RxContext)
 {
-    Log(("VBOXSF: MRxQuerySdInfo\n"));
-    return STATUS_NOT_IMPLEMENTED;
+    NTSTATUS Status;
+
+    PVOID pvBuffer = RxContext->Info.Buffer;
+    ULONG cbBuffer = RxContext->Info.LengthRemaining;
+    SECURITY_INFORMATION SecurityInformation = RxContext->QuerySecurity.SecurityInformation;
+
+    ULONG cbSD = 0;
+
+    Log(("VBOXSF: MRxQuerySdInfo: Buffer %p, Length %d, SecurityInformation 0x%x\n",
+         pvBuffer, cbBuffer, SecurityInformation));
+
+    Status = vbsfQuerySdInfo(pvBuffer, cbBuffer, SecurityInformation, &cbSD);
+    if (NT_SUCCESS(Status))
+    {
+        RxContext->InformationToReturn = cbSD;
+        if (RxContext->InformationToReturn > cbBuffer)
+        {
+            Status = STATUS_BUFFER_OVERFLOW;
+        }
+    }
+
+    Log(("VBOXSF: MRxQuerySdInfo: Status 0x%08X, InformationToReturn %d\n",
+         Status, RxContext->InformationToReturn));
+    return Status;
 }
 
 NTSTATUS VBoxMRxSetSdInfo(IN OUT struct _RX_CONTEXT * RxContext)
 {
+    RT_NOREF(RxContext);
     Log(("VBOXSF: MRxSetSdInfo\n"));
     return STATUS_NOT_IMPLEMENTED;
 }
@@ -1430,10 +1582,13 @@ NTSTATUS VBoxMRxSetSdInfo(IN OUT struct _RX_CONTEXT * RxContext)
  */
 NTSTATUS WmlTinySystemControl(IN OUT PVOID pWmiLibInfo, IN PVOID pDevObj, IN PVOID pIrp)
 {
+    RT_NOREF(pWmiLibInfo, pDevObj, pIrp);
     return STATUS_WMI_GUID_NOT_FOUND;
 }
 
 ULONG WmlTrace(IN ULONG ulType, IN PVOID pTraceUuid, IN ULONG64 ullLogger, ...)
 {
+    RT_NOREF(ulType, pTraceUuid, ullLogger);
     return STATUS_SUCCESS;
 }
+

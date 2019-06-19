@@ -9,7 +9,7 @@
 
 #ifdef WINDOWS
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include <iprt/win/windows.h>
 #define RENDER_APIENTRY __stdcall
 #define snprintf _snprintf
 #elif defined(DARWIN)
@@ -246,6 +246,7 @@ typedef struct {
     int force_direct;
     int sync;
 #endif
+    int force_present_main_thread;
     int render_to_app_window;
     int render_to_crut_window;
     int crut_drawable;
@@ -347,6 +348,9 @@ typedef struct {
     bool fInit;
 # endif
 #endif /* RT_OS_DARWIN */
+    /* If TRUE, render should tell window server to prevent artificial content
+     * up-scaling when displayed on HiDPI monitor. */
+    bool fUnscaledHiDPI;
 } RenderSPU;
 
 #ifdef RT_OS_WINDOWS
@@ -494,6 +498,7 @@ extern "C" {
 #endif
 DECLEXPORT(void) renderspuSetWindowId(uint64_t winId);
 DECLEXPORT(void) renderspuReparentWindow(GLint window);
+DECLEXPORT(void) renderspuSetUnscaledHiDPI(bool fEnable);
 #ifdef __cplusplus
 }
 #endif

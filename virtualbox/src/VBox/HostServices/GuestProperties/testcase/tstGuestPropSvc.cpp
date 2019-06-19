@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,17 +16,18 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/HostServices/GuestPropertySvc.h>
 #include <iprt/test.h>
 #include <iprt/time.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST g_hTest = NIL_RTTEST;
 
 using namespace guestProp;
@@ -41,7 +42,7 @@ struct VBOXHGCMCALLHANDLE_TYPEDEF
 };
 
 /** Call completion callback for guest calls. */
-static void callComplete(VBOXHGCMCALLHANDLE callHandle, int32_t rc)
+static DECLCALLBACK(void) callComplete(VBOXHGCMCALLHANDLE callHandle, int32_t rc)
 {
     callHandle->rc = rc;
 }
@@ -459,6 +460,11 @@ static void testSetProp(VBOXHGCMSVCFNTABLE *pTable)
         { "TEST NAME", "test", "", true, true, false },
         { "Green", "gone out...", "", false, false, false },
         { "Green", "gone out...", "", true, false, false },
+        { "/VirtualBox/GuestAdd/SharedFolders/MountDir", "test", "", false, true, false },
+        { "/VirtualBox/GuestAdd/SomethingElse", "test", "", false, true, true },
+        { "/VirtualBox/HostInfo/VRDP/Client/1/Name", "test", "", false, false, false },
+        { "/VirtualBox/GuestAdd/SharedFolders/MountDir", "test", "", true, true, true },
+        { "/VirtualBox/HostInfo/VRDP/Client/1/Name", "test", "TRANSRESET", true, true, true },
     };
 
     for (unsigned i = 0; i < RT_ELEMENTS(s_aSetProperties); ++i)
@@ -657,6 +663,12 @@ g_aGetNotifications[] =
     { "Amber\0Caution!\0", sizeof("Amber\0Caution!\0") },
     { "Green\0Go!\0READONLY", sizeof("Green\0Go!\0READONLY") },
     { "Blue\0What on earth...?\0", sizeof("Blue\0What on earth...?\0") },
+    { "/VirtualBox/GuestAdd/SomethingElse\0test\0",
+      sizeof("/VirtualBox/GuestAdd/SomethingElse\0test\0") },
+    { "/VirtualBox/GuestAdd/SharedFolders/MountDir\0test\0RDONLYGUEST",
+      sizeof("/VirtualBox/GuestAdd/SharedFolders/MountDir\0test\0RDONLYGUEST") },
+    { "/VirtualBox/HostInfo/VRDP/Client/1/Name\0test\0TRANSIENT, RDONLYGUEST, TRANSRESET",
+      sizeof("/VirtualBox/HostInfo/VRDP/Client/1/Name\0test\0TRANSIENT, RDONLYGUEST, TRANSRESET") },
     { "Red\0\0", sizeof("Red\0\0") },
     { "Amber\0\0", sizeof("Amber\0\0") },
 };
@@ -766,6 +778,7 @@ static void setupAsyncNotification(VBOXHGCMSVCFNTABLE *pTable)
  */
 static void testAsyncNotification(VBOXHGCMSVCFNTABLE *pTable)
 {
+    RT_NOREF1(pTable);
     uint64_t u64Timestamp;
     uint32_t u32Size;
     if (   g_AsyncNotification.callHandle.rc != VINF_SUCCESS
@@ -1003,7 +1016,7 @@ static void test4(void)
             VBOXHGCMSVCPARM aParms[4];
             aParms[0].setString(s_szProp);
             aParms[1].setPointer(pvBuf, cbBuf);
-            int rc = svcTable.pfnHostCall(svcTable.pvService, GET_PROP_HOST, RT_ELEMENTS(aParms), aParms);
+            svcTable.pfnHostCall(svcTable.pvService, GET_PROP_HOST, RT_ELEMENTS(aParms), aParms);
 
             RTTestGuardedFree(g_hTest, pvBuf);
         }
@@ -1039,7 +1052,7 @@ static void test5(void)
             VBOXHGCMSVCPARM aParms[3];
             aParms[0].setString("*");
             aParms[1].setPointer(pvBuf, cbBuf);
-            int rc2 = svcTable.pfnHostCall(svcTable.pvService, ENUM_PROPS_HOST, RT_ELEMENTS(aParms), aParms);
+            svcTable.pfnHostCall(svcTable.pvService, ENUM_PROPS_HOST, RT_ELEMENTS(aParms), aParms);
 
             RTTestGuardedFree(g_hTest, pvBuf);
         }
@@ -1106,7 +1119,7 @@ static void test6(void)
         {
             VBOXHGCMSVCPARM aParms[4];
             char            szBuffer[256];
-            aParms[0].setPointer(szProp, cchProp + 1);
+            aParms[0].setPointer(szProp, (uint32_t)cchProp + 1);
             aParms[1].setPointer(szBuffer, sizeof(szBuffer));
             RTTESTI_CHECK_RC_BREAK(svcTable.pfnHostCall(svcTable.pvService, GET_PROP_HOST, 4, aParms), VINF_SUCCESS);
         }
@@ -1134,7 +1147,7 @@ static void test6(void)
 
 
 
-int main(int argc, char **argv)
+int main()
 {
     RTEXITCODE rcExit = RTTestInitAndCreate("tstGuestPropSvc", &g_hTest);
     if (rcExit != RTEXITCODE_SUCCESS)

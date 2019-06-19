@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -65,10 +65,11 @@
  * @{  */
 #define RTASN1TMPL_PASS_INTERNAL_HEADER 1
 
-#define RTASN1TMPL_PASS_VTABLE          2
-#define RTASN1TMPL_PASS_ENUM            3
-#define RTASN1TMPL_PASS_DELETE          4
-#define RTASN1TMPL_PASS_COMPARE         5
+#define RTASN1TMPL_PASS_XTAG            2
+#define RTASN1TMPL_PASS_VTABLE          3
+#define RTASN1TMPL_PASS_ENUM            4
+#define RTASN1TMPL_PASS_DELETE          5
+#define RTASN1TMPL_PASS_COMPARE         6
 
 #define RTASN1TMPL_PASS_CHECK_SANITY    8
 
@@ -76,6 +77,7 @@
 #define RTASN1TMPL_PASS_CLONE          17
 #define RTASN1TMPL_PASS_SETTERS_1      18
 #define RTASN1TMPL_PASS_SETTERS_2      19
+#define RTASN1TMPL_PASS_ARRAY          20
 
 #define RTASN1TMPL_PASS_DECODE         24
 /** @} */
@@ -111,6 +113,9 @@
 # define RTASN1TMPL_BEGIN_SEQCORE()                 RTASN1TMPL_BEGIN_COMMON()
 # define RTASN1TMPL_BEGIN_SETCORE()                 RTASN1TMPL_BEGIN_COMMON()
 # define RTASN1TMPL_MEMBER_EX(a_Name, a_Type, a_Api, a_Constraints)                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_OPT_XTAG_EX(a_TnNm, a_CtxTagN, a_Name, a_Type, a_Api, a_uTag, a_Constraints) \
+    extern "C" DECLHIDDEN(RTASN1COREVTABLE const)   RT_CONCAT5(g_,RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Vtable)
+
 # define RTASN1TMPL_MEMBER_DYN_BEGIN(a_enmType, a_enmMembNm, a_Allocation)                          RTASN1TMPL_SEMICOLON_DUMMY()
 # define RTASN1TMPL_MEMBER_DYN_END(a_enmType, a_enmMembNm, a_Allocation)                            RTASN1TMPL_SEMICOLON_DUMMY()
 # define RTASN1TMPL_END_SEQCORE()                   RTASN1TMPL_SEMICOLON_DUMMY()
@@ -121,12 +126,131 @@
 # define RTASN1TMPL_PCHOICE_ITAG_EX(a_uTag, a_enmChoice, a_PtrName, a_Name, a_Type, a_Api, a_fClue, a_Constraints) \
                                                                                                     RTASN1TMPL_SEMICOLON_DUMMY()
 # define RTASN1TMPL_PCHOICE_XTAG_EX(a_uTag, a_enmChoice, a_PtrTnNm, a_CtxTagN, a_Name, a_Type, a_Api, a_Constraints) \
-                                                                                                    RTASN1TMPL_SEMICOLON_DUMMY()
+    extern "C" DECLHIDDEN(RTASN1COREVTABLE const)   RT_CONCAT5(g_,RTASN1TMPL_INT_NAME,_PCHOICE_XTAG_,a_Name,_Vtable)
+
 # define RTASN1TMPL_END_PCHOICE()                   RTASN1TMPL_SEMICOLON_DUMMY()
 
 
 # define RTASN1TMPL_SEQ_OF(a_ItemType, a_ItemApi)   RTASN1TMPL_BEGIN_COMMON()
 # define RTASN1TMPL_SET_OF(a_ItemType, a_ItemApi)   RTASN1TMPL_BEGIN_COMMON()
+
+
+
+#elif RTASN1TMPL_PASS == RTASN1TMPL_PASS_XTAG
+/*
+ *
+ * Generate a vtable and associated methods for explicitly tagged items (XTAG).
+ *
+ * These turned out to be a little problematic during encoding since there are
+ * two tags, the first encapsulating the second, thus the enumeration has to be
+ * nested or we cannot calculate the size of the first tag.
+ *
+ *
+ */
+# define RTASN1TMPL_BEGIN_COMMON()                                                                  RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_BEGIN_SEQCORE()                                                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_BEGIN_SETCORE()                                                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_EX(a_Name, a_Type, a_Api, a_Constraints)                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_DYN_BEGIN(a_enmType, a_enmMembNm, a_Allocation)                          RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_DYN_END(a_enmType, a_enmMembNm, a_Allocation)                            RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_OPT_XTAG_EX(a_TnNm, a_CtxTagN, a_Name, a_Type, a_Api, a_uTag, a_Constraints) \
+    /* This is the method we need to make it work. */ \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Enum)(PRTASN1CORE pThisCore, \
+                                                                                 PFNRTASN1ENUMCALLBACK pfnCallback, \
+                                                                                 uint32_t uDepth, void *pvUser) \
+    { \
+        RTASN1TMPL_TYPE *pThis = RT_FROM_MEMBER(pThisCore, RTASN1TMPL_TYPE, a_TnNm.a_CtxTagN); \
+        if (RTASN1CORE_IS_PRESENT(&pThis->a_TnNm.a_CtxTagN.Asn1Core)) \
+            return pfnCallback(RT_CONCAT(a_Api,_GetAsn1Core)(&pThis->a_TnNm.a_Name), #a_TnNm "." #a_Name, uDepth + 1, pvUser); \
+        return VINF_SUCCESS; \
+    } \
+    /* The reminder of the methods shouldn't normally be needed, just stub them. */ \
+    static DECLCALLBACK(void) RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Delete)(PRTASN1CORE pThisCore) \
+    { AssertFailed(); RT_NOREF_PV(pThisCore); } \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Clone)(PRTASN1CORE pThisCore, PCRTASN1CORE pSrcCore, \
+                                                                                  PCRTASN1ALLOCATORVTABLE pAllocator) \
+    { AssertFailed(); RT_NOREF_PV(pThisCore); RT_NOREF_PV(pSrcCore); RT_NOREF_PV(pAllocator); return VERR_INTERNAL_ERROR_2; } \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Compare)(PCRTASN1CORE pLeftCore, \
+                                                                                    PCRTASN1CORE pRightCore) \
+    { AssertFailed(); RT_NOREF_PV(pLeftCore); RT_NOREF_PV(pRightCore); return VERR_INTERNAL_ERROR_2; } \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_CheckSanity)(PCRTASN1CORE pThisCore, uint32_t fFlags, \
+                                                                                        PRTERRINFO pErrInfo, const char *pszErrorTag) \
+    { AssertFailed(); RT_NOREF_PV(pThisCore); RT_NOREF_PV(fFlags); RT_NOREF_PV(pErrInfo); RT_NOREF_PV(pszErrorTag); \
+      return VERR_INTERNAL_ERROR_2; } \
+    DECL_HIDDEN_CONST(RTASN1COREVTABLE const) RT_CONCAT5(g_,RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Vtable) = \
+    { \
+        /* When the Asn1Core is at the start of the structure, we can reuse the _Delete and _Enum APIs here. */ \
+        /* .pszName = */        RT_XSTR(RTASN1TMPL_INT_NAME) "_XTAG_" RT_XSTR(a_Name), \
+        /* .cb = */             RT_SIZEOFMEMB(RTASN1TMPL_TYPE, a_TnNm), \
+        /* .uDefaultTag = */    a_uTag, \
+        /* .fDefaultClass = */  ASN1_TAGCLASS_CONTEXT, \
+        /* .uReserved = */      0, \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Delete), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Enum), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Clone), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Compare), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_CheckSanity), \
+        /*.pfnEncodePrep */ NULL, \
+        /*.pfnEncodeWrite */ NULL \
+    }
+
+
+# define RTASN1TMPL_END_SEQCORE()                                                                   RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_END_SETCORE()                                                                   RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_BEGIN_PCHOICE()                                                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_PCHOICE_ITAG_EX(a_uTag, a_enmChoice, a_PtrName, a_Name, a_Type, a_Api, a_fClue, a_Constraints) \
+                                                                                                    RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_PCHOICE_XTAG_EX(a_uTag, a_enmChoice, a_PtrTnNm, a_CtxTagN, a_Name, a_Type, a_Api, a_Constraints) \
+    /* This is the method we need to make it work. */ \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Enum)(PRTASN1CORE pThisCore, \
+                                                                                    PFNRTASN1ENUMCALLBACK pfnCallback, \
+                                                                                    uint32_t uDepth, void *pvUser) \
+    { \
+        if (RTASN1CORE_IS_PRESENT(pThisCore)) \
+        { \
+            /** @todo optimize this one day, possibly change the PCHOICE+XTAG representation. */ \
+            RTASN1TMPL_TYPE Tmp; \
+            *(PRTASN1CORE *)&Tmp.a_PtrTnNm = pThisCore; \
+            Assert(&Tmp.a_PtrTnNm->a_CtxTagN.Asn1Core == pThisCore); \
+            return pfnCallback(RT_CONCAT(a_Api,_GetAsn1Core)(&Tmp.a_PtrTnNm->a_Name), "T" #a_uTag "." #a_Name, uDepth + 1, pvUser); \
+        } \
+        return VINF_SUCCESS; \
+    } \
+    /* The reminder of the methods shouldn't normally be needed, just stub them. */ \
+    static DECLCALLBACK(void) RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Delete)(PRTASN1CORE pThisCore) \
+    { AssertFailed(); RT_NOREF_PV(pThisCore); } \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Clone)(PRTASN1CORE pThisCore, PCRTASN1CORE pSrcCore, \
+                                                                                     PCRTASN1ALLOCATORVTABLE pAllocator) \
+    { AssertFailed(); RT_NOREF_PV(pThisCore); RT_NOREF_PV(pSrcCore); RT_NOREF_PV(pAllocator);  return VERR_INTERNAL_ERROR_3; } \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Compare)(PCRTASN1CORE pLeftCore, \
+                                                                                       PCRTASN1CORE pRightCore) \
+    { AssertFailed(); RT_NOREF_PV(pLeftCore); RT_NOREF_PV(pRightCore);  return VERR_INTERNAL_ERROR_3; } \
+    static DECLCALLBACK(int) RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_CheckSanity)(PCRTASN1CORE pThisCore, uint32_t fFlags, \
+                                                                                           PRTERRINFO pErrInfo, const char *pszErrorTag) \
+    { AssertFailed(); RT_NOREF_PV(pThisCore); RT_NOREF_PV(fFlags); RT_NOREF_PV(pErrInfo); RT_NOREF_PV(pszErrorTag); \
+      return VERR_INTERNAL_ERROR_3; } \
+    DECL_HIDDEN_CONST(RTASN1COREVTABLE const) RT_CONCAT5(g_,RTASN1TMPL_INT_NAME,_PCHOICE_XTAG_,a_Name,_Vtable) = \
+    { \
+        /* When the Asn1Core is at the start of the structure, we can reuse the _Delete and _Enum APIs here. */ \
+        /* .pszName = */        RT_XSTR(RTASN1TMPL_INT_NAME) "_PCHOICE_XTAG_" RT_XSTR(a_Name), \
+        /* .cb = */             sizeof(*((RTASN1TMPL_TYPE *)(void *)0)->a_PtrTnNm), \
+        /* .uDefaultTag = */    a_uTag, \
+        /* .fDefaultClass = */  ASN1_TAGCLASS_CONTEXT, \
+        /* .uReserved = */      0, \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Delete), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Enum), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Clone), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_Compare), \
+        RT_CONCAT4(RTASN1TMPL_INT_NAME,_PC_XTAG_,a_Name,_CheckSanity), \
+        /*.pfnEncodePrep */ NULL, \
+        /*.pfnEncodeWrite */ NULL \
+    }
+
+
+
+# define RTASN1TMPL_END_PCHOICE()                                                                   RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_SEQ_OF(a_ItemType, a_ItemApi)                                                   RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_SET_OF(a_ItemType, a_ItemApi)                                                   RTASN1TMPL_SEMICOLON_DUMMY()
 
 
 
@@ -199,6 +323,7 @@
 # define RTASN1TMPL_BEGIN_COMMON() \
 RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Init)(RT_CONCAT(P,RTASN1TMPL_TYPE) pThis, PCRTASN1ALLOCATORVTABLE pAllocator) \
 { \
+    RT_NOREF_PV(pAllocator); \
     RT_ZERO(*pThis)
 # define RTASN1TMPL_END_COMMON() \
     return rc; \
@@ -247,7 +372,7 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Init)(RT_CONCAT(P,RTASN1TMPL
 
 # define RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi, a_OfApi, a_OfMember) \
     RTASN1TMPL_BEGIN_COMMON(); \
-    RTAsn1MemInitAllocation(&pThis->Allocation, pAllocator); \
+    RTAsn1MemInitArrayAllocation(&pThis->Allocation, pAllocator, sizeof(a_ItemType)); \
     int rc = RT_CONCAT(a_OfApi,_Init)(&pThis->a_OfMember, &RT_CONCAT3(g_,RTASN1TMPL_INT_NAME,_Vtable)); \
     if (RT_FAILURE(rc)) \
         RT_ZERO(*pThis); \
@@ -348,7 +473,9 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_DecodeAsn1)(PRTASN1CURSOR pC
     if (RT_SUCCESS(rc) && RTAsn1CursorIsNextEx(pCursor, a_uTag, ASN1_TAGCLASS_CONTEXT | ASN1_TAGFLAG_CONSTRUCTED)) \
     { \
         RTASN1CURSOR CtxCursor; \
-        rc = RT_CONCAT3(RTAsn1CursorGetContextTag,a_uTag,Cursor)(pCursor, 0, &pThis->a_TnNm.a_CtxTagN, &CtxCursor, #a_TnNm); \
+        rc = RT_CONCAT3(RTAsn1CursorGetContextTag,a_uTag,Cursor)(pCursor, 0, \
+                                                                 &RT_CONCAT5(g_,RTASN1TMPL_INT_NAME,_XTAG_,a_Name,_Vtable), \
+                                                                 &pThis->a_TnNm.a_CtxTagN, &CtxCursor, #a_TnNm); \
         if (RT_SUCCESS(rc)) \
         { \
             rc = RT_CONCAT(a_Api,_DecodeAsn1)(&CtxCursor, 0, &pThis->a_TnNm.a_Name, #a_Name); \
@@ -362,17 +489,23 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_DecodeAsn1)(PRTASN1CURSOR pC
         RTASN1TMPL_MEMBER_EX(a_Name, a_Type, a_Api, RT_NOTHING)
 
 # define RTASN1TMPL_END_SEQCORE() \
-   if (RT_SUCCESS(rc)) \
-       rc = RTAsn1CursorCheckEnd(&ThisCursor); \
-   if (RT_SUCCESS(rc)) \
-       return VINF_SUCCESS; \
-   RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(pThis); \
-   RTASN1TMPL_END_COMMON()
-# define RTASN1TMPL_END_SETCORE() RTASN1TMPL_END_SEQCORE()
-
+    if (RT_SUCCESS(rc)) \
+        rc = RTAsn1CursorCheckSeqEnd(&ThisCursor, &pThis->SeqCore); \
+    if (RT_SUCCESS(rc)) \
+        return VINF_SUCCESS; \
+    RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(pThis); \
+    RTASN1TMPL_END_COMMON()
+# define RTASN1TMPL_END_SETCORE() \
+    if (RT_SUCCESS(rc)) \
+        rc = RTAsn1CursorCheckSetEnd(&ThisCursor, &pThis->SetCore); \
+    if (RT_SUCCESS(rc)) \
+        return VINF_SUCCESS; \
+    RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(pThis); \
+    RTASN1TMPL_END_COMMON()
 
 # define RTASN1TMPL_BEGIN_PCHOICE() \
     RTASN1TMPL_BEGIN_COMMON(); \
+    RT_NOREF_PV(fFlags); \
     RTAsn1Dummy_InitEx(&pThis->Dummy); \
     pThis->Dummy.Asn1Core.pOps = &RT_CONCAT3(g_,RTASN1TMPL_INT_NAME,_Vtable); \
     RTAsn1CursorInitAllocation(pCursor, &pThis->Allocation); \
@@ -398,8 +531,9 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_DecodeAsn1)(PRTASN1CURSOR pC
             if (RT_SUCCESS(rc)) \
             { \
                 RTASN1CURSOR CtxCursor; \
-                rc = RT_CONCAT3(RTAsn1CursorGetContextTag,a_uTag,Cursor)(pCursor, 0, &pThis->a_PtrTnNm->a_CtxTagN, \
-                                                                         &CtxCursor, "T" #a_uTag); \
+                rc = RT_CONCAT3(RTAsn1CursorGetContextTag,a_uTag,Cursor)(pCursor, 0, \
+                                                                         &RT_CONCAT5(g_,RTASN1TMPL_INT_NAME,_PCHOICE_XTAG_,a_Name,_Vtable), \
+                                                                         &pThis->a_PtrTnNm->a_CtxTagN, &CtxCursor, "T" #a_uTag); \
                 if (RT_SUCCESS(rc)) \
                     rc = RT_CONCAT(a_Api,_DecodeAsn1)(&CtxCursor, RTASN1CURSOR_GET_F_IMPLICIT, \
                                                       &pThis->a_PtrTnNm->a_Name, #a_Name); \
@@ -426,20 +560,16 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_DecodeAsn1)(PRTASN1CURSOR pC
     { \
         pCursor = &ThisCursor; \
         pThis->a_OfMember.Asn1Core.pOps = &RT_CONCAT3(g_,RTASN1TMPL_INT_NAME,_Vtable); \
-        RTAsn1CursorInitAllocation(pCursor, &pThis->Allocation); \
+        RTAsn1CursorInitArrayAllocation(pCursor, &pThis->Allocation, sizeof(a_ItemType)); \
         \
         uint32_t i = 0; \
         while (   pCursor->cbLeft > 0 \
                && RT_SUCCESS(rc)) \
         { \
-            rc = RTAsn1MemGrowArray(&pThis->Allocation, \
-                                    (void **)&pThis->paItems, \
-                                    sizeof(pThis->paItems[0]), \
-                                    i, \
-                                    i + 1); \
+            rc = RTAsn1MemResizeArray(&pThis->Allocation, (void ***)&pThis->papItems, i, i + 1); \
             if (RT_SUCCESS(rc)) \
             { \
-                rc = RT_CONCAT(a_ItemApi,_DecodeAsn1)(pCursor, 0, &pThis->paItems[i], "paItems[#]"); \
+                rc = RT_CONCAT(a_ItemApi,_DecodeAsn1)(pCursor, 0, pThis->papItems[i], "papItems[#]"); \
                 if (RT_SUCCESS(rc)) \
                 { \
                     i++; \
@@ -513,8 +643,6 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Enum)(RT_CONCAT(P,RTASN1TMPL
         if (rc == VINF_SUCCESS && RTASN1CORE_IS_PRESENT(&pThis->a_TnNm.a_CtxTagN.Asn1Core)) \
         { \
             rc = pfnCallback(&pThis->a_TnNm.a_CtxTagN.Asn1Core, #a_Name, uDepth, pvUser); \
-            if (rc == VINF_SUCCESS) \
-                rc = pfnCallback(RT_CONCAT(a_Api,_GetAsn1Core)(&pThis->a_TnNm.a_Name), #a_TnNm "." #a_Name, uDepth, pvUser); \
         } do {} while (0)
 # define RTASN1TMPL_END_SEQCORE()   RTASN1TMPL_END_COMMON()
 # define RTASN1TMPL_END_SETCORE()   RTASN1TMPL_END_COMMON()
@@ -528,12 +656,7 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Enum)(RT_CONCAT(P,RTASN1TMPL
 # define RTASN1TMPL_PCHOICE_ITAG_EX(a_uTag, a_enmChoice, a_PtrName, a_Name, a_Type, a_Api, a_fClue, a_Constraints) \
         case a_enmChoice: rc = pfnCallback(RT_CONCAT(a_Api,_GetAsn1Core)(pThis->a_PtrName), #a_PtrName, uDepth, pvUser); break
 # define RTASN1TMPL_PCHOICE_XTAG_EX(a_uTag, a_enmChoice, a_PtrTnNm, a_CtxTagN, a_Name, a_Type, a_Api, a_Constraints) \
-        case a_enmChoice: \
-            rc = pfnCallback(&pThis->a_PtrTnNm->a_CtxTagN.Asn1Core, "T" #a_uTag "." #a_CtxTagN, uDepth, pvUser); \
-            if (rc == VINF_SUCCESS) \
-                rc = pfnCallback(RT_CONCAT(a_Api, _GetAsn1Core)(&pThis->a_PtrTnNm->a_Name), \
-                                 "T" #a_uTag "." #a_Name, uDepth + 1, pvUser); \
-            break
+        case a_enmChoice: rc = pfnCallback(&pThis->a_PtrTnNm->a_CtxTagN.Asn1Core, "T" #a_uTag "." #a_CtxTagN, uDepth, pvUser); break
 #define RTASN1TMPL_END_PCHOICE() \
     } \
     RTASN1TMPL_END_COMMON()
@@ -541,7 +664,7 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Enum)(RT_CONCAT(P,RTASN1TMPL
 # define RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi) \
     RTASN1TMPL_BEGIN_COMMON(); \
     for (uint32_t i = 0; i < pThis->cItems && rc == VINF_SUCCESS; i++) \
-        rc = pfnCallback(RT_CONCAT(a_ItemApi,_GetAsn1Core)(&pThis->paItems[i]), "paItems[#]", uDepth, pvUser); \
+        rc = pfnCallback(RT_CONCAT(a_ItemApi,_GetAsn1Core)(pThis->papItems[i]), "papItems[#]", uDepth, pvUser); \
     RTASN1TMPL_END_COMMON()
 # define RTASN1TMPL_SEQ_OF(a_ItemType, a_ItemApi) RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi)
 # define RTASN1TMPL_SET_OF(a_ItemType, a_ItemApi) RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi)
@@ -619,6 +742,7 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Clone)(RT_CONCAT(P,RTASN1TMP
 # define RTASN1TMPL_BEGIN_PCHOICE() \
     RTASN1TMPL_BEGIN_COMMON(); \
     RTAsn1Dummy_InitEx(&pThis->Dummy); \
+    pThis->Dummy.Asn1Core.pOps = &RT_CONCAT3(g_,RTASN1TMPL_INT_NAME,_Vtable); \
     RTAsn1MemInitAllocation(&pThis->Allocation, pAllocator); \
     int rc; \
     pThis->enmChoice = pSrc->enmChoice; \
@@ -651,17 +775,17 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Clone)(RT_CONCAT(P,RTASN1TMP
     int rc = RT_CONCAT(a_OfApi,_Clone)(&pThis->a_OfMember, &RT_CONCAT3(g_,RTASN1TMPL_INT_NAME,_Vtable), &pSrc->a_OfMember); \
     if (RT_SUCCESS(rc)) \
     { \
-        RTAsn1MemInitAllocation(&pThis->Allocation, pAllocator); \
+        RTAsn1MemInitArrayAllocation(&pThis->Allocation, pAllocator, sizeof(a_ItemType)); \
         uint32_t const cItems = pSrc->cItems; \
         if (cItems > 0) \
         { \
-            rc = RTAsn1MemGrowArray(&pThis->Allocation, (void **)&pThis->paItems, sizeof(pThis->paItems[0]), 0, cItems); \
+            rc = RTAsn1MemResizeArray(&pThis->Allocation, (void ***)&pThis->papItems, 0, cItems); \
             if (RT_SUCCESS(rc)) \
             { \
                 uint32_t i = 0; \
                 while (i < cItems) \
                 { \
-                    rc = RT_CONCAT(a_ItemApi,_Clone)(&pThis->paItems[i], &pSrc->paItems[i], pAllocator); \
+                    rc = RT_CONCAT(a_ItemApi,_Clone)(pThis->papItems[i], pSrc->papItems[i], pAllocator); \
                     if (RT_SUCCESS(rc)) \
                         pThis->cItems = ++i; \
                     else \
@@ -746,6 +870,7 @@ RTASN1TMPL_DECL(int) RT_CONCAT3(RTASN1TMPL_EXT_NAME,_Set,a_Name)(RT_CONCAT(P,RTA
     AssertPtr(pSrc); AssertPtr(pThis); \
     RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(pThis); /* See _Init. */ \
     RTAsn1Dummy_InitEx(&pThis->Dummy); \
+    pThis->Dummy.Asn1Core.pOps = &RT_CONCAT3(g_,RTASN1TMPL_INT_NAME,_Vtable); \
     RTAsn1MemInitAllocation(&pThis->Allocation, pAllocator); \
     pThis->enmChoice = a_enmChoice; \
     int rc = RTAsn1MemAllocZ(&pThis->Allocation, (void **)&pThis->a_PtrName, sizeof(*pThis->a_PtrName)); \
@@ -769,12 +894,15 @@ RTASN1TMPL_DECL(int) RT_CONCAT3(RTASN1TMPL_EXT_NAME,_Set,a_Name)(RT_CONCAT(P,RTA
     AssertPtr(pThis); AssertPtr(pSrc); Assert(RT_CONCAT(a_Api,_IsPresent)(pSrc)); \
     RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(pThis); /* See _Init. */ \
     RTAsn1Dummy_InitEx(&pThis->Dummy); \
+    pThis->Dummy.Asn1Core.pOps = &RT_CONCAT3(g_,RTASN1TMPL_INT_NAME,_Vtable); \
     RTAsn1MemInitAllocation(&pThis->Allocation, pAllocator); \
     pThis->enmChoice = a_enmChoice; \
     int rc = RTAsn1MemAllocZ(&pThis->Allocation, (void **)&pThis->a_PtrTnNm, sizeof(*pThis->a_PtrTnNm)); \
     if (RT_SUCCESS(rc)) \
     { \
-        rc = RT_CONCAT3(RTAsn1ContextTag,a_uTag,_Init)(&pThis->a_PtrTnNm->a_CtxTagN, pAllocator); \
+        rc = RT_CONCAT3(RTAsn1ContextTag,a_uTag,_Init)(&pThis->a_PtrTnNm->a_CtxTagN, \
+                                                       &RT_CONCAT5(g_,RTASN1TMPL_INT_NAME,_PCHOICE_XTAG_,a_Name,_Vtable), \
+                                                       pAllocator); \
         if (RT_SUCCESS(rc)) \
         { \
             rc = RT_CONCAT(a_Api,_Clone)(&pThis->a_PtrTnNm->a_Name, pSrc, pAllocator); \
@@ -785,11 +913,113 @@ RTASN1TMPL_DECL(int) RT_CONCAT3(RTASN1TMPL_EXT_NAME,_Set,a_Name)(RT_CONCAT(P,RTA
     return rc; \
 } RTASN1TMPL_SEMICOLON_DUMMY()
 
-#define RTASN1TMPL_END_PCHOICE() RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_END_PCHOICE() RTASN1TMPL_SEMICOLON_DUMMY()
 
 
 # define RTASN1TMPL_SEQ_OF(a_ItemType, a_ItemApi)   RTASN1TMPL_SEMICOLON_DUMMY()
 # define RTASN1TMPL_SET_OF(a_ItemType, a_ItemApi)   RTASN1TMPL_SEMICOLON_DUMMY()
+
+
+#elif RTASN1TMPL_PASS == RTASN1TMPL_PASS_ARRAY
+/*
+ *
+ * Array operations.
+ *
+ */
+# define RTASN1TMPL_BEGIN_SEQCORE()                                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_BEGIN_SETCORE()                                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_EX(a_Name, a_Type, a_Api, a_Constraints)                     RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_DYN_BEGIN(a_enmType, a_enmMembNm, a_Allocation)              RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_MEMBER_DYN_END(a_enmType, a_enmMembNm, a_Allocation)                RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_END_SEQCORE()                                                   RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_END_SETCORE()                                                   RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_BEGIN_PCHOICE()                                                 RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_PCHOICE_ITAG_EX(a_uTag, a_enmChoice, a_PtrName, a_Name, a_Type, a_Api, a_fClue, a_Constraints) \
+                                                                                    RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_PCHOICE_XTAG_EX(a_uTag, a_enmChoice, a_PtrTnNm, a_CtxTagN, a_Name, a_Type, a_Api, a_Constraints) \
+                                                                                    RTASN1TMPL_SEMICOLON_DUMMY()
+# define RTASN1TMPL_END_PCHOICE()                                                   RTASN1TMPL_SEMICOLON_DUMMY()
+
+# define RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi) \
+    RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Erase)(RT_CONCAT(P,RTASN1TMPL_TYPE) pThis, uint32_t iPosition) \
+    { \
+        /* Check and adjust iPosition. */ \
+        uint32_t const cItems = pThis->cItems; \
+        if (iPosition < cItems) \
+        { /* likely */ } \
+        else \
+        { \
+            AssertReturn(iPosition == UINT32_MAX, VERR_OUT_OF_RANGE); \
+            AssertReturn(cItems > 0, VERR_OUT_OF_RANGE); \
+            iPosition = cItems - 1; \
+        } \
+        \
+        /* Delete the entry instance. */ \
+        RT_CONCAT(P, a_ItemType) pErased = pThis->papItems[iPosition]; \
+        if (RT_CONCAT(a_ItemApi,_IsPresent)(pErased)) \
+            RT_CONCAT(a_ItemApi,_Delete)(pErased); \
+        \
+        /* If not the final entry, shift the other entries up and place the erased on at the end. */ \
+        if (iPosition < cItems - 1) \
+        { \
+            memmove(&pThis->papItems[iPosition], &pThis->papItems[iPosition + 1], (cItems - iPosition - 1) * sizeof(void *)); \
+            pThis->papItems[cItems - 1] = pErased; \
+        } \
+        /* Commit the new array size. */ \
+        pThis->cItems = cItems - 1; \
+        \
+        /* Call the allocator to resize the array (ignore return). */ \
+        RTAsn1MemResizeArray(&pThis->Allocation, (void ***)&pThis->papItems, cItems - 1, cItems); \
+        return VINF_SUCCESS; \
+    } \
+    \
+    RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_InsertEx)(RT_CONCAT(P,RTASN1TMPL_TYPE) pThis, uint32_t iPosition, \
+                                                                  RT_CONCAT(PC, a_ItemType) pToClone, \
+                                                                  PCRTASN1ALLOCATORVTABLE pAllocator, uint32_t *piActualPos) \
+    { \
+        /* Check and adjust iPosition. */ \
+        uint32_t const cItems = pThis->cItems; \
+        if (iPosition <= cItems) \
+        { /* likely */ } \
+        else \
+        { \
+            AssertReturn(iPosition == UINT32_MAX, VERR_OUT_OF_RANGE); \
+            iPosition = cItems; \
+        } \
+        \
+        /* Ensure we've got space in the array. */ \
+        int rc = RTAsn1MemResizeArray(&pThis->Allocation, (void ***)&pThis->papItems, cItems, cItems + 1); \
+        if (RT_SUCCESS(rc)) \
+        { \
+            /* Initialize the new entry (which is currently at the end of the array) either with defaults or as a clone. */ \
+            RT_CONCAT(P,a_ItemType) pInserted = pThis->papItems[cItems]; \
+            if (RT_CONCAT(a_ItemApi,_IsPresent)(pToClone)) \
+                rc = RT_CONCAT(a_ItemApi,_Clone)(pInserted, pToClone, pAllocator); \
+            else \
+                rc = RT_CONCAT(a_ItemApi,_Init)(pInserted, pAllocator); \
+            if (RT_SUCCESS(rc)) \
+            { \
+                pThis->cItems = cItems + 1; \
+                \
+                /* If not inserting at the end of the array, shift existing items out of the way and insert the new as req. */ \
+                if (iPosition != cItems) \
+                { \
+                    memmove(&pThis->papItems[iPosition + 1], &pThis->papItems[iPosition], (cItems - iPosition) * sizeof(void *)); \
+                    pThis->papItems[iPosition] = pInserted; \
+                } \
+                \
+                /* Done! */ \
+                if (piActualPos) \
+                    *piActualPos = iPosition; \
+                return VINF_SUCCESS; \
+            } \
+            RTAsn1MemResizeArray(&pThis->Allocation, (void ***)&pThis->papItems, cItems + 1, cItems); \
+        } \
+        return rc; \
+    } RTASN1TMPL_SEMICOLON_DUMMY()
+
+# define RTASN1TMPL_SEQ_OF(a_ItemType, a_ItemApi)   RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi)
+# define RTASN1TMPL_SET_OF(a_ItemType, a_ItemApi)   RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi)
 
 
 #elif RTASN1TMPL_PASS == RTASN1TMPL_PASS_COMPARE
@@ -866,7 +1096,7 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Compare)(RT_CONCAT(PC,RTASN1
     uint32_t cItems = pLeft->cItems; \
     if (cItems == pRight->cItems) \
         for (uint32_t i = 0; iDiff == 0 && i < cItems; i++) \
-            iDiff = RT_CONCAT(a_ItemApi,_Compare)(&pLeft->paItems[i], &pRight->paItems[i]); \
+            iDiff = RT_CONCAT(a_ItemApi,_Compare)(pLeft->papItems[i], pRight->papItems[i]); \
     else \
         iDiff = cItems < pRight->cItems ? -1 : 1; \
     RTASN1TMPL_END_COMMON()
@@ -888,7 +1118,9 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Compare)(RT_CONCAT(PC,RTASN1
 RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RTASN1TMPL_TYPE) pThis, uint32_t fFlags,  \
                                                                  PRTERRINFO pErrInfo, const char *pszErrorTag) \
 { \
-    if (RT_UNLIKELY(!RT_CONCAT(RTASN1TMPL_EXT_NAME,_IsPresent)(pThis))) \
+    if (RT_LIKELY(RT_CONCAT(RTASN1TMPL_EXT_NAME,_IsPresent)(pThis))) \
+    { /* likely */ } \
+    else \
         return RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, "%s: Missing (%s).", pszErrorTag, RT_XSTR(RTASN1TMPL_TYPE)); \
     int rc = VINF_SUCCESS
 
@@ -929,8 +1161,7 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RT
 # define RTASN1TMPL_MEMBER_DYN_END(a_enmType, a_enmMembNm, a_Allocation) \
             case RT_CONCAT(a_enmType,_NOT_PRESENT): \
                 rc = RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, \
-                                   "%s: Invalid " #a_enmMembNm " value: " #a_enmType "_NOT_PRESENT", \
-                                   pszErrorTag, pThis->a_enmMembNm); \
+                                   "%s: Invalid " #a_enmMembNm " value: " #a_enmType "_NOT_PRESENT", pszErrorTag); \
                 break; \
         }
 # define RTASN1TMPL_MEMBER_OPT_EX(a_Name, a_Type, a_Api, a_Constraints) \
@@ -951,7 +1182,9 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RT
                                                pErrInfo, RT_XSTR(RTASN1TMPL_TYPE) "::" #a_Name); \
             { a_Constraints } \
         } \
-        else if (RT_UNLIKELY(RTASN1CORE_IS_PRESENT(&pThis->a_TnNm.a_CtxTagN.Asn1Core) != fInnerPresent)) \
+        else if (RT_LIKELY(RTASN1CORE_IS_PRESENT(&pThis->a_TnNm.a_CtxTagN.Asn1Core) == fInnerPresent)) \
+        { /* likely */ } \
+        else \
             rc = RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, \
                                "%s::" #a_TnNm "." #a_Name ": Explict tag precense mixup; " #a_CtxTagN "=%d " #a_Name "=%d.", \
                                pszErrorTag, fOuterPresent, fInnerPresent); \
@@ -1008,8 +1241,8 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RT
 # define RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi) \
     RTASN1TMPL_BEGIN_COMMON(); \
     for (uint32_t i = 0; RT_SUCCESS(rc) && i < pThis->cItems; i++) \
-        rc = RT_CONCAT(a_ItemApi,_CheckSanity)(&pThis->paItems[i], fFlags & RTASN1_CHECK_SANITY_F_COMMON_MASK, \
-                                               pErrInfo, RT_XSTR(RTASN1TMPL_TYPE) "::paItems[#]"); \
+        rc = RT_CONCAT(a_ItemApi,_CheckSanity)(pThis->papItems[i], fFlags & RTASN1_CHECK_SANITY_F_COMMON_MASK, \
+                                               pErrInfo, RT_XSTR(RTASN1TMPL_TYPE) "::papItems[#]"); \
     if (RT_SUCCESS(rc)) { RTASN1TMPL_SET_SEQ_EXEC_CHECK_SANITY(); } \
     RTASN1TMPL_END_COMMON()
 # define RTASN1TMPL_SEQ_OF(a_ItemType, a_ItemApi) RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi)
@@ -1020,7 +1253,9 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RT
     if (RT_SUCCESS(rc) && ((cbMin) != 0 || (cbMax) != UINT32_MAX)) \
     { \
         PCRTASN1CORE pCore = RT_CONCAT(a_Api,_GetAsn1Core)(&pThis->a_Name); \
-        if (RT_UNLIKELY(pCore->cb < (cbMin) || pCore->cb > (cbMax))) \
+        if (RT_LIKELY(pCore->cb >= (cbMin) && pCore->cb <= (cbMax))) \
+        { /* likely */ } \
+        else \
             rc = RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, \
                                "%s::" #a_Name ": Content size is out of range: %#x not in {%#x..%#x}", \
                                pszErrorTag, pCore->cb, cbMin, cbMax); \
@@ -1030,8 +1265,10 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RT
 # define RTASN1TMPL_MEMBER_CONSTR_BITSTRING_MIN_MAX(a_Name, cMinBits, cMaxBits, a_MoreConstraints) \
     if (RT_SUCCESS(rc) && ((cMinBits) != 0 || (cMaxBits) != UINT32_MAX)) \
     { \
-        if (RT_UNLIKELY(   ((cMinBits) == 0          ? false : pThis->a_Name.cBits + 1U < (cMinBits) + 1U /* warning avoiding */) \
-                        || ((cMaxBits) == UINT32_MAX ? false : pThis->a_Name.cBits + 1U > (cMaxBits) + 1U /* ditto */) ) ) \
+        if (RT_LIKELY(   ((cMinBits) == 0          ? true : pThis->a_Name.cBits + 1U >= (cMinBits) + 1U /* warning avoiding */) \
+                      && ((cMaxBits) == UINT32_MAX ? true : pThis->a_Name.cBits + 1U <= (cMaxBits) + 1U /* ditto */) ) ) \
+        { /* likely */ } \
+        else \
             rc = RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, \
                                "%s::" #a_Name ": Bit size is out of range: %#x not in {%#x..%#x}", \
                                pszErrorTag, pThis->a_Name.cBits, cMinBits, cMaxBits); \
@@ -1041,8 +1278,10 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RT
 # define RTASN1TMPL_MEMBER_CONSTR_U64_MIN_MAX(a_Name, uMin, uMax, a_MoreConstraints) \
     if (RT_SUCCESS(rc)) \
     { \
-        if (RT_UNLIKELY(   RTAsn1Integer_UnsignedCompareWithU64(&pThis->a_Name, uMin) < 0 \
-                        || RTAsn1Integer_UnsignedCompareWithU64(&pThis->a_Name, uMax) > 0) ) \
+        if (RT_LIKELY(   RTAsn1Integer_UnsignedCompareWithU64(&pThis->a_Name, uMin) >= 0 \
+                      && RTAsn1Integer_UnsignedCompareWithU64(&pThis->a_Name, uMax) <= 0) ) \
+        { /* likely */ } \
+        else \
             rc = RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, \
                                "%s::" #a_Name ": Out of range: %#x not in {%#llx..%#llx}", \
                                pszErrorTag, pThis->a_Name.Asn1Core.cb > 8 ? UINT64_MAX : pThis->a_Name.uValue.u, \
@@ -1051,8 +1290,13 @@ RTASN1TMPL_DECL(int) RT_CONCAT(RTASN1TMPL_EXT_NAME,_CheckSanity)(RT_CONCAT(PC,RT
     { a_MoreConstraints }
 
 # define RTASN1TMPL_MEMBER_CONSTR_PRESENT(a_Name, a_Api, a_MoreConstraints) \
-    if (RT_SUCCESS(rc) && RT_UNLIKELY(!RT_CONCAT(a_Api,_IsPresent)(&pThis->a_Name))) \
-        rc = RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, "%s::" #a_Name ": Missing.", pszErrorTag); \
+    if (RT_SUCCESS(rc)) \
+    { \
+        if (RT_LIKELY(RT_CONCAT(a_Api,_IsPresent)(&pThis->a_Name))) \
+        { /* likely */ } \
+        else \
+            rc = RTErrInfoSetF(pErrInfo, VERR_GENERAL_FAILURE, "%s::" #a_Name ": Missing.", pszErrorTag); \
+    } \
     { a_MoreConstraints }
 
 
@@ -1086,9 +1330,12 @@ RTASN1TMPL_DECL(void) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(RT_CONCAT(P,RTASN1T
         default: break
 # define RTASN1TMPL_MEMBER_DYN_COMMON(a_UnionNm, a_PtrName, a_Type, a_Api, a_Allocation, a_enmMembNm, a_enmValue, a_IfStmt) \
         case a_enmValue: \
-            RT_CONCAT(a_Api,_Delete)(pThis->a_UnionNm.a_PtrName); \
-            RTAsn1MemFree(&pThis->Allocation, pThis->a_UnionNm.a_PtrName); \
-            pThis->a_UnionNm.a_PtrName = NULL; \
+            if (pThis->a_UnionNm.a_PtrName) \
+            { \
+                RT_CONCAT(a_Api,_Delete)(pThis->a_UnionNm.a_PtrName); \
+                RTAsn1MemFree(&pThis->Allocation, pThis->a_UnionNm.a_PtrName); \
+                pThis->a_UnionNm.a_PtrName = NULL; \
+            } \
             break
 # define RTASN1TMPL_MEMBER_DYN_END(a_enmType, a_enmMembNm, a_Allocation) \
     }
@@ -1103,15 +1350,21 @@ RTASN1TMPL_DECL(void) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(RT_CONCAT(P,RTASN1T
         default: break
 # define RTASN1TMPL_PCHOICE_ITAG_EX(a_uTag, a_enmChoice, a_PtrName, a_Name, a_Type, a_Api, a_fClue, a_Constraints) \
         case a_enmChoice: \
-            RT_CONCAT(a_Api,_Delete)(pThis->a_PtrName); \
-            RTAsn1MemFree(&pThis->Allocation, pThis->a_PtrName); \
-            pThis->a_PtrName = NULL; \
+            if (pThis->a_PtrName) \
+            { \
+                RT_CONCAT(a_Api,_Delete)(pThis->a_PtrName); \
+                RTAsn1MemFree(&pThis->Allocation, pThis->a_PtrName); \
+                pThis->a_PtrName = NULL; \
+            } \
             break
 # define RTASN1TMPL_PCHOICE_XTAG_EX(a_uTag, a_enmChoice, a_PtrTnNm, a_CtxTagN, a_Name, a_Type, a_Api, a_Constraints) \
         case a_enmChoice: \
-            RT_CONCAT(a_Api,_Delete)(&pThis->a_PtrTnNm->a_Name); \
-            RTAsn1MemFree(&pThis->Allocation, pThis->a_PtrTnNm); \
-            pThis->a_PtrTnNm = NULL; \
+            if (pThis->a_PtrTnNm) \
+            { \
+                RT_CONCAT(a_Api,_Delete)(&pThis->a_PtrTnNm->a_Name); \
+                RTAsn1MemFree(&pThis->Allocation, pThis->a_PtrTnNm); \
+                pThis->a_PtrTnNm = NULL; \
+            } \
             break
 # define RTASN1TMPL_END_PCHOICE() \
     } \
@@ -1122,9 +1375,10 @@ RTASN1TMPL_DECL(void) RT_CONCAT(RTASN1TMPL_EXT_NAME,_Delete)(RT_CONCAT(P,RTASN1T
     RTASN1TMPL_BEGIN_COMMON(); \
     uint32_t i = pThis->cItems; \
     while (i-- > 0) \
-        RT_CONCAT(a_ItemApi,_Delete)(&pThis->paItems[i]); \
-    RTAsn1MemFree(&pThis->Allocation, pThis->paItems); \
-    pThis->paItems = NULL; \
+        RT_CONCAT(a_ItemApi,_Delete)(pThis->papItems[i]); \
+    RTAsn1MemFreeArray(&pThis->Allocation, (void **)pThis->papItems); \
+    pThis->papItems = NULL; \
+    pThis->cItems   = 0; \
     RTASN1TMPL_END_COMMON()
 # define RTASN1TMPL_SEQ_OF(a_ItemType, a_ItemApi) RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi)
 # define RTASN1TMPL_SET_OF(a_ItemType, a_ItemApi) RTASN1TMPL_SET_SEQ_OF_COMMON(a_ItemType, a_ItemApi)

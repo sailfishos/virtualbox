@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/s3.h>
 #include "internal/iprt.h"
 
@@ -38,6 +38,9 @@
 #include <iprt/file.h>
 #include <iprt/stream.h>
 
+#ifdef RT_OS_WINDOWS /* OpenSSL drags in Windows.h, which isn't compatible with -Wall.  */
+# include <iprt/win/windows.h>
+#endif
 #include <curl/curl.h>
 #include <openssl/hmac.h>
 #include <libxml/parser.h>
@@ -45,9 +48,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct RTS3INTERNAL
 {
     uint32_t u32Magic;
@@ -72,9 +75,9 @@ typedef struct RTS3TMPMEMCHUNK
 typedef RTS3TMPMEMCHUNK *PRTS3TMPMEMCHUNK;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /** Validates a handle and returns VERR_INVALID_HANDLE if not valid. */
 #define RTS3_VALID_RETURN_RC(hS3, rc) \
@@ -94,9 +97,9 @@ typedef RTS3TMPMEMCHUNK *PRTS3TMPMEMCHUNK;
     } while (0)
 
 
-/*******************************************************************************
-*   Private RTS3 helper                                                        *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Private RTS3 helper                                                                                                          *
+*********************************************************************************************************************************/
 
 static char* rtS3Host(const char* pszBucket, const char* pszKey, const char* pszBaseUrl)
 {
@@ -365,9 +368,10 @@ static void rtS3ReinitCurl(PRTS3INTERNAL pS3Int)
     }
 }
 
-/*******************************************************************************
-*   Private XML helper                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Private XML helper                                                                                                           *
+*********************************************************************************************************************************/
 
 static xmlNodePtr rtS3FindNode(xmlNodePtr pNode, const char *pszName)
 {
@@ -496,9 +500,10 @@ static void rtS3ExtractAllKeys(xmlDocPtr pDoc, xmlNodePtr pNode, PCRTS3KEYENTRY 
     }
 }
 
-/*******************************************************************************
-*   Public RTS3 interface                                                      *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Public RTS3 interface                                                                                                        *
+*********************************************************************************************************************************/
 
 RTR3DECL(int) RTS3Create(PRTS3 ppS3, const char* pszAccessKey, const char* pszSecretKey, const char* pszBaseUrl, const char* pszUserAgent /* = NULL */)
 {
@@ -966,7 +971,7 @@ RTR3DECL(int) RTS3PutKey(RTS3 hS3, const char *pszBucketName, const char *pszKey
     /* Create the three basic header entries */
     char *apszHead[5] =
     {
-        /* todo: For now we use octet-stream for all types. Later we should try
+        /** @todo For now we use octet-stream for all types. Later we should try
          * to set the right one (libmagic from the file packet could be a
          * candidate for finding the right type). */
         RTStrDup("Content-Type: octet-stream"),            /* Content type entry */

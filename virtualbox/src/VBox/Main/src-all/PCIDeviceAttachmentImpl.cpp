@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,19 +22,22 @@
 #include "Global.h"
 #include "Logging.h"
 
+#include <VBox/settings.h>
+
 struct PCIDeviceAttachment::Data
 {
-    Data(const Bstr    &aDevName,
+    Data(const Utf8Str &aDevName,
          LONG          aHostAddress,
          LONG          aGuestAddress,
-         BOOL          afPhysical)
-        : HostAddress(aHostAddress), GuestAddress(aGuestAddress),
-          fPhysical(afPhysical)
+         BOOL          afPhysical) :
+        DevName(aDevName),
+        HostAddress(aHostAddress),
+        GuestAddress(aGuestAddress),
+        fPhysical(afPhysical)
     {
-        DevName = aDevName;
     }
 
-    Bstr             DevName;
+    Utf8Str          DevName;
     LONG             HostAddress;
     LONG             GuestAddress;
     BOOL             fPhysical;
@@ -42,6 +45,7 @@ struct PCIDeviceAttachment::Data
 
 // constructor / destructor
 /////////////////////////////////////////////////////////////////////////////
+DEFINE_EMPTY_CTOR_DTOR(PCIDeviceAttachment)
 
 HRESULT PCIDeviceAttachment::FinalConstruct()
 {
@@ -59,26 +63,42 @@ void PCIDeviceAttachment::FinalRelease()
 // public initializer/uninitializer for internal purposes only
 /////////////////////////////////////////////////////////////////////////////
 HRESULT PCIDeviceAttachment::init(IMachine      *aParent,
-                                  const Bstr   &aDevName,
+                                  const Utf8Str &aDevName,
                                   LONG          aHostAddress,
                                   LONG          aGuestAddress,
                                   BOOL          fPhysical)
 {
-    (void)aParent;
+    NOREF(aParent);
+
+    /* Enclose the state transition NotReady->InInit->Ready */
+    AutoInitSpan autoInitSpan(this);
+    AssertReturn(autoInitSpan.isOk(), E_FAIL);
+
     m = new Data(aDevName, aHostAddress, aGuestAddress, fPhysical);
 
-    return m != NULL ? S_OK : E_FAIL;
+    /* Confirm a successful initialization */
+    autoInitSpan.setSucceeded();
+
+    return S_OK;
 }
 
-HRESULT PCIDeviceAttachment::loadSettings(IMachine *aParent,
-                                          const settings::HostPCIDeviceAttachment &hpda)
+HRESULT PCIDeviceAttachment::initCopy(IMachine *aParent, PCIDeviceAttachment *aThat)
 {
-    Bstr bname(hpda.strDeviceName);
-    return init(aParent, bname,  hpda.uHostAddress, hpda.uGuestAddress, TRUE);
+    LogFlowThisFunc(("aParent=%p, aThat=%p\n", aParent, aThat));
+
+    ComAssertRet(aParent && aThat, E_INVALIDARG);
+
+    return init(aParent, aThat->m->DevName, aThat->m->HostAddress, aThat->m->GuestAddress, aThat->m->fPhysical);
+}
+
+HRESULT PCIDeviceAttachment::i_loadSettings(IMachine *aParent,
+                                            const settings::HostPCIDeviceAttachment &hpda)
+{
+    return init(aParent, hpda.strDeviceName, hpda.uHostAddress, hpda.uGuestAddress, TRUE);
 }
 
 
-HRESULT PCIDeviceAttachment::saveSettings(settings::HostPCIDeviceAttachment &data)
+HRESULT PCIDeviceAttachment::i_saveSettings(settings::HostPCIDeviceAttachment &data)
 {
     Assert(m);
     data.uHostAddress = m->HostAddress;
@@ -94,43 +114,36 @@ HRESULT PCIDeviceAttachment::saveSettings(settings::HostPCIDeviceAttachment &dat
  */
 void PCIDeviceAttachment::uninit()
 {
-    if (m)
-    {
-        delete m;
-        m = NULL;
-    }
+    /* Enclose the state transition Ready->InUninit->NotReady */
+    AutoUninitSpan autoUninitSpan(this);
+    if (autoUninitSpan.uninitDone())
+        return;
+
+    delete m;
+    m = NULL;
 }
 
 // IPCIDeviceAttachment properties
 /////////////////////////////////////////////////////////////////////////////
-
-STDMETHODIMP PCIDeviceAttachment::COMGETTER(Name)(BSTR * aName)
+HRESULT PCIDeviceAttachment::getName(com::Utf8Str &aName)
 {
-    CheckComArgOutPointerValid(aName);
-    m->DevName.cloneTo(aName);
+    aName = m->DevName;
     return S_OK;
 }
 
-STDMETHODIMP PCIDeviceAttachment::COMGETTER(IsPhysicalDevice)(BOOL * aPhysical)
+HRESULT PCIDeviceAttachment::getIsPhysicalDevice(BOOL *aIsPhysicalDevice)
 {
-    CheckComArgOutPointerValid(aPhysical);
-    *aPhysical = m->fPhysical;
+    *aIsPhysicalDevice = m->fPhysical;
     return S_OK;
 }
 
-STDMETHODIMP PCIDeviceAttachment::COMGETTER(HostAddress)(LONG * aHostAddress)
+HRESULT PCIDeviceAttachment::getHostAddress(LONG *aHostAddress)
 {
     *aHostAddress = m->HostAddress;
     return S_OK;
 }
-
-STDMETHODIMP PCIDeviceAttachment::COMGETTER(GuestAddress)(LONG * aGuestAddress)
+HRESULT PCIDeviceAttachment::getGuestAddress(LONG *aGuestAddress)
 {
     *aGuestAddress = m->GuestAddress;
     return S_OK;
 }
-
-#ifdef VBOX_WITH_XPCOM
-NS_DECL_CLASSINFO(PCIDeviceAttachment)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(PCIDeviceAttachment, IPCIDeviceAttachment)
-#endif

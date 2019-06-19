@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*  Header Files                                                                *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <stdio.h>
@@ -29,9 +29,9 @@
 #include <iprt/stdarg.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifndef S_ISDIR
 # define S_ISDIR(a_fMode)       ( (S_IFMT & (a_fMode)) == S_IFDIR )
 #endif
@@ -95,7 +95,12 @@ static int openMakefileList(const char *pcszPath, const char *pcszVariableName, 
 
     FILE *pFile= fopen(pcszPath, "w");
     if (!pFile)
-        return printErr("Failed to open \"%s\" for writing the file list");
+#ifdef _MSC_VER
+        return printErr("Failed to open \"%s\" for writing the file list: %s (win32: %d)\n",
+                        pcszPath, strerror(errno), _doserrno);
+#else
+        return printErr("Failed to open \"%s\" for writing the file list: %s\n", pcszPath, strerror(errno));
+#endif
 
     if (fprintf(pFile, "%s := \\\n", pcszVariableName) <= 0)
     {
@@ -240,7 +245,11 @@ static int writeSubFile(const char *pcszFilename, const char *pcszSubContent, si
 {
     FILE   *pFile = fopen(pcszFilename, "w");
     if (!pFile)
+#ifdef _MSC_VER
+        return printErr("Failed to open \"%s\" for writing: %s (win32: %d)\n", pcszFilename, strerror(errno), _doserrno);
+#else
         return printErr("Failed to open \"%s\" for writing: %s\n", pcszFilename, strerror(errno));
+#endif
 
     errno = 0;
     int rc = 0;

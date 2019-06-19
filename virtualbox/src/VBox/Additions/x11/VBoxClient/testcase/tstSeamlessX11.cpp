@@ -1,9 +1,10 @@
+/* $Id: tstSeamlessX11.cpp $ */
 /** @file
  * Linux seamless guest additions simulator in host.
  */
 
 /*
- * Copyright (C) 2007-2011 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,6 +17,7 @@
 
 #include <stdlib.h> /* exit() */
 
+#include <iprt/err.h>
 #include <iprt/initterm.h>
 #include <iprt/semaphore.h>
 #include <iprt/stream.h>
@@ -78,16 +80,6 @@ int VbglR3SeamlessWaitEvent(VMMDevSeamlessMode *pMode)
     return rc;
 }
 
-int VbglR3WaitEvent(uint32_t , uint32_t cMillies, uint32_t *)
-{
-    return RTSemEventWait(eventSem, cMillies);
-}
-
-int VbglR3InterruptEventWaits(void)
-{
-    return RTSemEventSignal(eventSem);
-}
-
 VBGLR3DECL(int)     VbglR3InitUser(void) { return VINF_SUCCESS; }
 VBGLR3DECL(void)    VbglR3Term(void) {}
 
@@ -118,7 +110,6 @@ int vboxClientXLibErrorHandler(Display *pDisplay, XErrorEvent *pError)
 int main( int argc, char **argv)
 {
     int rc = VINF_SUCCESS;
-    char ach[2];
 
     RTR3InitExe(argc, &argv, 0);
     RTPrintf("VirtualBox guest additions X11 seamless mode testcase\n");

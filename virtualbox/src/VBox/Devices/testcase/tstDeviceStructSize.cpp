@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,19 +17,43 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/types.h>
 #include <iprt/x86.h>
 
-
 #define VBOX_WITH_HGCM                  /* grumble */
 #define VBOX_DEVICE_STRUCT_TESTCASE
+
+/* Check that important preprocessor macros does not get redefined: */
+#include <VBox/cdefs.h>
+#include <VBox/log.h>
+#ifdef DEBUG
+# define VBOX_DEVICE_STRUCT_TESTCASE_CHECK_DEBUG
+#else
+# undef  VBOX_DEVICE_STRUCT_TESTCASE_CHECK_DEBUG
+#endif
+#ifdef LOG_ENABLED
+# define VBOX_DEVICE_STRUCT_TESTCASE_CHECK_LOG_ENABLED
+#else
+# undef  VBOX_DEVICE_STRUCT_TESTCASE_CHECK_LOG_ENABLED
+#endif
+#ifdef VBOX_STRICT
+# define VBOX_DEVICE_STRUCT_TESTCASE_CHECK_VBOX_STRICT
+#else
+# undef  VBOX_DEVICE_STRUCT_TESTCASE_CHECK_VBOX_STRICT
+#endif
+#ifdef RT_STRICT
+# define VBOX_DEVICE_STRUCT_TESTCASE_CHECK_RT_STRICT
+#else
+# undef  VBOX_DEVICE_STRUCT_TESTCASE_CHECK_RT_STRICT
+#endif
+
+/* The structures we're checking: */
 #undef LOG_GROUP
-#include "../Bus/DevPCI.cpp"
-#undef LOG_GROUP
-#include "../Bus/DevPciIch9.cpp"
+#include "../Bus/DevPciInternal.h"
 #undef LOG_GROUP
 #include "../Graphics/DevVGA.cpp"
 #undef LOG_GROUP
@@ -56,8 +80,8 @@
 #include "../PC/DevPit-i8254.cpp"
 #undef LOG_GROUP
 #include "../PC/DevRTC.cpp"
-#undef LOG_GROUP
-#include "../PC/DevAPIC.cpp"
+# undef LOG_GROUP
+# include "../../VMM/VMMR3/APIC.cpp"
 #undef LOG_GROUP
 #include "../PC/DevIoApic.cpp"
 #undef LOG_GROUP
@@ -74,6 +98,10 @@
 # ifdef VBOX_WITH_EHCI_IMPL
 #  undef LOG_GROUP
 #  include "../USB/DevEHCI.cpp"
+# endif
+# ifdef VBOX_WITH_XHCI_IMPL
+#  undef LOG_GROUP
+#  include "../USB/DevXHCI.cpp"
 # endif
 #endif
 #undef LOG_GROUP
@@ -94,21 +122,45 @@
 # undef LOG_GROUP
 # include "../Storage/DevLsiLogicSCSI.cpp"
 #endif
+#ifdef VBOX_WITH_NVME_IMPL
+# undef LOG_GROUP
+# include "../Storage/DevNVMe.cpp"
+#endif
 
 #ifdef VBOX_WITH_PCI_PASSTHROUGH_IMPL
 # undef LOG_GROUP
 # include "../Bus/DevPciRaw.cpp"
 #endif
 
+#include <VBox/vmm/pdmaudioifs.h>
+
 #undef LOG_GROUP
-#include "../Audio/DevIchHda.cpp"
+#include "../Audio/DevIchAc97.cpp"
+#undef LOG_GROUP
+#include "../Audio/DevHDA.cpp"
+
+
+/* Check that important preprocessor macros didn't get redefined: */
+#if defined(DEBUG)       != defined(VBOX_DEVICE_STRUCT_TESTCASE_CHECK_DEBUG)
+# error "DEBUG was modified!  This may throw off structure tests."
+#endif
+#if defined(LOG_ENABLED) != defined(VBOX_DEVICE_STRUCT_TESTCASE_CHECK_LOG_ENABLED)
+# error "LOG_ENABLED was modified!  This may throw off structure tests."
+#endif
+#if defined(RT_STRICT)   != defined(VBOX_DEVICE_STRUCT_TESTCASE_CHECK_RT_STRICT)
+# error "RT_STRICT was modified!  This may throw off structure tests."
+#endif
+#if defined(VBOX_STRICT) != defined(VBOX_DEVICE_STRUCT_TESTCASE_CHECK_VBOX_STRICT)
+# error "VBOX_STRICT was modified!  This may throw off structure tests."
+#endif
+
 
 #include <stdio.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /**
  * Checks the offset of a data member.
  * @param   type    Type.
@@ -119,11 +171,12 @@
     do { \
         if (off != RT_OFFSETOF(type, m)) \
         { \
-            printf("tstDeviceStructSize: error! %#010x %s  Off by %d!! (off=%#x)\n", RT_OFFSETOF(type, m), #type "." #m, off - RT_OFFSETOF(type, m), off); \
+            printf("tstDeviceStructSize: Error! %#010x %s  Member offset wrong by %d (should be %d -- but is %d)\n", \
+                   RT_OFFSETOF(type, m), #type "." #m, off - RT_OFFSETOF(type, m), off, RT_OFFSETOF(type, m)); \
             rc++; \
         } \
-        /*else */ \
-            /*printf("%#08x %s\n", RT_OFFSETOF(type, m), #m);*/ \
+        else  \
+            printf("%#08x (%d) %s\n", RT_OFFSETOF(type, m), RT_OFFSETOF(type, m), #type "." #m); \
     } while (0)
 
 /**
@@ -135,7 +188,8 @@
     do { \
         if (size != sizeof(type)) \
         { \
-            printf("tstDeviceStructSize: error! sizeof(%s): %#x (%d)  Off by %d!!\n", #type, (int)sizeof(type), (int)sizeof(type), (int)(sizeof(type) - size)); \
+            printf("tstDeviceStructSize: Error! sizeof(%s): %#x (%d)  Size wrong by %d (should be %d -- but is %d)\n", \
+                   #type, (int)sizeof(type), (int)sizeof(type), (int)sizeof(type) - (int)size, (int)size, (int)sizeof(type)); \
             rc++; \
         } \
         else \
@@ -259,17 +313,20 @@ int main()
 
     /* Basic alignment checks. */
     CHECK_MEMBER_ALIGNMENT(PDMDEVINS, achInstanceData, 64);
-    CHECK_MEMBER_ALIGNMENT(PCIDEVICE, Int.s, 16);
-    CHECK_MEMBER_ALIGNMENT(PCIDEVICE, Int.s.aIORegions, 16);
+    CHECK_MEMBER_ALIGNMENT(PDMPCIDEV, Int.s, 16);
+    CHECK_MEMBER_ALIGNMENT(PDMPCIDEV, Int.s.aIORegions, 16);
 
     /*
      * Misc alignment checks (keep this somewhat alphabetical).
      */
+    CHECK_MEMBER_ALIGNMENT(AC97STATE, CritSect, 8);
+
     CHECK_MEMBER_ALIGNMENT(AHCI, lock, 8);
-    CHECK_MEMBER_ALIGNMENT(AHCIPort, StatDMA, 8);
-#ifdef VBOX_WITH_STATISTICS
-    CHECK_MEMBER_ALIGNMENT(APICDeviceInfo, StatMMIOReadGC, 8);
-#endif
+    CHECK_MEMBER_ALIGNMENT(AHCI, ahciPort[0], 8);
+
+    CHECK_MEMBER_ALIGNMENT(APICDEV, pDevInsR0, 8);
+    CHECK_MEMBER_ALIGNMENT(APICDEV, pDevInsRC, 8);
+
     CHECK_MEMBER_ALIGNMENT(ATADevState, cTotalSectors, 8);
     CHECK_MEMBER_ALIGNMENT(ATADevState, StatATADMA, 8);
     CHECK_MEMBER_ALIGNMENT(ATADevState, StatReads, 8);
@@ -295,12 +352,24 @@ int main()
     CHECK_MEMBER_ALIGNMENT(EHCI, StatCanceledIsocUrbs, 8);
 #  endif
 # endif
+# ifdef VBOX_WITH_XHCI_IMPL
+    CHECK_MEMBER_ALIGNMENT(XHCI, pWorkerThread, 8);
+    CHECK_MEMBER_ALIGNMENT(XHCI, IBase, 8);
+    CHECK_MEMBER_ALIGNMENT(XHCI, MMIOBase, 8);
+    CHECK_MEMBER_ALIGNMENT(XHCI, RootHub2, 8);
+    CHECK_MEMBER_ALIGNMENT(XHCI, RootHub3, 8);
+    CHECK_MEMBER_ALIGNMENT(XHCI, cmdr_dqp, 8);
+#  ifdef VBOX_WITH_STATISTICS
+    CHECK_MEMBER_ALIGNMENT(XHCI, StatErrorIsocUrbs, 8);
+    CHECK_MEMBER_ALIGNMENT(XHCI, StatIntrsCleared, 8);
+#  endif
+# endif
 #endif
     CHECK_MEMBER_ALIGNMENT(E1KSTATE, StatReceiveBytes, 8);
-#ifdef VBOX_WITH_STATISTICS
-    CHECK_MEMBER_ALIGNMENT(IOAPIC, StatMMIOReadGC, 8);
-    CHECK_MEMBER_ALIGNMENT(IOAPIC, StatMMIOReadGC, 8);
-#endif
+    CHECK_MEMBER_ALIGNMENT(IOAPIC, au64RedirTable, 8);
+# ifdef VBOX_WITH_STATISTICS
+    CHECK_MEMBER_ALIGNMENT(IOAPIC, StatMmioReadRZ, 8);
+# endif
     CHECK_MEMBER_ALIGNMENT(LSILOGISCSI, GCPhysMMIOBase, 8);
     CHECK_MEMBER_ALIGNMENT(LSILOGISCSI, aMessage, 8);
     CHECK_MEMBER_ALIGNMENT(LSILOGISCSI, ReplyPostQueueCritSect, 8);
@@ -313,9 +382,9 @@ int main()
     CHECK_MEMBER_ALIGNMENT(OHCI, StatCanceledIsocUrbs, 8);
 # endif
 #endif
-    CHECK_MEMBER_ALIGNMENT(PCIBUS, devices, 16);
-    CHECK_MEMBER_ALIGNMENT(PCIBUS, devices, 16);
-    CHECK_MEMBER_ALIGNMENT(PCIGLOBALS, pci_irq_levels, 16);
+    CHECK_MEMBER_ALIGNMENT(DEVPCIBUS, apDevices, 64);
+    CHECK_MEMBER_ALIGNMENT(DEVPCIROOT, auPciApicIrqLevels, 16);
+    CHECK_MEMBER_ALIGNMENT(DEVPCIROOT, Piix3.auPciLegacyIrqLevels, 16);
     CHECK_MEMBER_ALIGNMENT(PCNETSTATE, u64LastPoll, 8);
     CHECK_MEMBER_ALIGNMENT(PCNETSTATE, CritSect, 8);
     CHECK_MEMBER_ALIGNMENT(PCNETSTATE, StatReceiveBytes, 8);
@@ -325,12 +394,18 @@ int main()
     CHECK_MEMBER_ALIGNMENT(PITSTATE, StatPITIrq, 8);
     CHECK_MEMBER_ALIGNMENT(SerialState, CritSect, 8);
 #ifdef VBOX_WITH_VMSVGA
+    CHECK_SIZE(VMSVGAState, RT_ALIGN_Z(sizeof(VMSVGAState), 8));
+    CHECK_MEMBER_ALIGNMENT(VGASTATE, svga, 8);
     CHECK_MEMBER_ALIGNMENT(VGASTATE, svga.u64HostWindowId, 8);
+    CHECK_MEMBER_ALIGNMENT(VGASTATE, svga.au32ScratchRegion, 8);
+    CHECK_MEMBER_ALIGNMENT(VGASTATE, svga.StatRegBitsPerPixelWr, 8);
 #endif
+    CHECK_MEMBER_ALIGNMENT(VGASTATE, cMonitors, 8);
     CHECK_MEMBER_ALIGNMENT(VGASTATE, GCPhysVRAM, 8);
     CHECK_MEMBER_ALIGNMENT(VGASTATE, Dev, 8);
     CHECK_MEMBER_ALIGNMENT(VGASTATE, CritSect, 8);
     CHECK_MEMBER_ALIGNMENT(VGASTATE, StatRZMemoryRead, 8);
+    CHECK_MEMBER_ALIGNMENT(VGASTATE, CritSectIRQ, 8);
     CHECK_MEMBER_ALIGNMENT(VMMDevState, CritSect, 8);
 #ifdef VBOX_WITH_VIRTIO
     CHECK_MEMBER_ALIGNMENT(VPCISTATE, cs, 8);

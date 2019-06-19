@@ -1,17 +1,19 @@
-// $Id: vbox-cpuhotplug.dsl $
-/// @file
-//
-// VirtualBox ACPI
-//
-// Copyright (C) 2006-2010 Oracle Corporation
-//
-// This file is part of VirtualBox Open Source Edition (OSE), as
-// available from http://www.virtualbox.org. This file is free software;
-// you can redistribute it and/or modify it under the terms of the GNU
-// General Public License (GPL) as published by the Free Software
-// Foundation, in version 2 as it comes in the "COPYING" file of the
-// VirtualBox OSE distribution. VirtualBox OSE is distributed in the
-// hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+/* $Id: vbox-cpuhotplug.dsl $ */
+/** @file
+ * VirtualBox ACPI
+ */
+
+/*
+ * Copyright (C) 2006-2017 Oracle Corporation
+ *
+ * This file is part of VirtualBox Open Source Edition (OSE), as
+ * available from http://www.virtualbox.org. This file is free software;
+ * you can redistribute it and/or modify it under the terms of the GNU
+ * General Public License (GPL) as published by the Free Software
+ * Foundation, in version 2 as it comes in the "COPYING" file of the
+ * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+ * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ */
 
 DefinitionBlock ("SSDT-cpuhotplug.aml", "SSDT", 1, "VBOX  ", "VBOXCPUT", 2)
 {
@@ -27,16 +29,28 @@ DefinitionBlock ("SSDT-cpuhotplug.aml", "SSDT", 1, "VBOX  ", "VBOXCPUT", 2)
         Return(LEqual(CPUL, 0x01))
     }
 
+    // Method to notify the VMM that a CPU is not
+    // in use anymore and can be safely removed.
+    // Using the extra method here because the CPUL
+    // register identifer clashes with the CPUL object defined
+    // below making iasl starting with version 20150930 fail.
+    //
+    // Think of CPLO as "CPU Lock Open"
+    Method(CPLO, 1)
+    {
+        Store(Arg0, CPUL)
+    }
+
     Scope (\_SB)
     {
 
-#define GENERATE_CPU_OBJECT(id, sck, sckuid, cpu, cpuuid)                  \
+#define GENERATE_CPU_OBJECT(id, sck, sckuid, cpu, cpuuid)<NL>              \
     Device (sck)                                                           \
     {                                                                      \
         Name (_HID, "ACPI0004")                                            \
         Name (_UID, sckuid)                                                \
                                                                            \
-                                                                           \
+        <NL>                                                               \
         Processor (cpu, /* Name */                                         \
                    id,  /* Id */                                           \
                    0x0, /* Processor IO ports range start */               \
@@ -46,8 +60,8 @@ DefinitionBlock ("SSDT-cpuhotplug.aml", "SSDT", 1, "VBOX  ", "VBOXCPUT", 2)
             Name (_HID, "ACPI0007")                                        \
             Name (_UID, cpuuid)                                            \
             Name (_PXM, 0x00)                                              \
-                                                                           \
-            Method(_MAT, 0)                                                \
+            <NL>                                                           \
+            Method(_MAT, 0, Serialized)                                    \
             {                                                              \
                 Name (APIC, Buffer (8) {0x00, 0x08, id, id})               \
                 IF (CPCK(id))                                              \
@@ -60,6 +74,7 @@ DefinitionBlock ("SSDT-cpuhotplug.aml", "SSDT", 1, "VBOX  ", "VBOXCPUT", 2)
                 }                                                          \
                 Return (APIC)                                              \
             }                                                              \
+            <NL>                                                           \
             Method(_STA) /* Used for device presence detection */          \
             {                                                              \
                 IF (CPCK(id))                                              \
@@ -71,9 +86,10 @@ DefinitionBlock ("SSDT-cpuhotplug.aml", "SSDT", 1, "VBOX  ", "VBOXCPUT", 2)
                     Return (0x0)                                           \
                 }                                                          \
             }                                                              \
+            <NL>                                                           \
             Method(_EJ0, 1)                                                \
             {                                                              \
-                Store(id, CPUL) /* Unlock the CPU */                       \
+                CPLO(id) /* Unlock the CPU */                              \
                 Return                                                     \
             }                                                              \
         }                                                                  \

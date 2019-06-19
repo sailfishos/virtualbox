@@ -245,8 +245,12 @@ static const struct wined3d_sm1_opcode_info vs_opcode_table[] =
     {WINED3D_SM1_OP_FRC,      1, 2, WINED3DSIH_FRC,          0,                           0                          },
     {WINED3D_SM1_OP_POW,      1, 3, WINED3DSIH_POW,          0,                           0                          },
     {WINED3D_SM1_OP_CRS,      1, 3, WINED3DSIH_CRS,          0,                           0                          },
+#ifdef VBOX_WITH_VMSVGA /* appears incorrect */
+    {WINED3D_SM1_OP_SGN,      1, 4, WINED3DSIH_SGN,          0,                           0                          },
+#else
     {WINED3D_SM1_OP_SGN,      1, 4, WINED3DSIH_SGN,          WINED3D_SHADER_VERSION(2,0), WINED3D_SHADER_VERSION(2,1)},
     {WINED3D_SM1_OP_SGN,      1, 2, WINED3DSIH_SGN,          WINED3D_SHADER_VERSION(3,0), -1                         },
+#endif
     {WINED3D_SM1_OP_NRM,      1, 2, WINED3DSIH_NRM,          0,                           0                          },
     {WINED3D_SM1_OP_SINCOS,   1, 4, WINED3DSIH_SINCOS,       WINED3D_SHADER_VERSION(2,0), WINED3D_SHADER_VERSION(2,1)},
     {WINED3D_SM1_OP_SINCOS,   1, 2, WINED3DSIH_SINCOS,       WINED3D_SHADER_VERSION(3,0), -1                         },
@@ -419,7 +423,7 @@ static const struct wined3d_sm1_opcode_info *shader_get_opcode(const struct wine
 
     while (opcode_table[i].handler_idx != WINED3DSIH_TABLE_SIZE)
     {
-        if ((code & WINED3DSI_OPCODE_MASK) == opcode_table[i].opcode
+        if ((code & WINED3DSI_OPCODE_MASK) == (DWORD)opcode_table[i].opcode
                 && shader_version >= opcode_table[i].min_version
                 && (!opcode_table[i].max_version || shader_version <= opcode_table[i].max_version))
         {

@@ -1,12 +1,39 @@
+/* $Id: tstRTTcp-1.cpp $ */
+/** @file
+ * IPRT testcase - TCP.
+ */
+
+/*
+ * Copyright (C) 2010-2017 Oracle Corporation
+ *
+ * This file is part of VirtualBox Open Source Edition (OSE), as
+ * available from http://www.virtualbox.org. This file is free software;
+ * you can redistribute it and/or modify it under the terms of the GNU
+ * General Public License (GPL) as published by the Free Software
+ * Foundation, in version 2 as it comes in the "COPYING" file of the
+ * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+ * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
+ */
+
+
 #include <iprt/tcp.h>
 
 #include <iprt/string.h>
 #include <iprt/test.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST g_hTest;
 
 
@@ -14,6 +41,8 @@ static RTTEST g_hTest;
 
 static DECLCALLBACK(int) test3Server(RTSOCKET hSocket, void *pvUser)
 {
+    RT_NOREF_PV(pvUser);
+
     RTTestSetDefault(g_hTest, NULL);
     char szBuf[4096];
 
@@ -46,9 +75,10 @@ void test3()
     {
         PRTTCPSERVER pServer;
         int rc = RTTcpServerCreate("localhost", 9999, RTTHREADTYPE_DEFAULT, "server-2", test3Server, NULL, &pServer);
-#ifdef RT_OS_SOLARIS
+#if defined(RT_OS_SOLARIS) || defined(RT_OS_LINUX)
         /** @todo testboxsh1 occationally hits this for some stupid reason. i=21 in
-         *        one occurrence. Fudge a bit for now and see if it helps. */
+         *        one occurrence. Fudge a bit for now and see if it helps.
+         *        Same for testboxopt, i=98 in another case. */
         if (rc == VERR_NET_ADDRESS_IN_USE)
         {
             RTThreadSleep(500);
@@ -86,6 +116,8 @@ void test3()
 
 static DECLCALLBACK(int) test2Server(RTSOCKET hSocket, void *pvUser)
 {
+    RT_NOREF_PV(pvUser);
+
     RTTestSetDefault(g_hTest, NULL);
     char szBuf[512];
 

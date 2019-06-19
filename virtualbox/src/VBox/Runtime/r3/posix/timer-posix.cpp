@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Enables the use of POSIX RT timers. */
 #ifndef RT_OS_SOLARIS /* Solaris 10 doesn't have SIGEV_THREAD */
 # define IPRT_WITH_POSIX_TIMERS
@@ -43,9 +44,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP   RTLOGGROUP_TIMER
 #include <iprt/timer.h>
 #include <iprt/alloc.h>
@@ -73,9 +74,9 @@
 #include <pthread.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef IPRT_WITH_POSIX_TIMERS
 /** Init the critsect on first call. */
 static RTONCE g_TimerOnce = RTONCE_INITIALIZER;
@@ -94,9 +95,9 @@ static RTTHREAD g_TimerThread;
 #endif /* IPRT_WITH_POSIX_TIMERS */
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The internal representation of a timer handle.
  */
@@ -668,7 +669,7 @@ RTR3DECL(int) RTTimerDestroy(PRTTIMER pTimer)
         TimerSpec.it_value.tv_sec     = 0;
         TimerSpec.it_value.tv_nsec    = 0;
         int err = timer_settime(pTimer->NativeTimer, 0, &TimerSpec, NULL); NOREF(err);
-        AssertMsg(!err, ("%d\n", err));
+        AssertMsg(!err, ("%d / %d\n", err, errno));
     }
 #endif
 
@@ -765,7 +766,7 @@ RTDECL(int) RTTimerStart(PRTTIMER pTimer, uint64_t u64First)
     TimerSpec.it_interval.tv_sec  = pTimer->u64NanoInterval / 1000000000;
     TimerSpec.it_interval.tv_nsec = pTimer->u64NanoInterval % 1000000000;
     int err = timer_settime(pTimer->NativeTimer, 0, &TimerSpec, NULL);
-    int rc = RTErrConvertFromErrno(err);
+    int rc = err == 0 ? VINF_SUCCESS : RTErrConvertFromErrno(errno);
 #endif /* IPRT_WITH_POSIX_TIMERS */
 
     if (RT_FAILURE(rc))
@@ -812,7 +813,7 @@ RTDECL(int) RTTimerStop(PRTTIMER pTimer)
     TimerSpec.it_value.tv_sec     = 0;
     TimerSpec.it_value.tv_nsec    = 0;
     int err = timer_settime(pTimer->NativeTimer, 0, &TimerSpec, NULL);
-    int rc = RTErrConvertFromErrno(err);
+    int rc = err == 0 ? VINF_SUCCESS : RTErrConvertFromErrno(errno);
 #endif /* IPRT_WITH_POSIX_TIMERS */
 
     return rc;

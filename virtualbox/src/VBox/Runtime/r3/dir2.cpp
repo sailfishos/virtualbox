@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DIR
 #include <iprt/dir.h>
 #include "internal/iprt.h"
@@ -61,17 +61,13 @@ static int rtDirRemoveRecursiveSub(char *pszBuf, size_t cchDir, PRTDIRENTRY pDir
     /*
      * Enumerate the directory content and dispose of it.
      */
-    PRTDIR pDir;
-    int rc = RTDirOpen(&pDir, pszBuf);
+    RTDIR hDir;
+    int rc = RTDirOpen(&hDir, pszBuf);
     if (RT_FAILURE(rc))
         return rc;
-    while (RT_SUCCESS(rc = RTDirRead(pDir, pDirEntry, NULL)))
+    while (RT_SUCCESS(rc = RTDirRead(hDir, pDirEntry, NULL)))
     {
-        if (   pDirEntry->szName[0] != '.'
-            || pDirEntry->cbName > 2
-            || (   pDirEntry->cbName == 2
-                && pDirEntry->szName[1] != '.')
-           )
+        if (!RTDirEntryIsStdDotLink(pDirEntry))
         {
             /* Construct the full name of the entry. */
             if (cchDir + pDirEntry->cbName + 1 /* dir slash */ >= RTPATH_MAX)
@@ -129,7 +125,7 @@ static int rtDirRemoveRecursiveSub(char *pszBuf, size_t cchDir, PRTDIRENTRY pDir
     }
     if (rc == VERR_NO_MORE_FILES)
         rc = VINF_SUCCESS;
-    RTDirClose(pDir);
+    RTDirClose(hDir);
     return rc;
 }
 

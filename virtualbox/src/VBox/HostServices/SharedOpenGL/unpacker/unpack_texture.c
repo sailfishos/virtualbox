@@ -289,9 +289,13 @@ void crUnpackTexGendv( void )
     GLdouble params[4];
     unsigned int n_param = READ_DATA( 0, int ) - ( sizeof(int) + 8 );
 
-    if ( n_param > sizeof(params) )
-        crError( "crUnpackTexGendv: n_param=%d, expected <= %d\n", n_param,
-                 (unsigned int)sizeof(params) );
+    if (n_param > sizeof(params))
+    {
+        crError("crUnpackTexGendv: n_param=%d, expected <= %d\n", n_param,
+            (unsigned int)sizeof(params));
+        return;
+    }
+
     crMemcpy( params, DATA_POINTER( sizeof( int ) + 8, GLdouble ), n_param );
 
     cr_unpackDispatch.TexGendv( coord, pname, params );
@@ -322,6 +326,13 @@ void crUnpackExtendAreTexturesResident( void )
 {
     GLsizei n = READ_DATA( 8, GLsizei );
     const GLuint *textures = DATA_POINTER( 12, const GLuint );
+
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint) / 4 || !DATA_POINTER_CHECK(20 + n * sizeof(GLuint)))
+    {
+        crError("crUnpackExtendAreTexturesResident: %d is out of range", n);
+        return;
+    }
+
     SET_RETURN_PTR(12 + n * sizeof(GLuint));
     SET_WRITEBACK_PTR(20 + n * sizeof(GLuint));
     (void) cr_unpackDispatch.AreTexturesResident( n, textures, NULL );

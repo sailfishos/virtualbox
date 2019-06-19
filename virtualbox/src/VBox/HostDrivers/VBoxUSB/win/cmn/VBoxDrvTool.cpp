@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 #include "VBoxDrvTool.h"
@@ -79,11 +88,11 @@ VBOXDRVTOOL_DECL(NTSTATUS) VBoxDrvToolRegQueryValueDword(IN HANDLE hKey, IN PWCH
     UNICODE_STRING RtlStr;
     RtlInitUnicodeString(&RtlStr, pName);
     NTSTATUS Status = ZwQueryValueKey(hKey,
-                &RtlStr,
-                KeyValuePartialInformation,
-                &Buf.Info,
-                sizeof(Buf),
-                &cbBuf);
+                                      &RtlStr,
+                                      KeyValuePartialInformation,
+                                      &Buf.Info,
+                                      sizeof(Buf),
+                                      &cbBuf);
     if (Status == STATUS_SUCCESS)
     {
         if (Buf.Info.Type == REG_DWORD)
@@ -110,6 +119,7 @@ VBOXDRVTOOL_DECL(NTSTATUS) VBoxDrvToolRegSetValueDword(IN HANDLE hKey, IN PWCHAR
 
 static NTSTATUS vboxDrvToolIoCompletionSetEvent(IN PDEVICE_OBJECT pDevObj, IN PIRP pIrp, IN PVOID pvContext)
 {
+    RT_NOREF2(pDevObj, pIrp);
     PKEVENT pEvent = (PKEVENT)pvContext;
     KeSetEvent(pEvent, 0, FALSE);
     return STATUS_MORE_PROCESSING_REQUIRED;
@@ -187,13 +197,21 @@ VBOXDRVTOOL_DECL(VOID) VBoxDrvToolRefWaitEqual(PVBOXDRVTOOL_REF pRef, uint32_t u
     LARGE_INTEGER Interval;
     Interval.QuadPart = -(int64_t) 2 /* ms */ * 10000;
     uint32_t cRefs;
+    size_t loops = 0;
+    KTIMER kTimer;
+    NTSTATUS status = STATUS_SUCCESS;
 
-    while ((cRefs = ASMAtomicReadU32(&pRef->cRefs)) != u32Val)
+    KeInitializeTimer(&kTimer);
+
+    while ((cRefs = ASMAtomicReadU32(&pRef->cRefs)) > u32Val && loops < 256)
     {
         Assert(cRefs >= u32Val);
         Assert(cRefs < UINT32_MAX/2);
 
-        KeDelayExecutionThread(KernelMode, FALSE, &Interval);
+        KeSetTimer(&kTimer, Interval, NULL);
+        status = KeWaitForSingleObject(&kTimer, Executive, KernelMode, false, NULL);
+        Assert(NT_SUCCESS(status));
+        loops++;
     }
 }
 

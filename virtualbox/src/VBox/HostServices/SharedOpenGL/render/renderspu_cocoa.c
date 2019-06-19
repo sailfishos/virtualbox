@@ -1,9 +1,10 @@
+/* $Id: renderspu_cocoa.c $ */
 /** @file
  * VirtualBox OpenGL Cocoa Window System implementation
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -79,11 +80,7 @@ GLboolean renderspu_SystemVBoxCreateWindow(VisualInfo *pVisInfo, GLboolean fShow
     pWinInfo->nativeWindow = NULL;
     pWinInfo->currentCtx = NULL;
 
-#ifdef __LP64__
-    NativeNSViewRef pParentWin = (NativeNSViewRef)render_spu_parent_window_id;
-#else /* __LP64__ */
-    NativeNSViewRef pParentWin = (NativeNSViewRef)(uint32_t)render_spu_parent_window_id;
-#endif /* __LP64__ */
+    NativeNSViewRef pParentWin = (NativeNSViewRef)(uintptr_t)render_spu_parent_window_id;
 
     cocoaViewCreate(&pWinInfo->window, pWinInfo, pParentWin, pVisInfo->visAttribs);
 
@@ -95,11 +92,7 @@ GLboolean renderspu_SystemVBoxCreateWindow(VisualInfo *pVisInfo, GLboolean fShow
 
 void renderspu_SystemReparentWindow(WindowInfo *pWinInfo)
 {
-#ifdef __LP64__
-    NativeNSViewRef pParentWin = (NativeNSViewRef)render_spu_parent_window_id;
-#else /* __LP64__ */
-    NativeNSViewRef pParentWin = (NativeNSViewRef)(uint32_t)render_spu_parent_window_id;
-#endif /* __LP64__ */
+    NativeNSViewRef pParentWin = (NativeNSViewRef)(uintptr_t)render_spu_parent_window_id;
     cocoaViewReparent(pWinInfo->window, pParentWin);
 }
 
@@ -113,12 +106,7 @@ void renderspu_SystemDestroyWindow(WindowInfo *pWinInfo)
 void renderspu_SystemWindowPosition(WindowInfo *pWinInfo, GLint x, GLint y)
 {
     CRASSERT(pWinInfo);
-
-#ifdef __LP64__
-    NativeNSViewRef pParentWin = (NativeNSViewRef)render_spu_parent_window_id;
-#else /* __LP64__ */
-    NativeNSViewRef pParentWin = (NativeNSViewRef)(uint32_t)render_spu_parent_window_id;
-#endif /* __LP64__ */
+    NativeNSViewRef pParentWin = (NativeNSViewRef)(uintptr_t)render_spu_parent_window_id;
 
     /*pParentWin is unused in the call, otherwise it might hold incorrect value if for ex. last reparent call was for
       a different screen*/

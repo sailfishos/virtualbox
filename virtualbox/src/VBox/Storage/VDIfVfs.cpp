@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/types.h>
 #include <iprt/assert.h>
 #include <iprt/mem.h>
@@ -32,9 +32,10 @@
 #include <VBox/vd.h>
 #include <VBox/vd-ifs-internal.h>
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * The internal data of an VD I/O to VFS file or I/O stream wrapper.
@@ -63,6 +64,7 @@ typedef VDIFVFSIOSFILE *PVDIFVFSIOSFILE;
 static DECLCALLBACK(int) vdIfVfsIos_Close(void *pvThis)
 {
     /* We don't close anything. */
+    RT_NOREF1(pvThis);
     return VINF_SUCCESS;
 }
 
@@ -242,7 +244,7 @@ VBOXDDU_DECL(int) VDIfCreateVfsStream(PVDINTERFACEIO pVDIfsIo, void *pvStorage, 
 
 
 /**
- * @interface_method_impl{RTVFSOBJSETOPS,pfnMode}
+ * @interface_method_impl{RTVFSOBJSETOPS,pfnSetMode}
  */
 static DECLCALLBACK(int) vdIfVfsFile_SetMode(void *pvThis, RTFMODE fMode, RTFMODE fMask)
 {
@@ -373,7 +375,7 @@ DECL_HIDDEN_CONST(const RTVFSFILEOPS) g_vdIfVfsFileOps =
     0,
     { /* ObjSet */
         RTVFSOBJSETOPS_VERSION,
-        RT_OFFSETOF(RTVFSFILEOPS, Stream.Obj) - RT_OFFSETOF(RTVFSFILEOPS, ObjSet),
+        RT_UOFFSETOF(RTVFSFILEOPS, ObjSet) - RT_UOFFSETOF(RTVFSFILEOPS, Stream.Obj),
         vdIfVfsFile_SetMode,
         vdIfVfsFile_SetTimes,
         vdIfVfsFile_SetOwner,

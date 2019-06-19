@@ -1,11 +1,10 @@
 /* $Id: VBoxMPDevExt.h $ */
-
 /** @file
  * VBox Miniport device extension header
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,12 +19,13 @@
 #define VBOXMPDEVEXT_H
 
 #include "VBoxMPUtils.h"
-#include <VBox/VBoxVideoGuest.h>
+#include <VBoxVideoGuest.h>
+#include <HGSMIHostCmd.h>
 
 #ifdef VBOX_XPDM_MINIPORT
-# include <miniport.h>
+# include <iprt/nt/miniport.h>
 # include <ntddvdeo.h>
-# include <video.h>
+# include <iprt/nt/video.h>
 # include "common/xpdm/VBoxVideoPortAPI.h"
 #endif
 
@@ -66,6 +66,7 @@ typedef struct VBOXMP_COMMON
     HGSMIGUESTCOMMANDCONTEXT guestCtx;
 
     BOOLEAN fAnyX;                      /* Unrestricted horizontal resolution flag. */
+    uint16_t u16SupportedScreenFlags;   /* VBVA_SCREEN_F_* flags supported by the host. */
 } VBOXMP_COMMON, *PVBOXMP_COMMON;
 
 typedef struct _VBOXMP_DEVEXT
@@ -248,6 +249,7 @@ DECLINLINE(ULONG) vboxWddmVramCpuVisibleSegmentSize(PVBOXMP_DEVEXT pDevExt)
 /* 128 MB */
 DECLINLINE(ULONG) vboxWddmVramCpuInvisibleSegmentSize(PVBOXMP_DEVEXT pDevExt)
 {
+    RT_NOREF(pDevExt);
     return 128 * 1024 * 1024;
 }
 

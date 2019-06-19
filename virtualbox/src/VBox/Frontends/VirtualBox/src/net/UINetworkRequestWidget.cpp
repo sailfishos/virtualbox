@@ -1,12 +1,10 @@
 /* $Id: UINetworkRequestWidget.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkRequestWidget stuff implementation
+ * VBox Qt GUI - UINetworkRequestWidget stuff implementation.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,19 +15,27 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QTimer>
-#include <QGridLayout>
-#include <QProgressBar>
+# include <QTimer>
+# include <QStyle>
+# include <QGridLayout>
+# include <QProgressBar>
 
 /* Local includes: */
-#include "UINetworkRequestWidget.h"
-#include "UINetworkRequest.h"
-#include "UINetworkManager.h"
-#include "UINetworkManagerDialog.h"
-#include "UIIconPool.h"
-#include "QIToolButton.h"
-#include "QIRichTextLabel.h"
+# include "UINetworkRequestWidget.h"
+# include "UINetworkRequest.h"
+# include "UINetworkManager.h"
+# include "UINetworkManagerDialog.h"
+# include "UIIconPool.h"
+# include "QIToolButton.h"
+# include "QIRichTextLabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UINetworkRequestWidget::UINetworkRequestWidget(UINetworkManagerDialog *pParent, UINetworkRequest *pNetworkRequest)
     : QIWithRetranslateUI<UIPopupBox>(pParent)
@@ -43,23 +49,31 @@ UINetworkRequestWidget::UINetworkRequestWidget(UINetworkManagerDialog *pParent, 
     , m_pTimer(new QTimer(this))
 {
     /* Setup self: */
-    setTitleIcon(UIIconPool::iconSet(":/nw_16px.png"));
+    setTitleIcon(UIIconPool::iconSet(":/download_manager_16px.png"));
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
     setContentWidget(m_pContentWidget);
     setOpen(true);
 
     /* Prepare listeners for m_pNetworkRequest: */
-    connect(m_pNetworkRequest, SIGNAL(sigProgress(qint64, qint64)), this, SLOT(sltSetProgress(qint64, qint64)));
-    connect(m_pNetworkRequest, SIGNAL(sigStarted()), this, SLOT(sltSetProgressToStarted()));
-    connect(m_pNetworkRequest, SIGNAL(sigFinished()), this, SLOT(sltSetProgressToFinished()));
-    connect(m_pNetworkRequest, SIGNAL(sigFailed(const QString&)), this, SLOT(sltSetProgressToFailed(const QString&)));
+    connect(m_pNetworkRequest, static_cast<void(UINetworkRequest::*)(qint64, qint64)>(&UINetworkRequest::sigProgress),
+            this, &UINetworkRequestWidget::sltSetProgress);
+    connect(m_pNetworkRequest, static_cast<void(UINetworkRequest::*)()>(&UINetworkRequest::sigStarted),
+            this, &UINetworkRequestWidget::sltSetProgressToStarted);
+    connect(m_pNetworkRequest, static_cast<void(UINetworkRequest::*)()>(&UINetworkRequest::sigFinished),
+            this, &UINetworkRequestWidget::sltSetProgressToFinished);
+    connect(m_pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QString&)>(&UINetworkRequest::sigFailed),
+            this, &UINetworkRequestWidget::sltSetProgressToFailed);
 
     /* Setup timer: */
     m_pTimer->setInterval(5000);
-    connect(m_pTimer, SIGNAL(timeout()), this, SLOT(sltTimeIsOut()));
+    connect(m_pTimer, &QTimer::timeout, this, &UINetworkRequestWidget::sltTimeIsOut);
 
     /* Setup main-layout: */
-    m_pMainLayout->setContentsMargins(6, 6, 6, 6);
+    const int iL = qApp->style()->pixelMetric(QStyle::PM_LayoutLeftMargin) / 2;
+    const int iT = qApp->style()->pixelMetric(QStyle::PM_LayoutTopMargin) / 2;
+    const int iR = qApp->style()->pixelMetric(QStyle::PM_LayoutRightMargin) / 2;
+    const int iB = qApp->style()->pixelMetric(QStyle::PM_LayoutBottomMargin) / 2;
+    m_pMainLayout->setContentsMargins(iL, iT, iR, iB);
 
     /* Setup progress-bar: */
     m_pProgressBar->setRange(0, 0);
@@ -70,13 +84,13 @@ UINetworkRequestWidget::UINetworkRequestWidget(UINetworkManagerDialog *pParent, 
     m_pRetryButton->removeBorder();
     m_pRetryButton->setFocusPolicy(Qt::NoFocus);
     m_pRetryButton->setIcon(UIIconPool::iconSet(":/refresh_16px.png"));
-    connect(m_pRetryButton, SIGNAL(clicked(bool)), this, SIGNAL(sigRetry()));
+    connect(m_pRetryButton, &QIToolButton::clicked, this, &UINetworkRequestWidget::sigRetry);
 
     /* Setup cancel-button: */
     m_pCancelButton->removeBorder();
     m_pCancelButton->setFocusPolicy(Qt::NoFocus);
     m_pCancelButton->setIcon(UIIconPool::iconSet(":/cancel_16px.png"));
-    connect(m_pCancelButton, SIGNAL(clicked(bool)), this, SIGNAL(sigCancel()));
+    connect(m_pCancelButton, &QIToolButton::clicked, this, &UINetworkRequestWidget::sigCancel);
 
     /* Setup error-label: */
     m_pErrorPane->setHidden(true);
@@ -159,24 +173,9 @@ void UINetworkRequestWidget::sltSetProgressToFailed(const QString &strError)
     /* Show 'retry' button: */
     m_pRetryButton->setHidden(false);
 
-    /* Try to find all the links in the error-message,
-     * replace them with %increment if present: */
-    QString strErrorText(strError);
-    QRegExp linkRegExp("[\\S]+[\\./][\\S]+");
-    QStringList links;
-    for (int i = 1; linkRegExp.indexIn(strErrorText) != -1; ++i)
-    {
-        links << linkRegExp.cap();
-        strErrorText.replace(linkRegExp.cap(), QString("%%1").arg(i));
-    }
-    /* Return back all the links, just in bold: */
-    if (!links.isEmpty())
-        for (int i = 0; i < links.size(); ++i)
-            strErrorText = strErrorText.arg(QString("<b>%1</b>").arg(links[i]));
-
     /* Show error label: */
     m_pErrorPane->setHidden(false);
-    m_pErrorPane->setText(UINetworkManagerDialog::tr("The network operation failed with the following error: %1.").arg(strErrorText));
+    m_pErrorPane->setText(composeErrorText(strError));
 }
 
 void UINetworkRequestWidget::sltTimeIsOut()
@@ -201,4 +200,38 @@ void UINetworkRequestWidget::retranslateUi()
 
     /* Translate cancel button: */
     m_pCancelButton->setStatusTip(UINetworkManagerDialog::tr("Cancel network operation"));
+
+    /* Translate error label: */
+    if (m_pNetworkRequest->reply())
+        m_pErrorPane->setText(composeErrorText(m_pNetworkRequest->reply()->errorString()));
 }
+
+/* static */
+const QString UINetworkRequestWidget::composeErrorText(QString strErrorText)
+{
+    /* Null-string for null-string: */
+    if (strErrorText.isEmpty())
+        return QString();
+
+    /* Try to find all the links in the error-message,
+     * replace them with %increment if present: */
+    QRegExp linkRegExp("[\\S]+[\\./][\\S]+");
+    QStringList links;
+    for (int i = 1; linkRegExp.indexIn(strErrorText) != -1; ++i)
+    {
+        links << linkRegExp.cap();
+        strErrorText.replace(linkRegExp.cap(), QString("%%1").arg(i));
+    }
+    /* Return back all the links, just in bold: */
+    if (!links.isEmpty())
+        for (int i = 0; i < links.size(); ++i)
+            strErrorText = strErrorText.arg(QString("<b>%1</b>").arg(links[i]));
+
+    /// @todo NLS: Embed <br> directly into error header text.
+    /* Prepend the error-message with <br> symbol: */
+    strErrorText.prepend("<br>");
+
+    /* Return final result: */
+    return UINetworkManagerDialog::tr("The network operation failed with the following error: %1.").arg(strErrorText);
+}
+

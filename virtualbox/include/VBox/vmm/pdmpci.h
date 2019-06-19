@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,7 +31,7 @@
 
 RT_C_DECLS_BEGIN
 
-/** @defgroup grp_pdm_pcidev    The raw PCI Devices API
+/** @defgroup grp_pdm_pciraw    The raw PCI Devices API
  * @ingroup grp_pdm
  * @{
  */
@@ -51,7 +51,7 @@ typedef struct PDMIPCIRAW
      *
      * @thread  Any thread.
      */
-    DECLR3CALLBACKMEMBER(int, pfnInterruptRequest ,(PPDMIPCIRAW pInterface, int32_t iGuestIrq));
+    DECLR3CALLBACKMEMBER(int, pfnInterruptRequest,(PPDMIPCIRAW pInterface, int32_t iGuestIrq));
 } PDMIPCIRAW;
 
 typedef struct PDMIPCIRAWUP *PPDMIPCIRAWUP;
@@ -67,18 +67,17 @@ typedef struct PDMIPCIRAWUP
      * @returns true, if region is present, and out parameters are correct
      * @param   pInterface          Pointer to this interface structure.
      * @param   iRegion             Region number.
-     * @param   pRegStart           Where to store region base address (guest).
-     * @param   piRegSize           Where to store region size.
+     * @param   pGCPhysRegion       Where to store region base address (guest).
+     * @param   pcbRegion           Where to store region size.
      *
-     * @param   fMmio               If region is MMIO or IO.
+     * @param   pfFlags             If region is MMIO or IO.
      * @thread  Any thread.
      */
     DECLR3CALLBACKMEMBER(bool, pfnGetRegionInfo, (PPDMIPCIRAWUP pInterface,
-                                                  int32_t              iRegion,
-                                                  RTGCPHYS             *pRegStart,
-                                                  uint64_t             *piRegSize,
-                                                  uint32_t             *pfFlags
-                                                  ));
+                                                  uint32_t      iRegion,
+                                                  RTGCPHYS     *pGCPhysRegion,
+                                                  uint64_t     *pcbRegion,
+                                                  uint32_t     *pfFlags));
 
     /**
      * Request driver to map part of host device's MMIO region to the VM process and maybe kernel.
@@ -90,7 +89,7 @@ typedef struct PDMIPCIRAWUP
      * @param   pInterface          Pointer to this interface structure.
      * @param   iRegion             Number of the region.
      * @param   StartAddress        Host physical address of start.
-     * @param   iRegionSize         Size of the region.
+     * @param   cbRegion            Size of the region.
      * @param   fFlags              Flags, currently lowest significant bit set if R0 mapping requested too
      * @param   ppvAddressR3        Where to store mapped region address for R3 (can be 0, if cannot map into userland)
      * @param   ppvAddressR0        Where to store mapped region address for R0 (can be 0, if cannot map into kernel)
@@ -98,13 +97,12 @@ typedef struct PDMIPCIRAWUP
      * @thread  Any thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnMapRegion, (PPDMIPCIRAWUP pInterface,
-                                             int32_t              iRegion,
-                                             RTHCPHYS             StartAddress,
-                                             uint64_t             iRegionSize,
-                                             uint32_t             fFlags,
-                                             RTR3PTR              *ppvAddressR3,
-                                             RTR0PTR              *ppvAddressR0
-                                             ));
+                                             uint32_t      iRegion,
+                                             RTHCPHYS      StartAddress,
+                                             uint64_t      cbRegion,
+                                             uint32_t      fFlags,
+                                             PRTR3PTR      ppvAddressR3,
+                                             PRTR0PTR      ppvAddressR0));
 
     /**
      * Request driver to unmap part of host device's MMIO region to the VM process.
@@ -114,54 +112,51 @@ typedef struct PDMIPCIRAWUP
      * @param   pInterface          Pointer to this interface structure
      * @param   iRegion             Number of the region.
      * @param   StartAddress        Host physical address of start.
-     * @param   iRegionSize         Size of the region.
+     * @param   cbRegion            Size of the region.
      * @param   pvAddressR3         R3 address of mapped region.
      * @param   pvAddressR0         R0 address of mapped region.
      *
      * @thread  Any thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnUnmapRegion, (PPDMIPCIRAWUP pInterface,
-                                               int                  iRegion,
-                                               RTHCPHYS             StartAddress,
-                                               uint64_t             iRegionSize,
-                                               RTR3PTR              pvAddressR3,
-                                               RTR0PTR              pvAddressR0
-                                               ));
+                                               uint32_t      iRegion,
+                                               RTHCPHYS      StartAddress,
+                                               uint64_t      cbRegion,
+                                               RTR3PTR       pvAddressR3,
+                                               RTR0PTR       pvAddressR0));
 
     /**
      * Request port IO write.
      *
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
-     * @param   iPort               IO port.
-     * @param   iValue              Value to write.
+     * @param   uPort               I/O port address.
+     * @param   uValue              Value to write.
      * @param   cb                  Access width.
      *
      * @thread  EMT thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnPioWrite, (PPDMIPCIRAWUP pInterface,
-                                            uint16_t             iPort,
-                                            uint32_t             iValue,
-                                            unsigned             cb
-                                            ));
+                                            RTIOPORT      uPort,
+                                            uint32_t      uValue,
+                                            unsigned      cb));
 
     /**
      * Request port IO read.
      *
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
-     * @param   iPort               IO port.
-     * @param   piValue             Place to store read value.
+     * @param   uPort               I/O port address.
+     * @param   puValue             Place to store read value.
      * @param   cb                  Access width.
      *
      * @thread  EMT thread.
      */
 
     DECLR3CALLBACKMEMBER(int, pfnPioRead, (PPDMIPCIRAWUP pInterface,
-                                           uint16_t             iPort,
-                                           uint32_t             *piValue,
-                                           unsigned             cb
-                                           ));
+                                           RTIOPORT      uPort,
+                                           uint32_t     *puValue,
+                                           unsigned      cb));
 
 
     /**
@@ -171,16 +166,17 @@ typedef struct PDMIPCIRAWUP
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
      * @param   Address             Guest physical address.
-     * @param   pValue              Address of value to write.
+     *                              @todo Why is this documented as guest physical
+     *                              address and given a host ring-0 address type?
+     * @param   pvValue             Address of value to write.
      * @param   cb                  Access width.
      *
      * @thread  EMT thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnMmioWrite, (PPDMIPCIRAWUP pInterface,
-                                             RTR0PTR              Address,
-                                             void const          *pValue,
-                                             unsigned             cb
-                                             ));
+                                             RTR0PTR       Address,
+                                             void const   *pvValue,
+                                             unsigned      cb));
 
     /**
      * Request MMIO read.
@@ -188,17 +184,18 @@ typedef struct PDMIPCIRAWUP
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
      * @param   Address             Guest physical address.
-     * @param   pValue              Place to store read value.
+     *                              @todo Why is this documented as guest physical
+     *                              address and given a host ring-0 address type?
+     * @param   pvValue             Place to store read value.
      * @param   cb                  Access width.
      *
      * @thread  EMT thread.
      */
 
     DECLR3CALLBACKMEMBER(int, pfnMmioRead, (PPDMIPCIRAWUP pInterface,
-                                            RTR0PTR              Address,
-                                            void                 *pValue,
-                                            unsigned             cb
-                                            ));
+                                            RTR0PTR       Address,
+                                            void         *pvValue,
+                                            unsigned      cb));
 
     /**
      * Host PCI config space accessors.
@@ -209,33 +206,32 @@ typedef struct PDMIPCIRAWUP
      *
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
-     * @param   iOffset             Offset in PCI config space.
-     * @param   iValue              Value to write.
+     * @param   offCfgSpace         Offset in PCI config space.
+     * @param   pvValue             Value to write.
      * @param   cb                  Access width.
      *
      * @thread  EMT thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnPciCfgWrite, (PPDMIPCIRAWUP pInterface,
-                                               uint32_t             iOffset,
-                                               void*                pValue,
-                                               unsigned             cb
-                                               ));
+                                               uint32_t      offCfgSpace,
+                                               void         *pvValue,
+                                               unsigned      cb));
      /**
      * Request driver to read value from host device's PCI config space.
      * Host specific way (PIO or MCFG) is used to perform actual operation.
      *
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
-     * @param   iOffset             Offset in PCI config space.
-     * @param   pValue              Where to store read value.
+     * @param   offCfgSpace         Offset in PCI config space.
+     * @param   pvValue             Where to store read value.
      * @param   cb                  Access width.
      *
      * @thread  EMT thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnPciCfgRead, (PPDMIPCIRAWUP pInterface,
-                                              uint32_t             iOffset,
-                                              void                *pValue,
-                                              unsigned             cb                                              ));
+                                              uint32_t      offCfgSpace,
+                                              void         *pvValue,
+                                              unsigned      cb));
 
     /**
      * Request to enable interrupt notifications. Please note that this is purely
@@ -250,13 +246,11 @@ typedef struct PDMIPCIRAWUP
      *
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
-     * @param   pListener           Pointer to the listener object.
-     * @param   iGuestIrq           Guest IRQ to be passed to pfnInterruptRequest().
+     * @param   uGuestIrq           Guest IRQ to be passed to pfnInterruptRequest().
      *
      * @thread  Any thread, pfnInterruptRequest() will be usually invoked on a dedicated thread.
      */
-    DECLR3CALLBACKMEMBER(int, pfnEnableInterruptNotifications, (PPDMIPCIRAWUP pInterface, int32_t iGuestIrq
-                                                                ));
+    DECLR3CALLBACKMEMBER(int, pfnEnableInterruptNotifications, (PPDMIPCIRAWUP pInterface, uint8_t uGuestIrq));
 
     /**
      * Request to disable interrupt notifications.
@@ -266,33 +260,34 @@ typedef struct PDMIPCIRAWUP
      *
      * @thread  Any thread.
      */
-    DECLR3CALLBACKMEMBER(int, pfnDisableInterruptNotifications, (PPDMIPCIRAWUP pInterface
-                                                                 ));
+    DECLR3CALLBACKMEMBER(int, pfnDisableInterruptNotifications, (PPDMIPCIRAWUP pInterface));
 
-    /**
-     * Notification APIs.
+    /** @name  Notification APIs.
+     * @{
      */
 
     /**
-     * Notify driver when raw PCI device construction starts. Have to be the first operation
-     * as initializes internal state and opens host device driver.
+     * Notify driver when raw PCI device construction starts.
+     *
+     * Have to be the first operation as initializes internal state and opens host
+     * device driver.
      *
      * @returns status code
      * @param   pInterface          Pointer to this interface structure.
-     * @param   iHostAddress        Host PCI address of device attached.
-     * @param   iGuestAddress       Guest PCI address of device attached.
-     * @param   szDeviceName        Human readable device name.
+     * @param   uHostPciAddress     Host PCI address of device attached.
+     * @param   uGuestPciAddress    Guest PCI address of device attached.
+     * @param   pszDeviceName       Human readable device name.
      * @param   fDeviceFlags        Flags for the host device.
-     * @param   pu32Flags           Flags for virtual device, from the upper driver.
+     * @param   pfFlags             Flags for virtual device, from the upper driver.
      *
      * @thread  Any thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnPciDeviceConstructStart, (PPDMIPCIRAWUP  pInterface,
-                                                           uint32_t             iHostAddress,
-                                                           uint32_t             iGuestAddress,
-                                                           const char*          szDeviceName,
-                                                           uint32_t             fDeviceFlags,
-                                                           uint32_t             *pu32Flags));
+                                                           uint32_t       uHostPciAddress,
+                                                           uint32_t       uGuestPciAddress,
+                                                           const char    *pszDeviceName,
+                                                           uint32_t       fDeviceFlags,
+                                                           uint32_t      *pfFlags));
 
     /**
      * Notify driver when raw PCI device construction completes, so that it may
@@ -304,46 +299,46 @@ typedef struct PDMIPCIRAWUP
      *
      * @thread  Any thread.
      */
-    DECLR3CALLBACKMEMBER(void, pfnPciDeviceConstructComplete, (PPDMIPCIRAWUP pInterface,
-                                                               int                  rc));
+    DECLR3CALLBACKMEMBER(void, pfnPciDeviceConstructComplete, (PPDMIPCIRAWUP pInterface, int rc));
 
     /**
      * Notify driver on finalization of raw PCI device.
      *
      * @param   pInterface          Pointer to this interface structure.
+     * @param   fFlags              Flags.
      *
      * @thread  Any thread.
      */
-    DECLR3CALLBACKMEMBER(int, pfnPciDeviceDestruct, (PPDMIPCIRAWUP pInterface,
-                                                     uint32_t             fFlags));
+    DECLR3CALLBACKMEMBER(int, pfnPciDeviceDestruct, (PPDMIPCIRAWUP pInterface, uint32_t fFlags));
 
     /**
      * Notify driver on guest power state change.
      *
      * @param   pInterface          Pointer to this interface structure.
-     * @param   aState              New power state.
+     * @param   enmState            New power state.
      * @param   pu64Param           State-specific in/out parameter. For now only used during power-on to provide VM caps.
      *
      * @thread  Any thread.
      */
-    DECLR3CALLBACKMEMBER(int, pfnPciDevicePowerStateChange, (PPDMIPCIRAWUP pInterface,
-                                                             PCIRAWPOWERSTATE     aState,
-                                                             uint64_t             *pu64Param));
+    DECLR3CALLBACKMEMBER(int, pfnPciDevicePowerStateChange, (PPDMIPCIRAWUP      pInterface,
+                                                             PCIRAWPOWERSTATE   enmState,
+                                                             uint64_t          *pu64Param));
 
-     /**
+    /**
      * Notify driver about runtime error.
      *
      * @param   pInterface          Pointer to this interface structure.
      * @param   fFatal              If error is fatal.
-     * @param   szErrorId           Error ID.
-     * @param   szMessage           Error message.
+     * @param   pszErrorId          Error ID.
+     * @param   pszMessage          Error message.
      *
      * @thread  Any thread.
      */
     DECLR3CALLBACKMEMBER(int, pfnReportRuntimeError, (PPDMIPCIRAWUP pInterface,
-                                                      uint8_t              fFatal,
-                                                      const char*          szErrorId,
-                                                      const char*          szMessage));
+                                                      bool          fFatal,
+                                                      const char   *pszErrorId,
+                                                      const char   *pszMessage));
+    /** @} */
 } PDMIPCIRAWUP;
 
 /**
@@ -353,7 +348,7 @@ PCIRAWR0DECL(int)  PciRawR0Init(void);
 /**
  * Process request (in R0).
  */
-PCIRAWR0DECL(int)  PciRawR0ProcessReq(PSUPDRVSESSION pSession, PVM pVM, PPCIRAWSENDREQ pReq);
+PCIRAWR0DECL(int)  PciRawR0ProcessReq(PGVM pGVM, PVM pVM, PSUPDRVSESSION pSession, PPCIRAWSENDREQ pReq);
 /**
  * Terminate R0 PCI module.
  */
@@ -362,12 +357,12 @@ PCIRAWR0DECL(void) PciRawR0Term(void);
 /**
  * Per-VM R0 module init.
  */
-PCIRAWR0DECL(int)  PciRawR0InitVM(PVM pVM);
+PCIRAWR0DECL(int)  PciRawR0InitVM(PGVM pGVM, PVM pVM);
 
 /**
  * Per-VM R0 module termination routine.
  */
-PCIRAWR0DECL(void)  PciRawR0TermVM(PVM pVM);
+PCIRAWR0DECL(void)  PciRawR0TermVM(PGVM pGVM, PVM pVM);
 
 /**
  * Flags returned by pfnPciDeviceConstructStart(), to notify device

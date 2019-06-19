@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,13 +25,14 @@
  */
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/zip.h>
 
 #include <iprt/assert.h>
+#include <iprt/ctype.h>
 #include <iprt/file.h>
 #include <iprt/err.h>
 #include <iprt/poll.h>
@@ -57,9 +58,9 @@ PFNRT g_apfnRTZlibDeps[] =
 #endif /* RT_OS_OS2 || RT_OS_SOLARIS || RT_OS_WINDOWS */
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 #pragma pack(1)
 typedef struct RTZIPGZIPHDR
 {
@@ -147,7 +148,7 @@ typedef struct RTZIPGZIPSTREAM
     bool                fFatalError;
     /** Set if we've reached the end of the zlib stream. */
     bool                fEndOfStream;
-    /** The stream offset for pfnTell. */
+    /** The stream offset for pfnTell, always the uncompressed data. */
     RTFOFF              offStream;
     /** The zlib stream.  */
     z_stream            Zlib;
@@ -168,9 +169,9 @@ typedef struct RTZIPGZIPSTREAM
 typedef RTZIPGZIPSTREAM *PRTZIPGZIPSTREAM;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int rtZipGzip_FlushIt(PRTZIPGZIPSTREAM pThis, uint8_t fFlushType);
 
 
@@ -312,7 +313,7 @@ static int rtZipGzip_ReadOneSeg(PRTZIPGZIPSTREAM pThis, void *pvBuf, size_t cbTo
         if (pThis->Zlib.avail_in == 0)
         {
             size_t cbReadIn = ~(size_t)0;
-            rc = RTVfsIoStrmSgRead(pThis->hVfsIos, &pThis->SgBuf, fBlocking, &cbReadIn);
+            rc = RTVfsIoStrmSgRead(pThis->hVfsIos, -1 /*off*/, &pThis->SgBuf, fBlocking, &cbReadIn);
             if (rc != VINF_SUCCESS)
             {
                 AssertMsg(RT_FAILURE(rc) || rc == VINF_TRY_AGAIN || rc == VINF_EOF, ("%Rrc\n", rc));
@@ -376,9 +377,9 @@ static DECLCALLBACK(int) rtZipGzip_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgB
     PRTZIPGZIPSTREAM pThis = (PRTZIPGZIPSTREAM)pvThis;
 
     Assert(pSgBuf->cSegs == 1);
-    AssertReturn(off == -1, VERR_INVALID_PARAMETER);
     if (!pThis->fDecompress)
         return VERR_ACCESS_DENIED;
+    AssertReturn(off == -1 || off == pThis->offStream , VERR_INVALID_PARAMETER);
 
     return rtZipGzip_ReadOneSeg(pThis, pSgBuf->paSegs[0].pvSeg, pSgBuf->paSegs[0].cbSeg, fBlocking, pcbRead);
 }
@@ -424,7 +425,7 @@ static int rtZipGzip_WriteOutputBuffer(PRTZIPGZIPSTREAM pThis, bool fBlocking)
         RTSgBufReset(&pThis->SgBuf);
 
         cbWrittenOut = ~(size_t)0;
-        rc = RTVfsIoStrmSgWrite(pThis->hVfsIos, &pThis->SgBuf, fBlocking, &cbWrittenOut);
+        rc = RTVfsIoStrmSgWrite(pThis->hVfsIos, -1 /*off*/, &pThis->SgBuf, fBlocking, &cbWrittenOut);
         if (rc != VINF_SUCCESS)
         {
             AssertMsg(RT_FAILURE(rc) || rc == VINF_TRY_AGAIN, ("%Rrc\n", rc));
@@ -509,14 +510,13 @@ static DECLCALLBACK(int) rtZipGzip_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSg
 {
     PRTZIPGZIPSTREAM pThis = (PRTZIPGZIPSTREAM)pvThis;
 
-    AssertReturn(off == -1, VERR_INVALID_PARAMETER);
     Assert(pSgBuf->cSegs == 1); NOREF(fBlocking);
-
     if (pThis->fDecompress)
         return VERR_ACCESS_DENIED;
+    AssertReturn(off == -1 || off == pThis->offStream , VERR_INVALID_PARAMETER);
 
     /*
-     * Write out the intput buffer. Using a loop here because of potential
+     * Write out the input buffer. Using a loop here because of potential
      * integer type overflow since avail_in is uInt and cbSeg is size_t.
      */
     int             rc        = VINF_SUCCESS;
@@ -540,6 +540,7 @@ static DECLCALLBACK(int) rtZipGzip_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSg
             cbLeft -= cbThis;
         }
 
+    pThis->offStream += cbWritten;
     if (pcbWritten)
         *pcbWritten = cbWritten;
     return rc;
@@ -709,19 +710,16 @@ RTDECL(int) RTZipGzipDecompressIoStream(RTVFSIOSTREAM hVfsIosIn, uint32_t fFlags
 
         memset(&pThis->Zlib, 0, sizeof(pThis->Zlib));
         pThis->Zlib.opaque  = pThis;
-        rc = inflateInit2(&pThis->Zlib,
-                          fFlags & RTZIPGZIPDECOMP_F_ALLOW_ZLIB_HDR
-                          ? MAX_WBITS
-                          : MAX_WBITS + 16 /* autodetect gzip header */);
+        rc = inflateInit2(&pThis->Zlib, MAX_WBITS | RT_BIT(5) /* autodetect gzip header */);
         if (rc >= 0)
         {
             /*
              * Read the gzip header from the input stream to check that it's
              * a gzip stream as specified by the user.
              *
-             * Note!. Since we've told zlib to check for the gzip header, we
-             *        prebuffer what we read in the input buffer so it can
-             *        be handed on to zlib later on.
+             * Note! Since we've told zlib to check for the gzip header, we
+             *       prebuffer what we read in the input buffer so it can
+             *       be handed on to zlib later on.
              */
             rc = RTVfsIoStrmRead(pThis->hVfsIos, pThis->abBuffer, sizeof(RTZIPGZIPHDR), true /*fBlocking*/, NULL /*pcbRead*/);
             if (RT_SUCCESS(rc))
@@ -829,4 +827,198 @@ RTDECL(int) RTZipGzipCompressIoStream(RTVFSIOSTREAM hVfsIosDst, uint32_t fFlags,
         RTVfsIoStrmRelease(hVfsIosDst);
     return rc;
 }
+
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnValidate}
+ */
+static DECLCALLBACK(int) rtVfsChainGunzip_Validate(PCRTVFSCHAINELEMENTREG pProviderReg, PRTVFSCHAINSPEC pSpec,
+                                                   PRTVFSCHAINELEMSPEC pElement, uint32_t *poffError, PRTERRINFO pErrInfo)
+{
+    RT_NOREF(pProviderReg, poffError, pErrInfo);
+
+    if (pElement->enmType != RTVFSOBJTYPE_IO_STREAM)
+        return VERR_VFS_CHAIN_ONLY_IOS;
+    if (pElement->enmTypeIn == RTVFSOBJTYPE_INVALID)
+        return VERR_VFS_CHAIN_CANNOT_BE_FIRST_ELEMENT;
+    if (   pElement->enmTypeIn != RTVFSOBJTYPE_FILE
+        && pElement->enmTypeIn != RTVFSOBJTYPE_IO_STREAM)
+        return VERR_VFS_CHAIN_TAKES_FILE_OR_IOS;
+    if (pSpec->fOpenFile & RTFILE_O_WRITE)
+        return VERR_VFS_CHAIN_READ_ONLY_IOS;
+    if (pElement->cArgs != 0)
+        return VERR_VFS_CHAIN_NO_ARGS;
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnInstantiate}
+ */
+static DECLCALLBACK(int) rtVfsChainGunzip_Instantiate(PCRTVFSCHAINELEMENTREG pProviderReg, PCRTVFSCHAINSPEC pSpec,
+                                                      PCRTVFSCHAINELEMSPEC pElement, RTVFSOBJ hPrevVfsObj,
+                                                      PRTVFSOBJ phVfsObj, uint32_t *poffError, PRTERRINFO pErrInfo)
+{
+    RT_NOREF(pProviderReg, pSpec, pElement, poffError, pErrInfo);
+    AssertReturn(hPrevVfsObj != NIL_RTVFSOBJ, VERR_VFS_CHAIN_IPE);
+
+    RTVFSIOSTREAM hVfsIosIn = RTVfsObjToIoStream(hPrevVfsObj);
+    if (hVfsIosIn == NIL_RTVFSIOSTREAM)
+        return VERR_VFS_CHAIN_CAST_FAILED;
+
+    RTVFSIOSTREAM hVfsIos = NIL_RTVFSIOSTREAM;
+    int rc = RTZipGzipDecompressIoStream(hVfsIosIn, 0 /*fFlags*/, &hVfsIos);
+    RTVfsObjFromIoStream(hVfsIosIn);
+    if (RT_SUCCESS(rc))
+    {
+        *phVfsObj = RTVfsObjFromIoStream(hVfsIos);
+        RTVfsIoStrmRelease(hVfsIos);
+        if (*phVfsObj != NIL_RTVFSOBJ)
+            return VINF_SUCCESS;
+        rc = VERR_VFS_CHAIN_CAST_FAILED;
+    }
+    return rc;
+}
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnCanReuseElement}
+ */
+static DECLCALLBACK(bool) rtVfsChainGunzip_CanReuseElement(PCRTVFSCHAINELEMENTREG pProviderReg,
+                                                           PCRTVFSCHAINSPEC pSpec, PCRTVFSCHAINELEMSPEC pElement,
+                                                           PCRTVFSCHAINSPEC pReuseSpec, PCRTVFSCHAINELEMSPEC pReuseElement)
+{
+    RT_NOREF(pProviderReg, pSpec, pElement, pReuseSpec, pReuseElement);
+    return false;
+}
+
+
+/** VFS chain element 'gunzip'. */
+static RTVFSCHAINELEMENTREG g_rtVfsChainGunzipReg =
+{
+    /* uVersion = */            RTVFSCHAINELEMENTREG_VERSION,
+    /* fReserved = */           0,
+    /* pszName = */             "gunzip",
+    /* ListEntry = */           { NULL, NULL },
+    /* pszHelp = */             "Takes an I/O stream and gunzips it. No arguments.",
+    /* pfnValidate = */         rtVfsChainGunzip_Validate,
+    /* pfnInstantiate = */      rtVfsChainGunzip_Instantiate,
+    /* pfnCanReuseElement = */  rtVfsChainGunzip_CanReuseElement,
+    /* uEndMarker = */          RTVFSCHAINELEMENTREG_VERSION
+};
+
+RTVFSCHAIN_AUTO_REGISTER_ELEMENT_PROVIDER(&g_rtVfsChainGunzipReg, rtVfsChainGunzipReg);
+
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnValidate}
+ */
+static DECLCALLBACK(int) rtVfsChainGzip_Validate(PCRTVFSCHAINELEMENTREG pProviderReg, PRTVFSCHAINSPEC pSpec,
+                                                 PRTVFSCHAINELEMSPEC pElement, uint32_t *poffError, PRTERRINFO pErrInfo)
+{
+    RT_NOREF(pProviderReg);
+
+    /*
+     * Basics.
+     */
+    if (pElement->enmType != RTVFSOBJTYPE_IO_STREAM)
+        return VERR_VFS_CHAIN_ONLY_IOS;
+    if (pElement->enmTypeIn == RTVFSOBJTYPE_INVALID)
+        return VERR_VFS_CHAIN_CANNOT_BE_FIRST_ELEMENT;
+    if (   pElement->enmTypeIn != RTVFSOBJTYPE_FILE
+        && pElement->enmTypeIn != RTVFSOBJTYPE_IO_STREAM)
+        return VERR_VFS_CHAIN_TAKES_FILE_OR_IOS;
+    if (pSpec->fOpenFile & RTFILE_O_READ)
+        return VERR_VFS_CHAIN_WRITE_ONLY_IOS;
+    if (pElement->cArgs > 1)
+        return VERR_VFS_CHAIN_AT_MOST_ONE_ARG;
+
+    /*
+     * Optional argument 1..9 indicating the compression level.
+     * We store it in pSpec->uProvider.
+     */
+    if (pElement->cArgs > 0)
+    {
+        const char *psz = pElement->paArgs[0].psz;
+        if (!*psz || !strcmp(psz, "default"))
+            pElement->uProvider = 6;
+        else if (!strcmp(psz, "fast"))
+            pElement->uProvider = 3;
+        else if (   RT_C_IS_DIGIT(*psz)
+                 && *psz != '0'
+                 && *RTStrStripL(psz + 1) == '\0')
+            pElement->uProvider = *psz - '0';
+        else
+        {
+            *poffError = pElement->paArgs[0].offSpec;
+            return RTErrInfoSet(pErrInfo, VERR_VFS_CHAIN_INVALID_ARGUMENT, "Expected compression level: 1-9, default, or fast");
+        }
+    }
+    else
+        pElement->uProvider = 6;
+
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnInstantiate}
+ */
+static DECLCALLBACK(int) rtVfsChainGzip_Instantiate(PCRTVFSCHAINELEMENTREG pProviderReg, PCRTVFSCHAINSPEC pSpec,
+                                                    PCRTVFSCHAINELEMSPEC pElement, RTVFSOBJ hPrevVfsObj,
+                                                    PRTVFSOBJ phVfsObj, uint32_t *poffError, PRTERRINFO pErrInfo)
+{
+    RT_NOREF(pProviderReg, pSpec, pElement, poffError, pErrInfo);
+    AssertReturn(hPrevVfsObj != NIL_RTVFSOBJ, VERR_VFS_CHAIN_IPE);
+
+    RTVFSIOSTREAM hVfsIosOut = RTVfsObjToIoStream(hPrevVfsObj);
+    if (hVfsIosOut == NIL_RTVFSIOSTREAM)
+        return VERR_VFS_CHAIN_CAST_FAILED;
+
+    RTVFSIOSTREAM hVfsIos = NIL_RTVFSIOSTREAM;
+    int rc = RTZipGzipCompressIoStream(hVfsIosOut, 0 /*fFlags*/, pElement->uProvider, &hVfsIos);
+    RTVfsObjFromIoStream(hVfsIosOut);
+    if (RT_SUCCESS(rc))
+    {
+        *phVfsObj = RTVfsObjFromIoStream(hVfsIos);
+        RTVfsIoStrmRelease(hVfsIos);
+        if (*phVfsObj != NIL_RTVFSOBJ)
+            return VINF_SUCCESS;
+        rc = VERR_VFS_CHAIN_CAST_FAILED;
+    }
+    return rc;
+}
+
+
+/**
+ * @interface_method_impl{RTVFSCHAINELEMENTREG,pfnCanReuseElement}
+ */
+static DECLCALLBACK(bool) rtVfsChainGzip_CanReuseElement(PCRTVFSCHAINELEMENTREG pProviderReg,
+                                                         PCRTVFSCHAINSPEC pSpec, PCRTVFSCHAINELEMSPEC pElement,
+                                                         PCRTVFSCHAINSPEC pReuseSpec, PCRTVFSCHAINELEMSPEC pReuseElement)
+{
+    RT_NOREF(pProviderReg, pSpec, pElement, pReuseSpec, pReuseElement);
+    return false;
+}
+
+
+/** VFS chain element 'gzip'. */
+static RTVFSCHAINELEMENTREG g_rtVfsChainGzipReg =
+{
+    /* uVersion = */            RTVFSCHAINELEMENTREG_VERSION,
+    /* fReserved = */           0,
+    /* pszName = */             "gzip",
+    /* ListEntry = */           { NULL, NULL },
+    /* pszHelp = */             "Takes an I/O stream and gzips it.\n"
+                                "Optional argument specifying compression level: 1-9, default, fast",
+    /* pfnValidate = */         rtVfsChainGzip_Validate,
+    /* pfnInstantiate = */      rtVfsChainGzip_Instantiate,
+    /* pfnCanReuseElement = */  rtVfsChainGzip_CanReuseElement,
+    /* uEndMarker = */          RTVFSCHAINELEMENTREG_VERSION
+};
+
+RTVFSCHAIN_AUTO_REGISTER_ELEMENT_PROVIDER(&g_rtVfsChainGzipReg, rtVfsChainGzipReg);
 

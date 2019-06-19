@@ -1,10 +1,10 @@
-; $Id$
+; $Id: VBoxGuestAdditionsW2KXP.nsh $
 ;; @file
 ; VBoxGuestAdditionsW2KXP.nsh - Guest Additions installation for Windows 2000/XP.
 ;
 
 ;
-; Copyright (C) 2006-2013 Oracle Corporation
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -366,7 +366,7 @@ FunctionEnd
 Function W2K_InstallFiles
 
   ; The Shared Folder IFS goes to the system directory
-  FILE /oname=$g_strSystemDir\drivers\VBoxSF.sys "$%PATH_OUT%\bin\additions\VBoxSF.sys"
+  !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxSF.sys" "$g_strSystemDir\drivers\VBoxSF.sys" "$INSTDIR"
   !insertmacro ReplaceDLL "$%PATH_OUT%\bin\additions\VBoxMRXNP.dll" "$g_strSystemDir\VBoxMRXNP.dll" "$INSTDIR"
   AccessControl::GrantOnFile "$g_strSystemDir\VBoxMRXNP.dll" "(BU)" "GenericRead"
   !if $%BUILD_TARGET_ARCH% == "amd64"
@@ -428,7 +428,7 @@ Function W2K_InstallFiles
   ; Create the VBoxService service
   ; No need to stop/remove the service here! Do this only on uninstallation!
   ${LogVerbose} "Installing VirtualBox service ..."
-  ${CmdExecute} "$\"$INSTDIR\VBoxDrvInst.exe$\" service create $\"VBoxService$\" $\"VirtualBox Guest Additions Service$\" 16 2 $\"system32\VBoxService.exe$\" $\"Base$\"" "false"
+  ${CmdExecute} "$\"$INSTDIR\VBoxDrvInst.exe$\" service create $\"VBoxService$\" $\"VirtualBox Guest Additions Service$\" 16 2 $\"%SystemRoot%\System32\VBoxService.exe$\" $\"Base$\"" "false"
 
   ; Set service description
   WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\VBoxService" "Description" "Manages VM runtime information, time synchronization, remote sysprep execution and miscellaneous utilities for guest operating systems."
@@ -439,7 +439,7 @@ sf:
 
   ; Create the Shared Folders service ...
   ; No need to stop/remove the service here! Do this only on uninstallation!
-  ${CmdExecute} "$\"$INSTDIR\VBoxDrvInst.exe$\" service create $\"VBoxSF$\" $\"VirtualBox Shared Folders$\" 2 1 $\"system32\drivers\VBoxSF.sys$\" $\"NetworkProvider$\"" "false"
+  ${CmdExecute} "$\"$INSTDIR\VBoxDrvInst.exe$\" service create $\"VBoxSF$\" $\"VirtualBox Shared Folders$\" 2 1 $\"\SystemRoot\System32\drivers\VBoxSF.sys$\" $\"NetworkProvider$\"" "false"
 
   ; ... and the link to the network provider
   WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\VBoxSF\NetworkProvider" "DeviceName" "\Device\VBoxMiniRdr"

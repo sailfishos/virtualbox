@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -169,10 +169,10 @@ typedef INTNETBUF const *PCINTNETBUF;
         AssertPtr(pBuf); \
         Assert((pBuf)->u32Magic == INTNETBUF_MAGIC); \
         { \
-            uint32_t const offRecvStart = (pBuf)->Recv.offStart + RT_OFFSETOF(INTNETBUF, Recv); \
-            uint32_t const offRecvEnd   = (pBuf)->Recv.offStart + RT_OFFSETOF(INTNETBUF, Recv); \
-            uint32_t const offSendStart = (pBuf)->Send.offStart + RT_OFFSETOF(INTNETBUF, Send); \
-            uint32_t const offSendEnd   = (pBuf)->Send.offStart + RT_OFFSETOF(INTNETBUF, Send); \
+            uint32_t const offRecvStart = (pBuf)->Recv.offStart + RT_UOFFSETOF(INTNETBUF, Recv); \
+            uint32_t const offRecvEnd   = (pBuf)->Recv.offStart + RT_UOFFSETOF(INTNETBUF, Recv); \
+            uint32_t const offSendStart = (pBuf)->Send.offStart + RT_UOFFSETOF(INTNETBUF, Send); \
+            uint32_t const offSendEnd   = (pBuf)->Send.offStart + RT_UOFFSETOF(INTNETBUF, Send); \
             \
             Assert(offRecvEnd > offRecvStart); \
             Assert(offRecvEnd - offRecvStart == (pBuf)->cbRecv); \
@@ -386,6 +386,41 @@ typedef enum INTNETSWDECISION
 } INTNETSWDECISION;
 
 
+/**
+ * Network layer address type.
+ */
+typedef enum INTNETADDRTYPE
+{
+    /** The invalid 0 entry. */
+    kIntNetAddrType_Invalid = 0,
+    /** IP version 4. */
+    kIntNetAddrType_IPv4,
+    /** IP version 6. */
+    kIntNetAddrType_IPv6,
+    /** IPX. */
+    kIntNetAddrType_IPX,
+    /** The end of the valid values. */
+    kIntNetAddrType_End,
+    /** The usual 32-bit hack. */
+    kIntNetAddrType_32BitHack = 0x7fffffff
+} INTNETADDRTYPE;
+
+
+/** Pointer to the interface side of a trunk port. */
+typedef struct INTNETTRUNKIFPORT *PINTNETTRUNKIFPORT;
+
+
+/**
+ * Special variation of INTNETTRUNKIFPORT::pfnRelease for use with
+ * INTNETTRUNKSWPORT::pfnDisconnect.
+ *
+ * @param   pIfPort     Pointer to the INTNETTRUNKIFPORT instance.
+ */
+typedef DECLCALLBACK(void) FNINTNETTRUNKIFPORTRELEASEBUSY(PINTNETTRUNKIFPORT pIfPort);
+/** Pointer to a FNINTNETTRUNKIFPORTRELEASEBUSY function. */
+typedef FNINTNETTRUNKIFPORTRELEASEBUSY *PFNINTNETTRUNKIFPORTRELEASEBUSY;
+
+
 /** Pointer to the switch side of a trunk port. */
 typedef struct INTNETTRUNKSWPORT *PINTNETTRUNKSWPORT;
 /**
@@ -560,12 +595,58 @@ typedef struct INTNETTRUNKSWPORT
      */
     DECLR0CALLBACKMEMBER(void, pfnReportNoPreemptDsts,(PINTNETTRUNKSWPORT pSwitchPort, uint32_t fNoPreemptDsts));
 
+    /**
+     * Notifications about changes to host IP addresses.
+     *
+     * This is used by networks bridged to wifi that share mac with
+     * the host.  Host reports changes to its IP addresses so that L3
+     * switching can ingore guests spoofing host's own IP addresses
+     *
+     * This callback may be null to indicate we are not interested.
+     *
+     * @param   pSwitchPort         Pointer to this structure.
+     * @param   fAdded              Whether address is added of removed.
+     * @param   enmType             Address type.
+     * @param   pvAddr              Pointer to the address.
+     */
+    DECLR0CALLBACKMEMBER(void, pfnNotifyHostAddress,(PINTNETTRUNKSWPORT pSwitchPort, bool fAdded,
+                                                     INTNETADDRTYPE enmType, const void *pvAddr));
+
+    /**
+     * OS triggered trunk disconnect.
+     *
+     * The caller shall must be busy when calling this method to prevent racing the
+     * network destruction code. This method will always consume this busy reference
+     * (released via @a pfnReleaseBusy using @a pIfPort).
+     *
+     * The caller shall guarantee that there are absolutely no chance of concurrent
+     * calls to this method on the same instance.
+     *
+     * @param   pSwitchPort         Pointer to this structure.
+     * @param   pIfPort             The interface port structure corresponding to @a
+     *                              pSwitchPort and which should be used when
+     *                              calling @a pfnReleaseBusy.  This is required as
+     *                              the method may no longer have access to a valid
+     *                              @a pIfPort pointer.
+     * @param   pfnReleaseBusy      Callback for releasing the callers busy
+     *                              reference to it's side of things.
+     */
+    DECLR0CALLBACKMEMBER(void, pfnDisconnect,(PINTNETTRUNKSWPORT pSwitchPort, PINTNETTRUNKIFPORT pIfPort,
+                                              PFNINTNETTRUNKIFPORTRELEASEBUSY pfnReleaseBusy));
+
     /** Structure version number. (INTNETTRUNKSWPORT_VERSION) */
     uint32_t u32VersionEnd;
 } INTNETTRUNKSWPORT;
 
-/** Version number for the INTNETTRUNKIFPORT::u32Version and INTNETTRUNKIFPORT::u32VersionEnd fields. */
-#define INTNETTRUNKSWPORT_VERSION   UINT32_C(0xA2CDf001)
+/**
+ * Version number for the INTNETTRUNKIFPORT::u32Version and
+ * INTNETTRUNKIFPORT::u32VersionEnd fields.
+ *
+ * NB: Version @c 0xA2CDf005 is consumed by 4.x branches for the
+ * backport of pfnNotifyHostAddress.  On the next version bump use
+ * @c 0xA2CDf006 and remove this reminder.
+ */
+# define INTNETTRUNKSWPORT_VERSION   UINT32_C(0xA2CDf004)
 
 
 /**
@@ -589,8 +670,7 @@ typedef enum INTNETTRUNKIFSTATE
     INTNETTRUNKIFSTATE_32BIT_HACK = 0x7fffffff
 } INTNETTRUNKIFSTATE;
 
-/** Pointer to the interface side of a trunk port. */
-typedef struct INTNETTRUNKIFPORT *PINTNETTRUNKIFPORT;
+
 /**
  * This is the port on the trunk interface, i.e. the driver side which the
  * internal network is connected to.
@@ -617,7 +697,6 @@ typedef struct INTNETTRUNKIFPORT
      * Releases the object.
      *
      * This must be called for every pfnRetain call.
-     *
      *
      * @param   pIfPort     Pointer to this structure.
      *

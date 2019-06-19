@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MM_HEAP
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/stam.h>
@@ -34,9 +34,9 @@
 #include <iprt/heap.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void *mmR3UkHeapAlloc(PMMUKHEAP pHeap, MMTAG enmTag, size_t cb, bool fZero, PRTR0PTR pR0Ptr);
 
 
@@ -47,8 +47,8 @@ static void *mmR3UkHeapAlloc(PMMUKHEAP pHeap, MMTAG enmTag, size_t cb, bool fZer
  * This does not require SUPLib to be initialized as we'll lazily allocate the
  * kernel accessible memory on the first alloc call.
  *
- * @returns VBox status.
- * @param   pVM     The handle to the VM the heap should be associated with.
+ * @returns VBox status code.
+ * @param   pUVM    Pointer to the user mode VM structure.
  * @param   ppHeap  Where to store the heap pointer.
  */
 int mmR3UkHeapCreateU(PUVM pUVM, PMMUKHEAP *ppHeap)
@@ -124,7 +124,7 @@ void mmR3UkHeapDestroy(PMMUKHEAP pHeap)
  * freed during the life of the VM.
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM.
@@ -141,7 +141,7 @@ VMMR3DECL(void *) MMR3UkHeapAlloc(PVM pVM, MMTAG enmTag, size_t cbSize, PRTR0PTR
  * Same as MMR3UkHeapAlloc().
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM.
@@ -165,7 +165,7 @@ VMMR3DECL(int) MMR3UkHeapAllocEx(PVM pVM, MMTAG enmTag, size_t cbSize, void **pp
  * Same as MMR3UkHeapAlloc() only the memory is zeroed.
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM.
@@ -182,7 +182,7 @@ VMMR3DECL(void *) MMR3UkHeapAllocZ(PVM pVM, MMTAG enmTag, size_t cbSize, PRTR0PT
  * Same as MMR3UkHeapAllocZ().
  *
  * @returns Pointer to allocated memory.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   enmTag      Statistics tag. Statistics are collected on a per tag
  *                      basis in addition to a global one. Thus we can easily
  *                      identify how memory is used by the VM.
@@ -287,6 +287,8 @@ static void *mmR3UkHeapAlloc(PMMUKHEAP pHeap, MMTAG enmTag, size_t cb, bool fZer
         STAMR3RegisterFU(pUVM, &pStat->cbAllocated,    STAMTYPE_U64, STAMVISIBILITY_ALWAYS,  STAMUNIT_BYTES, "Total number of bytes allocated.",        "/MM/UkHeap/%s/cbAllocated", pszTag);
         STAMR3RegisterFU(pUVM, &pStat->cbFreed,        STAMTYPE_U64, STAMVISIBILITY_ALWAYS,  STAMUNIT_BYTES, "Total number of bytes freed.",            "/MM/UkHeap/%s/cbFreed", pszTag);
     }
+#else
+    RT_NOREF_PV(enmTag);
 #endif
 
     /*
@@ -375,8 +377,9 @@ static void *mmR3UkHeapAlloc(PMMUKHEAP pHeap, MMTAG enmTag, size_t cb, bool fZer
 /**
  * Releases memory allocated with MMR3UkHeapAlloc() and MMR3UkHeapAllocZ()
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pv          Pointer to the memory block to free.
+ * @param   enmTag      The allocation accounting tag.
  */
 VMMR3DECL(void) MMR3UkHeapFree(PVM pVM, void *pv, MMTAG enmTag)
 {
@@ -410,6 +413,8 @@ VMMR3DECL(void) MMR3UkHeapFree(PVM pVM, void *pv, MMTAG enmTag)
             pHeap->Stat.cFrees++;
             pHeap->Stat.cbFreed           += cbActual;
             pHeap->Stat.cbCurAllocated    -= cbActual;
+#else
+            RT_NOREF_PV(enmTag);
 #endif
             RTHeapSimpleFree(pSubHeap->hSimple, pv);
 

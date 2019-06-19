@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -33,6 +33,8 @@
 # include <iprt/cdefs.h>
 # if defined(RT_OS_FREEBSD) && defined(_KERNEL)
 #  include <machine/stdarg.h>
+# elif defined(RT_OS_NETBSD) && defined(_KERNEL)
+#  include <sys/stdarg.h>
 # elif defined(RT_OS_SOLARIS) && defined(_KERNEL) && defined(__GNUC__)
 #  include <stdarg.h>
 #  if __GNUC__ >= 4 /* System headers refers to __builtin_stdarg_start. */
@@ -44,9 +46,12 @@
 #endif
 
 /*
- * MSC doesn't implement va_copy.
+ * Older MSC versions doesn't implement va_copy.  Newer (12.0+?) ones does
+ * implement it like below, but for now it's easier to continue like for the
+ * older ones so we can more easily handle R0, RC and other weird contexts.
  */
-#ifndef va_copy
+#if !defined(va_copy) || defined(_MSC_VER)
+# undef  va_copy
 # define va_copy(dst, src) do { (dst) = (src); } while (0) /** @todo check AMD64 */
 #endif
 

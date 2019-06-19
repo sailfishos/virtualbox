@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,8 +30,8 @@
 
 
 /** @defgroup grp_mm_int   Internals
- * @internal
  * @ingroup grp_mm
+ * @internal
  * @{
  */
 
@@ -673,8 +673,14 @@ typedef struct MMLOOKUPHYPER
         {
             /** The device instance owning the MMIO2 region. */
             PPDMDEVINSR3            pDevIns;
+            /** The sub-device number. */
+            uint32_t                iSubDev;
             /** The region number. */
             uint32_t                iRegion;
+#if HC_ARCH_BITS == 32
+            /** Alignment padding. */
+            uint32_t                uPadding;
+#endif
             /** The offset into the MMIO2 region. */
             RTGCPHYS                off;
         } MMIO2;
@@ -760,6 +766,12 @@ typedef struct MM
 
     /** Size of the base RAM in bytes. (The CFGM RamSize value.) */
     uint64_t                    cbRamBase;
+    /** Number of bytes of RAM above 4GB, starting at address 4GB.  */
+    uint64_t                    cbRamAbove4GB;
+    /** Size of the below 4GB RAM hole. */
+    uint32_t                    cbRamHole;
+    /** Number of bytes of RAM below 4GB, starting at address 0.  */
+    uint32_t                    cbRamBelow4GB;
     /** The number of base RAM pages that PGM has reserved (GMM).
      * @remarks Shadow ROMs will be counted twice (RAM+ROM), so it won't be 1:1 with
      *          what the guest sees. */

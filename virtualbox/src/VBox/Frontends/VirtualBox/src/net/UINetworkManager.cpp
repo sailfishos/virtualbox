@@ -1,12 +1,10 @@
 /* $Id: UINetworkManager.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkManager stuff implementation
+ * VBox Qt GUI - UINetworkManager stuff implementation.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QWidget>
+# include <QWidget>
+# include <QUrl>
 
 /* Local includes: */
-#include "UINetworkManager.h"
-#include "UINetworkManagerDialog.h"
-#include "UINetworkManagerIndicator.h"
-#include "UINetworkRequest.h"
-#include "UINetworkCustomer.h"
-#include "VBoxGlobal.h"
+# include "UINetworkManager.h"
+# include "UINetworkManagerDialog.h"
+# include "UINetworkManagerIndicator.h"
+# include "UINetworkRequest.h"
+# include "UINetworkCustomer.h"
+# include "VBoxGlobal.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UINetworkManager* UINetworkManager::m_pInstance = 0;
 
@@ -61,9 +67,38 @@ UINetworkManagerDialog* UINetworkManager::window() const
     return m_pNetworkManagerDialog;
 }
 
-UINetworkManagerIndicator* UINetworkManager::indicator() const
+UINetworkManagerIndicator* UINetworkManager::createIndicator() const
 {
-    return m_pNetworkManagerIndicator;
+    /* For Selector UI only: */
+    AssertReturn(!vboxGlobal().isVMConsoleProcess(), 0);
+
+    /* Create network-manager state-indicator: */
+    UINetworkManagerIndicator *pNetworkManagerIndicator = new UINetworkManagerIndicator;
+    connect(pNetworkManagerIndicator, &UINetworkManagerIndicator::sigMouseDoubleClick,
+            this, &UINetworkManager::show);
+    connect(this, &UINetworkManager::sigAddNetworkManagerIndicatorDescription,
+            pNetworkManagerIndicator, &UINetworkManagerIndicator::sltAddNetworkManagerIndicatorDescription);
+    connect(this, &UINetworkManager::sigRemoveNetworkManagerIndicatorDescription,
+            pNetworkManagerIndicator, &UINetworkManagerIndicator::sldRemoveNetworkManagerIndicatorDescription);
+    return pNetworkManagerIndicator;
+}
+
+void UINetworkManager::registerNetworkRequest(UINetworkRequest *pNetworkRequest)
+{
+    /* Add network-request widget to network-manager dialog: */
+    m_pNetworkManagerDialog->addNetworkRequestWidget(pNetworkRequest);
+
+    /* Add network-request description to network-manager state-indicators: */
+    emit sigAddNetworkManagerIndicatorDescription(pNetworkRequest);
+}
+
+void UINetworkManager::unregisterNetworkRequest(const QUuid &uuid)
+{
+    /* Remove network-request description from network-manager state-indicator: */
+    emit sigRemoveNetworkManagerIndicatorDescription(uuid);
+
+    /* Remove network-request widget from network-manager dialog: */
+    m_pNetworkManagerDialog->removeNetworkRequestWidget(uuid);
 }
 
 void UINetworkManager::show()
@@ -72,27 +107,17 @@ void UINetworkManager::show()
     m_pNetworkManagerDialog->showNormal();
 }
 
-void UINetworkManager::createNetworkRequest(const QNetworkRequest &request, UINetworkRequestType type, const QString &strDescription,
-                                            UINetworkCustomer *pCustomer)
+void UINetworkManager::createNetworkRequest(UINetworkRequestType type, const QList<QUrl> &urls,
+                                            const UserDictionary &requestHeaders, UINetworkCustomer *pCustomer)
 {
     /* Create network-request: */
-    UINetworkRequest *pNetworkRequest = new UINetworkRequest(request, type, strDescription, pCustomer, this);
-    /* Prepare created network-request: */
-    prepareNetworkRequest(pNetworkRequest);
-}
-
-void UINetworkManager::createNetworkRequest(const QList<QNetworkRequest> &requests, UINetworkRequestType type, const QString &strDescription,
-                                            UINetworkCustomer *pCustomer)
-{
-    /* Create network-request: */
-    UINetworkRequest *pNetworkRequest = new UINetworkRequest(requests, type, strDescription, pCustomer, this);
+    UINetworkRequest *pNetworkRequest = new UINetworkRequest(type, urls, requestHeaders, pCustomer, this);
     /* Prepare created network-request: */
     prepareNetworkRequest(pNetworkRequest);
 }
 
 UINetworkManager::UINetworkManager()
     : m_pNetworkManagerDialog(0)
-    , m_pNetworkManagerIndicator(0)
 {
     /* Prepare instance: */
     m_pInstance = this;
@@ -108,27 +133,13 @@ void UINetworkManager::prepare()
 {
     /* Prepare network-manager dialog: */
     m_pNetworkManagerDialog = new UINetworkManagerDialog;
-    connect(m_pNetworkManagerDialog, SIGNAL(sigCancelNetworkRequests()), this, SIGNAL(sigCancelNetworkRequests()));
-
-    /* Prepare network-manager state-indicator: */
-    if (!vboxGlobal().isVMConsoleProcess())
-    {
-        m_pNetworkManagerIndicator = new UINetworkManagerIndicator;
-        connect(m_pNetworkManagerIndicator, SIGNAL(mouseDoubleClicked(QIStateIndicator *, QMouseEvent *)), this, SLOT(show()));
-    }
+    connect(m_pNetworkManagerDialog, &UINetworkManagerDialog::sigCancelNetworkRequests, this, &UINetworkManager::sigCancelNetworkRequests);
 }
 
 void UINetworkManager::cleanup()
 {
     /* Cleanup network-requests first: */
     cleanupNetworkRequests();
-
-    /* Cleanup network-manager state-indicator: */
-    if (!vboxGlobal().isVMConsoleProcess())
-    {
-        delete m_pNetworkManagerIndicator;
-        m_pNetworkManagerIndicator = 0;
-    }
 
     /* Cleanup network-manager dialog: */
     delete m_pNetworkManagerDialog;
@@ -137,14 +148,14 @@ void UINetworkManager::cleanup()
 void UINetworkManager::prepareNetworkRequest(UINetworkRequest *pNetworkRequest)
 {
     /* Prepare listeners for network-request: */
-    connect(pNetworkRequest, SIGNAL(sigProgress(const QUuid&, qint64, qint64)),
-            this, SLOT(sltHandleNetworkRequestProgress(const QUuid&, qint64, qint64)));
-    connect(pNetworkRequest, SIGNAL(sigCanceled(const QUuid&)),
-            this, SLOT(sltHandleNetworkRequestCancel(const QUuid&)));
-    connect(pNetworkRequest, SIGNAL(sigFinished(const QUuid&)),
-            this, SLOT(sltHandleNetworkRequestFinish(const QUuid&)));
-    connect(pNetworkRequest, SIGNAL(sigFailed(const QUuid&, const QString&)),
-            this, SLOT(sltHandleNetworkRequestFailure(const QUuid&, const QString&)));
+    connect(pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QUuid&, qint64, qint64)>(&UINetworkRequest::sigProgress),
+            this, &UINetworkManager::sltHandleNetworkRequestProgress);
+    connect(pNetworkRequest, &UINetworkRequest::sigCanceled,
+            this, &UINetworkManager::sltHandleNetworkRequestCancel);
+    connect(pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QUuid&)>(&UINetworkRequest::sigFinished),
+            this, &UINetworkManager::sltHandleNetworkRequestFinish);
+    connect(pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QUuid &uuid, const QString &strError)>(&UINetworkRequest::sigFailed),
+            this, &UINetworkManager::sltHandleNetworkRequestFailure);
 
     /* Add network-request into map: */
     m_requests.insert(pNetworkRequest->uuid(), pNetworkRequest);

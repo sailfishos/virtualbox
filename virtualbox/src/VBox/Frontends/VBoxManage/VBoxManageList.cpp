@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,10 @@
 
 #ifndef VBOX_ONLY_DOCS
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/com/com.h>
 #include <VBox/com/string.h>
 #include <VBox/com/Guid.h>
@@ -36,6 +37,9 @@
 #include <iprt/getopt.h>
 #include <iprt/ctype.h>
 
+#include <vector>
+#include <algorithm>
+
 #include "VBoxManage.h"
 using namespace com;
 
@@ -47,8 +51,9 @@ static const char *getHostIfMediumTypeText(HostNetworkInterfaceMediumType_T enmT
         case HostNetworkInterfaceMediumType_Ethernet: return "Ethernet";
         case HostNetworkInterfaceMediumType_PPP: return "PPP";
         case HostNetworkInterfaceMediumType_SLIP: return "SLIP";
+        case HostNetworkInterfaceMediumType_Unknown: return "Unknown";
     }
-    return "Unknown";
+    return "unknown";
 }
 
 static const char *getHostIfStatusText(HostNetworkInterfaceStatus_T enmStatus)
@@ -57,8 +62,9 @@ static const char *getHostIfStatusText(HostNetworkInterfaceStatus_T enmStatus)
     {
         case HostNetworkInterfaceStatus_Up: return "Up";
         case HostNetworkInterfaceStatus_Down: return "Down";
+        case HostNetworkInterfaceStatus_Unknown: return "Unknown";
     }
-    return "Unknown";
+    return "unknown";
 }
 #endif /* VBOX_WITH_HOSTNETIF_API */
 
@@ -69,6 +75,12 @@ static const char*getDeviceTypeText(DeviceType_T enmType)
         case DeviceType_HardDisk: return "HardDisk";
         case DeviceType_DVD: return "DVD";
         case DeviceType_Floppy: return "Floppy";
+        /* Make MSC happy */
+        case DeviceType_Null: return "Null";
+        case DeviceType_Network:        return "Network";
+        case DeviceType_USB:            return "USB";
+        case DeviceType_SharedFolder:   return "SharedFolder";
+        case DeviceType_Graphics3D:     return "Graphics3D";
     }
     return "Unknown";
 }
@@ -116,6 +128,7 @@ static HRESULT listNetworkInterfaces(const ComPtr<IVirtualBox> pVirtualBox,
         CHECK_ERROR(host, FindHostNetworkInterfacesOfType(HostNetworkInterfaceType_HostOnly,
                                                           ComSafeArrayAsOutParam(hostNetworkInterfaces)));
 #else
+    RT_NOREF(fIsBridged);
     CHECK_ERROR(host, COMGETTER(NetworkInterfaces)(ComSafeArrayAsOutParam(hostNetworkInterfaces)));
 #endif
     for (size_t i = 0; i < hostNetworkInterfaces.size(); ++i)
@@ -157,6 +170,9 @@ static HRESULT listNetworkInterfaces(const ComPtr<IVirtualBox> pVirtualBox,
         HostNetworkInterfaceMediumType_T Type;
         networkInterface->COMGETTER(MediumType)(&Type);
         RTPrintf("MediumType:      %s\n", getHostIfMediumTypeText(Type));
+        BOOL fWireless;
+        networkInterface->COMGETTER(Wireless)(&fWireless);
+        RTPrintf("Wireless:        %s\n", fWireless ? "Yes" : "No");
         HostNetworkInterfaceStatus_T Status;
         networkInterface->COMGETTER(Status)(&Status);
         RTPrintf("Status:          %s\n", getHostIfStatusText(Status));
@@ -177,6 +193,18 @@ static HRESULT listNetworkInterfaces(const ComPtr<IVirtualBox> pVirtualBox,
  */
 static HRESULT listHostInfo(const ComPtr<IVirtualBox> pVirtualBox)
 {
+    static struct
+    {
+        ProcessorFeature_T feature;
+        const char *pszName;
+    } features[]
+    =
+    {
+        { ProcessorFeature_HWVirtEx,     "HW virtualization" },
+        { ProcessorFeature_PAE,          "PAE" },
+        { ProcessorFeature_LongMode,     "long mode" },
+        { ProcessorFeature_NestedPaging, "nested paging" },
+    };
     HRESULT rc;
     ComPtr<IHost> Host;
     CHECK_ERROR(pVirtualBox, COMGETTER(Host)(Host.asOutParam()));
@@ -201,15 +229,21 @@ static HRESULT listHostInfo(const ComPtr<IVirtualBox> pVirtualBox)
     ULONG processorCoreCount = 0;
     CHECK_ERROR(Host, COMGETTER(ProcessorCoreCount)(&processorCoreCount));
     RTPrintf("Processor core count: %lu\n", processorCoreCount);
-    ULONG processorSpeed = 0;
-    Bstr processorDescription;
+    for (unsigned i = 0; i < RT_ELEMENTS(features); i++)
+    {
+        BOOL supported;
+        CHECK_ERROR(Host, GetProcessorFeature(features[i].feature, &supported));
+        RTPrintf("Processor supports %s: %s\n", features[i].pszName, supported ? "yes" : "no");
+    }
     for (ULONG i = 0; i < processorCount; i++)
     {
+        ULONG processorSpeed = 0;
         CHECK_ERROR(Host, GetProcessorSpeed(i, &processorSpeed));
         if (processorSpeed)
             RTPrintf("Processor#%u speed: %lu MHz\n", i, processorSpeed);
         else
             RTPrintf("Processor#%u speed: unknown\n", i);
+        Bstr processorDescription;
         CHECK_ERROR(Host, GetProcessorDescription(i, processorDescription.asOutParam()));
         RTPrintf("Processor#%u description: %ls\n", i, processorDescription.raw());
     }
@@ -401,25 +435,55 @@ static HRESULT listUsbHost(const ComPtr<IVirtualBox> &pVirtualBox)
             CHECK_ERROR_RET(dev, COMGETTER(Version)(&usVersion), 1);
             USHORT usPortVersion;
             CHECK_ERROR_RET(dev, COMGETTER(PortVersion)(&usPortVersion), 1);
+            USBConnectionSpeed_T enmSpeed;
+            CHECK_ERROR_RET(dev, COMGETTER(Speed)(&enmSpeed), 1);
 
             RTPrintf("UUID:               %s\n"
                      "VendorId:           %#06x (%04X)\n"
                      "ProductId:          %#06x (%04X)\n"
                      "Revision:           %u.%u (%02u%02u)\n"
-                     "Port:               %u\n"
-                     "USB version/speed:  %u/%u\n",
+                     "Port:               %u\n",
                      Utf8Str(id).c_str(),
                      usVendorId, usVendorId, usProductId, usProductId,
                      bcdRevision >> 8, bcdRevision & 0xff,
                      bcdRevision >> 8, bcdRevision & 0xff,
-                     usPort, usVersion, usPortVersion);
+                     usPort);
+
+            const char *pszSpeed = "?";
+            switch (enmSpeed)
+            {
+                case USBConnectionSpeed_Low:
+                    pszSpeed = "Low";
+                    break;
+                case USBConnectionSpeed_Full:
+                    pszSpeed = "Full";
+                    break;
+                case USBConnectionSpeed_High:
+                    pszSpeed = "High";
+                    break;
+                case USBConnectionSpeed_Super:
+                    pszSpeed = "Super";
+                    break;
+                case USBConnectionSpeed_SuperPlus:
+                    pszSpeed = "SuperPlus";
+                    break;
+                default:
+                    ASSERT(false);
+                    break;
+            }
+
+            RTPrintf("USB version/speed:  %u/%s\n", usVersion, pszSpeed);
 
             /* optional stuff. */
+            SafeArray<BSTR> CollDevInfo;
             Bstr bstr;
-            CHECK_ERROR_RET(dev, COMGETTER(Manufacturer)(bstr.asOutParam()), 1);
+            CHECK_ERROR_RET(dev, COMGETTER(DeviceInfo)(ComSafeArrayAsOutParam(CollDevInfo)), 1);
+            if (CollDevInfo.size() >= 1)
+                bstr = Bstr(CollDevInfo[0]);
             if (!bstr.isEmpty())
                 RTPrintf("Manufacturer:       %ls\n", bstr.raw());
-            CHECK_ERROR_RET(dev, COMGETTER(Product)(bstr.asOutParam()), 1);
+            if (CollDevInfo.size() >= 2)
+                bstr = Bstr(CollDevInfo[1]);
             if (!bstr.isEmpty())
                 RTPrintf("Product:            %ls\n", bstr.raw());
             CHECK_ERROR_RET(dev, COMGETTER(SerialNumber)(bstr.asOutParam()), 1);
@@ -552,6 +616,7 @@ static HRESULT listSystemProperties(const ComPtr<IVirtualBox> &pVirtualBox)
     ULONG ulValue;
     LONG64 i64Value;
     BOOL fValue;
+    const char *psz;
 
     pVirtualBox->COMGETTER(APIVersion)(str.asOutParam());
     RTPrintf("API version:                     %ls\n", str.raw());
@@ -614,6 +679,14 @@ static HRESULT listSystemProperties(const ComPtr<IVirtualBox> &pVirtualBox)
     RTPrintf("Maximum SAS Port count:          %u\n", ulValue);
     systemProperties->GetMaxDevicesPerPortForStorageBus(StorageBus_SAS, &ulValue);
     RTPrintf("Maximum Devices per SAS Port:    %u\n", ulValue);
+    systemProperties->GetMaxInstancesOfStorageBus(ChipsetType_PIIX3, StorageBus_PCIe, &ulValue);
+    RTPrintf("Maximum NVMe PIIX3 Controllers:  %u\n", ulValue);
+    systemProperties->GetMaxInstancesOfStorageBus(ChipsetType_ICH9, StorageBus_PCIe, &ulValue);
+    RTPrintf("Maximum NVMe ICH9 Controllers:   %u\n", ulValue);
+    systemProperties->GetMaxPortCountForStorageBus(StorageBus_PCIe, &ulValue);
+    RTPrintf("Maximum NVMe Port count:         %u\n", ulValue);
+    systemProperties->GetMaxDevicesPerPortForStorageBus(StorageBus_PCIe, &ulValue);
+    RTPrintf("Maximum Devices per NVMe Port:   %u\n", ulValue);
     systemProperties->GetMaxInstancesOfStorageBus(ChipsetType_PIIX3, StorageBus_Floppy, &ulValue);
     RTPrintf("Maximum PIIX3 Floppy Controllers:%u\n", ulValue);
     systemProperties->GetMaxInstancesOfStorageBus(ChipsetType_ICH9, StorageBus_Floppy, &ulValue);
@@ -634,8 +707,10 @@ static HRESULT listSystemProperties(const ComPtr<IVirtualBox> &pVirtualBox)
 #endif
     systemProperties->COMGETTER(DefaultMachineFolder)(str.asOutParam());
     RTPrintf("Default machine folder:          %ls\n", str.raw());
+    systemProperties->COMGETTER(RawModeSupported)(&fValue);
+    RTPrintf("Raw-mode Supported:              %s\n", fValue ? "yes" : "no");
     systemProperties->COMGETTER(ExclusiveHwVirt)(&fValue);
-    RTPrintf("Exclusive HW virtualization use: %ls\n", fValue ? L"on" : L"off");
+    RTPrintf("Exclusive HW virtualization use: %s\n", fValue ? "on" : "off");
     systemProperties->COMGETTER(DefaultHardDiskFormat)(str.asOutParam());
     RTPrintf("Default hard disk format:        %ls\n", str.raw());
     systemProperties->COMGETTER(VRDEAuthLibrary)(str.asOutParam());
@@ -648,10 +723,28 @@ static HRESULT listSystemProperties(const ComPtr<IVirtualBox> &pVirtualBox)
     RTPrintf("Log history count:               %u\n", ulValue);
     systemProperties->COMGETTER(DefaultFrontend)(str.asOutParam());
     RTPrintf("Default frontend:                %ls\n", str.raw());
+    AudioDriverType_T enmAudio;
+    systemProperties->COMGETTER(DefaultAudioDriver)(&enmAudio);
+    switch (enmAudio)
+    {
+        case AudioDriverType_Null:          psz = "Null";           break;
+        case AudioDriverType_WinMM:         psz = "WinMM";          break;
+        case AudioDriverType_OSS:           psz = "OSS";            break;
+        case AudioDriverType_ALSA:          psz = "ALSA";           break;
+        case AudioDriverType_DirectSound:   psz = "DirectSound";    break;
+        case AudioDriverType_CoreAudio:     psz = "CoreAudio";      break;
+        case AudioDriverType_MMPM:          psz = "MMPM";           break;
+        case AudioDriverType_Pulse:         psz = "Pulse";          break;
+        case AudioDriverType_SolAudio:      psz = "SolAudio";       break;
+        default:                            psz = "Unknown";
+    }
+    RTPrintf("Default audio driver:            %s\n", psz);
     systemProperties->COMGETTER(AutostartDatabasePath)(str.asOutParam());
     RTPrintf("Autostart database path:         %ls\n", str.raw());
     systemProperties->COMGETTER(DefaultAdditionsISO)(str.asOutParam());
     RTPrintf("Default Guest Additions ISO:     %ls\n", str.raw());
+    systemProperties->COMGETTER(LoggingLevel)(str.asOutParam());
+    RTPrintf("Logging Level:                   %ls\n", str.raw());
     return S_OK;
 }
 
@@ -665,10 +758,10 @@ static HRESULT listSystemProperties(const ComPtr<IVirtualBox> &pVirtualBox)
 static HRESULT listExtensionPacks(const ComPtr<IVirtualBox> &pVirtualBox)
 {
     ComObjPtr<IExtPackManager> ptrExtPackMgr;
-    CHECK_ERROR2_RET(pVirtualBox, COMGETTER(ExtensionPackManager)(ptrExtPackMgr.asOutParam()), hrcCheck);
+    CHECK_ERROR2I_RET(pVirtualBox, COMGETTER(ExtensionPackManager)(ptrExtPackMgr.asOutParam()), hrcCheck);
 
     SafeIfaceArray<IExtPack> extPacks;
-    CHECK_ERROR2_RET(ptrExtPackMgr, COMGETTER(InstalledExtPacks)(ComSafeArrayAsOutParam(extPacks)), hrcCheck);
+    CHECK_ERROR2I_RET(ptrExtPackMgr, COMGETTER(InstalledExtPacks)(ComSafeArrayAsOutParam(extPacks)), hrcCheck);
     RTPrintf("Extension Packs: %u\n", extPacks.size());
 
     HRESULT hrc = S_OK;
@@ -676,21 +769,21 @@ static HRESULT listExtensionPacks(const ComPtr<IVirtualBox> &pVirtualBox)
     {
         /* Read all the properties. */
         Bstr bstrName;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(Name)(bstrName.asOutParam()),          hrc = hrcCheck; bstrName.setNull());
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(Name)(bstrName.asOutParam()),          hrc = hrcCheck; bstrName.setNull());
         Bstr bstrDesc;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(Description)(bstrDesc.asOutParam()),   hrc = hrcCheck; bstrDesc.setNull());
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(Description)(bstrDesc.asOutParam()),   hrc = hrcCheck; bstrDesc.setNull());
         Bstr bstrVersion;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(Version)(bstrVersion.asOutParam()),    hrc = hrcCheck; bstrVersion.setNull());
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(Version)(bstrVersion.asOutParam()),    hrc = hrcCheck; bstrVersion.setNull());
         ULONG uRevision;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(Revision)(&uRevision),                 hrc = hrcCheck; uRevision = 0);
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(Revision)(&uRevision),                 hrc = hrcCheck; uRevision = 0);
         Bstr bstrEdition;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(Edition)(bstrEdition.asOutParam()),    hrc = hrcCheck; bstrEdition.setNull());
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(Edition)(bstrEdition.asOutParam()),    hrc = hrcCheck; bstrEdition.setNull());
         Bstr bstrVrdeModule;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(VRDEModule)(bstrVrdeModule.asOutParam()),hrc=hrcCheck; bstrVrdeModule.setNull());
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(VRDEModule)(bstrVrdeModule.asOutParam()),hrc=hrcCheck; bstrVrdeModule.setNull());
         BOOL fUsable;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(Usable)(&fUsable),                     hrc = hrcCheck; fUsable = FALSE);
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(Usable)(&fUsable),                     hrc = hrcCheck; fUsable = FALSE);
         Bstr bstrWhy;
-        CHECK_ERROR2_STMT(extPacks[i], COMGETTER(WhyUnusable)(bstrWhy.asOutParam()),    hrc = hrcCheck; bstrWhy.setNull());
+        CHECK_ERROR2I_STMT(extPacks[i], COMGETTER(WhyUnusable)(bstrWhy.asOutParam()),    hrc = hrcCheck; bstrWhy.setNull());
 
         /* Display them. */
         if (i)
@@ -727,7 +820,7 @@ static HRESULT listExtensionPacks(const ComPtr<IVirtualBox> &pVirtualBox)
 static HRESULT listGroups(const ComPtr<IVirtualBox> &pVirtualBox)
 {
     SafeArray<BSTR> groups;
-    CHECK_ERROR2_RET(pVirtualBox, COMGETTER(MachineGroups)(ComSafeArrayAsOutParam(groups)), hrcCheck);
+    CHECK_ERROR2I_RET(pVirtualBox, COMGETTER(MachineGroups)(ComSafeArrayAsOutParam(groups)), hrcCheck);
 
     for (size_t i = 0; i < groups.size(); i++)
     {
@@ -765,6 +858,35 @@ static HRESULT listVideoInputDevices(const ComPtr<IVirtualBox> pVirtualBox)
     return rc;
 }
 
+/**
+ * List supported screen shot formats.
+ *
+ * @returns See produceList.
+ * @param   pVirtualBox         Reference to the IVirtualBox pointer.
+ */
+static HRESULT listScreenShotFormats(const ComPtr<IVirtualBox> pVirtualBox)
+{
+    HRESULT rc = S_OK;
+    ComPtr<ISystemProperties> systemProperties;
+    CHECK_ERROR(pVirtualBox, COMGETTER(SystemProperties)(systemProperties.asOutParam()));
+    com::SafeArray<BitmapFormat_T> formats;
+    CHECK_ERROR(systemProperties, COMGETTER(ScreenShotFormats)(ComSafeArrayAsOutParam(formats)));
+
+    RTPrintf("Supported %d screen shot formats:\n", formats.size());
+    for (size_t i = 0; i < formats.size(); ++i)
+    {
+        uint32_t u32Format = (uint32_t)formats[i];
+        char szFormat[5];
+        szFormat[0] = RT_BYTE1(u32Format);
+        szFormat[1] = RT_BYTE2(u32Format);
+        szFormat[2] = RT_BYTE3(u32Format);
+        szFormat[3] = RT_BYTE4(u32Format);
+        szFormat[4] = 0;
+        RTPrintf("    BitmapFormat_%s (0x%08X)\n", szFormat, u32Format);
+    }
+    return rc;
+}
+
 
 /**
  * The type of lists we can produce.
@@ -795,7 +917,8 @@ enum enmListType
     kListExtPacks,
     kListGroups,
     kListNatNetworks,
-    kListVideoInputDevices
+    kListVideoInputDevices,
+    kListScreenShotFormats
 };
 
 
@@ -807,7 +930,7 @@ enum enmListType
  * @param   fOptLong            Long (@c true) or short list format.
  * @param   pVirtualBox         Reference to the IVirtualBox smart pointer.
  */
-static HRESULT produceList(enum enmListType enmCommand, bool fOptLong, const ComPtr<IVirtualBox> &pVirtualBox)
+static HRESULT produceList(enum enmListType enmCommand, bool fOptLong, bool fOptSorted, const ComPtr<IVirtualBox> &pVirtualBox)
 {
     HRESULT rc = S_OK;
     switch (enmCommand)
@@ -826,12 +949,35 @@ static HRESULT produceList(enum enmListType enmCommand, bool fOptLong, const Com
             if (SUCCEEDED(rc))
             {
                 /*
-                 * Iterate through the collection
+                 * Display it.
                  */
-                for (size_t i = 0; i < machines.size(); ++i)
+                if (!fOptSorted)
                 {
-                    if (machines[i])
-                        rc = showVMInfo(pVirtualBox, machines[i], fOptLong ? VMINFO_STANDARD : VMINFO_COMPACT);
+                    for (size_t i = 0; i < machines.size(); ++i)
+                        if (machines[i])
+                            rc = showVMInfo(pVirtualBox, machines[i], NULL, fOptLong ? VMINFO_STANDARD : VMINFO_COMPACT);
+                }
+                else
+                {
+                    /*
+                     * Sort the list by name before displaying it.
+                     */
+                    std::vector<std::pair<com::Bstr, IMachine *> > sortedMachines;
+                    for (size_t i = 0; i < machines.size(); ++i)
+                    {
+                        IMachine *pMachine = machines[i];
+                        if (pMachine) /* no idea why we need to do this... */
+                        {
+                            Bstr bstrName;
+                            pMachine->COMGETTER(Name)(bstrName.asOutParam());
+                            sortedMachines.push_back(std::pair<com::Bstr, IMachine *>(bstrName, pMachine));
+                        }
+                    }
+
+                    std::sort(sortedMachines.begin(), sortedMachines.end());
+
+                    for (size_t i = 0; i < sortedMachines.size(); ++i)
+                        rc = showVMInfo(pVirtualBox, sortedMachines[i].second, NULL, fOptLong ? VMINFO_STANDARD : VMINFO_COMPACT);
                 }
             }
             break;
@@ -864,8 +1010,9 @@ static HRESULT produceList(enum enmListType enmCommand, bool fOptLong, const Com
                             case MachineState_LiveSnapshotting:
                             case MachineState_Paused:
                             case MachineState_TeleportingPausedVM:
-                                rc = showVMInfo(pVirtualBox, machines[i], fOptLong ? VMINFO_STANDARD : VMINFO_COMPACT);
+                                rc = showVMInfo(pVirtualBox, machines[i], NULL, fOptLong ? VMINFO_STANDARD : VMINFO_COMPACT);
                                 break;
+                            default: break; /* Shut up MSC */
                         }
                     }
                 }
@@ -1093,7 +1240,7 @@ static HRESULT produceList(enum enmListType enmCommand, bool fOptLong, const Com
                 net->COMGETTER(IPv6Enabled)(&fEnabled);
                 RTPrintf("IPv6 Enabled:   %s\n", fEnabled ? "Yes" : "No");
                 Bstr ipv6prefix;
-                net->COMGETTER(Network)(network.asOutParam());
+                net->COMGETTER(IPv6Prefix)(ipv6prefix.asOutParam());
                 RTPrintf("IPv6 Prefix:    %ls\n", ipv6prefix.raw());
                 net->COMGETTER(NeedDhcpServer)(&fEnabled);
                 RTPrintf("DHCP Enabled:   %s\n", fEnabled ? "Yes" : "No");
@@ -1133,6 +1280,10 @@ static HRESULT produceList(enum enmListType enmCommand, bool fOptLong, const Com
             rc = listVideoInputDevices(pVirtualBox);
             break;
 
+        case kListScreenShotFormats:
+            rc = listScreenShotFormats(pVirtualBox);
+            break;
+
         /* No default here, want gcc warnings. */
 
     } /* end switch */
@@ -1146,16 +1297,18 @@ static HRESULT produceList(enum enmListType enmCommand, bool fOptLong, const Com
  * @returns Appropriate exit code.
  * @param   a                   Handler argument.
  */
-int handleList(HandlerArg *a)
+RTEXITCODE handleList(HandlerArg *a)
 {
     bool                fOptLong      = false;
     bool                fOptMultiple  = false;
+    bool                fOptSorted    = false;
     enum enmListType    enmOptCommand = kListNotSpecified;
 
     static const RTGETOPTDEF s_aListOptions[] =
     {
         { "--long",             'l',                     RTGETOPT_REQ_NOTHING },
         { "--multiple",         'm',                     RTGETOPT_REQ_NOTHING }, /* not offical yet */
+        { "--sorted",           's',                     RTGETOPT_REQ_NOTHING },
         { "vms",                kListVMs,                RTGETOPT_REQ_NOTHING },
         { "runningvms",         kListRunningVMs,         RTGETOPT_REQ_NOTHING },
         { "ostypes",            kListOsTypes,            RTGETOPT_REQ_NOTHING },
@@ -1182,6 +1335,7 @@ int handleList(HandlerArg *a)
         { "extpacks",           kListExtPacks,           RTGETOPT_REQ_NOTHING },
         { "groups",             kListGroups,             RTGETOPT_REQ_NOTHING },
         { "webcams",            kListVideoInputDevices,  RTGETOPT_REQ_NOTHING },
+        { "screenshotformats",  kListScreenShotFormats,  RTGETOPT_REQ_NOTHING },
     };
 
     int                 ch;
@@ -1197,12 +1351,16 @@ int handleList(HandlerArg *a)
                 fOptLong = true;
                 break;
 
+            case 's':
+                fOptSorted = true;
+                break;
+
             case 'm':
                 fOptMultiple = true;
                 if (enmOptCommand == kListNotSpecified)
                     break;
                 ch = enmOptCommand;
-                /* fall thru */
+                RT_FALL_THRU();
 
             case kListVMs:
             case kListRunningVMs:
@@ -1228,12 +1386,13 @@ int handleList(HandlerArg *a)
             case kListGroups:
             case kListNatNetworks:
             case kListVideoInputDevices:
+            case kListScreenShotFormats:
                 enmOptCommand = (enum enmListType)ch;
                 if (fOptMultiple)
                 {
-                    HRESULT hrc = produceList((enum enmListType)ch, fOptLong, a->virtualBox);
+                    HRESULT hrc = produceList((enum enmListType)ch, fOptLong, fOptSorted, a->virtualBox);
                     if (FAILED(hrc))
-                        return 1;
+                        return RTEXITCODE_FAILURE;
                 }
                 break;
 
@@ -1252,12 +1411,12 @@ int handleList(HandlerArg *a)
         return errorSyntax(USAGE_LIST, "Missing subcommand for \"list\" command.\n");
     if (!fOptMultiple)
     {
-        HRESULT hrc = produceList(enmOptCommand, fOptLong, a->virtualBox);
+        HRESULT hrc = produceList(enmOptCommand, fOptLong, fOptSorted, a->virtualBox);
         if (FAILED(hrc))
-            return 1;
+            return RTEXITCODE_FAILURE;
     }
 
-    return 0;
+    return RTEXITCODE_SUCCESS;
 }
 
 #endif /* !VBOX_ONLY_DOCS */

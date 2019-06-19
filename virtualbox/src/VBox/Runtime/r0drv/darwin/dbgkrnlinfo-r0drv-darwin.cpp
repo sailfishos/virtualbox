@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef IN_RING0
 # include "the-darwin-kernel.h"
 # include <sys/kauth.h>
@@ -44,6 +44,14 @@ RT_C_DECLS_END
 # include <sys/systm.h>
 # include <vfs/vfs_support.h>
 /*# include <miscfs/specfs/specdev.h>*/
+#else
+# include <stdio.h> /* for printf */
+#endif
+
+#if !defined(IN_RING0) && !defined(DOXYGEN_RUNNING) /* A linking tweak for the testcase: */
+# include <iprt/cdefs.h>
+# undef  RTR0DECL
+# define RTR0DECL(type) DECLHIDDEN(type) RTCALL
 #endif
 
 #include "internal/iprt.h"
@@ -115,10 +123,14 @@ RT_C_DECLS_END
 
 #define VERR_LDR_UNEXPECTED     (-641)
 
+#ifndef RT_OS_DARWIN
+# define MAC_OS_X_VERSION_MIN_REQUIRED 1050
+#endif
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Our internal representation of the mach_kernel after loading it's symbols
  * and successfully resolving their addresses.
@@ -173,171 +185,11 @@ typedef struct RTDBGKRNLINFOINT
 } RTDBGKRNLINFOINT;
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 #ifdef DEBUG
 static bool g_fBreakpointOnError = false;
-#endif
-
-
-#ifdef IN_RING0
-
-/** Default file permissions for newly created files. */
-#if defined(S_IRUSR) && defined(S_IWUSR)
-# define RT_FILE_PERMISSION  (S_IRUSR | S_IWUSR)
-#else
-# define RT_FILE_PERMISSION  (00600)
-#endif
-
-/**
- * Darwin kernel file handle data.
- */
-typedef struct RTFILEINT
-{
-    /** Magic value (RTFILE_MAGIC). */
-    uint32_t        u32Magic;
-    /** The open mode flags passed to the kernel API. */
-    int             fOpenMode;
-    /** The open flags passed to RTFileOpen. */
-    uint64_t        fOpen;
-    /** The VFS context in which the file was opened. */
-    vfs_context_t   hVfsCtx;
-    /** The vnode returned by vnode_open. */
-    vnode_t         hVnode;
-} RTFILEINT;
-/** Magic number for RTFILEINT::u32Magic (To Be Determined). */
-#define RTFILE_MAGIC                    UINT32_C(0x01020304)
-
-
-RTDECL(int) RTFileOpen(PRTFILE phFile, const char *pszFilename, uint64_t fOpen)
-{
-    RTFILEINT *pThis = (RTFILEINT *)RTMemAllocZ(sizeof(*pThis));
-    if (!pThis)
-        return VERR_NO_MEMORY;
-
-    errno_t rc;
-    pThis->u32Magic = RTFILE_MAGIC;
-    pThis->fOpen    = fOpen;
-    pThis->hVfsCtx  = vfs_context_current();
-    if (pThis->hVfsCtx != NULL)
-    {
-        int             fCMode    = (fOpen & RTFILE_O_CREATE_MODE_MASK)
-                                  ? (fOpen & RTFILE_O_CREATE_MODE_MASK) >> RTFILE_O_CREATE_MODE_SHIFT
-                                  : RT_FILE_PERMISSION;
-        int             fVnFlags  = 0; /* VNODE_LOOKUP_XXX */
-        int             fOpenMode = 0;
-        if (fOpen & RTFILE_O_NON_BLOCK)
-            fOpenMode |= O_NONBLOCK;
-        if (fOpen & RTFILE_O_WRITE_THROUGH)
-            fOpenMode |= O_SYNC;
-
-        /* create/truncate file */
-        switch (fOpen & RTFILE_O_ACTION_MASK)
-        {
-            case RTFILE_O_OPEN:             break;
-            case RTFILE_O_OPEN_CREATE:      fOpenMode |= O_CREAT; break;
-            case RTFILE_O_CREATE:           fOpenMode |= O_CREAT | O_EXCL; break;
-            case RTFILE_O_CREATE_REPLACE:   fOpenMode |= O_CREAT | O_TRUNC; break; /** @todo replacing needs fixing, this is *not* a 1:1 mapping! */
-        }
-        if (fOpen & RTFILE_O_TRUNCATE)
-            fOpenMode |= O_TRUNC;
-
-        switch (fOpen & RTFILE_O_ACCESS_MASK)
-        {
-            case RTFILE_O_READ:
-                fOpenMode |= FREAD;
-                break;
-            case RTFILE_O_WRITE:
-                fOpenMode |= fOpen & RTFILE_O_APPEND ? O_APPEND | FWRITE : FWRITE;
-                break;
-            case RTFILE_O_READWRITE:
-                fOpenMode |= fOpen & RTFILE_O_APPEND ? O_APPEND | FWRITE | FREAD : FWRITE | FREAD;
-                break;
-            default:
-                AssertMsgFailed(("RTFileOpen received an invalid RW value, fOpen=%#x\n", fOpen));
-                return VERR_INVALID_PARAMETER;
-        }
-
-        pThis->fOpenMode = fOpenMode;
-        rc = vnode_open(pszFilename, fOpenMode, fCMode, fVnFlags, &pThis->hVnode, pThis->hVfsCtx);
-        if (rc == 0)
-        {
-            *phFile = pThis;
-            return VINF_SUCCESS;
-        }
-
-        rc = RTErrConvertFromErrno(rc);
-    }
-    else
-        rc = VERR_INTERNAL_ERROR_5;
-    RTMemFree(pThis);
-
-    return rc;
-}
-
-
-RTDECL(int) RTFileClose(RTFILE hFile)
-{
-    if (hFile == NIL_RTFILE)
-        return VINF_SUCCESS;
-
-    RTFILEINT *pThis = hFile;
-    AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
-    AssertReturn(pThis->u32Magic == RTFILE_MAGIC, VERR_INVALID_HANDLE);
-    pThis->u32Magic = ~RTFILE_MAGIC;
-
-    errno_t rc = vnode_close(pThis->hVnode, pThis->fOpenMode & (FREAD | FWRITE), pThis->hVfsCtx);
-
-    RTMemFree(pThis);
-    return RTErrConvertFromErrno(rc);
-}
-
-
-RTDECL(int) RTFileReadAt(RTFILE hFile, RTFOFF off, void *pvBuf, size_t cbToRead, size_t *pcbRead)
-{
-    RTFILEINT *pThis = hFile;
-    AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
-    AssertReturn(pThis->u32Magic == RTFILE_MAGIC, VERR_INVALID_HANDLE);
-
-    off_t offNative = (off_t)off;
-    AssertReturn((RTFOFF)offNative == off, VERR_OUT_OF_RANGE);
-
-#if 0 /* Added in 10.6, grr. */
-    errno_t rc;
-    if (!pcbRead)
-        rc = vn_rdwr(UIO_READ, pThis->hVnode, (char *)pvBuf, cbToRead, offNative, UIO_SYSSPACE, 0 /*ioflg*/,
-                     vfs_context_ucred(pThis->hVfsCtx), NULL, vfs_context_proc(pThis->hVfsCtx));
-    else
-    {
-        int cbLeft = 0;
-        rc = vn_rdwr(UIO_READ, pThis->hVnode, (char *)pvBuf, cbToRead, offNative, UIO_SYSSPACE, 0 /*ioflg*/,
-                     vfs_context_ucred(pThis->hVfsCtx), &cbLeft, vfs_context_proc(pThis->hVfsCtx));
-        *pcbRead = cbToRead - cbLeft;
-    }
-    return !rc ? VINF_SUCCESS : RTErrConvertFromErrno(rc);
-
-#else
-    uio_t hUio = uio_create(1, offNative, UIO_SYSSPACE, UIO_READ);
-    if (!hUio)
-        return VERR_NO_MEMORY;
-    errno_t rc;
-    if (uio_addiov(hUio, (user_addr_t)(uintptr_t)pvBuf, cbToRead) == 0)
-    {
-        rc = VNOP_READ(pThis->hVnode, hUio, 0 /*ioflg*/, pThis->hVfsCtx);
-        if (pcbRead)
-            *pcbRead = cbToRead - uio_resid(hUio);
-        else if (!rc && uio_resid(hUio))
-            rc = VERR_FILE_IO_ERROR;
-    }
-    else
-        rc = VERR_INTERNAL_ERROR_3;
-    uio_free(hUio);
-    return rc;
-
-#endif
-}
-
 #endif
 
 
@@ -453,7 +305,7 @@ static int rtR0DbgKrnlDarwinCheckStandardSymbols(RTDBGKRNLINFOINT *pThis)
         KNOWN_ENTRY(ostype),
         KNOWN_ENTRY(panic),
         KNOWN_ENTRY(strprefix),
-        KNOWN_ENTRY(sysctlbyname),
+        //KNOWN_ENTRY(sysctlbyname), - we get kernel_sysctlbyname from the 10.10+ kernels.
         KNOWN_ENTRY(vsscanf),
         KNOWN_ENTRY(page_mask),
 
@@ -520,7 +372,7 @@ static int rtR0DbgKrnlDarwinCheckStandardSymbols(RTDBGKRNLINFOINT *pThis)
         KNOWN_ENTRY(vm_map),
         KNOWN_ENTRY(vm_protect),
         KNOWN_ENTRY(vm_region),
-        KNOWN_ENTRY(vm_map_wire),
+        KNOWN_ENTRY(vm_map_unwire), /* vm_map_wire has an alternative symbol, vm_map_wire_external, in 10.11  */
         KNOWN_ENTRY(PE_kputc),
         KNOWN_ENTRY(kernel_map),
         KNOWN_ENTRY(kernel_pmap),
@@ -548,8 +400,9 @@ static int rtR0DbgKrnlDarwinCheckStandardSymbols(RTDBGKRNLINFOINT *pThis)
  *
  * @returns IPRT status code.
  * @param   pThis               The internal scratch data.
+ * @param   pszKernelFile       The name of the kernel file.
  */
-static int rtR0DbgKrnlDarwinLoadSymTab(RTDBGKRNLINFOINT *pThis)
+static int rtR0DbgKrnlDarwinLoadSymTab(RTDBGKRNLINFOINT *pThis, const char *pszKernelFile)
 {
     /*
      * Load the tables.
@@ -587,7 +440,11 @@ static int rtR0DbgKrnlDarwinLoadSymTab(RTDBGKRNLINFOINT *pThis)
     for (uint32_t iSym = 0; iSym < cSyms; iSym++, pSym++)
     {
         if ((uint32_t)pSym->n_un.n_strx >= pThis->cbStrTab)
+        {
+            printf("RTR0DbgKrnlInfoOpen: %s: Symbol #%u has a bad string table index: %#x vs cbStrTab=%#x\n",
+                   pszKernelFile, iSym, pSym->n_un.n_strx, pThis->cbStrTab);
             RETURN_VERR_BAD_EXE_FORMAT;
+        }
         const char *pszSym = &pThis->pachStrTab[(uint32_t)pSym->n_un.n_strx];
 #ifdef IN_RING3
         RTAssertMsg2("%05i: %02x:%08llx %02x %04x %s\n", iSym, pSym->n_sect, (uint64_t)pSym->n_value, pSym->n_type, pSym->n_desc, pszSym);
@@ -602,42 +459,76 @@ static int rtR0DbgKrnlDarwinLoadSymTab(RTDBGKRNLINFOINT *pThis)
             {
                 case MACHO_N_SECT:
                     if (pSym->n_sect == MACHO_NO_SECT)
+                    {
+                        printf("RTR0DbgKrnlInfoOpen: %s: Symbol #%u '%s' problem: n_sect = MACHO_NO_SECT\n",
+                               pszKernelFile, iSym, pszSym);
                         RETURN_VERR_BAD_EXE_FORMAT;
+                    }
                     if (pSym->n_sect > pThis->cSections)
+                    {
+                        printf("RTR0DbgKrnlInfoOpen: %s: Symbol #%u '%s' problem: n_sect (%u) is higher than cSections (%u)\n",
+                               pszKernelFile, iSym, pszSym, pSym->n_sect, pThis->cSections);
                         RETURN_VERR_BAD_EXE_FORMAT;
-                    if (pSym->n_desc & ~(REFERENCED_DYNAMICALLY))
+                    }
+                    if (pSym->n_desc & ~(REFERENCED_DYNAMICALLY | N_WEAK_DEF))
+                    {
+                        printf("RTR0DbgKrnlInfoOpen: %s: Symbol #%u '%s' problem: Unexpected value n_desc=%#x\n",
+                               pszKernelFile, iSym, pszSym, pSym->n_desc);
                         RETURN_VERR_BAD_EXE_FORMAT;
+                    }
                     if (   pSym->n_value < pThis->apSections[pSym->n_sect - 1]->addr
                         && strcmp(pszSym, "__mh_execute_header"))    /* in 10.8 it's no longer absolute (PIE?). */
+                    {
+                        printf("RTR0DbgKrnlInfoOpen: %s: Symbol #%u '%s' problem: n_value (%#llx) < section addr (%#llx)\n",
+                               pszKernelFile, iSym, pszSym, pSym->n_value, pThis->apSections[pSym->n_sect - 1]->addr);
                         RETURN_VERR_BAD_EXE_FORMAT;
+                    }
                     if (      pSym->n_value - pThis->apSections[pSym->n_sect - 1]->addr
                            > pThis->apSections[pSym->n_sect - 1]->size
                         && strcmp(pszSym, "__mh_execute_header"))    /* see above. */
+                    {
+                        printf("RTR0DbgKrnlInfoOpen: %s: Symbol #%u '%s' problem: n_value (%#llx) >= end of section (%#llx + %#llx)\n",
+                               pszKernelFile, iSym, pszSym, pSym->n_value, pThis->apSections[pSym->n_sect - 1]->addr,
+                               pThis->apSections[pSym->n_sect - 1]->size);
                         RETURN_VERR_BAD_EXE_FORMAT;
+                    }
                     break;
 
                 case MACHO_N_ABS:
                     if (   pSym->n_sect != MACHO_NO_SECT
                         && (   strcmp(pszSym, "__mh_execute_header") /* n_sect=1 in 10.7/amd64 */
                             || pSym->n_sect > pThis->cSections) )
+                    {
+                        printf("RTR0DbgKrnlInfoOpen: %s: Abs symbol #%u '%s' problem: n_sect (%u) is not MACHO_NO_SECT (cSections is %u)\n",
+                               pszKernelFile, iSym, pszSym, pSym->n_sect, pThis->cSections);
                         RETURN_VERR_BAD_EXE_FORMAT;
-                    if (pSym->n_desc & ~(REFERENCED_DYNAMICALLY))
+                    }
+                    if (pSym->n_desc & ~(REFERENCED_DYNAMICALLY | N_WEAK_DEF))
+                    {
+                        printf("RTR0DbgKrnlInfoOpen: %s: Abs symbol #%u '%s' problem: Unexpected value n_desc=%#x\n",
+                               pszKernelFile, iSym, pszSym, pSym->n_desc);
                         RETURN_VERR_BAD_EXE_FORMAT;
+                    }
                     break;
 
                 case MACHO_N_UNDF:
                     /* No undefined or common symbols in the kernel. */
+                    printf("RTR0DbgKrnlInfoOpen: %s: Unexpected undefined symbol #%u '%s'\n", pszKernelFile, iSym, pszSym);
                     RETURN_VERR_BAD_EXE_FORMAT;
 
                 case MACHO_N_INDR:
                     /* No indirect symbols in the kernel. */
+                    printf("RTR0DbgKrnlInfoOpen: %s: Unexpected indirect symbol #%u '%s'\n", pszKernelFile, iSym, pszSym);
                     RETURN_VERR_BAD_EXE_FORMAT;
 
                 case MACHO_N_PBUD:
                     /* No prebound symbols in the kernel. */
+                    printf("RTR0DbgKrnlInfoOpen: %s: Unexpected prebound symbol #%u '%s'\n", pszKernelFile, iSym, pszSym);
                     RETURN_VERR_BAD_EXE_FORMAT;
 
                 default:
+                    printf("RTR0DbgKrnlInfoOpen: %s: Unexpected symbol n_type %#x for symbol #%u '%s'\n",
+                           pszKernelFile, pSym->n_type, iSym, pszSym);
                     RETURN_VERR_BAD_EXE_FORMAT;
             }
         }
@@ -756,7 +647,6 @@ static int rtR0DbgKrnlDarwinLoadCommands(RTDBGKRNLINFOINT *pThis)
 
                 /* Validate the sections. */
                 uint32_t            uAlignment = 0;
-                uintptr_t           uAddr      = pSeg->vmaddr;
                 MY_SECTION const   *paSects    = (MY_SECTION const *)(pSeg + 1);
                 for (uint32_t i = 0; i < pSeg->nsects; i++)
                 {
@@ -835,6 +725,13 @@ static int rtR0DbgKrnlDarwinLoadCommands(RTDBGKRNLINFOINT *pThis)
             case LC_MAIN:
             case LC_DATA_IN_CODE:
             case LC_SOURCE_VERSION:
+            case LC_ENCRYPTION_INFO_64:
+            case LC_LINKER_OPTION:
+            case LC_LINKER_OPTIMIZATION_HINT:
+            case LC_VERSION_MIN_TVOS:
+            case LC_VERSION_MIN_WATCHOS:
+            case LC_NOTE:
+            case LC_BUILD_VERSION:
                 break;
 
             /* not observed */
@@ -1019,24 +916,20 @@ static void rtR0DbgKrnlDarwinDtor(RTDBGKRNLINFOINT *pThis)
 }
 
 
-RTR0DECL(int) RTR0DbgKrnlInfoOpen(PRTDBGKRNLINFO phKrnlInfo, uint32_t fFlags)
+static int rtR0DbgKrnlDarwinOpen(PRTDBGKRNLINFO phKrnlInfo, const char *pszKernelFile)
 {
-    AssertPtrReturn(phKrnlInfo, VERR_INVALID_POINTER);
-    *phKrnlInfo = NIL_RTDBGKRNLINFO;
-    AssertReturn(!fFlags, VERR_INVALID_PARAMETER);
-
     RTDBGKRNLINFOINT *pThis = (RTDBGKRNLINFOINT *)RTMemAllocZ(sizeof(*pThis));
     if (!pThis)
         return VERR_NO_MEMORY;
     pThis->hFile = NIL_RTFILE;
 
-    int rc = RTFileOpen(&pThis->hFile, "/mach_kernel", RTFILE_O_READ | RTFILE_O_OPEN | RTFILE_O_DENY_WRITE);
+    int rc = RTFileOpen(&pThis->hFile, pszKernelFile, RTFILE_O_READ | RTFILE_O_OPEN | RTFILE_O_DENY_WRITE);
     if (RT_SUCCESS(rc))
         rc = rtR0DbgKrnlDarwinLoadFileHeaders(pThis);
     if (RT_SUCCESS(rc))
         rc = rtR0DbgKrnlDarwinLoadCommands(pThis);
     if (RT_SUCCESS(rc))
-        rc = rtR0DbgKrnlDarwinLoadSymTab(pThis);
+        rc = rtR0DbgKrnlDarwinLoadSymTab(pThis, pszKernelFile);
     if (RT_SUCCESS(rc))
     {
 #ifdef IN_RING0
@@ -1059,6 +952,72 @@ RTR0DECL(int) RTR0DbgKrnlInfoOpen(PRTDBGKRNLINFO phKrnlInfo, uint32_t fFlags)
     }
     else
         rtR0DbgKrnlDarwinDtor(pThis);
+    return rc;
+}
+
+
+RTR0DECL(int) RTR0DbgKrnlInfoOpen(PRTDBGKRNLINFO phKrnlInfo, uint32_t fFlags)
+{
+    AssertPtrReturn(phKrnlInfo, VERR_INVALID_POINTER);
+    *phKrnlInfo = NIL_RTDBGKRNLINFO;
+    AssertReturn(!fFlags, VERR_INVALID_PARAMETER);
+
+    /*
+     * Go thru likely kernel locations
+     *
+     * Note! Check the OS X version and reorder the list?
+     * Note! We should try fish kcsuffix out of bootargs or somewhere one day.
+     */
+    static bool s_fFirstCall = true;
+#ifdef IN_RING3
+    extern const char *g_pszTestKernel;
+#endif
+    struct
+    {
+        const char *pszLocation;
+        int         rc;
+    } aKernels[] =
+    {
+#ifdef IN_RING3
+        { g_pszTestKernel, VERR_WRONG_ORDER },
+#endif
+        { "/System/Library/Kernels/kernel", VERR_WRONG_ORDER },
+        { "/System/Library/Kernels/kernel.development", VERR_WRONG_ORDER },
+        { "/System/Library/Kernels/kernel.debug", VERR_WRONG_ORDER },
+        { "/mach_kernel", VERR_WRONG_ORDER },
+    };
+    int rc = VERR_WRONG_ORDER; /* shut up stupid MSC */
+    for (uint32_t i = 0; i < RT_ELEMENTS(aKernels); i++)
+    {
+        aKernels[i].rc = rc = rtR0DbgKrnlDarwinOpen(phKrnlInfo, aKernels[i].pszLocation);
+        if (RT_SUCCESS(rc))
+        {
+            if (s_fFirstCall)
+            {
+                printf("RTR0DbgKrnlInfoOpen: Using kernel file '%s'\n", aKernels[i].pszLocation);
+                s_fFirstCall = false;
+            }
+            return rc;
+        }
+    }
+
+    /*
+     * Failed.
+     */
+    /* Pick the best error code. */
+    for (uint32_t i = 0; rc == VERR_FILE_NOT_FOUND && i < RT_ELEMENTS(aKernels); i++)
+        if (aKernels[i].rc != VERR_FILE_NOT_FOUND)
+            rc = aKernels[i].rc;
+
+    /* Bitch about it. */
+    printf("RTR0DbgKrnlInfoOpen: failed to find matching kernel file! rc=%d\n", rc);
+    if (s_fFirstCall)
+    {
+        for (uint32_t i = 0; i < RT_ELEMENTS(aKernels); i++)
+            printf("RTR0DbgKrnlInfoOpen: '%s' -> %d\n", aKernels[i].pszLocation, aKernels[i].rc);
+        s_fFirstCall = false;
+    }
+
     return rc;
 }
 
@@ -1090,15 +1049,16 @@ RTR0DECL(uint32_t) RTR0DbgKrnlInfoRelease(RTDBGKRNLINFO hKrnlInfo)
 }
 
 
-RTR0DECL(int) RTR0DbgKrnlInfoQueryMember(RTDBGKRNLINFO hKrnlInfo, const char *pszStructure,
+RTR0DECL(int) RTR0DbgKrnlInfoQueryMember(RTDBGKRNLINFO hKrnlInfo, const char *pszModule, const char *pszStructure,
                                          const char *pszMember, size_t *poffMember)
 {
     RTDBGKRNLINFOINT *pThis = hKrnlInfo;
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertMsgReturn(pThis->u32Magic == RTDBGKRNLINFO_MAGIC, ("%p: u32Magic=%RX32\n", pThis, pThis->u32Magic), VERR_INVALID_HANDLE);
-    AssertPtrReturn(pszMember, VERR_INVALID_PARAMETER);
-    AssertPtrReturn(pszStructure, VERR_INVALID_PARAMETER);
-    AssertPtrReturn(poffMember, VERR_INVALID_PARAMETER);
+    AssertPtrReturn(pszMember, VERR_INVALID_POINTER);
+    AssertPtrReturn(pszModule, VERR_INVALID_POINTER);
+    AssertPtrReturn(pszStructure, VERR_INVALID_POINTER);
+    AssertPtrReturn(poffMember, VERR_INVALID_POINTER);
     return VERR_NOT_FOUND;
 }
 

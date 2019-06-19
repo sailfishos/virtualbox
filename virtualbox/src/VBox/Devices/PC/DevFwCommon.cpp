@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV
 #include <VBox/vmm/pdmdev.h>
 
@@ -40,9 +41,9 @@
 #include "DevFwCommon.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /*
  * Default DMI data (legacy).
@@ -88,9 +89,9 @@ static       char    g_szHostDmiSystemProduct[64];
 static       char    g_szHostDmiSystemVersion[64];
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 #pragma pack(1)
 
 typedef struct SMBIOSHDR
@@ -372,8 +373,8 @@ AssertCompileSize(MPSIOINTERRUPTENTRY, 8);
 /**
  * Calculate a simple checksum for the MPS table.
  *
- * @param   data            data
- * @param   len             size of data
+ * @param   au8Data         data
+ * @param   u32Length       size of data
  */
 static uint8_t fwCommonChecksum(const uint8_t * const au8Data, uint32_t u32Length)
 {
@@ -818,11 +819,7 @@ int FwCommonPlantDMITable(PPDMDEVINS pDevIns, uint8_t *pTable, unsigned cbMax, P
         /***************************************
          * DMI Physical Memory Array (Type 16) *
          ***************************************/
-        uint64_t u64RamSize;
-        rc = CFGMR3QueryU64(pCfg, "RamSize", &u64RamSize);
-        if (RT_FAILURE (rc))
-            return PDMDEV_SET_ERROR(pDevIns, rc,
-                                    N_("Configuration error: Failed to read \"RamSize\""));
+        uint64_t const  cbRamSize = MMR3PhysGetRamSize(PDMDevHlpGetVM(pDevIns));
 
         PDMIRAMARRAY pMemArray = (PDMIRAMARRAY)pszStr;
         DMI_CHECK_SIZE(sizeof(*pMemArray));
@@ -836,7 +833,16 @@ int FwCommonPlantDMITable(PPDMDEVINS pDevIns, uint8_t *pTable, unsigned cbMax, P
         pMemArray->u8Location            = 0x03;   /* Motherboard */
         pMemArray->u8Use                 = 0x03;   /* System memory */
         pMemArray->u8MemErrorCorrection  = 0x01;   /* Other */
-        pMemArray->u32MaxCapacity        = (uint32_t)(u64RamSize / _1K); /* RAM size in K */
+        if (cbRamSize / _1K > INT32_MAX)
+        {
+            /** @todo 2TB-1K limit. In such cases we probably need to provide multiple type-16 descriptors.
+             * Or use 0x8000'0000 = 'capacity unknown'? */
+            AssertLogRelMsgFailed(("DMI: RAM size %#RX64 does not fit into type-16 descriptor, clipping to %#RX64\n",
+                                   cbRamSize, (uint64_t)INT32_MAX * _1K));
+            pMemArray->u32MaxCapacity    = INT32_MAX;
+        }
+        else
+            pMemArray->u32MaxCapacity    = (int32_t)(cbRamSize / _1K); /* RAM size in K */
         pMemArray->u16MemErrorHandle     = 0xfffe; /* No error info structure */
         pMemArray->u16NumberOfMemDevices = 1;
         DMI_TERM_STRUCT;
@@ -857,7 +863,17 @@ int FwCommonPlantDMITable(PPDMDEVINS pDevIns, uint8_t *pTable, unsigned cbMax, P
         pMemDev->u16MemErrHandle         = 0xfffe; /* system doesn't provide this information */
         pMemDev->u16TotalWidth           = 0xffff; /* Unknown */
         pMemDev->u16DataWidth            = 0xffff; /* Unknown */
-        int16_t u16RamSizeM = (uint16_t)(u64RamSize / _1M);
+        int16_t u16RamSizeM;
+        if (cbRamSize / _1M > INT16_MAX)
+        {
+            /** @todo 32G-1M limit. Provide multiple type-17 descriptors.
+             * The highest bit of u16Size must be 0 to specify 'GB' units / 1 would be 'KB' */
+            AssertLogRelMsgFailed(("DMI: RAM size %#RX64 too big for one type-17 descriptor, clipping to %#RX64\n",
+                                   cbRamSize, (uint64_t)INT16_MAX * _1M));
+            u16RamSizeM = INT16_MAX;
+        }
+        else
+            u16RamSizeM = (uint16_t)(cbRamSize / _1M);
         if (u16RamSizeM == 0)
             u16RamSizeM = 0x400; /* 1G */
         pMemDev->u16Size                 = u16RamSizeM; /* RAM size */
@@ -938,7 +954,9 @@ int FwCommonPlantDMITable(PPDMDEVINS pDevIns, uint8_t *pTable, unsigned cbMax, P
  * Construct the SMBIOS and DMI headers table pointer at VM construction and
  * reset.
  *
- * @param   pDevIns    The device instance data.
+ * @param   pDevIns         The device instance data.
+ * @param   cbDmiTables     Size of all DMI tables planted in bytes.
+ * @param   cNumDmiTables   Number of DMI tables planted.
  */
 void FwCommonPlantSmbiosAndDmiHdrs(PPDMDEVINS pDevIns, uint16_t cbDmiTables, uint16_t cNumDmiTables)
 {
@@ -1012,6 +1030,8 @@ void FwCommonPlantSmbiosAndDmiHdrs(PPDMDEVINS pDevIns, uint16_t cbDmiTables, uin
  */
 void FwCommonPlantMpsTable(PPDMDEVINS pDevIns, uint8_t *pTable, unsigned cbMax, uint16_t cCpus)
 {
+    RT_NOREF1(cbMax);
+
     /* configuration table */
     PMPSCFGTBLHEADER pCfgTab      = (MPSCFGTBLHEADER*)pTable;
     memcpy(pCfgTab->au8Signature, "PCMP", 4);
@@ -1069,13 +1089,14 @@ void FwCommonPlantMpsTable(PPDMDEVINS pDevIns, uint8_t *pTable, unsigned cbMax, 
     pBusEntry->u8EntryType         = 1; /* bus entry */
     pBusEntry->u8BusId             = iBusIdPci0; /* this ID can be referenced by the interrupt entries */
     memcpy(pBusEntry->au8BusTypeStr, "PCI   ", 6);
+    pBusEntry++;
     pCfgTab->u16EntryCount++;
 
 
     /* I/O-APIC.
      * MP spec: "The configuration table contains one or more entries for I/O APICs.
      *           ... At least one I/O APIC must be enabled." */
-    PMPSIOAPICENTRY pIOAPICEntry   = (PMPSIOAPICENTRY)(pBusEntry+1);
+    PMPSIOAPICENTRY pIOAPICEntry   = (PMPSIOAPICENTRY)(pBusEntry);
     uint16_t iApicId = 0;
     pIOAPICEntry->u8EntryType      = 2; /* I/O-APIC entry */
     pIOAPICEntry->u8Id             = iApicId; /* this ID is referenced by the interrupt entries */

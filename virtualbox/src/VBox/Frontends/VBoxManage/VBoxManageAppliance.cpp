@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2014 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,10 @@
 
 #ifndef VBOX_ONLY_DOCS
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifndef VBOX_ONLY_DOCS
 #include <VBox/com/com.h>
 #include <VBox/com/string.h>
@@ -91,6 +92,8 @@ static int parseImportOptions(const char *psz, com::SafeArray<ImportOptions_T> *
                 options->push_back(ImportOptions_KeepAllMACs);
             else if (!RTStrNICmp(psz, "KeepNATMACs", len))
                 options->push_back(ImportOptions_KeepNATMACs);
+            else if (!RTStrNICmp(psz, "ImportToVDI", len))
+                options->push_back(ImportOptions_ImportToVDI);
             else
                 rc = VERR_PARSE_ERROR;
         }
@@ -141,7 +144,7 @@ static const RTGETOPTDEF g_aImportApplianceOptions[] =
     { "--options",              'O', RTGETOPT_REQ_STRING },
 };
 
-int handleImportAppliance(HandlerArg *arg)
+RTEXITCODE handleImportAppliance(HandlerArg *arg)
 {
     HRESULT rc = S_OK;
 
@@ -337,9 +340,9 @@ int handleImportAppliance(HandlerArg *arg)
                           COMGETTER(Disks)(ComSafeArrayAsOutParam(retDisks)));
         if (retDisks.size() > 0)
         {
-            RTPrintf("Disks:");
+            RTPrintf("Disks:\n");
             for (unsigned i = 0; i < retDisks.size(); i++)
-                RTPrintf("  %ls", retDisks[i]);
+                RTPrintf("  %ls\n", retDisks[i]);
             RTPrintf("\n");
         }
 
@@ -420,7 +423,7 @@ int handleImportAppliance(HandlerArg *arg)
                                 RTPrintf("%2u: Suggested OS type: \"%ls\""
                                         "\n    (change with \"--vsys %u --ostype <type>\"; use \"list ostypes\" to list all possible values)\n",
                                         a, bstrFinalValue.raw(), i);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_Name:
                             if (findArgValue(strOverride, pmapArgs, "vmname"))
@@ -433,32 +436,32 @@ int handleImportAppliance(HandlerArg *arg)
                                 RTPrintf("%2u: Suggested VM name \"%ls\""
                                         "\n    (change with \"--vsys %u --vmname <name>\")\n",
                                         a, bstrFinalValue.raw(), i);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_Product:
                             RTPrintf("%2u: Product (ignored): %ls\n",
                                      a, aVBoxValues[a]);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_ProductUrl:
                             RTPrintf("%2u: ProductUrl (ignored): %ls\n",
                                      a, aVBoxValues[a]);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_Vendor:
                             RTPrintf("%2u: Vendor (ignored): %ls\n",
                                      a, aVBoxValues[a]);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_VendorUrl:
                             RTPrintf("%2u: VendorUrl (ignored): %ls\n",
                                      a, aVBoxValues[a]);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_Version:
                             RTPrintf("%2u: Version (ignored): %ls\n",
                                      a, aVBoxValues[a]);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_Description:
                             if (findArgValue(strOverride, pmapArgs, "description"))
@@ -471,7 +474,7 @@ int handleImportAppliance(HandlerArg *arg)
                                 RTPrintf("%2u: Description \"%ls\""
                                         "\n    (change with \"--vsys %u --description <desc>\")\n",
                                         a, bstrFinalValue.raw(), i);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_License:
                             ++cLicensesInTheWay;
@@ -499,7 +502,7 @@ int handleImportAppliance(HandlerArg *arg)
                                         "\n    (display with \"--vsys %u --eula show\";"
                                         "\n    accept with \"--vsys %u --eula accept\")\n",
                                         a, i, i);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_CPU:
                             if (findArgValue(strOverride, pmapArgs, "cpus"))
@@ -522,7 +525,7 @@ int handleImportAppliance(HandlerArg *arg)
                             else
                                 RTPrintf("%2u: Number of CPUs: %ls\n    (change with \"--vsys %u --cpus <n>\")\n",
                                          a, bstrFinalValue.raw(), i);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_Memory:
                         {
@@ -542,8 +545,8 @@ int handleImportAppliance(HandlerArg *arg)
                             else
                                 RTPrintf("%2u: Guest memory: %ls MB\n    (change with \"--vsys %u --memory <MB>\")\n",
                                          a, bstrFinalValue.raw(), i);
+                            break;
                         }
-                        break;
 
                         case VirtualSystemDescriptionType_HardDiskControllerIDE:
                             if (fIgnoreThis)
@@ -559,7 +562,7 @@ int handleImportAppliance(HandlerArg *arg)
                                          a,
                                          aVBoxValues[a],
                                          i, a);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_HardDiskControllerSATA:
                             if (fIgnoreThis)
@@ -575,7 +578,7 @@ int handleImportAppliance(HandlerArg *arg)
                                         a,
                                         aVBoxValues[a],
                                         i, a);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_HardDiskControllerSAS:
                             if (fIgnoreThis)
@@ -591,7 +594,7 @@ int handleImportAppliance(HandlerArg *arg)
                                         a,
                                         aVBoxValues[a],
                                         i, a);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_HardDiskControllerSCSI:
                             if (fIgnoreThis)
@@ -620,7 +623,7 @@ int handleImportAppliance(HandlerArg *arg)
                                             aVBoxValues[a],
                                             i, a, i, a);
                             }
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_HardDiskImage:
                             if (fIgnoreThis)
@@ -633,23 +636,39 @@ int handleImportAppliance(HandlerArg *arg)
                             else
                             {
                                 Utf8StrFmt strTypeArg("disk%u", a);
+                                RTCList<ImportOptions_T> optionsList = options.toList();
+
+                                bstrFinalValue = aVBoxValues[a];
+
                                 if (findArgValue(strOverride, pmapArgs, strTypeArg))
                                 {
-                                    RTUUID uuid;
-                                    /* Check if this is a uuid. If so, don't touch. */
-                                    int vrc = RTUuidFromStr(&uuid, strOverride.c_str());
-                                    if (vrc != VINF_SUCCESS)
+                                    if (!optionsList.contains(ImportOptions_ImportToVDI))
                                     {
-                                        /* Make the path absolute. */
-                                        if (!RTPathStartsWithRoot(strOverride.c_str()))
+                                        RTUUID uuid;
+                                        /* Check if this is a uuid. If so, don't touch. */
+                                        int vrc = RTUuidFromStr(&uuid, strOverride.c_str());
+                                        if (vrc != VINF_SUCCESS)
                                         {
-                                            char pszPwd[RTPATH_MAX];
-                                            vrc = RTPathGetCurrent(pszPwd, RTPATH_MAX);
-                                            if (RT_SUCCESS(vrc))
-                                                strOverride = Utf8Str(pszPwd).append(RTPATH_SLASH).append(strOverride);
+                                            /* Make the path absolute. */
+                                            if (!RTPathStartsWithRoot(strOverride.c_str()))
+                                            {
+                                                char pszPwd[RTPATH_MAX];
+                                                vrc = RTPathGetCurrent(pszPwd, RTPATH_MAX);
+                                                if (RT_SUCCESS(vrc))
+                                                    strOverride = Utf8Str(pszPwd).append(RTPATH_SLASH).append(strOverride);
+                                            }
                                         }
+                                        bstrFinalValue = strOverride;
                                     }
-                                    bstrFinalValue = strOverride;
+                                    else
+                                    {
+                                        //print some error about incompatible command-line arguments
+                                        return errorSyntax(USAGE_IMPORTAPPLIANCE,
+                                                           "Option --ImportToVDI shall not be used together with "
+                                                           "manually set target path.");
+
+                                    }
+
                                     RTPrintf("%2u: Hard disk image: source image=%ls, target path=%ls, %ls\n",
                                             a,
                                             aOvfValues[a],
@@ -676,16 +695,95 @@ int handleImportAppliance(HandlerArg *arg)
                                 }
 #endif
                                 else
+                                {
+                                    strOverride = aVBoxValues[a];
+
+                                    /*
+                                     * Current solution isn't optimal.
+                                     * Better way is to provide API call for function
+                                     * Appliance::i_findMediumFormatFromDiskImage()
+                                     * and creating one new function which returns
+                                     * struct ovf::DiskImage for currently processed disk.
+                                    */
+
+                                    /*
+                                     * if user wants to convert all imported disks to VDI format
+                                     * we need to replace files extensions to "vdi"
+                                     * except CD/DVD disks
+                                     */
+                                    if (optionsList.contains(ImportOptions_ImportToVDI))
+                                    {
+                                        ComPtr<IVirtualBox> pVirtualBox = arg->virtualBox;
+                                        ComPtr<ISystemProperties> systemProperties;
+                                        com::SafeIfaceArray<IMediumFormat> mediumFormats;
+                                        Bstr bstrFormatName;
+
+                                        CHECK_ERROR(pVirtualBox,
+                                                     COMGETTER(SystemProperties)(systemProperties.asOutParam()));
+
+                                        CHECK_ERROR(systemProperties,
+                                             COMGETTER(MediumFormats)(ComSafeArrayAsOutParam(mediumFormats)));
+
+                                        /* go through all supported media formats and store files extensions only for RAW */
+                                        com::SafeArray<BSTR> extensions;
+
+                                        for (unsigned j = 0; j < mediumFormats.size(); ++j)
+                                        {
+                                            com::SafeArray<DeviceType_T> deviceType;
+                                            ComPtr<IMediumFormat> mediumFormat = mediumFormats[j];
+                                            CHECK_ERROR(mediumFormat, COMGETTER(Name)(bstrFormatName.asOutParam()));
+                                            Utf8Str strFormatName = Utf8Str(bstrFormatName);
+
+                                            if (strFormatName.compare("RAW", Utf8Str::CaseInsensitive) == 0)
+                                            {
+                                                /* getting files extensions for "RAW" format */
+                                                CHECK_ERROR(mediumFormat,
+                                                            DescribeFileExtensions(ComSafeArrayAsOutParam(extensions),
+                                                                                   ComSafeArrayAsOutParam(deviceType)));
+                                                break;
+                                            }
+                                        }
+
+                                        /* go through files extensions for RAW format and compare them with
+                                         * extension of current file
+                                         */
+                                        bool fReplace = true;
+
+                                        const char *pszExtension = RTPathSuffix(strOverride.c_str());
+                                        if (pszExtension)
+                                            pszExtension++;
+
+                                        for (unsigned j = 0; j < extensions.size(); ++j)
+                                        {
+                                            Bstr bstrExt(extensions[j]);
+                                            Utf8Str strExtension(bstrExt);
+                                            if(strExtension.compare(pszExtension, Utf8Str::CaseInsensitive) == 0)
+                                            {
+                                                fReplace = false;
+                                                break;
+                                            }
+                                        }
+
+                                        if (fReplace)
+                                        {
+                                            strOverride = strOverride.stripSuffix();
+                                            strOverride = strOverride.append(".").append("vdi");
+                                        }
+                                    }
+
+                                    bstrFinalValue = strOverride;
+
                                     RTPrintf("%2u: Hard disk image: source image=%ls, target path=%ls, %ls"
                                             "\n    (change target path with \"--vsys %u --unit %u --disk path\";"
                                             "\n    disable with \"--vsys %u --unit %u --ignore\")\n",
                                             a,
                                             aOvfValues[a],
-                                            aVBoxValues[a],
+                                            bstrFinalValue.raw(),
                                             aExtraConfigValues[a],
                                             i, a, i, a);
+                                }
                             }
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_CDROM:
                             if (fIgnoreThis)
@@ -698,7 +796,7 @@ int handleImportAppliance(HandlerArg *arg)
                                 RTPrintf("%2u: CD-ROM"
                                         "\n    (disable with \"--vsys %u --unit %u --ignore\")\n",
                                         a, i, a);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_Floppy:
                             if (fIgnoreThis)
@@ -711,15 +809,15 @@ int handleImportAppliance(HandlerArg *arg)
                                 RTPrintf("%2u: Floppy"
                                         "\n    (disable with \"--vsys %u --unit %u --ignore\")\n",
                                         a, i, a);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_NetworkAdapter:
-                            RTPrintf("%2u: Network adapter: orig %ls, config %ls, extra %ls\n",   // @todo implement once we have a plan for the back-end
+                            RTPrintf("%2u: Network adapter: orig %ls, config %ls, extra %ls\n",   /// @todo implement once we have a plan for the back-end
                                      a,
                                      aOvfValues[a],
                                      aVBoxValues[a],
                                      aExtraConfigValues[a]);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_USBController:
                             if (fIgnoreThis)
@@ -732,7 +830,7 @@ int handleImportAppliance(HandlerArg *arg)
                                 RTPrintf("%2u: USB controller"
                                         "\n    (disable with \"--vsys %u --unit %u --ignore\")\n",
                                         a, i, a);
-                        break;
+                            break;
 
                         case VirtualSystemDescriptionType_SoundCard:
                             if (fIgnoreThis)
@@ -749,7 +847,16 @@ int handleImportAppliance(HandlerArg *arg)
                                         aOvfValues[a],
                                         i,
                                         a);
-                        break;
+                            break;
+
+                        case VirtualSystemDescriptionType_SettingsFile:
+                            /** @todo  VirtualSystemDescriptionType_SettingsFile? */
+                            break;
+                        case VirtualSystemDescriptionType_Miscellaneous:
+                            /** @todo  VirtualSystemDescriptionType_Miscellaneous? */
+                            break;
+                        case VirtualSystemDescriptionType_Ignore:
+                            break;
                     }
 
                     bstrFinalValue.detachTo(&aFinalValues[a]);
@@ -835,6 +942,7 @@ static const RTGETOPTDEF g_aExportOptions[] =
     { "--ovf09",                'l', RTGETOPT_REQ_NOTHING },
     { "--ovf10",                '1', RTGETOPT_REQ_NOTHING },
     { "--ovf20",                '2', RTGETOPT_REQ_NOTHING },
+    { "--opc10",                'c', RTGETOPT_REQ_NOTHING },
     { "--manifest",             'm', RTGETOPT_REQ_NOTHING },    // obsoleted by --options
     { "--iso",                  'I', RTGETOPT_REQ_NOTHING },    // obsoleted by --options
     { "--vsys",                 's', RTGETOPT_REQ_UINT32 },
@@ -849,7 +957,7 @@ static const RTGETOPTDEF g_aExportOptions[] =
     { "--options",              'O', RTGETOPT_REQ_STRING },
 };
 
-int handleExportAppliance(HandlerArg *a)
+RTEXITCODE handleExportAppliance(HandlerArg *a)
 {
     HRESULT rc = S_OK;
 
@@ -895,6 +1003,10 @@ int handleExportAppliance(HandlerArg *a)
 
                 case '2':   // --ovf20
                     strOvfFormat = "ovf-2.0";
+                    break;
+
+                case 'c':   // --opc
+                    strOvfFormat = "opc-1.0";
                     break;
 
                 case 'I':   // --iso
@@ -1094,7 +1206,7 @@ int handleExportAppliance(HandlerArg *a)
                         {
                             RTMsgError("Cannot read license file \"%s\" which should be included in the virtual system %u.",
                                        itD->second.c_str(), i);
-                            return 1;
+                            return RTEXITCODE_FAILURE;
                         }
                     }
                 }
@@ -1103,6 +1215,36 @@ int handleExportAppliance(HandlerArg *a)
 
         if (FAILED(rc))
             break;
+
+        /* Query required passwords and supply them to the appliance. */
+        com::SafeArray<BSTR> aIdentifiers;
+
+        CHECK_ERROR_BREAK(pAppliance, GetPasswordIds(ComSafeArrayAsOutParam(aIdentifiers)));
+
+        if (aIdentifiers.size() > 0)
+        {
+            com::SafeArray<BSTR> aPasswords(aIdentifiers.size());
+            RTPrintf("Enter the passwords for the following identifiers to export the apppliance:\n");
+            for (unsigned idxId = 0; idxId < aIdentifiers.size(); idxId++)
+            {
+                com::Utf8Str strPassword;
+                Bstr bstrPassword;
+                Bstr bstrId = aIdentifiers[idxId];
+
+                RTEXITCODE rcExit = readPasswordFromConsole(&strPassword, "Password ID %s:", Utf8Str(bstrId).c_str());
+                if (rcExit == RTEXITCODE_FAILURE)
+                {
+                    RTStrFree(pszAbsFilePath);
+                    return rcExit;
+                }
+
+                bstrPassword = strPassword;
+                bstrPassword.detachTo(&aPasswords[idxId]);
+            }
+
+            CHECK_ERROR_BREAK(pAppliance, AddPasswords(ComSafeArrayAsInParam(aIdentifiers),
+                                                       ComSafeArrayAsInParam(aPasswords)));
+        }
 
         if (fManifest)
             options.push_back(ExportOptions_CreateManifest);

@@ -1,11 +1,10 @@
+/* $Id: UIDownloaderUserManual.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIDownloaderUserManual class declaration
+ * VBox Qt GUI - UIDownloaderUserManual class declaration.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -43,6 +42,9 @@ private:
     /* Constructor/destructor: */
     UIDownloaderUserManual();
     ~UIDownloaderUserManual();
+
+    /** Returns description of the current network operation. */
+    virtual const QString description() const;
 
     /* Virtual stuff reimplementations: */
     bool askForDownloadingConfirmation(UINetworkReply *pReply);

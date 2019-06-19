@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,9 @@
 
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_HOST_SERIAL
 #include <VBox/vmm/pdm.h>
 #include <VBox/err.h>
@@ -66,15 +66,15 @@
 # endif /* linux */
 
 #elif defined(RT_OS_WINDOWS)
-# include <Windows.h>
+# include <iprt/win/windows.h>
 #endif
 
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * Char driver instance data.
@@ -113,11 +113,9 @@ typedef struct DRVHOSTSERIAL
     RTPIPE                      hWakeupPipeR;
     /** The write end of the control pipe */
     RTPIPE                      hWakeupPipeW;
-# ifndef RT_OS_LINUX
     /** The current line status.
      * Used by the polling version of drvHostSerialMonitorThread.  */
     int                         fStatusLines;
-# endif
 #elif defined(RT_OS_WINDOWS)
     /** the device handle */
     HANDLE                      hDeviceFile;
@@ -171,7 +169,7 @@ static DECLCALLBACK(void *) drvHostSerialQueryInterface(PPDMIBASE pInterface, co
 
 /* -=-=-=-=- ICharConnector -=-=-=-=- */
 
-/** @copydoc PDMICHARCONNECTOR::pfnWrite */
+/** @interface_method_impl{PDMICHARCONNECTOR,pfnWrite} */
 static DECLCALLBACK(int) drvHostSerialWrite(PPDMICHARCONNECTOR pInterface, const void *pvBuf, size_t cbWrite)
 {
     PDRVHOSTSERIAL pThis = PDMICHAR_2_DRVHOSTSERIAL(pInterface);
@@ -203,7 +201,7 @@ static DECLCALLBACK(int) drvHostSerialSetParameters(PPDMICHARCONNECTOR pInterfac
 
     LogFlow(("%s: Bps=%u chParity=%c cDataBits=%u cStopBits=%u\n", __FUNCTION__, Bps, chParity, cDataBits, cStopBits));
 
-#if defined(RT_OS_LINUX) || defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS)
+#if defined(RT_OS_LINUX) || defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
     termiosSetup = (struct termios *)RTMemTmpAllocZ(sizeof(struct termios));
 
     /* Enable receiver */
@@ -338,7 +336,8 @@ static DECLCALLBACK(int) drvHostSerialSetParameters(PPDMICHARCONNECTOR pInterfac
      * modem irqs and so the monitor thread never gets released. The workaround
      * is to send a signal after each tcsetattr.
      */
-    RTThreadPoke(pThis->pMonitorThread->Thread);
+    if (RT_LIKELY(pThis->pMonitorThread != NULL))
+        RTThreadPoke(pThis->pMonitorThread->Thread);
 #endif
 
 #elif defined(RT_OS_WINDOWS)
@@ -451,8 +450,8 @@ static DECLCALLBACK(int) drvHostSerialSetParameters(PPDMICHARCONNECTOR pInterfac
  * Send thread loop.
  *
  * @returns VINF_SUCCESS.
- * @param   ThreadSelf  Thread handle to this thread.
- * @param   pvUser      User argument.
+ * @param   pDrvIns     PDM driver instance data.
+ * @param   pThread     The PDM thread data.
  */
 static DECLCALLBACK(int) drvHostSerialSendThread(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 {
@@ -473,8 +472,7 @@ static DECLCALLBACK(int) drvHostSerialSendThread(PPDMDRVINS pDrvIns, PPDMTHREAD 
     while (pThread->enmState == PDMTHREADSTATE_RUNNING)
     {
         int rc = RTSemEventWait(pThis->SendSem, RT_INDEFINITE_WAIT);
-        if (RT_FAILURE(rc))
-            break;
+        AssertRCBreak(rc);
 
         /*
          * Write the character to the host device.
@@ -568,8 +566,9 @@ static DECLCALLBACK(int) drvHostSerialSendThread(PPDMDRVINS pDrvIns, PPDMTHREAD 
  * @param     pDrvIns     The driver instance.
  * @param     pThread     The send thread.
  */
-static DECLCALLBACK(int) drvHostSerialWakeupSendThread(PPDMDRVINS pDrvIns, PPDMTHREAD /*pThread*/)
+static DECLCALLBACK(int) drvHostSerialWakeupSendThread(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 {
+    RT_NOREF(pThread);
     PDRVHOSTSERIAL pThis = PDMINS_2_DATA(pDrvIns, PDRVHOSTSERIAL);
     int rc;
 
@@ -594,8 +593,8 @@ static DECLCALLBACK(int) drvHostSerialWakeupSendThread(PPDMDRVINS pDrvIns, PPDMT
  * chain toward the serial device.
  *
  * @returns VINF_SUCCESS.
- * @param   ThreadSelf  Thread handle to this thread.
- * @param   pvUser      User argument.
+ * @param   pDrvIns     PDM driver instance data.
+ * @param   pThread     The PDM thread data.
  */
 static DECLCALLBACK(int) drvHostSerialRecvThread(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 {
@@ -769,9 +768,20 @@ static DECLCALLBACK(int) drvHostSerialRecvThread(PPDMDRVINS pDrvIns, PPDMTHREAD 
             {
                 if (!ReadFile(pThis->hDeviceFile, abBuffer, sizeof(abBuffer), &dwNumberOfBytesTransferred, &pThis->overlappedRecv))
                 {
-                    rcThread = RTErrConvertFromWin32(GetLastError());
-                    LogRel(("HostSerial#%d: Read failed with error %Rrc; terminating the worker thread.\n", pDrvIns->iInstance, rcThread));
-                    break;
+                    dwRet = GetLastError();
+                    if (dwRet == ERROR_IO_PENDING)
+                    {
+                        if (GetOverlappedResult(pThis->hDeviceFile, &pThis->overlappedRecv, &dwNumberOfBytesTransferred, TRUE))
+                            dwRet = NO_ERROR;
+                        else
+                            dwRet = GetLastError();
+                    }
+                    if (dwRet != NO_ERROR)
+                    {
+                        rcThread = RTErrConvertFromWin32(dwRet);
+                        LogRel(("HostSerial#%d: Read failed with error %Rrc; terminating the worker thread.\n", pDrvIns->iInstance, rcThread));
+                        break;
+                    }
                 }
                 cbRemaining = dwNumberOfBytesTransferred;
             }
@@ -846,14 +856,15 @@ static DECLCALLBACK(int) drvHostSerialRecvThread(PPDMDRVINS pDrvIns, PPDMTHREAD 
 }
 
 /**
- * Unblock the send thread so it can respond to a state change.
+ * Unblock the receive thread so it can respond to a state change.
  *
  * @returns a VBox status code.
  * @param     pDrvIns     The driver instance.
- * @param     pThread     The send thread.
+ * @param     pThread     The receive thread.
  */
-static DECLCALLBACK(int) drvHostSerialWakeupRecvThread(PPDMDRVINS pDrvIns, PPDMTHREAD /*pThread*/)
+static DECLCALLBACK(int) drvHostSerialWakeupRecvThread(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 {
+    RT_NOREF(pThread);
     PDRVHOSTSERIAL pThis = PDMINS_2_DATA(pDrvIns, PDRVHOSTSERIAL);
 #if defined(RT_OS_LINUX) || defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
     size_t cbIgnored;
@@ -878,14 +889,16 @@ static DECLCALLBACK(int) drvHostSerialWakeupRecvThread(PPDMDRVINS pDrvIns, PPDMT
  * if they change.
  *
  * @returns VINF_SUCCESS.
- * @param   ThreadSelf  Thread handle to this thread.
- * @param   pvUser      User argument.
+ * @param   pDrvIns     PDM driver instance data.
+ * @param   pThread     The PDM thread data.
  */
 static DECLCALLBACK(int) drvHostSerialMonitorThread(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 {
     PDRVHOSTSERIAL pThis = PDMINS_2_DATA(pDrvIns, PDRVHOSTSERIAL);
-    int rc = VINF_SUCCESS;
     unsigned long const uStatusLinesToCheck = TIOCM_CAR | TIOCM_RNG | TIOCM_DSR | TIOCM_CTS;
+#ifdef RT_OS_LINUX
+    bool fPoll = false;
+#endif
 
     if (pThread->enmState == PDMTHREADSTATE_INITIALIZING)
         return VINF_SUCCESS;
@@ -897,8 +910,8 @@ static DECLCALLBACK(int) drvHostSerialMonitorThread(PPDMDRVINS pDrvIns, PPDMTHRE
         /*
          * Get the status line state.
          */
-        rc = ioctl(RTFileToNative(pThis->hDeviceFile), TIOCMGET, &statusLines);
-        if (rc < 0)
+        int rcPsx = ioctl(RTFileToNative(pThis->hDeviceFile), TIOCMGET, &statusLines);
+        if (rcPsx < 0)
         {
             PDMDrvHlpVMSetRuntimeError(pDrvIns, 0 /*fFlags*/, "DrvHostSerialFail",
                                        N_("Ioctl failed for serial host device '%s' (%Rrc). The device will not work properly"),
@@ -929,16 +942,38 @@ static DECLCALLBACK(int) drvHostSerialMonitorThread(PPDMDRVINS pDrvIns, PPDMTHRE
          * waiting in ioctl for a modem status change then 8250.c wrongly disables
          * modem irqs and so the monitor thread never gets released. The workaround
          * is to send a signal after each tcsetattr.
+         *
+         * TIOCMIWAIT doesn't work for the DSR line with TIOCM_DSR set
+         * (see http://lxr.linux.no/#linux+v4.7/drivers/usb/class/cdc-acm.c#L949)
+         * However as it is possible to query the line state we will not just clear
+         * the TIOCM_DSR bit from the lines to check but resort to the polling
+         * approach just like on other hosts.
          */
-        ioctl(RTFileToNative(pThis->hDeviceFile), TIOCMIWAIT, uStatusLinesToCheck);
+        if (!fPoll)
+        {
+            rcPsx = ioctl(RTFileToNative(pThis->hDeviceFile), TIOCMIWAIT, uStatusLinesToCheck);
+            if (rcPsx < 0 && errno != EINTR)
+            {
+                LogRel(("Serial#%u: Failed to wait for status line change with rcPsx=%d errno=%d, switch to polling\n",
+                        pDrvIns->iInstance, rcPsx, errno));
+                fPoll = true;
+                pThis->fStatusLines = statusLines;
+            }
+        }
+        else
+        {
+            /* Poll for status line change. */
+            if (!((statusLines ^ pThis->fStatusLines) & uStatusLinesToCheck))
+                PDMR3ThreadSleep(pThread, 500); /* 0.5 sec */
+            pThis->fStatusLines = statusLines;
+        }
 # else
         /* Poll for status line change. */
         if (!((statusLines ^ pThis->fStatusLines) & uStatusLinesToCheck))
             PDMR3ThreadSleep(pThread, 500); /* 0.5 sec */
         pThis->fStatusLines = statusLines;
 # endif
-    }
-    while (PDMTHREADSTATE_RUNNING == pThread->enmState);
+    } while (PDMTHREADSTATE_RUNNING == pThread->enmState);
 
     return VINF_SUCCESS;
 }
@@ -1119,8 +1154,9 @@ static DECLCALLBACK(void) drvHostSerialDestruct(PPDMDRVINS pDrvIns)
  *
  * @copydoc FNPDMDRVCONSTRUCT
  */
-static DECLCALLBACK(int) drvHostSerialConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t /*fFlags*/)
+static DECLCALLBACK(int) drvHostSerialConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t fFlags)
 {
+    RT_NOREF1(fFlags);
     PDRVHOSTSERIAL pThis = PDMINS_2_DATA(pDrvIns, PDRVHOSTSERIAL);
     LogFlow(("%s: iInstance=%d\n", __FUNCTION__, pDrvIns->iInstance));
     PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
@@ -1288,12 +1324,21 @@ static DECLCALLBACK(int) drvHostSerialConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pC
 
 #if defined(RT_OS_LINUX) || defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS) || defined(RT_OS_FREEBSD)
     /* Linux & darwin needs a separate thread which monitors the status lines. */
-# ifndef RT_OS_LINUX
-    ioctl(RTFileToNative(pThis->hDeviceFile), TIOCMGET, &pThis->fStatusLines);
-# endif
-    rc = PDMDrvHlpThreadCreate(pDrvIns, &pThis->pMonitorThread, pThis, drvHostSerialMonitorThread, drvHostSerialWakeupMonitorThread, 0, RTTHREADTYPE_IO, "SerMon");
-    if (RT_FAILURE(rc))
-        return PDMDrvHlpVMSetError(pDrvIns, rc, RT_SRC_POS, N_("HostSerial#%d cannot create monitor thread"), pDrvIns->iInstance);
+    int rcPsx = ioctl(RTFileToNative(pThis->hDeviceFile), TIOCMGET, &pThis->fStatusLines);
+    if (!rcPsx)
+    {
+        rc = PDMDrvHlpThreadCreate(pDrvIns, &pThis->pMonitorThread, pThis, drvHostSerialMonitorThread, drvHostSerialWakeupMonitorThread, 0, RTTHREADTYPE_IO, "SerMon");
+        if (RT_FAILURE(rc))
+            return PDMDrvHlpVMSetError(pDrvIns, rc, RT_SRC_POS, N_("HostSerial#%d cannot create monitor thread"), pDrvIns->iInstance);
+    }
+    else
+    {
+        /* TIOCMGET is not supported for pseudo terminals so just silently skip it. */
+        if (errno != ENOTTY)
+            PDMDrvHlpVMSetRuntimeError(pDrvIns, 0 /*fFlags*/, "DrvHostSerialFail",
+                                       N_("Trying to get the status lines state failed for serial host device '%s' (%Rrc). The device will not work properly"),
+                                       pThis->pszDevicePath, RTErrConvertFromErrno(errno));
+    }
 #endif
 
     /*

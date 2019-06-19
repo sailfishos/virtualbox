@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,10 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define LOG_GROUP RTLOGGROUP_CRYPTO
 #include "internal/iprt.h"
 #include <iprt/crypto/x509.h>
 
@@ -37,16 +38,18 @@
 #include <iprt/mem.h>
 #include <iprt/string.h>
 #include <iprt/list.h>
+#include <iprt/log.h>
 #include <iprt/time.h>
+#include <iprt/crypto/applecodesign.h> /* critical extension OIDs */
 #include <iprt/crypto/pkcs7.h> /* PCRTCRPKCS7SETOFCERTS */
 #include <iprt/crypto/store.h>
 
 #include "x509-internal.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * X.509 certificate path node.
  */
@@ -289,9 +292,9 @@ typedef RTCRX509CERTPATHSINT *PRTCRX509CERTPATHSINT;
 /** @} */
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void rtCrX509CertPathsDestroyTree(PRTCRX509CERTPATHSINT pThis);
 static void rtCrX509CpvCleanup(PRTCRX509CERTPATHSINT pThis);
 
@@ -461,7 +464,8 @@ RTDECL(int) RTCrX509CertPathsSetValidTime(RTCRX509CERTPATHS hCertPaths, PCRTTIME
     PRTCRX509CERTPATHSINT pThis = hCertPaths;
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTCRX509CERTPATHSINT_MAGIC, VERR_INVALID_HANDLE);
-    AssertReturn(pThis->pRoot == NULL, VERR_WRONG_ORDER);
+
+    /* Allow this after building paths, as it's only used during verification. */
 
     if (pTime)
     {
@@ -480,7 +484,8 @@ RTDECL(int) RTCrX509CertPathsSetValidTimeSpec(RTCRX509CERTPATHS hCertPaths, PCRT
     PRTCRX509CERTPATHSINT pThis = hCertPaths;
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTCRX509CERTPATHSINT_MAGIC, VERR_INVALID_HANDLE);
-    AssertReturn(pThis->pRoot == NULL, VERR_WRONG_ORDER);
+
+    /* Allow this after building paths, as it's only used during verification. */
 
     if (pTimeSpec)
     {
@@ -718,12 +723,15 @@ static void rtCrX509CertPathsGetIssuers(PRTCRX509CERTPATHSINT pThis, PRTCRX509CE
      */
     if (pThis->pUntrustedCertsSet)
     {
-        uint32_t const  cCerts  = pThis->pUntrustedCertsSet->cItems;
-        PCRTCRPKCS7CERT paCerts = pThis->pUntrustedCertsSet->paItems;
+        uint32_t const        cCerts   = pThis->pUntrustedCertsSet->cItems;
+        PRTCRPKCS7CERT const *papCerts = pThis->pUntrustedCertsSet->papItems;
         for (uint32_t i = 0; i < cCerts; i++)
-            if (   paCerts[i].enmChoice == RTCRPKCS7CERTCHOICE_X509
-                && RTCrX509Certificate_MatchSubjectOrAltSubjectByRfc5280(paCerts[i].u.pX509Cert, pIssuer))
-                rtCrX509CertPathsAddIssuer(pThis, pNode, paCerts[i].u.pX509Cert, NULL, RTCRX509CERTPATHNODE_SRC_UNTRUSTED_SET);
+        {
+            PCRTCRPKCS7CERT pCert = papCerts[i];
+            if (   pCert->enmChoice == RTCRPKCS7CERTCHOICE_X509
+                && RTCrX509Certificate_MatchSubjectOrAltSubjectByRfc5280(pCert->u.pX509Cert, pIssuer))
+                rtCrX509CertPathsAddIssuer(pThis, pNode, pCert->u.pX509Cert, NULL, RTCRX509CERTPATHNODE_SRC_UNTRUSTED_SET);
+        }
     }
 }
 
@@ -745,6 +753,8 @@ static PRTCRX509CERTPATHNODE rtCrX509CertPathsGetNextRightUp(PRTCRX509CERTPATHSI
         /* Up. */
         pNode = pParent;
     }
+
+    RT_NOREF_PV(pThis);
 }
 
 
@@ -919,6 +929,11 @@ RTDECL(int) RTCrX509CertPathsBuild(RTCRX509CERTPATHS hCertPaths, PRTERRINFO pErr
                 else
                     pCur = rtCrX509CertPathsAddLeaf(pThis, pCur);
             }
+            if (pCur)
+                Log2(("RTCrX509CertPathsBuild: pCur=%p fLeaf=%d pParent=%p pNext=%p pPrev=%p\n",
+                      pCur, pCur->fLeaf, pCur->pParent,
+                      pCur->pParent ? RTListGetNext(&pCur->pParent->ChildListOrLeafEntry, pCur, RTCRX509CERTPATHNODE, SiblingEntry) : NULL,
+                      pCur->pParent ? RTListGetPrev(&pCur->pParent->ChildListOrLeafEntry, pCur, RTCRX509CERTPATHNODE, SiblingEntry) : NULL));
         } while (pCur);
 
         pThis->pErrInfo = NULL;
@@ -1045,9 +1060,11 @@ static void rtDumpIndent(PFNRTDUMPPRINTFV pfnPrintfV, void *pvUser, uint32_t cch
 static void rtCrX509NameDump(PCRTCRX509NAME pName, PFNRTDUMPPRINTFV pfnPrintfV, void *pvUser)
 {
     for (uint32_t i = 0; i < pName->cItems; i++)
-        for (uint32_t j = 0; j < pName->paItems[i].cItems; j++)
+    {
+        PCRTCRX509RELATIVEDISTINGUISHEDNAME const pRdn = pName->papItems[i];
+        for (uint32_t j = 0; j < pRdn->cItems; j++)
         {
-            PRTCRX509ATTRIBUTETYPEANDVALUE pAttrib = &pName->paItems[i].paItems[j];
+            PRTCRX509ATTRIBUTETYPEANDVALUE pAttrib = pRdn->papItems[j];
 
             const char *pszType = pAttrib->Type.szObjId;
             if (   !strncmp(pAttrib->Type.szObjId, "2.5.4.", 6)
@@ -1106,6 +1123,7 @@ static void rtCrX509NameDump(PCRTCRX509NAME pName, PFNRTDUMPPRINTFV pfnPrintfV, 
             else
                 rtDumpPrintf(pfnPrintfV, pvUser, "<not-string: uTag=%#x>", pAttrib->Value.u.Core.uTag);
         }
+    }
 }
 
 
@@ -1127,6 +1145,7 @@ static const char *rtCrX509CertPathsNodeGetSourceName(PRTCRX509CERTPATHNODE pNod
 static void rtCrX509CertPathsDumpOneWorker(PRTCRX509CERTPATHSINT pThis, uint32_t iPath, PRTCRX509CERTPATHNODE pCurLeaf,
                                            uint32_t uVerbosity, PFNRTDUMPPRINTFV pfnPrintfV, void *pvUser)
 {
+    RT_NOREF_PV(pThis);
     rtDumpPrintf(pfnPrintfV, pvUser, "Path #%u: %s, %u deep, rcVerify=%Rrc\n",
                  iPath, RTCRX509CERTPATHNODE_SRC_IS_TRUSTED(pCurLeaf->uSrc) ? "trusted" : "untrusted", pCurLeaf->uDepth,
                  pCurLeaf->rcVerify);
@@ -1337,9 +1356,10 @@ static bool rtCrX509CpvGrowPermittedSubtrees(PRTCRX509CERTPATHSINT pThis, uint32
  * @returns success indiciator.
  * @param   pThis               The validator instance.
  * @param   cSubtrees           The number of sub-trees to add.
- * @param   paSubtrees          Array of sub-trees to add.
+ * @param   papSubtrees         Array of sub-trees to add.
  */
-static bool rtCrX509CpvAddPermittedSubtrees(PRTCRX509CERTPATHSINT pThis, uint32_t cSubtrees, PCRTCRX509GENERALSUBTREE paSubtrees)
+static bool rtCrX509CpvAddPermittedSubtrees(PRTCRX509CERTPATHSINT pThis, uint32_t cSubtrees,
+                                            PRTCRX509GENERALSUBTREE const *papSubtrees)
 {
     /*
      * If the array is empty, assume no permitted names.
@@ -1362,14 +1382,30 @@ static bool rtCrX509CpvAddPermittedSubtrees(PRTCRX509CERTPATHSINT pThis, uint32_
     uint32_t iDst = pThis->v.cPermittedSubtrees;
     for (uint32_t iSrc = 0; iSrc < cSubtrees; iSrc++)
     {
-        if (!rtCrX509CpvCheckSubtreeValidity(pThis, &paSubtrees[iSrc]))
+        if (!rtCrX509CpvCheckSubtreeValidity(pThis, papSubtrees[iSrc]))
             return false;
-        pThis->v.papPermittedSubtrees[iDst] = &paSubtrees[iSrc];
+        pThis->v.papPermittedSubtrees[iDst] = papSubtrees[iSrc];
         iDst++;
     }
     pThis->v.cPermittedSubtrees = iDst;
 
     return true;
+}
+
+
+/**
+ * Adds a one permitted sub-tree.
+ *
+ * We store reference to each individual sub-tree because we must support
+ * intersection calculation.
+ *
+ * @returns success indiciator.
+ * @param   pThis               The validator instance.
+ * @param   pSubtree            Array of sub-trees to add.
+ */
+static bool rtCrX509CpvAddPermittedSubtree(PRTCRX509CERTPATHSINT pThis, PCRTCRX509GENERALSUBTREE pSubtree)
+{
+    return rtCrX509CpvAddPermittedSubtrees(pThis, 1, (PRTCRX509GENERALSUBTREE const *)&pSubtree);
 }
 
 
@@ -1392,8 +1428,8 @@ static bool rtCrX509CpvIntersectionPermittedSubtrees(PRTCRX509CERTPATHSINT pThis
         return true;
     }
 
-    uint32_t                    cRight  = pSubtrees->cItems;
-    PCRTCRX509GENERALSUBTREE    paRight = pSubtrees->paItems;
+    uint32_t                       cRight   = pSubtrees->cItems;
+    PRTCRX509GENERALSUBTREE const *papRight = pSubtrees->papItems;
     if (cRight == 0)
     {
         pThis->v.cPermittedSubtrees = 0;
@@ -1404,7 +1440,7 @@ static bool rtCrX509CpvIntersectionPermittedSubtrees(PRTCRX509CERTPATHSINT pThis
     uint32_t                    cLeft   = pThis->v.cPermittedSubtrees;
     PCRTCRX509GENERALSUBTREE   *papLeft = pThis->v.papPermittedSubtrees;
     if (!cLeft) /* first name constraint, no initial constraint */
-        return rtCrX509CpvAddPermittedSubtrees(pThis, cRight, paRight);
+        return rtCrX509CpvAddPermittedSubtrees(pThis, cRight, papRight);
 
     /*
      * Create a new array with the intersection, freeing the old (left) array
@@ -1418,34 +1454,34 @@ static bool rtCrX509CpvIntersectionPermittedSubtrees(PRTCRX509CERTPATHSINT pThis
 
     for (uint32_t iRight = 0; iRight < cRight; iRight++)
     {
-        if (!rtCrX509CpvCheckSubtreeValidity(pThis, &paRight[iRight]))
+        if (!rtCrX509CpvCheckSubtreeValidity(pThis, papRight[iRight]))
             return false;
 
-        RTCRX509GENERALNAMECHOICE const enmRightChoice = paRight[iRight].Base.enmChoice;
+        RTCRX509GENERALNAMECHOICE const enmRightChoice = papRight[iRight]->Base.enmChoice;
         afRightTags[enmRightChoice] = true;
 
         bool fHaveRight = false;
         for (uint32_t iLeft = 0; iLeft < cLeft; iLeft++)
             if (papLeft[iLeft]->Base.enmChoice == enmRightChoice)
             {
-                if (RTCrX509GeneralSubtree_Compare(papLeft[iLeft], &paRight[iRight]) == 0)
+                if (RTCrX509GeneralSubtree_Compare(papLeft[iLeft], papRight[iRight]) == 0)
                 {
                     if (!fHaveRight)
                     {
                         fHaveRight = true;
-                        rtCrX509CpvAddPermittedSubtrees(pThis, 1, papLeft[iLeft]);
+                        rtCrX509CpvAddPermittedSubtree(pThis, papLeft[iLeft]);
                     }
                 }
-                else if (RTCrX509GeneralSubtree_ConstraintMatch(papLeft[iLeft], &paRight[iRight]))
+                else if (RTCrX509GeneralSubtree_ConstraintMatch(papLeft[iLeft], papRight[iRight]))
                 {
                     if (!fHaveRight)
                     {
                         fHaveRight = true;
-                        rtCrX509CpvAddPermittedSubtrees(pThis, 1, &paRight[iRight]);
+                        rtCrX509CpvAddPermittedSubtree(pThis, papRight[iRight]);
                     }
                 }
-                else if (RTCrX509GeneralSubtree_ConstraintMatch(&paRight[iRight], papLeft[iLeft]))
-                    rtCrX509CpvAddPermittedSubtrees(pThis, 1, papLeft[iLeft]);
+                else if (RTCrX509GeneralSubtree_ConstraintMatch(papRight[iRight], papLeft[iLeft]))
+                    rtCrX509CpvAddPermittedSubtree(pThis, papLeft[iLeft]);
             }
     }
 
@@ -1454,7 +1490,7 @@ static bool rtCrX509CpvIntersectionPermittedSubtrees(PRTCRX509CERTPATHSINT pThis
      */
     for (uint32_t iLeft = 0; iLeft < cLeft; iLeft++)
         if (!afRightTags[papLeft[iLeft]->Base.enmChoice])
-            rtCrX509CpvAddPermittedSubtrees(pThis, 1, papLeft[iLeft]);
+            rtCrX509CpvAddPermittedSubtree(pThis, papLeft[iLeft]);
 
     /*
      * If we ended up with an empty set, no names are permitted any more.
@@ -1528,9 +1564,12 @@ static bool rtCrX509CpvIsNameExcluded(PRTCRX509CERTPATHSINT pThis, PCRTCRX509NAM
         PCRTCRX509GENERALSUBTREES pSubTrees = pThis->v.papExcludedSubtrees[i];
         uint32_t j = pSubTrees->cItems;
         while (j-- > 0)
-            if (   RTCRX509GENERALNAME_IS_DIRECTORY_NAME(&pSubTrees->paItems[j].Base)
-                && RTCrX509Name_ConstraintMatch(&pSubTrees->paItems[j].Base.u.pT4->DirectoryName, pName))
+        {
+            PCRTCRX509GENERALSUBTREE const pSubTree = pSubTrees->papItems[j];
+            if (   RTCRX509GENERALNAME_IS_DIRECTORY_NAME(&pSubTree->Base)
+                && RTCrX509Name_ConstraintMatch(&pSubTree->Base.u.pT4->DirectoryName, pName))
                 return true;
+        }
     }
     return false;
 }
@@ -1553,7 +1592,7 @@ static bool rtCrX509CpvIsGeneralNameExcluded(PRTCRX509CERTPATHSINT pThis, PCRTCR
         PCRTCRX509GENERALSUBTREES pSubTrees = pThis->v.papExcludedSubtrees[i];
         uint32_t j = pSubTrees->cItems;
         while (j-- > 0)
-            if (RTCrX509GeneralName_ConstraintMatch(&pSubTrees->paItems[j].Base, pGeneralName))
+            if (RTCrX509GeneralName_ConstraintMatch(&pSubTrees->papItems[j]->Base, pGeneralName))
                 return true;
     }
     return false;
@@ -1938,7 +1977,7 @@ static void rtCrX509CpvInit(PRTCRX509CERTPATHSINT pThis, PRTCRX509CERTPATHNODE p
      */
     if (pThis->pInitialPermittedSubtrees)
         rtCrX509CpvAddPermittedSubtrees(pThis, pThis->pInitialPermittedSubtrees->cItems,
-                                        pThis->pInitialPermittedSubtrees->paItems);
+                                        pThis->pInitialPermittedSubtrees->papItems);
     if (pThis->pInitialExcludedSubtrees)
         rtCrX509CpvAddExcludedSubtrees(pThis, pThis->pInitialExcludedSubtrees);
 
@@ -1998,7 +2037,8 @@ static bool rtCrX509CpvCheckBasicCertInfo(PRTCRX509CERTPATHSINT pThis, PRTCRX509
      * 6.1.3.a.2 - Verify that the certificate is valid at the specified time.
      */
     AssertCompile(sizeof(pThis->szTmp) >= 36 * 3);
-    if (!RTCrX509Validity_IsValidAtTimeSpec(&pNode->pCert->TbsCertificate.Validity, &pThis->ValidTime))
+    if (   (pThis->fFlags & RTCRX509CERTPATHSINT_F_VALID_TIME)
+        && !RTCrX509Validity_IsValidAtTimeSpec(&pNode->pCert->TbsCertificate.Validity, &pThis->ValidTime))
         return rtCrX509CpvFailed(pThis, VERR_CR_X509_CPV_NOT_VALID_AT_TIME,
                                  "Certificate is not valid (ValidTime=%s Validity=[%s...%s])",
                                  RTTimeSpecToString(&pThis->ValidTime, &pThis->szTmp[0], 36),
@@ -2039,8 +2079,8 @@ static bool rtCrX509CpvCheckNameConstraints(PRTCRX509CERTPATHSINT pThis, PRTCRX5
     {
         uint32_t i = pAltSubjectName->cItems;
         while (i-- > 0)
-            if (   !rtCrX509CpvIsGeneralNamePermitted(pThis, &pAltSubjectName->paItems[i])
-                || rtCrX509CpvIsGeneralNameExcluded(pThis, &pAltSubjectName->paItems[i]))
+            if (   !rtCrX509CpvIsGeneralNamePermitted(pThis, pAltSubjectName->papItems[i])
+                || rtCrX509CpvIsGeneralNameExcluded(pThis, pAltSubjectName->papItems[i]))
                 return rtCrX509CpvFailed(pThis, VERR_CR_X509_CPV_ALT_NAME_NOT_PERMITTED,
                                          "Alternative name #%u is is not permitted by current name constraints", i);
     }
@@ -2067,8 +2107,8 @@ static bool rtCrX509CpvWorkValidPolicyTree(PRTCRX509CERTPATHSINT pThis, uint32_t
         uint32_t                        i           = pPolicies->cItems;
         while (i-- > 0)
         {
-            PCRTCRX509POLICYQUALIFIERINFOS const    pQualifiers = &pPolicies->paItems[i].PolicyQualifiers;
-            PCRTASN1OBJID const                     pIdP        = &pPolicies->paItems[i].PolicyIdentifier;
+            PCRTCRX509POLICYQUALIFIERINFOS const    pQualifiers = &pPolicies->papItems[i]->PolicyQualifiers;
+            PCRTASN1OBJID const                     pIdP        = &pPolicies->papItems[i]->PolicyIdentifier;
             if (RTAsn1ObjId_CompareWithString(pIdP, RTCRX509_ID_CE_CP_ANY_POLICY_OID) == 0)
             {
                 iAnyPolicy++;
@@ -2118,7 +2158,7 @@ static bool rtCrX509CpvWorkValidPolicyTree(PRTCRX509CERTPATHSINT pThis, uint32_t
             && (   pThis->v.cInhibitAnyPolicy > 0
                 || (pNode->pParent && fSelfIssued) ) )
         {
-            PCRTCRX509POLICYQUALIFIERINFOS pApQ = &pPolicies->paItems[iAnyPolicy].PolicyQualifiers;
+            PCRTCRX509POLICYQUALIFIERINFOS pApQ = &pPolicies->papItems[iAnyPolicy]->PolicyQualifiers;
             RTListForEach(pListAbove, pCur, RTCRX509CERTPATHSPOLICYNODE, DepthEntry)
             {
                 if (!rtCrX509CpvPolicyTreeIsChild(pCur, pCur->pExpectedPolicyFirst))
@@ -2169,11 +2209,12 @@ static bool rtCrX509CpvSoakUpPolicyMappings(PRTCRX509CERTPATHSINT pThis, uint32_
     uint32_t i = pPolicyMappings->cItems;
     while (i-- > 0)
     {
-        if (RTAsn1ObjId_CompareWithString(&pPolicyMappings->paItems[i].IssuerDomainPolicy, RTCRX509_ID_CE_CP_ANY_POLICY_OID) == 0)
+        PCRTCRX509POLICYMAPPING const pOne = pPolicyMappings->papItems[i];
+        if (RTAsn1ObjId_CompareWithString(&pOne->IssuerDomainPolicy, RTCRX509_ID_CE_CP_ANY_POLICY_OID) == 0)
             return rtCrX509CpvFailed(pThis, VERR_CR_X509_CPV_INVALID_POLICY_MAPPING,
                                      "Invalid policy mapping %#u: IssuerDomainPolicy is anyPolicy.", i);
 
-        if (RTAsn1ObjId_CompareWithString(&pPolicyMappings->paItems[i].SubjectDomainPolicy, RTCRX509_ID_CE_CP_ANY_POLICY_OID) == 0)
+        if (RTAsn1ObjId_CompareWithString(&pOne->SubjectDomainPolicy, RTCRX509_ID_CE_CP_ANY_POLICY_OID) == 0)
             return rtCrX509CpvFailed(pThis, VERR_CR_X509_CPV_INVALID_POLICY_MAPPING,
                                      "Invalid policy mapping %#u: SubjectDomainPolicy is anyPolicy.", i);
     }
@@ -2187,15 +2228,17 @@ static bool rtCrX509CpvSoakUpPolicyMappings(PRTCRX509CERTPATHSINT pThis, uint32_
         i = pPolicyMappings->cItems;
         while (i-- > 0)
         {
+            PCRTCRX509POLICYMAPPING const pOne = pPolicyMappings->papItems[i];
+
             uint32_t cFound = 0;
             RTListForEach(&pThis->v.paValidPolicyDepthLists[iDepth], pCur, RTCRX509CERTPATHSPOLICYNODE, DepthEntry)
             {
-                if (RTAsn1ObjId_Compare(pCur->pValidPolicy, &pPolicyMappings->paItems[i].IssuerDomainPolicy))
+                if (RTAsn1ObjId_Compare(pCur->pValidPolicy, &pOne->IssuerDomainPolicy))
                 {
                     if (!pCur->fAlreadyMapped)
                     {
                         pCur->fAlreadyMapped = true;
-                        pCur->pExpectedPolicyFirst = &pPolicyMappings->paItems[i].SubjectDomainPolicy;
+                        pCur->pExpectedPolicyFirst = &pOne->SubjectDomainPolicy;
                     }
                     else
                     {
@@ -2207,7 +2250,7 @@ static bool rtCrX509CpvSoakUpPolicyMappings(PRTCRX509CERTPATHSINT pThis, uint32_
                                                      "Error growing papMoreExpectedPolicySet array (cur %u, depth %u)",
                                                      pCur->cMoreExpectedPolicySet, iDepth);
                         pCur->papMoreExpectedPolicySet = (PCRTASN1OBJID *)pvNew;
-                        pCur->papMoreExpectedPolicySet[iExpected] = &pPolicyMappings->paItems[i].SubjectDomainPolicy;
+                        pCur->papMoreExpectedPolicySet[iExpected] = &pOne->SubjectDomainPolicy;
                         pCur->cMoreExpectedPolicySet = iExpected  + 1;
                     }
                     cFound++;
@@ -2224,9 +2267,9 @@ static bool rtCrX509CpvSoakUpPolicyMappings(PRTCRX509CERTPATHSINT pThis, uint32_
                     if (RTAsn1ObjId_CompareWithString(pCur->pValidPolicy, RTCRX509_ID_CE_CP_ANY_POLICY_OID) == 0)
                     {
                         if (!rtCrX509CpvPolicyTreeInsertNew(pThis, pCur->pParent, iDepth,
-                                                            &pPolicyMappings->paItems[i].IssuerDomainPolicy,
+                                                            &pOne->IssuerDomainPolicy,
                                                             pCur->pPolicyQualifiers,
-                                                            &pPolicyMappings->paItems[i].SubjectDomainPolicy))
+                                                            &pOne->SubjectDomainPolicy))
                             return false;
                         break;
                     }
@@ -2244,9 +2287,10 @@ static bool rtCrX509CpvSoakUpPolicyMappings(PRTCRX509CERTPATHSINT pThis, uint32_
         i = pPolicyMappings->cItems;
         while (i-- > 0)
         {
+            PCRTCRX509POLICYMAPPING const pOne = pPolicyMappings->papItems[i];
             RTListForEachSafe(&pThis->v.paValidPolicyDepthLists[iDepth], pCur, pNext, RTCRX509CERTPATHSPOLICYNODE, DepthEntry)
             {
-                if (RTAsn1ObjId_Compare(pCur->pValidPolicy, &pPolicyMappings->paItems[i].IssuerDomainPolicy))
+                if (RTAsn1ObjId_Compare(pCur->pValidPolicy, &pOne->IssuerDomainPolicy))
                 {
                     rtCrX509CpvPolicyTreeDestroyNode(pThis, pCur);
                     cRemoved++;
@@ -2396,10 +2440,11 @@ static bool rtCrX509CpvCheckAndSoakUpBasicConstraintsAndKeyUsage(PRTCRX509CERTPA
  */
 static bool rtCrX509CpvCheckCriticalExtensions(PRTCRX509CERTPATHSINT pThis, PRTCRX509CERTPATHNODE pNode)
 {
-    uint32_t                cLeft = pNode->pCert->TbsCertificate.T3.Extensions.cItems;
-    PCRTCRX509EXTENSION     pCur  = pNode->pCert->TbsCertificate.T3.Extensions.paItems;
+    uint32_t                  cLeft = pNode->pCert->TbsCertificate.T3.Extensions.cItems;
+    PRTCRX509EXTENSION const *ppCur = pNode->pCert->TbsCertificate.T3.Extensions.papItems;
     while (cLeft-- > 0)
     {
+        PCRTCRX509EXTENSION const pCur = *ppCur;
         if (pCur->Critical.fValue)
         {
             if (   RTAsn1ObjId_CompareWithString(&pCur->ExtnId, RTCRX509_ID_CE_KEY_USAGE_OID) != 0
@@ -2412,12 +2457,15 @@ static bool rtCrX509CpvCheckCriticalExtensions(PRTCRX509CERTPATHSINT pThis, PRTC
                 && RTAsn1ObjId_CompareWithString(&pCur->ExtnId, RTCRX509_ID_CE_POLICY_CONSTRAINTS_OID) != 0
                 && RTAsn1ObjId_CompareWithString(&pCur->ExtnId, RTCRX509_ID_CE_EXT_KEY_USAGE_OID) != 0
                 && RTAsn1ObjId_CompareWithString(&pCur->ExtnId, RTCRX509_ID_CE_INHIBIT_ANY_POLICY_OID) != 0
+                && RTAsn1ObjId_CompareWithString(&pCur->ExtnId, RTCR_APPLE_CS_DEVID_APPLICATION_OID) != 0
+                && RTAsn1ObjId_CompareWithString(&pCur->ExtnId, RTCR_APPLE_CS_DEVID_INSTALLER_OID) != 0
+                && RTAsn1ObjId_CompareWithString(&pCur->ExtnId, RTCR_APPLE_CS_DEVID_KEXT_OID) != 0
                )
                 return rtCrX509CpvFailed(pThis, VERR_CR_X509_CPV_UNKNOWN_CRITICAL_EXTENSION,
                                          "Node #%u has an unknown critical extension: %s", pThis->v.iNode, pCur->ExtnId.szObjId);
         }
 
-        pCur++;
+        ppCur++;
     }
 
     return true;
@@ -2474,7 +2522,7 @@ static bool rtCrX509CpvWrapUp(PRTCRX509CERTPATHSINT pThis, PRTCRX509CERTPATHNODE
 /**
  * Worker that validates one path.
  *
- * This implements the the algorithm in RFC-5280, section 6.1, with exception of
+ * This implements the algorithm in RFC-5280, section 6.1, with exception of
  * the CRL checks in 6.1.3.a.3.
  *
  * @returns success indicator.
@@ -2642,7 +2690,6 @@ RTDECL(int) RTCrX509CertPathsValidateAll(RTCRX509CERTPATHS hCertPaths, uint32_t 
 
     int      rcLastFailure = VINF_SUCCESS;
     uint32_t cValidPaths   = 0;
-    uint32_t iPath         = 0;
     PRTCRX509CERTPATHNODE pCurLeaf;
     RTListForEach(&pThis->LeafList, pCurLeaf, RTCRX509CERTPATHNODE, ChildListOrLeafEntry)
     {

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,18 +23,22 @@
 
 #include <VBox/vd-plugin.h>
 
+#include <iprt/cdefs.h>
+
 RT_C_DECLS_BEGIN
 
-extern const VBOXHDDBACKEND g_RawBackend;
-extern const VBOXHDDBACKEND g_VmdkBackend;
-extern const VBOXHDDBACKEND g_VDIBackend;
-extern const VBOXHDDBACKEND g_VhdBackend;
-extern const VBOXHDDBACKEND g_ParallelsBackend;
-extern const VBOXHDDBACKEND g_DmgBackend;
-extern const VBOXHDDBACKEND g_ISCSIBackend;
-extern const VBOXHDDBACKEND g_QedBackend;
-extern const VBOXHDDBACKEND g_QCowBackend;
-extern const VBOXHDDBACKEND g_VhdxBackend;
+extern const VDIMAGEBACKEND g_RawBackend;
+extern const VDIMAGEBACKEND g_VmdkBackend;
+extern const VDIMAGEBACKEND g_VDIBackend;
+extern const VDIMAGEBACKEND g_VhdBackend;
+extern const VDIMAGEBACKEND g_ParallelsBackend;
+extern const VDIMAGEBACKEND g_DmgBackend;
+extern const VDIMAGEBACKEND g_ISCSIBackend;
+extern const VDIMAGEBACKEND g_QedBackend;
+extern const VDIMAGEBACKEND g_QCowBackend;
+extern const VDIMAGEBACKEND g_VhdxBackend;
+extern const VDIMAGEBACKEND g_CueBackend;
+extern const VDIMAGEBACKEND g_VBoxIsoMakerBackend;
 
 extern const VDCACHEBACKEND g_VciCacheBackend;
 

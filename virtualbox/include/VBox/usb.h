@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,6 +29,11 @@
 #include <VBox/types.h>
 
 RT_C_DECLS_BEGIN
+
+/** @defgroup grp_usblib_usb    USB Device Structures & Types
+ * @ingroup grp_usblib
+ * @{
+ */
 
 /**
  * The USB host device state.
@@ -67,6 +72,8 @@ typedef enum USBDEVICESPEED
     USBDEVICESPEED_HIGH,
     /** Variable speed - USB 2.5 / wireless. */
     USBDEVICESPEED_VARIABLE,
+    /** Super speed - USB 3.0 (5Gbit/s). */
+    USBDEVICESPEED_SUPER,
     /** The usual 32-bit hack. */
     USBDEVICESPEED_32BIT_HACK = 0x7fffffff
 } USBDEVICESPEED;
@@ -90,6 +97,8 @@ typedef struct USBDEVICE
     const char     *pszSerialNumber;
     /** The address of the device. */
     const char     *pszAddress;
+    /** The backend to use for this device. */
+    const char     *pszBackend;
 
     /** Vendor ID. */
     uint16_t        idVendor;
@@ -249,6 +258,7 @@ typedef USBCONFIGDESC *PUSBCONFIGDESC;
 
 #endif /* VBOX_USB_H_INCL_DESCRIPTORS */
 
+/** @} */
 RT_C_DECLS_END
 
 #endif

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,7 +23,10 @@
 #include <VBox/vmm/pdmifs.h>
 #ifndef VBOX_WITHOUT_TESTING_FEATURES
 # include <iprt/test.h>
+# include <VBox/VMMDevTesting.h>
 #endif
+
+#include <iprt/list.h>
 
 #define VMMDEV_WITH_ALT_TIMESYNC
 
@@ -92,21 +95,18 @@ typedef struct VMMDEVCREDS
  */
 typedef struct VMMDEVFACILITYSTATUSENTRY
 {
-    /** The facility, see VBoxGuestFacilityType. */
-    uint32_t    uFacility;
-    /** The status, see VBoxGuestFacilityStatus. */
-    /** @todo r=andy uint16_t vs. uint32_t (VBoxGuestFacilityStatus enum). */
-    uint16_t    uStatus;
+    /** The facility (may contain values other than the defined ones). */
+    VBoxGuestFacilityType       enmFacility;
+    /** The status (may contain values other than the defined ones). */
+    VBoxGuestFacilityStatus     enmStatus;
     /** Whether this entry is fixed and cannot be reused when inactive. */
-    bool        fFixed;
+    bool                        fFixed;
     /** Explicit alignment padding / reserved for future use. MBZ. */
-    bool        fPadding;
+    bool                        afPadding[3];
     /** The facility flags (yet to be defined). */
-    uint32_t    fFlags;
-    /** Explicit alignment padding / reserved for future use. MBZ. */
-    uint32_t    uPadding;
+    uint32_t                    fFlags;
     /** Last update timestamp. */
-    RTTIMESPEC  TimeSpecTS;
+    RTTIMESPEC                  TimeSpecTS;
 } VMMDEVFACILITYSTATUSENTRY;
 /** Pointer to a facility status entry. */
 typedef VMMDEVFACILITYSTATUSENTRY *PVMMDEVFACILITYSTATUSENTRY;
@@ -116,7 +116,7 @@ typedef VMMDEVFACILITYSTATUSENTRY *PVMMDEVFACILITYSTATUSENTRY;
 typedef struct VMMDevState
 {
     /** The PCI device structure. */
-    PCIDevice           PciDev;
+    PDMPCIDEV           PciDev;
     /** The critical section for this device.
      * @remarks We use this rather than the default one, it's simpler with all
      *          the driver interfaces where we have to waste time digging out the
@@ -229,7 +229,7 @@ typedef struct VMMDevState
 
     /* memory balloon change request */
     uint32_t    cMbMemoryBalloon;
-    /** The last balloon size queried by the guest additions.  */
+    /** The last balloon size queried by the guest additions. */
     uint32_t    cMbMemoryBalloonLast;
 
     /* guest ram size */
@@ -272,20 +272,24 @@ typedef struct VMMDevState
     /** Guest Core Dump location. */
     char szGuestCoreDumpDir[RTPATH_MAX];
 
-    /** Number of additional cores to keep around.   */
+    /** Number of additional cores to keep around. */
     uint32_t cGuestCoreDumps;
 
     bool afAlignment7[1];
 
 #ifdef VBOX_WITH_HGCM
-    /** List of pending HGCM requests, used for saving the HGCM state. */
-    R3PTRTYPE(PVBOXHGCMCMD) pHGCMCmdList;
+    /** List of pending HGCM requests (VBOXHGCMCMD). */
+    RTLISTANCHORR3 listHGCMCmd;
     /** Critical section to protect the list. */
     RTCRITSECT critsectHGCMCmdList;
     /** Whether the HGCM events are already automatically enabled. */
     uint32_t u32HGCMEnabled;
+    /** Saved state version of restored commands. */
+    uint32_t u32SSMVersion;
+#if HC_ARCH_BITS == 32
     /** Alignment padding. */
     uint32_t u32Alignment7;
+#endif
 #endif /* VBOX_WITH_HGCM */
 
     /** Status LUN: Shared folders LED */
@@ -352,12 +356,36 @@ typedef struct VMMDevState
             uint32_t    u32Unit;
             char        szName[1024 - 8 - 4];
         } Value;
+
+        /** The read back register (VMMDEV_TESTING_MMIO_OFF_READBACK,
+         *  VMMDEV_TESTING_MMIO_OFF_READBACK_R3). */
+        uint8_t         abReadBack[VMMDEV_TESTING_READBACK_SIZE];
     } TestingData;
     /** The XML output file name (can be a named pipe, doesn't matter to us). */
     R3PTRTYPE(char *)       pszTestingXmlOutput;
     /** Testing instance for dealing with the output. */
     RTTEST                  hTestingTest;
 #endif /* !VBOX_WITHOUT_TESTING_FEATURES */
+
+    /** @name Heartbeat
+     * @{ */
+    /** Timestamp of the last heartbeat from guest in nanosec. */
+    uint64_t volatile   nsLastHeartbeatTS;
+    /** Indicates whether we missed HB from guest on last check. */
+    bool volatile       fFlatlined;
+    /** Indicates whether heartbeat check is active. */
+    bool volatile       fHeartbeatActive;
+    /** Alignment padding. */
+    bool                afAlignment8[6];
+    /** Guest heartbeat interval in nanoseconds.
+     * This is the interval the guest is told to produce heartbeats at. */
+    uint64_t            cNsHeartbeatInterval;
+    /** The amount of time without a heartbeat (nanoseconds) before we
+     * conclude the guest is doing a Dixie Flatline (Neuromancer) impression. */
+    uint64_t            cNsHeartbeatTimeout;
+    /** Timer for signalling a flatlined guest. */
+    PTMTIMERR3          pFlatlinedTimer;
+    /** @} */
 } VMMDevState;
 typedef VMMDevState VMMDEV;
 /** Pointer to the VMM device state. */
@@ -373,6 +401,22 @@ AssertCompileMemberAlignment(VMMDEV, TestingData.Value.u64Value, 8);
 
 void VMMDevNotifyGuest(VMMDEV *pVMMDevState, uint32_t u32EventMask);
 void VMMDevCtlSetGuestFilterMask(VMMDEV *pVMMDevState, uint32_t u32OrMask, uint32_t u32NotMask);
+
+/** The saved state version. */
+#define VMMDEV_SAVED_STATE_VERSION                              VMMDEV_SAVED_STATE_VERSION_HGCM_PARAMS
+/** Updated HGCM commands. */
+#define VMMDEV_SAVED_STATE_VERSION_HGCM_PARAMS                  17
+/** The saved state version with heartbeat state. */
+#define VMMDEV_SAVED_STATE_VERSION_HEARTBEAT                    16
+/** The saved state version without heartbeat state. */
+#define VMMDEV_SAVED_STATE_VERSION_NO_HEARTBEAT                 15
+/** The saved state version which is missing the guest facility statuses. */
+#define VMMDEV_SAVED_STATE_VERSION_MISSING_FACILITY_STATUSES    14
+/** The saved state version which is missing the guestInfo2 bits. */
+#define VMMDEV_SAVED_STATE_VERSION_MISSING_GUEST_INFO_2         13
+/** The saved state version used by VirtualBox 3.0.
+ *  This doesn't have the config part. */
+#define VMMDEV_SAVED_STATE_VERSION_VBOX_30                      11
 
 #endif /* !___VMMDev_VMMDevState_h */
 

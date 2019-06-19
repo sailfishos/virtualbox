@@ -46,7 +46,12 @@
 #include "wingdi.h"
 #include "winuser.h"
 #else
-#include <windows.h>
+# ifdef _MSC_VER
+#  include <iprt/win/windows.h>
+# else
+#  include <windows.h>
+#  undef cdecl /* see windef.h */
+# endif
 #endif
 #include "wine/debug.h"
 #include "wine/unicode.h"
@@ -79,8 +84,7 @@
 # define VBoxTlsRefGetImpl(_tls) (TlsGetValue((DWORD)(_tls)))
 # define VBoxTlsRefSetImpl(_tls, _val) (TlsSetValue((DWORD)(_tls), (_val)))
 # define VBoxTlsRefAssertImpl Assert
-# undef cdecl /* see windef.h */
-# include <VBox/VBoxVideo3D.h>
+# include <VBoxVideo3D.h>
 #endif
 
 /* Driver quirks */
@@ -1332,7 +1336,7 @@ void context_set_draw_buffer(struct wined3d_context *context, GLenum buffer) DEC
 void context_set_tls_idx(DWORD idx) DECLSPEC_HIDDEN;
 void context_surface_update(struct wined3d_context *context, IWineD3DSurfaceImpl *surface) DECLSPEC_HIDDEN;
 #if defined(VBOX_WINE_WITH_SINGLE_CONTEXT) || defined(VBOX_WINE_WITH_SINGLE_SWAPCHAIN_CONTEXT)
-void context_clear_on_thread_detach();
+void context_clear_on_thread_detach(void);
 #endif
 /* Macros for doing basic GPU detection based on opengl capabilities */
 #define WINE_D3D6_CAPABLE(gl_info) (gl_info->supported[ARB_MULTITEXTURE])
@@ -1730,7 +1734,7 @@ typedef struct VBOXWINEPROFILE_HASHMAP_ELEMENT
     VBOXWINEPROFILE_ELEMENT Data;
 } VBOXWINEPROFILE_HASHMAP_ELEMENT, *PVBOXWINEPROFILE_HASHMAP_ELEMENT;
 
-#define VBOXWINEPROFILE_HASHMAP_ELEMENT_FROMENTRY(_p) ((PVBOXWINEPROFILE_HASHMAP_ELEMENT)(((uint8_t*)(_p)) - RT_OFFSETOF(VBOXWINEPROFILE_HASHMAP_ELEMENT, MapEntry)))
+#define VBOXWINEPROFILE_HASHMAP_ELEMENT_FROMENTRY(_p) ((PVBOXWINEPROFILE_HASHMAP_ELEMENT)(((uint8_t*)(_p)) - RT_UOFFSETOF(VBOXWINEPROFILE_HASHMAP_ELEMENT, MapEntry)))
 
 #define VBOXWINEPROFILE_ELEMENT_DUMP(_p, _pn) do { \
         PRLOG(("%s: t(%u);c(%u)\n", \
@@ -3196,8 +3200,14 @@ static inline BOOL shader_is_scalar(const struct wined3d_shader_register *reg)
         case WINED3DSPR_DEPTHOUT:   /* oDepth */
         case WINED3DSPR_CONSTBOOL:  /* b# */
         case WINED3DSPR_LOOP:       /* aL */
+#ifndef VBOX_WITH_VMSVGA
         case WINED3DSPR_PREDICATE:  /* p0 */
             return TRUE;
+#else
+            return TRUE;
+        case WINED3DSPR_PREDICATE:  /* p0 */
+            return FALSE;
+#endif
 
         case WINED3DSPR_MISCTYPE:
             switch(reg->idx)

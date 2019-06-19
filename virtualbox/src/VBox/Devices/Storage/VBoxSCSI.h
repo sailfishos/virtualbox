@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -70,6 +70,7 @@
 *******************************************************************************/
 //#define DEBUG
 #include <VBox/vmm/pdmdev.h>
+#include <VBox/vmm/pdmstorageifs.h>
 #include <VBox/scsi.h>
 
 typedef enum VBOXSCSISTATE
@@ -87,7 +88,7 @@ typedef enum VBOXSCSISTATE
 #define VBOXSCSI_TXDIR_TO_DEVICE   1
 
 /** Maximum CDB size the BIOS driver sends. */
-#define VBOXSCSI_CDB_SIZE_MAX     10
+#define VBOXSCSI_CDB_SIZE_MAX     16
 
 typedef struct VBOXSCSI
 {
@@ -100,7 +101,7 @@ typedef struct VBOXSCSI
     /** The size of the CDB we are issuing. */
     uint8_t              cbCDB;
     /** The command to issue. */
-    uint8_t              abCDB[12];
+    uint8_t              abCDB[VBOXSCSI_CDB_SIZE_MAX + 4];
     /** Current position in the array. */
     uint8_t              iCDB;
 
@@ -112,13 +113,14 @@ typedef struct VBOXSCSI
     R3PTRTYPE(uint8_t *) pbBuf;
     /** Size of the buffer in bytes. */
     uint32_t             cbBuf;
+    /** The number of bytes left to read/write in the
+     *  buffer.  It is decremented when the guest (BIOS) accesses
+     *  the buffer data. */
+    uint32_t             cbBufLeft;
     /** Current position in the buffer (offBuf if you like). */
     uint32_t             iBuf;
     /** The result code of last operation. */
     int32_t              rcCompletion;
-#if HC_ARCH_BITS == 64
-    uint32_t             Alignment1;
-#endif
     /** Flag whether a request is pending. */
     volatile bool        fBusy;
     /** The state we are in when fetching a command from the BIOS. */
@@ -133,13 +135,19 @@ RT_C_DECLS_BEGIN
 int vboxscsiInitialize(PVBOXSCSI pVBoxSCSI);
 int vboxscsiReadRegister(PVBOXSCSI pVBoxSCSI, uint8_t iRegister, uint32_t *pu32Value);
 int vboxscsiWriteRegister(PVBOXSCSI pVBoxSCSI, uint8_t iRegister, uint8_t uVal);
-int vboxscsiSetupRequest(PVBOXSCSI pVBoxSCSI, PPDMSCSIREQUEST pScsiRequest, uint32_t *puTargetDevice);
-int vboxscsiRequestFinished(PVBOXSCSI pVBoxSCSI, PPDMSCSIREQUEST pScsiRequest, int rcCompletion);
-void vboxscsiSetRequestRedo(PVBOXSCSI pVBoxSCSI, PPDMSCSIREQUEST pScsiRequest);
+int vboxscsiSetupRequest(PVBOXSCSI pVBoxSCSI, uint32_t *puLun, uint8_t **ppbCdb, size_t *pcbCdb,
+                         size_t *pcbBuf, uint32_t *puTargetDevice);
+int vboxscsiRequestFinished(PVBOXSCSI pVBoxSCSI, int rcCompletion);
+size_t vboxscsiCopyToBuf(PVBOXSCSI pVBoxSCSI, PRTSGBUF pSgBuf, size_t cbSkip, size_t cbCopy);
+size_t vboxscsiCopyFromBuf(PVBOXSCSI pVBoxSCSI, PRTSGBUF pSgBuf, size_t cbSkip, size_t cbCopy);
+void vboxscsiSetRequestRedo(PVBOXSCSI pVBoxSCSI);
 int vboxscsiWriteString(PPDMDEVINS pDevIns, PVBOXSCSI pVBoxSCSI, uint8_t iRegister,
-                        RTGCPTR *pGCPtrSrc, PRTGCUINTREG pcTransfer, unsigned cb);
+                        uint8_t const *pbSrc, uint32_t *pcTransfers, unsigned cb);
 int vboxscsiReadString(PPDMDEVINS pDevIns, PVBOXSCSI pVBoxSCSI, uint8_t iRegister,
-                       RTGCPTR *pGCPtrDst, PRTGCUINTREG pcTransfer, unsigned cb);
+                       uint8_t *pbDst, uint32_t *pcTransfers, unsigned cb);
+
+DECLHIDDEN(int) vboxscsiR3LoadExec(PVBOXSCSI pVBoxSCSI, PSSMHANDLE pSSM);
+DECLHIDDEN(int) vboxscsiR3SaveExec(PVBOXSCSI pVBoxSCSI, PSSMHANDLE pSSM);
 RT_C_DECLS_END
 #endif /* IN_RING3 */
 

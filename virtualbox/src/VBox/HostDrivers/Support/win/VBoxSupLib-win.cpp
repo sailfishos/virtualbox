@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/nt/nt-and-windows.h>
 
 #include <iprt/path.h>
@@ -36,11 +36,13 @@
 /**
  * The Dll main entry point.
  * @remarks The dllexport is for forcing the linker to generate an import
- *          library, so the the build system doesn't get confused.
+ *          library, so the build system doesn't get confused.
  */
 extern "C" __declspec(dllexport)
 BOOL __stdcall DllMainEntrypoint(HANDLE hModule, DWORD dwReason, PVOID pvReserved)
 {
+    RT_NOREF1(pvReserved);
+
     switch (dwReason)
     {
         /*

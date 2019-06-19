@@ -181,7 +181,7 @@ ftp_alias_handler(PNATState pData, int type)
     handlers[0].proto = TCP;
     handlers[0].fingerprint = &fingerprint;
     handlers[0].protohandler = &protohandler;
-    handlers[1].pri = EOH;
+    handlers[1].pri = (u_int)EOH;
 #endif /* VBOX */
 
     switch (type) {
@@ -340,6 +340,7 @@ ParseFtpPortCommand(struct libalias *la, char *sptr, int dlen)
                 break;
             else
                 state++;
+            RT_FALL_THRU();
         case 1:
         case 3:
         case 5:
@@ -727,7 +728,7 @@ NewFtpMessage(struct libalias *la, struct ip *pip,
             }
 
 /* Save string length for IP header modification */
-            slen = strlen(stemp);
+            slen = (int)strlen(stemp);
 
 /* Copy modified buffer into IP packet. */
             sptr = (char *)pip;

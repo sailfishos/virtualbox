@@ -1,11 +1,10 @@
 /* $Id: VBoxDispD3DIf.cpp $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,6 +20,10 @@
 
 #include <iprt/assert.h>
 
+/** Convert a given FourCC code to a D3DDDIFORMAT enum. */
+#define VBOXWDDM_D3DDDIFORMAT_FROM_FOURCC(_a, _b, _c, _d) \
+    ((D3DDDIFORMAT)MAKEFOURCC(_a, _b, _c, _d))
+
 void VBoxDispD3DClose(VBOXDISPD3D *pD3D)
 {
     FreeLibrary(pD3D->hD3DLib);
@@ -35,6 +38,9 @@ void VBoxDispD3DClose(VBOXDISPD3D *pD3D)
  */
 static HMODULE loadSystemDll(const char *pszName)
 {
+    /* Assumed here that DEBUG version of VBoxDispD3D.dll will not be installed system wide
+       but will be loaded from local folder of an application being debugged. */
+#ifndef DEBUG
     char   szPath[MAX_PATH];
     UINT   cchPath = GetSystemDirectoryA(szPath, sizeof(szPath));
     size_t cbName  = strlen(pszName) + 1;
@@ -46,6 +52,9 @@ static HMODULE loadSystemDll(const char *pszName)
     szPath[cchPath] = '\\';
     memcpy(&szPath[cchPath + 1], pszName, cbName);
     return LoadLibraryA(szPath);
+#else
+    return LoadLibraryA(pszName);
+#endif
 }
 
 HRESULT VBoxDispD3DOpen(VBOXDISPD3D *pD3D)
@@ -57,7 +66,7 @@ HRESULT VBoxDispD3DOpen(VBOXDISPD3D *pD3D)
 #endif
     if (!pD3D->hD3DLib)
     {
-        DWORD winErr = GetLastError();
+        DWORD winErr = GetLastError(); NOREF(winErr);
         WARN((__FUNCTION__": LoadLibrary failed, winErr = (%d)", winErr));
         return E_FAIL;
     }
@@ -384,21 +393,21 @@ static FORMATOP gVBoxFormatOps3D[] = {
         FORMATOP_VERTEXTEXTURE, 0, 0, 0},
 
 // Floating-point formats are not implemented in Chromium.
-//    {D3DDDIFMT_A16B16G16R16F,
-//        FORMATOP_TEXTURE|FORMATOP_VOLUMETEXTURE|FORMATOP_CUBETEXTURE|FORMATOP_OFFSCREEN_RENDERTARGET|
-//        FORMATOP_SAME_FORMAT_RENDERTARGET|
-//        0|
-//        FORMATOP_OFFSCREENPLAIN|
-//        0|
-//        FORMATOP_VERTEXTEXTURE, 0, 0, 0},
-//
-//    {D3DDDIFMT_A32B32G32R32F,
-//        FORMATOP_TEXTURE|FORMATOP_VOLUMETEXTURE|FORMATOP_CUBETEXTURE|FORMATOP_OFFSCREEN_RENDERTARGET|
-//        FORMATOP_SAME_FORMAT_RENDERTARGET|
-//        0|
-//        FORMATOP_OFFSCREENPLAIN|
-//        0|
-//        FORMATOP_VERTEXTEXTURE, 0, 0, 0},
+    {D3DDDIFMT_A16B16G16R16F,
+        FORMATOP_TEXTURE|FORMATOP_VOLUMETEXTURE|FORMATOP_CUBETEXTURE|FORMATOP_OFFSCREEN_RENDERTARGET|
+        FORMATOP_SAME_FORMAT_RENDERTARGET|
+        0|
+        FORMATOP_OFFSCREENPLAIN|
+        0|
+        FORMATOP_VERTEXTEXTURE, 0, 0, 0},
+
+    {D3DDDIFMT_A32B32G32R32F,
+        FORMATOP_TEXTURE|FORMATOP_VOLUMETEXTURE|FORMATOP_CUBETEXTURE|FORMATOP_OFFSCREEN_RENDERTARGET|
+        FORMATOP_SAME_FORMAT_RENDERTARGET|
+        0|
+        FORMATOP_OFFSCREENPLAIN|
+        0|
+        FORMATOP_VERTEXTEXTURE, 0, 0, 0},
 
     {D3DDDIFMT_G16R16,
         FORMATOP_TEXTURE|FORMATOP_VOLUMETEXTURE|FORMATOP_CUBETEXTURE|FORMATOP_OFFSCREEN_RENDERTARGET|
@@ -436,6 +445,15 @@ static FORMATOP gVBoxFormatOps3D[] = {
         FORMATOP_NOTEXCOORDWRAPNORMIP, 0, 0, 0},
 
     {D3DDDIFMT_YUY2,
+        0|
+        0|
+        0|
+        FORMATOP_CONVERT_TO_ARGB|FORMATOP_OFFSCREENPLAIN|
+        FORMATOP_NOFILTER|
+        FORMATOP_NOALPHABLEND|
+        FORMATOP_NOTEXCOORDWRAPNORMIP, 0, 0, 0},
+
+    {VBOXWDDM_D3DDDIFORMAT_FROM_FOURCC('Y', 'V', '1', '2'),
         0|
         0|
         0|
@@ -983,6 +1001,146 @@ static void vboxDispD3DGlobalD3DFormatsInit(PVBOXWDDMDISP_FORMATS pFormats)
     pFormats->cFormstOps = RT_ELEMENTS(gVBoxFormatOps3D);
 }
 
+#ifndef D3DCAPS2_CANRENDERWINDOWED
+#define D3DCAPS2_CANRENDERWINDOWED UINT32_C(0x00080000)
+#endif
+
+#ifdef DEBUG
+/*
+ * Check capabilities reported by wine and log any which are not good enough for a D3D feature level.
+ */
+
+#define VBOX_D3D_CHECK_FLAGS(level, field, flags) do { \
+        if (((field) & (flags)) != (flags)) \
+        { \
+            LogRel(("D3D level %s %s flags: 0x%08X -> 0x%08X\n", #level, #field, (field), (flags))); \
+        } \
+    } while (0)
+
+#define VBOX_D3D_CHECK_VALUE(level, field, value) do { \
+        if ((int64_t)(value) >= 0? (field) < (value): (field) > (value)) \
+        { \
+            LogRel(("D3D level %s %s value: %lld -> %lld\n", #level, #field, (int64_t)(field), (int64_t)(value))); \
+        } \
+    } while (0)
+
+#define VBOX_D3D_CHECK_VALUE_HEX(level, field, value) do { \
+        if ((field) < (value)) \
+        { \
+            LogRel(("D3D level %s %s value: 0x%08X -> 0x%08X\n", #level, #field, (field), (value))); \
+        } \
+    } while (0)
+
+static void vboxDispCheckCapsLevel(const D3DCAPS9 *pCaps)
+{
+    /* Misc. */
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->Caps,                     D3DCAPS_READ_SCANLINE);
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->Caps2,                    D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANSHARERESOURCE);
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->DevCaps,                  D3DDEVCAPS_FLOATTLVERTEX
+                                                            /*| D3DDEVCAPS_HWVERTEXBUFFER | D3DDEVCAPS_HWINDEXBUFFER |  D3DDEVCAPS_SUBVOLUMELOCK */);
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->PrimitiveMiscCaps,        D3DPMISCCAPS_INDEPENDENTWRITEMASKS /** @todo needs GL_EXT_draw_buffers2 */
+                                                              | D3DPMISCCAPS_FOGINFVF
+                                                              | D3DPMISCCAPS_SEPARATEALPHABLEND
+                                                              | D3DPMISCCAPS_MRTINDEPENDENTBITDEPTHS);
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->RasterCaps,               D3DPRASTERCAPS_SUBPIXEL
+                                                              | D3DPRASTERCAPS_STIPPLE
+                                                              | D3DPRASTERCAPS_ZBIAS
+                                                              | D3DPRASTERCAPS_COLORPERSPECTIVE);
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->TextureCaps,              D3DPTEXTURECAPS_TRANSPARENCY
+                                                              | D3DPTEXTURECAPS_TEXREPEATNOTSCALEDBYSIZE);
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->TextureAddressCaps,       D3DPTADDRESSCAPS_MIRRORONCE); /** @todo needs GL_ARB_texture_mirror_clamp_to_edge */
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->VolumeTextureAddressCaps, D3DPTADDRESSCAPS_MIRRORONCE); /** @todo needs GL_ARB_texture_mirror_clamp_to_edge */
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->StencilCaps,              D3DSTENCILCAPS_TWOSIDED);
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->DeclTypes,                D3DDTCAPS_FLOAT16_2 | D3DDTCAPS_FLOAT16_4); /** @todo both need GL_ARB_half_float_vertex */
+    VBOX_D3D_CHECK_FLAGS(misc, pCaps->VertexTextureFilterCaps,  D3DPTFILTERCAPS_MINFPOINT
+                                                              | D3DPTFILTERCAPS_MAGFPOINT);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->GuardBandLeft,  -8192.);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->GuardBandTop,   -8192.);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->GuardBandRight,  8192.);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->GuardBandBottom, 8192.);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->VS20Caps.DynamicFlowControlDepth, 24);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->VS20Caps.NumTemps, D3DVS20_MAX_NUMTEMPS);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->PS20Caps.DynamicFlowControlDepth, 24);
+    VBOX_D3D_CHECK_VALUE(misc, pCaps->PS20Caps.NumTemps, D3DVS20_MAX_NUMTEMPS);
+
+    /* 9_1 */
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->Caps2,                 D3DCAPS2_DYNAMICTEXTURES | D3DCAPS2_FULLSCREENGAMMA);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->PresentationIntervals, D3DPRESENT_INTERVAL_IMMEDIATE | D3DPRESENT_INTERVAL_ONE);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->PrimitiveMiscCaps,     D3DPMISCCAPS_COLORWRITEENABLE);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->ShadeCaps,             D3DPSHADECAPS_ALPHAGOURAUDBLEND | D3DPSHADECAPS_COLORGOURAUDRGB
+                                                          | D3DPSHADECAPS_FOGGOURAUD | D3DPSHADECAPS_SPECULARGOURAUDRGB);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->TextureFilterCaps,     D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MINFPOINT
+                                                          | D3DPTFILTERCAPS_MAGFLINEAR | D3DPTFILTERCAPS_MAGFPOINT);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->TextureCaps,           D3DPTEXTURECAPS_ALPHA | D3DPTEXTURECAPS_CUBEMAP
+                                                          | D3DPTEXTURECAPS_MIPMAP | D3DPTEXTURECAPS_PERSPECTIVE);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->TextureAddressCaps,    D3DPTADDRESSCAPS_CLAMP | D3DPTADDRESSCAPS_INDEPENDENTUV
+                                                          | D3DPTADDRESSCAPS_MIRROR | D3DPTADDRESSCAPS_WRAP);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->TextureOpCaps,         D3DTEXOPCAPS_DISABLE | D3DTEXOPCAPS_MODULATE
+                                                          | D3DTEXOPCAPS_SELECTARG1 | D3DTEXOPCAPS_SELECTARG2);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->SrcBlendCaps,          D3DPBLENDCAPS_INVDESTALPHA | D3DPBLENDCAPS_INVDESTCOLOR
+                                                          | D3DPBLENDCAPS_INVSRCALPHA | D3DPBLENDCAPS_ONE
+                                                          | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_ZERO);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->DestBlendCaps,         D3DPBLENDCAPS_ONE | D3DPBLENDCAPS_INVSRCALPHA
+                                                          | D3DPBLENDCAPS_INVSRCCOLOR | D3DPBLENDCAPS_SRCALPHA | D3DPBLENDCAPS_ZERO);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->StretchRectFilterCaps, D3DPTFILTERCAPS_MAGFLINEAR | D3DPTFILTERCAPS_MAGFPOINT
+                                                          | D3DPTFILTERCAPS_MINFLINEAR | D3DPTFILTERCAPS_MINFPOINT);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->ZCmpCaps,              D3DPCMPCAPS_ALWAYS | D3DPCMPCAPS_LESSEQUAL);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->RasterCaps,            D3DPRASTERCAPS_DEPTHBIAS | D3DPRASTERCAPS_SLOPESCALEDEPTHBIAS);
+    VBOX_D3D_CHECK_FLAGS(9.1, pCaps->StencilCaps,           D3DSTENCILCAPS_TWOSIDED);
+
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxTextureWidth,         2048);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxTextureHeight,        2048);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->NumSimultaneousRTs,      1);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxSimultaneousTextures, 8);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxTextureBlendStages,   8);
+    VBOX_D3D_CHECK_VALUE_HEX(9.1, pCaps->PixelShaderVersion,  D3DPS_VERSION(2,0));
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxPrimitiveCount,       65535);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxVertexIndex,          65534);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxVolumeExtent,         256);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxTextureRepeat,        128); /* Must be zero, or 128, or greater. */
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxAnisotropy,           2);
+    VBOX_D3D_CHECK_VALUE(9.1, pCaps->MaxVertexW,              0.f);
+
+    /* 9_2 */
+    VBOX_D3D_CHECK_FLAGS(9.2, pCaps->PrimitiveMiscCaps,     D3DPMISCCAPS_SEPARATEALPHABLEND);
+    VBOX_D3D_CHECK_FLAGS(9.2, pCaps->DevCaps2,              D3DDEVCAPS2_VERTEXELEMENTSCANSHARESTREAMOFFSET);
+    VBOX_D3D_CHECK_FLAGS(9.2, pCaps->TextureAddressCaps,    D3DPTADDRESSCAPS_MIRRORONCE);
+    VBOX_D3D_CHECK_FLAGS(9.2, pCaps->VolumeTextureAddressCaps, D3DPTADDRESSCAPS_MIRRORONCE);
+    VBOX_D3D_CHECK_VALUE(9.2, pCaps->MaxTextureWidth,         2048);
+    VBOX_D3D_CHECK_VALUE(9.2, pCaps->MaxTextureHeight,        2048);
+    VBOX_D3D_CHECK_VALUE(9.2, pCaps->MaxTextureRepeat,        2048); /* Must be zero, or 2048, or greater. */
+    VBOX_D3D_CHECK_VALUE_HEX(9.2, pCaps->VertexShaderVersion, D3DVS_VERSION(2,0));
+    VBOX_D3D_CHECK_VALUE(9.2, pCaps->MaxAnisotropy,           16);
+    VBOX_D3D_CHECK_VALUE(9.2, pCaps->MaxPrimitiveCount,       1048575);
+    VBOX_D3D_CHECK_VALUE(9.2, pCaps->MaxVertexIndex,          1048575);
+    VBOX_D3D_CHECK_VALUE(9.2, pCaps->MaxVertexW,              10000000000.f);
+
+    /* 9_3 */
+    VBOX_D3D_CHECK_FLAGS(9.3, pCaps->PS20Caps.Caps,         D3DPS20CAPS_GRADIENTINSTRUCTIONS);
+    VBOX_D3D_CHECK_FLAGS(9.3, pCaps->VS20Caps.Caps,         D3DVS20CAPS_PREDICATION);
+    VBOX_D3D_CHECK_FLAGS(9.3, pCaps->PrimitiveMiscCaps,     D3DPMISCCAPS_INDEPENDENTWRITEMASKS | D3DPMISCCAPS_MRTPOSTPIXELSHADERBLENDING);
+    VBOX_D3D_CHECK_FLAGS(9.3, pCaps->TextureAddressCaps,    D3DPTADDRESSCAPS_BORDER);
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->MaxTextureWidth,         4096);
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->MaxTextureHeight,        4096);
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->MaxTextureRepeat,        8192); /* Must be zero, or 8192, or greater. */
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->NumSimultaneousRTs,      4);
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->PS20Caps.NumInstructionSlots, 512); /* (Pixel Shader Version 2b) */
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->PS20Caps.NumTemps,       32); /* (Pixel Shader Version 2b) */
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->VS20Caps.NumTemps,       32); /* (Vertex Shader Version 2a) */
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->VS20Caps.StaticFlowControlDepth, 4);
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->MaxVertexShaderConst,    256); /* (Vertex Shader Version 2a); */
+    VBOX_D3D_CHECK_VALUE(9.3, pCaps->MaxVertexShader30InstructionSlots, 512);
+    VBOX_D3D_CHECK_VALUE_HEX(9.3, pCaps->VertexShaderVersion, D3DVS_VERSION(3,0));
+
+    LogRel(("Capabilities check completed\n"));
+}
+
+#undef VBOX_D3D_CHECK_FLAGS
+#undef VBOX_D3D_CHECK_VALUE
+#undef VBOX_D3D_CHECK_VALUE_HEX
+
+#endif /* DEBUG */
+
 static HRESULT vboxWddmGetD3D9Caps(PVBOXWDDMDISP_D3D pD3D, D3DCAPS9 *pCaps)
 {
     HRESULT hr = pD3D->pD3D9If->GetDeviceCaps(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, pCaps);
@@ -991,6 +1149,10 @@ static HRESULT vboxWddmGetD3D9Caps(PVBOXWDDMDISP_D3D pD3D, D3DCAPS9 *pCaps)
         WARN(("GetDeviceCaps failed hr(0x%x)",hr));
         return hr;
     }
+
+#ifdef DEBUG
+    vboxDispCheckCapsLevel(pCaps);
+#endif
 
     /* needed for Windows Media Player to work properly */
     pCaps->Caps |= D3DCAPS_READ_SCANLINE;
@@ -1040,6 +1202,12 @@ static HRESULT vboxWddmGetD3D9Caps(PVBOXWDDMDISP_D3D pD3D, D3DCAPS9 *pCaps)
     {
         WARN(("incorect shader caps!"));
     }
+#endif
+
+    pCaps->MaxVertexW = 10000000000.f; /* Required by D3D feature level 9.3. */
+
+#ifdef DEBUG
+    vboxDispCheckCapsLevel(pCaps);
 #endif
 
     vboxDispDumpD3DCAPS9(pCaps);
@@ -1115,11 +1283,10 @@ HRESULT VBoxDispD3DGlobalOpen(PVBOXWDDMDISP_D3D pD3D, PVBOXWDDMDISP_FORMATS pFor
 
 void VBoxDispD3DGlobalClose(PVBOXWDDMDISP_D3D pD3D, PVBOXWDDMDISP_FORMATS pFormats)
 {
+    RT_NOREF(pD3D, pFormats);
     vboxDispD3DGlobalLock();
     --g_cVBoxDispD3DGlobalOpens;
     if (!g_cVBoxDispD3DGlobalOpens)
-    {
         vboxDispD3DGlobalDoClose(&g_VBoxDispD3DGlobalD3D);
-    }
     vboxDispD3DGlobalUnlock();
 }

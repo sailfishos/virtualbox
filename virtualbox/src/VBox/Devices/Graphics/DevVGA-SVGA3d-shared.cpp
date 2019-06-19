@@ -1,9 +1,10 @@
+/* $Id: DevVGA-SVGA3d-shared.cpp $ */
 /** @file
  * DevVMWare - VMWare SVGA device
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_VMSVGA
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/version.h>
@@ -31,30 +32,23 @@
 #include <iprt/mem.h>
 #include <iprt/avl.h>
 
-#include <VBox/VMMDev.h>
-#include <VBox/VBoxVideo.h>
-#include <VBox/bioslogo.h>
+#include <VBoxVideo.h> /* required by DevVGA.h */
 
 /* should go BEFORE any other DevVGA include to make all DevVGA.h config defines be visible */
 #include "DevVGA.h"
 
 #include "DevVGA-SVGA.h"
 #include "DevVGA-SVGA3d.h"
-#include "vmsvga/svga_reg.h"
-#include "vmsvga/svga3d_reg.h"
-#include "vmsvga/svga3d_shaderdefs.h"
+#define VMSVGA3D_INCL_STRUCTURE_DESCRIPTORS
+#include "DevVGA-SVGA3d-internal.h"
 
 
 #ifdef RT_OS_WINDOWS
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
-#define     VMSVGA3D_WNDCLASSNAME       "VMSVGA3DWNDCLS"
+# define VMSVGA3D_WNDCLASSNAME  "VMSVGA3DWNDCLS"
 
 static LONG WINAPI vmsvga3dWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-#endif
 
-#ifdef RT_OS_WINDOWS
+
 /**
  * Send a message to the async window thread and wait for a reply
  *
@@ -83,11 +77,12 @@ int vmsvga3dSendThreadMessage(RTTHREAD pWindowThread, RTSEMEVENT WndRequestSem, 
  * The async window handling thread
  *
  * @returns VBox status code.
- * @param   pDevIns     The VGA device instance.
- * @param   pThread     The send thread.
+ * @param   hThreadSelf     This thread.
+ * @param   pvUser          Request sempahore handle.
  */
-DECLCALLBACK(int) vmsvga3dWindowThread(RTTHREAD ThreadSelf, void *pvUser)
+DECLCALLBACK(int) vmsvga3dWindowThread(RTTHREAD hThreadSelf, void *pvUser)
 {
+    RT_NOREF(hThreadSelf);
     RTSEMEVENT      WndRequestSem = (RTSEMEVENT)pvUser;
     WNDCLASSEX      wc;
 
@@ -97,7 +92,7 @@ DECLCALLBACK(int) vmsvga3dWindowThread(RTTHREAD ThreadSelf, void *pvUser)
     wc.lpfnWndProc      = (WNDPROC) vmsvga3dWndProc;
     wc.cbClsExtra       = 0;
     wc.cbWndExtra       = 0;
-    wc.hInstance        = GetModuleHandle("VBoxDD.dll");    /* @todo hardcoded name.. */
+    wc.hInstance        = GetModuleHandle("VBoxDD.dll");    /** @todo hardcoded name.. */
     wc.hIcon            = LoadIcon(NULL, IDI_APPLICATION);
     wc.hCursor          = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground    = NULL;
@@ -145,44 +140,42 @@ DECLCALLBACK(int) vmsvga3dWindowThread(RTTHREAD ThreadSelf, void *pvUser)
                 pCS->cx = rectClient.right - rectClient.left;
                 pCS->cy = rectClient.bottom - rectClient.top;
 #endif
-                *pHwnd = CreateWindowEx(pCS->dwExStyle, 
-                                        VMSVGA3D_WNDCLASSNAME, 
-                                        pCS->lpszName, 
+                *pHwnd = CreateWindowEx(pCS->dwExStyle,
+                                        VMSVGA3D_WNDCLASSNAME,
+                                        pCS->lpszName,
                                         pCS->style,
 #ifdef DEBUG_GFX_WINDOW
                                         0,
                                         0,
 #else
-                                        pCS->x, 
-                                        pCS->y, 
+                                        pCS->x,
+                                        pCS->y,
 #endif
-                                        pCS->cx, 
+                                        pCS->cx,
                                         pCS->cy,
 #ifdef DEBUG_GFX_WINDOW
                                         0,
 #else
-                                        pCS->hwndParent, 
+                                        pCS->hwndParent,
 #endif
-                                        pCS->hMenu, 
-                                        pCS->hInstance, 
+                                        pCS->hMenu,
+                                        pCS->hInstance,
                                         NULL);
-                AssertMsg(*pHwnd, ("CreateWindowEx %x %s %s %x (%d,%d)(%d,%d), %x %x %x error=%x\n", pCS->dwExStyle, pCS->lpszName, VMSVGA3D_WNDCLASSNAME, pCS->style, pCS->x, 
+                AssertMsg(*pHwnd, ("CreateWindowEx %x %s %s %x (%d,%d)(%d,%d), %x %x %x error=%x\n", pCS->dwExStyle, pCS->lpszName, VMSVGA3D_WNDCLASSNAME, pCS->style, pCS->x,
                                     pCS->y, pCS->cx, pCS->cy,pCS->hwndParent, pCS->hMenu, pCS->hInstance, GetLastError()));
 
                 /* Signal to the caller that we're done. */
                 RTSemEventSignal(WndRequestSem);
                 continue;
             }
-            else
             if (msg.message == WM_VMSVGA3D_DESTROYWINDOW)
             {
-                BOOL ret = DestroyWindow((HWND)msg.wParam);
-                Assert(ret);
+                BOOL fRc = DestroyWindow((HWND)msg.wParam);
+                Assert(fRc); NOREF(fRc);
                 /* Signal to the caller that we're done. */
                 RTSemEventSignal(WndRequestSem);
                 continue;
             }
-            else
             if (msg.message == WM_VMSVGA3D_RESIZEWINDOW)
             {
                 HWND hwnd = (HWND)msg.wParam;
@@ -199,8 +192,8 @@ DECLCALLBACK(int) vmsvga3dWindowThread(RTTHREAD ThreadSelf, void *pvUser)
                 pCS->cx = rectClient.right - rectClient.left;
                 pCS->cy = rectClient.bottom - rectClient.top;
 #endif
-                BOOL ret = SetWindowPos(hwnd, 0, pCS->x, pCS->y, pCS->cx, pCS->cy, SWP_NOZORDER | SWP_NOMOVE);
-                Assert(ret);
+                BOOL fRc = SetWindowPos(hwnd, 0, pCS->x, pCS->y, pCS->cx, pCS->cy, SWP_NOZORDER | SWP_NOMOVE);
+                Assert(fRc); NOREF(fRc);
 
                 /* Signal to the caller that we're done. */
                 RTSemEventSignal(WndRequestSem);
@@ -227,33 +220,84 @@ static LONG WINAPI vmsvga3dWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
     switch (uMsg)
     {
         case WM_CLOSE:
+            Log7(("vmsvga3dWndProc(%p): WM_CLOSE\n", hwnd));
             break;
 
         case WM_DESTROY:
+            Log7(("vmsvga3dWndProc(%p): WM_DESTROY\n", hwnd));
             break;
 
         case WM_NCHITTEST:
+            Log7(("vmsvga3dWndProc(%p): WM_NCHITTEST\n", hwnd));
             return HTNOWHERE;
+
+# if 0 /* flicker experiment, no help here. */
+        case WM_PAINT:
+            Log7(("vmsvga3dWndProc(%p): WM_PAINT %p %p\n", hwnd, wParam, lParam));
+            ValidateRect(hwnd, NULL);
+            return 0;
+        case WM_ERASEBKGND:
+            Log7(("vmsvga3dWndProc(%p): WM_ERASEBKGND %p %p\n", hwnd, wParam, lParam));
+            return TRUE;
+        case WM_NCPAINT:
+            Log7(("vmsvga3dWndProc(%p): WM_NCPAINT %p %p\n", hwnd, wParam, lParam));
+            break;
+        case WM_WINDOWPOSCHANGING:
+        {
+            PWINDOWPOS pPos = (PWINDOWPOS)lParam;
+            Log7(("vmsvga3dWndProc(%p): WM_WINDOWPOSCHANGING %p %p pos=(%d,%d) size=(%d,%d) flags=%#x\n",
+                  hwnd, wParam, lParam, pPos->x, pPos->y, pPos->cx, pPos->cy, pPos->flags));
+            break;
+        }
+        case WM_WINDOWPOSCHANGED:
+        {
+            PWINDOWPOS pPos = (PWINDOWPOS)lParam;
+            Log7(("vmsvga3dWndProc(%p): WM_WINDOWPOSCHANGED %p %p pos=(%d,%d) size=(%d,%d) flags=%#x\n",
+                  hwnd, wParam, lParam, pPos->x, pPos->y, pPos->cx, pPos->cy, pPos->flags));
+            break;
+        }
+        case WM_MOVE:
+            Log7(("vmsvga3dWndProc(%p): WM_MOVE %p %p\n", hwnd, wParam, lParam));
+            break;
+        case WM_SIZE:
+            Log7(("vmsvga3dWndProc(%p): WM_SIZE %p %p\n", hwnd, wParam, lParam));
+            break;
+
+        default:
+            Log7(("vmsvga3dWndProc(%p): %#x %p %p\n", hwnd, uMsg, wParam, lParam));
+# endif
     }
     return DefWindowProc(hwnd, uMsg, wParam, lParam);
 }
+
 #endif /* RT_OS_WINDOWS */
 
+
 /**
- * Calculate the size of one pixel
+ * Calculate the size and dimensions of one block.
  */
-uint32_t vmsvga3dSurfaceFormatSize(SVGA3dSurfaceFormat format)
+uint32_t vmsvga3dSurfaceFormatSize(SVGA3dSurfaceFormat format,
+                                   uint32_t *pcxBlock,
+                                   uint32_t *pcyBlock)
 {
+    uint32_t u32 = 0;
+    if (!pcxBlock) pcxBlock = &u32;
+    if (!pcyBlock) pcyBlock = &u32;
+
     switch (format)
     {
     case SVGA3D_X8R8G8B8:
     case SVGA3D_A8R8G8B8:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_R5G6B5:
     case SVGA3D_X1R5G5B5:
     case SVGA3D_A1R5G5B5:
     case SVGA3D_A4R4G4B4:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 2;
 
     case SVGA3D_Z_D32:
@@ -261,65 +305,99 @@ uint32_t vmsvga3dSurfaceFormatSize(SVGA3dSurfaceFormat format)
     case SVGA3D_Z_D24X8:
     case SVGA3D_Z_DF24:
     case SVGA3D_Z_D24S8_INT:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_Z_D16:
     case SVGA3D_Z_DF16:
     case SVGA3D_Z_D15S1:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 2;
 
     case SVGA3D_LUMINANCE8:
     case SVGA3D_LUMINANCE4_ALPHA4:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 1;
 
     case SVGA3D_LUMINANCE16:
     case SVGA3D_LUMINANCE8_ALPHA8:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 2;
 
     case SVGA3D_DXT1:
     case SVGA3D_DXT2:
+        *pcxBlock = 4;
+        *pcyBlock = 4;
         return 8;
 
     case SVGA3D_DXT3:
     case SVGA3D_DXT4:
     case SVGA3D_DXT5:
+        *pcxBlock = 4;
+        *pcyBlock = 4;
         return 16;
 
     case SVGA3D_BUMPU8V8:
     case SVGA3D_BUMPL6V5U5:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 2;
 
     case SVGA3D_BUMPX8L8V8U8:
     case SVGA3D_Q8W8V8U8:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_V8U8:
     case SVGA3D_CxV8U8:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 2;
 
     case SVGA3D_X8L8V8U8:
     case SVGA3D_A2W10V10U10:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_ARGB_S10E5:   /* 16-bit floating-point ARGB */
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 2;
     case SVGA3D_ARGB_S23E8:   /* 32-bit floating-point ARGB */
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_A2R10G10B10:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_ALPHA8:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 1;
 
     case SVGA3D_R_S10E5:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 2;
 
     case SVGA3D_R_S23E8:
     case SVGA3D_RG_S10E5:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_RG_S23E8:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 8;
 
     /*
@@ -328,20 +406,47 @@ uint32_t vmsvga3dSurfaceFormatSize(SVGA3dSurfaceFormat format)
      * expressly for index or vertex data.
      */
     case SVGA3D_BUFFER:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
+        return 1;
+
+    case SVGA3D_NV12:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 1;
 
     case SVGA3D_V16U16:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 4;
 
     case SVGA3D_G16R16:
-        return 32;
+        *pcxBlock = 1;
+        *pcyBlock = 1;
+        return 4;
     case SVGA3D_A16B16G16R16:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
         return 8;
+    case SVGA3D_R8G8B8A8_UNORM:
+    case SVGA3D_R8G8B8A8_SNORM:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
+        return 4;
+    case SVGA3D_R16G16_UNORM:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
+        return 4;
+
+    default:
+        *pcxBlock = 1;
+        *pcyBlock = 1;
+        AssertFailedReturn(4);
     }
-    AssertFailedReturn(4);
 }
 
 #ifdef LOG_ENABLED
+
 const char *vmsvga3dGetCapString(uint32_t idxCap)
 {
     switch (idxCap)
@@ -576,7 +681,7 @@ const char *vmsvga3dGetRenderStateName(uint32_t state)
 {
     switch (state)
     {
-    case SVGA3D_RS_ZENABLE:                /* SVGA3dBool */            
+    case SVGA3D_RS_ZENABLE:                /* SVGA3dBool */
         return "SVGA3D_RS_ZENABLE";
     case SVGA3D_RS_ZWRITEENABLE:           /* SVGA3dBool */
         return "SVGA3D_RS_ZWRITEENABLE";
@@ -988,114 +1093,6 @@ const char *vmsvgaDeclType2String(SVGA3dDeclType type)
     }
 }
 
-const char *vmsvgaSurfaceType2String(SVGA3dSurfaceFormat format)
-{
-    switch (format)
-    {
-    case SVGA3D_X8R8G8B8:
-        return "SVGA3D_X8R8G8B8";
-    case SVGA3D_A8R8G8B8:
-        return "SVGA3D_A8R8G8B8";
-    case SVGA3D_R5G6B5:
-        return "SVGA3D_R5G6B5";
-    case SVGA3D_X1R5G5B5:
-        return "SVGA3D_X1R5G5B5";
-    case SVGA3D_A1R5G5B5:
-        return "SVGA3D_A1R5G5B5";
-    case SVGA3D_A4R4G4B4:
-        return "SVGA3D_A4R4G4B4";
-    case SVGA3D_Z_D32:
-        return "SVGA3D_Z_D32";
-    case SVGA3D_Z_D16:
-        return "SVGA3D_Z_D16";
-    case SVGA3D_Z_D24S8:
-        return "SVGA3D_Z_D24S8";
-    case SVGA3D_Z_D15S1:
-        return "SVGA3D_Z_D15S1";
-    case SVGA3D_Z_D24X8:
-        return "SVGA3D_Z_D24X8";
-    case SVGA3D_Z_DF16:
-        return "SVGA3D_Z_DF16";
-    case SVGA3D_Z_DF24:
-        return "SVGA3D_Z_DF24";
-    case SVGA3D_Z_D24S8_INT:
-        return "SVGA3D_Z_D24S8_INT";
-    case SVGA3D_LUMINANCE8:
-        return "SVGA3D_LUMINANCE8";
-    case SVGA3D_LUMINANCE4_ALPHA4:
-        return "SVGA3D_LUMINANCE4_ALPHA4";
-    case SVGA3D_LUMINANCE16:
-        return "SVGA3D_LUMINANCE16";
-    case SVGA3D_LUMINANCE8_ALPHA8:
-        return "SVGA3D_LUMINANCE8_ALPHA8";
-    case SVGA3D_DXT1:
-        return "SVGA3D_DXT1";
-    case SVGA3D_DXT2:
-        return "SVGA3D_DXT2";
-    case SVGA3D_DXT3:
-        return "SVGA3D_DXT3";
-    case SVGA3D_DXT4:
-        return "SVGA3D_DXT4";
-    case SVGA3D_DXT5:
-        return "SVGA3D_DXT5";
-    case SVGA3D_BUMPU8V8:
-        return "SVGA3D_BUMPU8V8";
-    case SVGA3D_BUMPL6V5U5:
-        return "SVGA3D_BUMPL6V5U5";
-    case SVGA3D_BUMPX8L8V8U8:
-        return "SVGA3D_BUMPX8L8V8U8";
-    case SVGA3D_BUMPL8V8U8:
-        return "SVGA3D_BUMPL8V8U8";
-    case SVGA3D_V8U8:
-        return "SVGA3D_V8U8";
-    case SVGA3D_Q8W8V8U8:
-        return "SVGA3D_Q8W8V8U8";
-    case SVGA3D_CxV8U8:
-        return "SVGA3D_CxV8U8";
-    case SVGA3D_X8L8V8U8:
-        return "SVGA3D_X8L8V8U8";
-    case SVGA3D_A2W10V10U10:
-        return "SVGA3D_A2W10V10U10";
-    case SVGA3D_ARGB_S10E5:
-        return "SVGA3D_ARGB_S10E5";
-    case SVGA3D_ARGB_S23E8:
-        return "SVGA3D_ARGB_S23E8";
-    case SVGA3D_A2R10G10B10:
-        return "SVGA3D_A2R10G10B10";
-    case SVGA3D_ALPHA8:
-        return "SVGA3D_ALPHA8";
-    case SVGA3D_R_S10E5:
-        return "SVGA3D_R_S10E5";
-    case SVGA3D_R_S23E8:
-        return "SVGA3D_R_S23E8";
-    case SVGA3D_RG_S10E5:
-        return "SVGA3D_RG_S10E5";
-    case SVGA3D_RG_S23E8:
-        return "SVGA3D_RG_S23E8";
-    case SVGA3D_BUFFER:
-        return "SVGA3D_BUFFER";
-    case SVGA3D_V16U16:
-        return "SVGA3D_V16U16";
-    case SVGA3D_G16R16:
-        return "SVGA3D_G16R16";
-    case SVGA3D_A16B16G16R16:
-        return "SVGA3D_A16B16G16R16";
-    case SVGA3D_UYVY:
-        return "SVGA3D_UYVY";
-    case SVGA3D_YUY2:
-        return "SVGA3D_YUY2";
-    case SVGA3D_NV12:
-        return "SVGA3D_NV12";
-    case SVGA3D_AYUV:
-        return "SVGA3D_AYUV";
-    case SVGA3D_BC4_UNORM:
-        return "SVGA3D_BC4_UNORM";
-    case SVGA3D_BC5_UNORM:
-        return "SVGA3D_BC5_UNORM";
-    }
-    return "UNKNOWN!!";
-}
-
 const char *vmsvga3dPrimitiveType2String(SVGA3dPrimitiveType PrimitiveType)
 {
     switch (PrimitiveType)
@@ -1118,3 +1115,77 @@ const char *vmsvga3dPrimitiveType2String(SVGA3dPrimitiveType PrimitiveType)
 }
 
 #endif /* LOG_ENABLED */
+
+/** Unsigned coordinates in pBox. Clip to [0; pSizeSrc), [0;pSizeDest).
+ *
+ * @param pSizeSrc  Source surface dimensions.
+ * @param pSizeDest Destination surface dimensions.
+ * @param pBox      Coordinates to be clipped.
+ */
+void vmsvgaClipCopyBox(const SVGA3dSize *pSizeSrc,
+                       const SVGA3dSize *pSizeDest,
+                       SVGA3dCopyBox *pBox)
+{
+    /* Src x, w */
+    if (pBox->srcx > pSizeSrc->width)
+        pBox->srcx = pSizeSrc->width;
+    if (pBox->w > pSizeSrc->width - pBox->srcx)
+        pBox->w = pSizeSrc->width - pBox->srcx;
+
+    /* Src y, h */
+    if (pBox->srcy > pSizeSrc->height)
+        pBox->srcy = pSizeSrc->height;
+    if (pBox->h > pSizeSrc->height - pBox->srcy)
+        pBox->h = pSizeSrc->height - pBox->srcy;
+
+    /* Src z, d */
+    if (pBox->srcz > pSizeSrc->depth)
+        pBox->srcz = pSizeSrc->depth;
+    if (pBox->d > pSizeSrc->depth - pBox->srcz)
+        pBox->d = pSizeSrc->depth - pBox->srcz;
+
+    /* Dest x, w */
+    if (pBox->x > pSizeDest->width)
+        pBox->x = pSizeDest->width;
+    if (pBox->w > pSizeDest->width - pBox->x)
+        pBox->w = pSizeDest->width - pBox->x;
+
+    /* Dest y, h */
+    if (pBox->y > pSizeDest->height)
+        pBox->y = pSizeDest->height;
+    if (pBox->h > pSizeDest->height - pBox->y)
+        pBox->h = pSizeDest->height - pBox->y;
+
+    /* Dest z, d */
+    if (pBox->z > pSizeDest->depth)
+        pBox->z = pSizeDest->depth;
+    if (pBox->d > pSizeDest->depth - pBox->z)
+        pBox->d = pSizeDest->depth - pBox->z;
+}
+
+/** Unsigned coordinates in pBox. Clip to [0; pSize).
+ *
+ * @param pSize     Source surface dimensions.
+ * @param pBox      Coordinates to be clipped.
+ */
+void vmsvgaClipBox(const SVGA3dSize *pSize,
+                   SVGA3dBox *pBox)
+{
+    /* x, w */
+    if (pBox->x > pSize->width)
+        pBox->x = pSize->width;
+    if (pBox->w > pSize->width - pBox->x)
+        pBox->w = pSize->width - pBox->x;
+
+    /* y, h */
+    if (pBox->y > pSize->height)
+        pBox->y = pSize->height;
+    if (pBox->h > pSize->height - pBox->y)
+        pBox->h = pSize->height - pBox->y;
+
+    /* z, d */
+    if (pBox->z > pSize->depth)
+        pBox->z = pSize->depth;
+    if (pBox->d > pSize->depth - pBox->z)
+        pBox->d = pSize->depth - pBox->z;
+}

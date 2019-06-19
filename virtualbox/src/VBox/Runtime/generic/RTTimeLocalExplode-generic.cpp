@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,20 +25,23 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/time.h>
 #include "internal/iprt.h"
 
 
 RTDECL(PRTTIME) RTTimeLocalExplode(PRTTIME pTime, PCRTTIMESPEC pTimeSpec)
 {
-    pTime = RTTimeExplode(pTime, pTimeSpec);
+    RTTIMESPEC LocalTime = *pTimeSpec;
+    int64_t cNsUtcOffset = RTTimeLocalDeltaNano(); /**< @todo this is obviously wrong. Need RTTimeLocalDeltaNanoFor(pTimeSpec); */
+    RTTimeSpecAddNano(&LocalTime, cNsUtcOffset);
+    pTime = RTTimeExplode(pTime, &LocalTime);
     if (pTime)
     {
         pTime->fFlags = (pTime->fFlags & ~RTTIME_FLAGS_TYPE_MASK) | RTTIME_FLAGS_TYPE_LOCAL;
-        pTime->offZone = RTTimeLocalDeltaNano() / (UINT64_C(1000000000)*3600); /** @todo this is obviously wrong. Need RTTimeLocalDeltaNanoFor(pTimeSpec); */
+        pTime->offUTC = cNsUtcOffset / RT_NS_1MIN;
     }
     return pTime;
 }

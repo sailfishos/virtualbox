@@ -1,11 +1,10 @@
 /* $Id: VBoxDispInternal.h $ */
-
 /** @file
  * VBox XPDM Display driver, internal header
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,7 +23,7 @@
 #include <VBox/log.h>
 #include <iprt/err.h>
 #include <iprt/assert.h>
-#include <windef.h>
+#include <iprt/win/windef.h>
 #include <wingdi.h>
 #include <winddi.h>
 #include <ntddvdeo.h>
@@ -35,9 +34,9 @@
 #include "common/VBoxVideoLog.h"
 #include "common/xpdm/VBoxVideoPortAPI.h"
 #include "common/xpdm/VBoxVideoIOCTL.h"
-#include <VBox/HGSMI/HGSMI.h>
-#include <VBox/VBoxVideo.h>
-#include <VBox/VBoxVideoGuest.h>
+#include <HGSMI.h>
+#include <VBoxVideo.h>
+#include <VBoxVideoGuest.h>
 #include <VBoxDisplay.h>
 
 typedef struct _VBOXDISPDEV *PVBOXDISPDEV;
@@ -131,7 +130,7 @@ int VBoxDispSetPalette8BPP(PVBOXDISPDEV pDev);
 
 /* VBVA related */
 int VBoxDispVBVAInit(PVBOXDISPDEV pDev);
-void VBoxDispVBVAHostCommandComplete(PVBOXDISPDEV pDev, VBVAHOSTCMD *pCmd);
+void VBoxDispVBVAHostCommandComplete(PVBOXDISPDEV pDev, VBVAHOSTCMD RT_UNTRUSTED_VOLATILE_HOST *pCmd);
 
 void vrdpReportDirtyRect(PVBOXDISPDEV pDev, RECTL *prcl);
 void vbvaReportDirtyRect(PVBOXDISPDEV pDev, RECTL *prcl);

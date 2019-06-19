@@ -1,11 +1,10 @@
 /* $Id: VBoxMPVModes.cpp $ */
-
 /** @file
  * VBox WDDM Miniport driver
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,8 +17,9 @@
 
 #include "VBoxMPWddm.h"
 #include "common/VBoxMPCommon.h"
+#include <iprt/param.h> /* PAGE_OFFSET_MASK */
 
-#include <stdio.h>
+#include <stdio.h> /* for swprintf */
 
 
 int VBoxVModesInit(VBOX_VMODES *pModes, uint32_t cTargets)
@@ -230,18 +230,25 @@ int vboxWddmVModesAdd(PVBOXMP_DEVEXT pExt, VBOXWDDM_VMODES *pModes, uint32_t u32
     vramSize &= ~PAGE_OFFSET_MASK;
 
     /* prevent potensial overflow */
-    if (pResolution->cx > 0x7fff
-            || pResolution->cy > 0x7fff)
+    if (   pResolution->cx > 0x7fff
+        || pResolution->cy > 0x7fff)
     {
-        WARN(("too big resolution"));
+        WARN(("resolution %dx%d insane", pResolution->cx, pResolution->cy));
         return VERR_INVALID_PARAMETER;
     }
+
     uint32_t cbSurfMem = pResolution->cx * pResolution->cy * 4;
     if (cbSurfMem > vramSize)
+    {
+        WARN(("resolution %dx%d too big for available VRAM (%d bytes)\n", pResolution->cx, pResolution->cy, vramSize));
         return VERR_NOT_SUPPORTED;
+    }
 
     if (!VBoxLikesVideoMode(u32Target, pResolution->cx, pResolution->cy, 32))
+    {
+        WARN(("resolution %dx%d not accepted by the frontend\n", pResolution->cx, pResolution->cy));
         return VERR_NOT_SUPPORTED;
+    }
 
     if (pModes->aTransientResolutions[u32Target] == CR_RSIZE2U64(*pResolution))
     {
@@ -310,7 +317,6 @@ int voxWddmVModesInitForTarget(PVBOXMP_DEVEXT pExt, VBOXWDDM_VMODES *pModes, uin
      * Give up on the first error encountered.
      */
     VBOXMPCMNREGISTRY Registry;
-    int fPrefSet=0;
     VP_STATUS vpRc;
 
     vpRc = VBoxMPCmnRegInit(pExt, &Registry);
@@ -556,8 +562,8 @@ static DECLCALLBACK(VOID) vboxWddmChildStatusReportCompletion(PVBOXMP_DEVEXT pDe
 
     PVBOXWDDMCHILDSTATUSCB pCtx = (PVBOXWDDMCHILDSTATUSCB)pvContext;
     PVBOXVDMACBUF_DR pDr = pCtx->pDr;
-    PVBOXVDMACMD pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
-    VBOXVDMACMD_CHILD_STATUS_IRQ *pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHILD_STATUS_IRQ);
+    VBOXVDMACMD                  RT_UNTRUSTED_VOLATILE_HOST *pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
+    VBOXVDMACMD_CHILD_STATUS_IRQ RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHILD_STATUS_IRQ);
 
     vboxWddmChildStatusHandleRequest(pDevExt, pBody);
 
@@ -585,10 +591,11 @@ NTSTATUS VBoxWddmChildStatusReportReconnected(PVBOXMP_DEVEXT pDevExt, uint32_t i
         pDr->cbBuf = cbCmd;
         pDr->rc = VERR_NOT_IMPLEMENTED;
 
-        PVBOXVDMACMD pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
+        VBOXVDMACMD RT_UNTRUSTED_VOLATILE_HOST *pHdr = VBOXVDMACBUF_DR_TAIL(pDr, VBOXVDMACMD);
         pHdr->enmType = VBOXVDMACMD_TYPE_CHILD_STATUS_IRQ;
         pHdr->u32CmdSpecific = 0;
-        PVBOXVDMACMD_CHILD_STATUS_IRQ pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHILD_STATUS_IRQ);
+
+        VBOXVDMACMD_CHILD_STATUS_IRQ RT_UNTRUSTED_VOLATILE_HOST *pBody = VBOXVDMACMD_BODY(pHdr, VBOXVDMACMD_CHILD_STATUS_IRQ);
         pBody->cInfos = 1;
         if (iChild == D3DDDI_ID_ALL)
         {
@@ -613,7 +620,7 @@ NTSTATUS VBoxWddmChildStatusReportReconnected(PVBOXMP_DEVEXT pDevExt, uint32_t i
         if (RT_SUCCESS(rc))
         {
             Status = KeWaitForSingleObject(&Event, Executive, KernelMode, FALSE, NULL);
-            Assert(Status == STATUS_SUCCESS);
+            AssertNtStatusSuccess(Status);
             return STATUS_SUCCESS;
         }
 
@@ -623,7 +630,7 @@ NTSTATUS VBoxWddmChildStatusReportReconnected(PVBOXMP_DEVEXT pDevExt, uint32_t i
     }
     else
     {
-        /* @todo: try flushing.. */
+        /** @todo try flushing.. */
         WARN(("vboxVdmaCBufDrCreate returned NULL"));
         Status = STATUS_INSUFFICIENT_RESOURCES;
     }

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -49,7 +49,7 @@
  * and empty strings.  In other words, RTCString("") and RTCString(NULL)
  * behave the same.  In both cases, RTCString allocates no memory, reports
  * a zero length and zero allocated bytes for both, and returns an empty
- * C string from c_str().
+ * C-style string from c_str().
  *
  * @note    RTCString ASSUMES that all strings it deals with are valid UTF-8.
  *          The caller is responsible for not breaking this assumption.
@@ -91,7 +91,7 @@ public:
     }
 
     /**
-     * Creates a copy of a C string.
+     * Creates a copy of a C-style string.
      *
      * This allocates strlen(pcsz) + 1 bytes for the new instance, unless s is empty.
      *
@@ -125,7 +125,7 @@ public:
     }
 
     /**
-     * Create a partial copy of a C string.
+     * Create a partial copy of a C-style string.
      *
      * @param   a_pszSrc        The source string (UTF-8).
      * @param   a_cchSrc        The max number of chars (encoded UTF-8 bytes)
@@ -171,7 +171,7 @@ public:
      * @sa      printfV
      * @remarks Not part of std::string.
      */
-    RTCString(const char *a_pszFormat, va_list a_va)
+    RTCString(const char *a_pszFormat, va_list a_va) RT_IPRT_FORMAT_ATTR(1, 0)
         : m_psz(NULL),
           m_cch(0),
           m_cbAllocated(0)
@@ -247,14 +247,35 @@ public:
              && cb > m_cch + 1
            )
         {
-            int vrc = RTStrRealloc(&m_psz, cb);
-            if (RT_SUCCESS(vrc))
+            int rc = RTStrRealloc(&m_psz, cb);
+            if (RT_SUCCESS(rc))
                 m_cbAllocated = cb;
 #ifdef RT_EXCEPTIONS_ENABLED
             else
                 throw std::bad_alloc();
 #endif
         }
+    }
+
+    /**
+     * A C like version of the reserve method, i.e. return code instead of throw.
+     *
+     * @returns VINF_SUCCESS or VERR_NO_STRING_MEMORY.
+     * @param   cb              New minimum size (in bytes) of member memory buffer.
+     */
+    int reserveNoThrow(size_t cb)
+    {
+        if (    cb != m_cbAllocated
+             && cb > m_cch + 1
+           )
+        {
+            int rc = RTStrRealloc(&m_psz, cb);
+            if (RT_SUCCESS(rc))
+                m_cbAllocated = cb;
+            else
+                return rc;
+        }
+        return VINF_SUCCESS;
     }
 
     /**
@@ -268,7 +289,7 @@ public:
     RTMEMEF_NEW_AND_DELETE_OPERATORS();
 
     /**
-     * Assigns a copy of pcsz to "this".
+     * Assigns a copy of pcsz to @a this.
      *
      * @param   pcsz            The source string.
      *
@@ -288,7 +309,7 @@ public:
     }
 
     /**
-     * Assigns a copy of s to "this".
+     * Assigns a copy of s to @a this.
      *
      * @param   s               The source string.
      *
@@ -308,6 +329,50 @@ public:
     }
 
     /**
+     * Assigns a copy of another RTCString.
+     *
+     * @param   a_rSrc          Reference to the source string.
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     */
+    RTCString &assign(const RTCString &a_rSrc);
+
+    /**
+     * Assigns a copy of a C-style string.
+     *
+     * @param   a_pszSrc        Pointer to the C-style source string.
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     * @remarks ASSUMES valid
+     */
+    RTCString &assign(const char *a_pszSrc);
+
+    /**
+     * Assigns a partial copy of another RTCString.
+     *
+     * @param   a_rSrc          The source string.
+     * @param   a_offSrc        The byte offset into the source string.
+     * @param   a_cchSrc        The max number of chars (encoded UTF-8 bytes)
+     *                          to copy from the source string.
+     */
+    RTCString &assign(const RTCString &a_rSrc, size_t a_offSrc, size_t a_cchSrc = npos);
+
+    /**
+     * Assigns a partial copy of a C-style string.
+     *
+     * @param   a_pszSrc        The source string (UTF-8).
+     * @param   a_cchSrc        The max number of chars (encoded UTF-8 bytes)
+     *                          to copy from the source string.
+     */
+    RTCString &assign(const char *a_pszSrc, size_t a_cchSrc);
+
+    /**
+     * Assigs a string containing @a a_cTimes repetitions of the character @a a_ch.
+     *
+     * @param   a_cTimes        The number of times the character is repeated.
+     * @param   a_ch            The character to fill the string with.
+     */
+    RTCString &assign(size_t a_cTimes, char a_ch);
+
+    /**
      * Assigns the output of the string format operation (RTStrPrintf).
      *
      * @param   pszFormat       Pointer to the format string,
@@ -319,7 +384,7 @@ public:
      *
      * @returns Reference to the object.
      */
-    RTCString &printf(const char *pszFormat, ...);
+    RTCString &printf(const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(1, 2);
 
     /**
      * Assigns the output of the string format operation (RTStrPrintfV).
@@ -333,48 +398,62 @@ public:
      *
      * @returns Reference to the object.
      */
-    RTCString &printfV(const char *pszFormat, va_list va);
+    RTCString &printfV(const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(1, 0);
 
     /**
-     * Appends the string "that" to "this".
+     * Appends the string @a that to @a rThat.
      *
-     * @param   that            The string to append.
-     *
+     * @param   rThat            The string to append.
      * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
-     *
      * @returns Reference to the object.
      */
-    RTCString &append(const RTCString &that);
+    RTCString &append(const RTCString &rThat);
 
     /**
-     * Appends the string "that" to "this".
+     * Appends the string @a pszSrc to @a this.
      *
-     * @param   pszThat         The C string to append.
-     *
+     * @param   pszSrc          The C-style string to append.
      * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
-     *
      * @returns Reference to the object.
      */
-    RTCString &append(const char *pszThat);
+    RTCString &append(const char *pszSrc);
 
     /**
-     * Appends the given character to "this".
+     * Appends the a substring from @a rThat to @a this.
+     *
+     * @param   rThat           The string to append a substring from.
+     * @param   offStart        The start of the substring to append (byte offset,
+     *                          not codepoint).
+     * @param   cchMax          The maximum number of bytes to append.
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     * @returns Reference to the object.
+     */
+    RTCString &append(const RTCString &rThat, size_t offStart, size_t cchMax = RTSTR_MAX);
+
+    /**
+     * Appends the first @a cchMax chars from string @a pszThat to @a this.
+     *
+     * @param   pszThat         The C-style string to append.
+     * @param   cchMax          The maximum number of bytes to append.
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     * @returns Reference to the object.
+     */
+    RTCString &append(const char *pszThat, size_t cchMax);
+
+    /**
+     * Appends the given character to @a this.
      *
      * @param   ch              The character to append.
-     *
      * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
-     *
      * @returns Reference to the object.
      */
     RTCString &append(char ch);
 
     /**
-     * Appends the given unicode code point to "this".
+     * Appends the given unicode code point to @a this.
      *
      * @param   uc              The unicode code point to append.
-     *
      * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
-     *
      * @returns Reference to the object.
      */
     RTCString &appendCodePoint(RTUNICP uc);
@@ -382,20 +461,18 @@ public:
     /**
      * Shortcut to append(), RTCString variant.
      *
-     * @param that              The string to append.
-     *
+     * @param   rThat           The string to append.
      * @returns Reference to the object.
      */
-    RTCString &operator+=(const RTCString &that)
+    RTCString &operator+=(const RTCString &rThat)
     {
-        return append(that);
+        return append(rThat);
     }
 
     /**
      * Shortcut to append(), const char* variant.
      *
-     * @param pszThat           The C string to append.
-     *
+     * @param   pszThat         The C-style string to append.
      * @returns                 Reference to the object.
      */
     RTCString &operator+=(const char *pszThat)
@@ -406,13 +483,13 @@ public:
     /**
      * Shortcut to append(), char variant.
      *
-     * @param pszThat           The character to append.
+     * @param ch                The character to append.
      *
      * @returns                 Reference to the object.
      */
-    RTCString &operator+=(char c)
+    RTCString &operator+=(char ch)
     {
-        return append(c);
+        return append(ch);
     }
 
     /**
@@ -454,11 +531,93 @@ public:
     }
 
     /**
+     * Erases a sequence from the string.
+     *
+     * @returns Reference to the object.
+     * @param   offStart        Where in @a this string to start erasing.
+     * @param   cchLength       How much following @a offStart to erase.
+     */
+    RTCString &erase(size_t offStart = 0, size_t cchLength = npos);
+
+    /**
+     * Replaces a span of @a this string with a replacement string.
+     *
+     * @returns Reference to the object.
+     * @param   offStart        Where in @a this string to start replacing.
+     * @param   cchLength       How much following @a offStart to replace.  npos is
+     *                          accepted.
+     * @param   rStrReplacement The replacement string.
+     *
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     *
+     * @note    Non-standard behaviour if offStart is beyond the end of the string.
+     *          No change will occure and strict builds hits a debug assertion.
+     */
+    RTCString &replace(size_t offStart, size_t cchLength, const RTCString &rStrReplacement);
+
+    /**
+     * Replaces a span of @a this string with a replacement substring.
+     *
+     * @returns Reference to the object.
+     * @param   offStart        Where in @a this string to start replacing.
+     * @param   cchLength       How much following @a offStart to replace.  npos is
+     *                          accepted.
+     * @param   rStrReplacement The string from which a substring is taken.
+     * @param   offReplacement  The offset into @a rStrReplacement where the
+     *                          replacement substring starts.
+     * @param   cchReplacement   The maximum length of the replacement substring.
+     *
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     *
+     * @note    Non-standard behaviour if offStart or offReplacement is beyond the
+     *          end of the repective strings.  No change is made in the former case,
+     *          while we consider it an empty string in the latter.  In both
+     *          situation a debug assertion is raised in strict builds.
+     */
+    RTCString &replace(size_t offStart, size_t cchLength, const RTCString &rStrReplacement,
+                       size_t offReplacement, size_t cchReplacement);
+
+    /**
+     * Replaces a span of @a this string with the replacement string.
+     *
+     * @returns Reference to the object.
+     * @param   offStart        Where in @a this string to start replacing.
+     * @param   cchLength       How much following @a offStart to replace.  npos is
+     *                          accepted.
+     * @param   pszReplacement  The replacement string.
+     *
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     *
+     * @note    Non-standard behaviour if offStart is beyond the end of the string.
+     *          No change will occure and strict builds hits a debug assertion.
+     */
+    RTCString &replace(size_t offStart, size_t cchLength, const char *pszReplacement);
+
+    /**
+     * Replaces a span of @a this string with the replacement string.
+     *
+     * @returns Reference to the object.
+     * @param   offStart        Where in @a this string to start replacing.
+     * @param   cchLength       How much following @a offStart to replace.  npos is
+     *                          accepted.
+     * @param   pszReplacement  The replacement string.
+     * @param   cchReplacement  How much of @a pszReplacement to use at most.  If a
+     *                          zero terminator is found before reaching this value,
+     *                          we'll stop there.
+     *
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     *
+     * @note    Non-standard behaviour if offStart is beyond the end of the string.
+     *          No change will occure and strict builds hits a debug assertion.
+     */
+    RTCString &replace(size_t offStart, size_t cchLength, const char *pszReplacement, size_t cchReplacement);
+
+    /**
      * Index operator.
      *
      * Returns the byte at the given index, or a null byte if the index is not
      * smaller than length().  This does _not_ count codepoints but simply points
-     * into the member C string.
+     * into the member C-style string.
      *
      * @param   i       The index into the string buffer.
      * @returns char at the index or null.
@@ -471,9 +630,10 @@ public:
     }
 
     /**
-     * Returns the contained string as a C-style const char* pointer.
-     * This never returns NULL; if the string is empty, this returns a
-     * pointer to static null byte.
+     * Returns the contained string as a const C-style string pointer.
+     *
+     * This never returns NULL; if the string is empty, this returns a pointer to
+     * static null byte.
      *
      * @returns const pointer to C-style string.
      */
@@ -581,28 +741,29 @@ public:
     /**
      * Compares the member string to another RTCString.
      *
-     * @param   pcszThat    The string to compare with.
+     * @param   rThat       The string to compare with.
      * @param   cs          Whether comparison should be case-sensitive.
      * @returns 0 if equal, negative if this is smaller than @a pcsz, positive
      *          if larger.
      */
-    int compare(const RTCString &that, CaseSensitivity cs = CaseSensitive) const
+    int compare(const RTCString &rThat, CaseSensitivity cs = CaseSensitive) const
     {
         if (cs == CaseSensitive)
-            return ::RTStrCmp(m_psz, that.m_psz);
-        return ::RTStrICmp(m_psz, that.m_psz);
+            return ::RTStrCmp(m_psz, rThat.m_psz);
+        return ::RTStrICmp(m_psz, rThat.m_psz);
     }
 
     /**
      * Compares the two strings.
      *
      * @returns true if equal, false if not.
-     * @param   that    The string to compare with.
+     * @param   rThat    The string to compare with.
      */
-    bool equals(const RTCString &that) const
+    bool equals(const RTCString &rThat) const
     {
-        return that.length() == length()
-            && memcmp(that.m_psz, m_psz, length()) == 0;
+        return rThat.length() == length()
+            && (   length() == 0
+                || memcmp(rThat.m_psz, m_psz, length()) == 0);
     }
 
     /**
@@ -671,16 +832,33 @@ public:
     /**
      * Find the given substring.
      *
-     * Looks for pcszFind in "this" starting at "pos" and returns its position
-     * as a byte (not codepoint) offset, counting from the beginning of "this" at 0.
+     * Looks for @a pszNeedle in @a this starting at @a offStart and returns its
+     * position as a byte (not codepoint) offset, counting from the beginning of
+     * @a this as 0.
      *
-     * @param   pcszFind        The substring to find.
-     * @param   pos             The (byte) offset into the string buffer to start
+     * @param   pszNeedle       The substring to find.
+     * @param   offStart        The (byte) offset into the string buffer to start
      *                          searching.
      *
-     * @returns 0 based position of pcszFind. npos if not found.
+     * @returns 0 based position of pszNeedle. npos if not found.
      */
-    size_t find(const char *pcszFind, size_t pos = 0) const;
+    size_t find(const char *pszNeedle, size_t offStart = 0) const;
+
+    /**
+     * Find the given substring.
+     *
+     * Looks for @a pStrNeedle in @a this starting at @a offStart and returns its
+     * position as a byte (not codepoint) offset, counting from the beginning of
+     * @a this as 0.
+     *
+     * @param   pStrNeedle      The substring to find.
+     * @param   offStart        The (byte) offset into the string buffer to start
+     *                          searching.
+     *
+     * @returns 0 based position of pStrNeedle. npos if not found or pStrNeedle is
+     *          NULL or an empty string.
+     */
+    size_t find(const RTCString *pStrNeedle, size_t offStart = 0) const;
 
     /**
      * Replaces all occurences of cFind with cReplace in the member string.
@@ -719,7 +897,28 @@ public:
     size_t count(const RTCString *pStr, CaseSensitivity cs = CaseSensitive) const;
 
     /**
-     * Returns a substring of "this" as a new Utf8Str.
+     * Strips leading and trailing spaces.
+     *
+     * @returns this
+     */
+    RTCString &strip();
+
+    /**
+     * Strips leading spaces.
+     *
+     * @returns this
+     */
+    RTCString &stripLeft();
+
+    /**
+     * Strips trailing spaces.
+     *
+     * @returns this
+     */
+    RTCString &stripRight();
+
+    /**
+     * Returns a substring of @a this as a new Utf8Str.
      *
      * Works exactly like its equivalent in std::string. With the default
      * parameters "0" and "npos", this always copies the entire string. The
@@ -727,7 +926,8 @@ public:
      * to ensure that the offsets do not copy invalid UTF-8 sequences. When
      * used in conjunction with find() and length(), this will work.
      *
-     * @param   pos             Index of first byte offset to copy from "this", counting from 0.
+     * @param   pos             Index of first byte offset to copy from @a this,
+     *                          counting from 0.
      * @param   n               Number of bytes to copy, starting with the one at "pos".
      *                          The copying will stop if the null terminator is encountered before
      *                          n bytes have been copied.
@@ -738,11 +938,11 @@ public:
     }
 
     /**
-     * Returns a substring of "this" as a new Utf8Str. As opposed to substr(),
-     * this variant takes codepoint offsets instead of byte offsets.
+     * Returns a substring of @a this as a new Utf8Str. As opposed to substr(), this
+     * variant takes codepoint offsets instead of byte offsets.
      *
      * @param   pos             Index of first unicode codepoint to copy from
-     *                          "this", counting from 0.
+     *                          @a this, counting from 0.
      * @param   n               Number of unicode codepoints to copy, starting with
      *                          the one at "pos".  The copying will stop if the null
      *                          terminator is encountered before n codepoints have
@@ -751,7 +951,7 @@ public:
     RTCString substrCP(size_t pos = 0, size_t n = npos) const;
 
     /**
-     * Returns true if "this" ends with "that".
+     * Returns true if @a this ends with @a that.
      *
      * @param   that    Suffix to test for.
      * @param   cs      Case sensitivity selector.
@@ -760,7 +960,7 @@ public:
     bool endsWith(const RTCString &that, CaseSensitivity cs = CaseSensitive) const;
 
     /**
-     * Returns true if "this" begins with "that".
+     * Returns true if @a this begins with @a that.
      * @param   that    Prefix to test for.
      * @param   cs      Case sensitivity selector.
      * @returns true if match, false if mismatch.
@@ -768,13 +968,40 @@ public:
     bool startsWith(const RTCString &that, CaseSensitivity cs = CaseSensitive) const;
 
     /**
-     * Returns true if "this" contains "that" (strstr).
+     * Checks if the string starts with the given word, ignoring leading blanks.
+     *
+     * @param   pszWord The word to test for.
+     * @param   enmCase Case sensitivity selector.
+     * @returns true if match, false if mismatch.
+     */
+    bool startsWithWord(const char *pszWord, CaseSensitivity enmCase = CaseSensitive) const;
+
+    /**
+     * Checks if the string starts with the given word, ignoring leading blanks.
+     *
+     * @param   rThat   Prefix to test for.
+     * @param   enmCase Case sensitivity selector.
+     * @returns true if match, false if mismatch.
+     */
+    bool startsWithWord(const RTCString &rThat, CaseSensitivity enmCase = CaseSensitive) const;
+
+    /**
+     * Returns true if @a this contains @a that (strstr).
      *
      * @param   that    Substring to look for.
      * @param   cs      Case sensitivity selector.
-     * @returns true if match, false if mismatch.
+     * @returns true if found, false if not found.
      */
     bool contains(const RTCString &that, CaseSensitivity cs = CaseSensitive) const;
+
+    /**
+     * Returns true if @a this contains @a pszNeedle (strstr).
+     *
+     * @param   pszNeedle   Substring to look for.
+     * @param   cs          Case sensitivity selector.
+     * @returns true if found, false if not found.
+     */
+    bool contains(const char *pszNeedle, CaseSensitivity cs = CaseSensitive) const;
 
     /**
      * Attempts to convert the member string into a 32-bit integer.
@@ -784,7 +1011,7 @@ public:
      */
     int32_t toInt32() const
     {
-        return RTStrToInt32(m_psz);
+        return RTStrToInt32(c_str());
     }
 
     /**
@@ -795,7 +1022,7 @@ public:
      */
     uint32_t toUInt32() const
     {
-        return RTStrToUInt32(m_psz);
+        return RTStrToUInt32(c_str());
     }
 
     /**
@@ -806,7 +1033,7 @@ public:
      */
     int64_t toInt64() const
     {
-        return RTStrToInt64(m_psz);
+        return RTStrToInt64(c_str());
     }
 
     /**
@@ -817,7 +1044,7 @@ public:
      */
     uint64_t toUInt64() const
     {
-        return RTStrToUInt64(m_psz);
+        return RTStrToUInt64(c_str());
     }
 
     /**
@@ -854,6 +1081,19 @@ public:
                                           SplitMode a_enmMode = RemoveEmptyParts) const;
 
     /**
+     * Joins a list of strings together using the provided separator and
+     * an optional prefix for each item in the list.
+     *
+     * @param   a_rList         The list to join.
+     * @param   a_rstrPrefix    The prefix used for appending to each item.
+     * @param   a_rstrSep       The separator used for joining.
+     * @returns joined string.
+     */
+    static RTCString joinEx(const RTCList<RTCString, RTCString *> &a_rList,
+                            const RTCString &a_rstrPrefix /* = "" */,
+                            const RTCString &a_rstrSep /* = "" */);
+
+    /**
      * Joins a list of strings together using the provided separator.
      *
      * @param   a_rList     The list to join.
@@ -862,6 +1102,28 @@ public:
      */
     static RTCString join(const RTCList<RTCString, RTCString *> &a_rList,
                           const RTCString &a_rstrSep = "");
+
+    /**
+     * Swaps two strings in a fast way.
+     *
+     * Exception safe.
+     *
+     * @param   a_rThat  The string to swap with.
+     */
+    inline void swap(RTCString &a_rThat) throw()
+    {
+        char   *pszTmp         = m_psz;
+        size_t  cchTmp         = m_cch;
+        size_t  cbAllocatedTmp = m_cbAllocated;
+
+        m_psz                  = a_rThat.m_psz;
+        m_cch                  = a_rThat.m_cch;
+        m_cbAllocated          = a_rThat.m_cbAllocated;
+
+        a_rThat.m_psz          = pszTmp;
+        a_rThat.m_cch          = cchTmp;
+        a_rThat.m_cbAllocated  = cbAllocatedTmp;
+    }
 
 protected:
 
@@ -930,6 +1192,34 @@ protected:
             m_psz = NULL;
         }
     }
+
+    /**
+     * Appends exactly @a cchSrc chars from @a pszSrc to @a this.
+     *
+     * This is an internal worker for the append() methods.
+     *
+     * @returns Reference to the object.
+     * @param   pszSrc          The source string.
+     * @param   cchSrc          The source string length (exact).
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     *
+     */
+    RTCString &appendWorker(const char *pszSrc, size_t cchSrc);
+
+    /**
+     * Replaces exatly @a cchLength chars at @a offStart with @a cchSrc from @a
+     * pszSrc.
+     *
+     * @returns Reference to the object.
+     * @param   offStart        Where in @a this string to start replacing.
+     * @param   cchLength       How much following @a offStart to replace.  npos is
+     *                          accepted.
+     * @param   pszSrc          The replacement string.
+     * @param   cchSrc          The exactly length of the replacement string.
+     *
+     * @throws  std::bad_alloc  On allocation error.  The object is left unchanged.
+     */
+    RTCString &replaceWorker(size_t offStart, size_t cchLength, const char *pszSrc, size_t cchSrc);
 
     static DECLCALLBACK(size_t) printfOutputCallback(void *pvArg, const char *pachChars, size_t cbChars);
 
@@ -1003,7 +1293,7 @@ public:
      * @param   ...             Ellipsis containing the arguments specified by
      *                          the format string.
      */
-    explicit RTCStringFmt(const char *a_pszFormat, ...)
+    explicit RTCStringFmt(const char *a_pszFormat, ...) RT_IPRT_FORMAT_ATTR(1, 2)
     {
         va_list va;
         va_start(va, a_pszFormat);

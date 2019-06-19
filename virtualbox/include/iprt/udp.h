@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -131,6 +131,7 @@ RTR3DECL(int) RTUdpServerListen(PRTUDPSERVER pServer, PFNRTUDPSERVE pfnServe, vo
  * @param   pvBuffer    Where to put the data we read.
  * @param   cbBuffer    Read buffer size.
  * @param   pcbRead     Number of bytes read. Must be non-NULL.
+ * @param   pSrcAddr    The network address to read from.
  */
 RTR3DECL(int)  RTUdpRead(RTSOCKET Sock, void *pvBuffer, size_t cbBuffer, size_t *pcbRead, PRTNETADDR pSrcAddr);
 
@@ -147,6 +148,18 @@ RTR3DECL(int)  RTUdpRead(RTSOCKET Sock, void *pvBuffer, size_t cbBuffer, size_t 
  */
 RTR3DECL(int)  RTUdpWrite(PRTUDPSERVER pServer, const void *pvBuffer,
                           size_t cbBuffer, PCRTNETADDR pDstAddr);
+
+/**
+ * Create and connect a data socket.
+ *
+ * @returns iprt status code.
+ * @param   pszAddress          The address to connect to.
+ * @param   uPort               The port to connect to.
+ * @param   pLocalAddr          The local address to bind this socket to, can be
+ *                              NULL.
+ * @param   pSock               Where to store the handle to the established connection.
+ */
+RTR3DECL(int) RTUdpCreateClientSocket(const char *pszAddress, uint32_t uPort, PRTNETADDR pLocalAddr, PRTSOCKET pSock);
 
 /** @} */
 RT_C_DECLS_END

@@ -1,12 +1,10 @@
 /* $Id: UIGraphicsRotatorButton.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGraphicsRotatorButton class definition
+ * VBox Qt GUI - UIGraphicsRotatorButton class definition.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,15 +15,23 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QStateMachine>
-#include <QPropertyAnimation>
-#include <QSignalTransition>
-#include <QMouseEventTransition>
+# include <QStateMachine>
+# include <QPropertyAnimation>
+# include <QSignalTransition>
 
 /* GUI includes: */
-#include "UIGraphicsRotatorButton.h"
-#include "UIIconPool.h"
+# include "UIGraphicsRotatorButton.h"
+# include "UIIconPool.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+#include <QMouseEventTransition>
+
 
 UIGraphicsRotatorButton::UIGraphicsRotatorButton(QIGraphicsWidget *pParent,
                                                  const QString &strPropertyName,
@@ -71,11 +77,11 @@ UIGraphicsRotatorButton::UIGraphicsRotatorButton(QIGraphicsWidget *pParent,
     m_pBackwardButtonAnimation->setEndValue(m_fReflected ? 180 : 0);
 
     /* Forward subordinate animation: */
-    m_pForwardSubordinateAnimation = new QPropertyAnimation(pParent, strPropertyName.toAscii(), this);
+    m_pForwardSubordinateAnimation = new QPropertyAnimation(pParent, strPropertyName.toLatin1(), this);
     m_pForwardSubordinateAnimation->setDuration(m_iAnimationDuration);
     m_pForwardSubordinateAnimation->setEasingCurve(QEasingCurve::InCubic);
     /* Backward subordinate animation: */
-    m_pBackwardSubordinateAnimation = new QPropertyAnimation(pParent, strPropertyName.toAscii(), this);
+    m_pBackwardSubordinateAnimation = new QPropertyAnimation(pParent, strPropertyName.toLatin1(), this);
     m_pBackwardSubordinateAnimation->setDuration(m_iAnimationDuration);
     m_pBackwardSubordinateAnimation->setEasingCurve(QEasingCurve::InCubic);
 

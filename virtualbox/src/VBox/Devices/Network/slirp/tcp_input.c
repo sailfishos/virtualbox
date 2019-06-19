@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -293,7 +293,8 @@ tcp_input(PNATState pData, register struct mbuf *m, int iphlen, struct socket *i
     register struct tcpiphdr *ti;
     caddr_t optp = NULL;
     int optlen = 0;
-    int len, tlen, off;
+    int len, off;
+    int tlen = 0; /* Shut up MSC (didn't check whether MSC was right). */
     register struct tcpcb *tp = 0;
     register int tiflags;
     struct socket *so = 0;
@@ -302,13 +303,12 @@ tcp_input(PNATState pData, register struct mbuf *m, int iphlen, struct socket *i
     int iss = 0;
     u_long tiwin;
 /*  int ts_present = 0; */
-    size_t ohdrlen;
+    unsigned ohdrlen;
     uint8_t ohdr[60 + 8]; /* max IP header plus 8 bytes of payload for icmp */
 
     STAM_PROFILE_START(&pData->StatTCP_input, counter_input);
 
-    LogFlow(("tcp_input: m = %8lx, iphlen = %2d, inso = %R[natsock]\n",
-             (long)m, iphlen, inso));
+    LogFlow(("tcp_input: m = %p, iphlen = %2d, inso = %R[natsock]\n", m, iphlen, inso));
 
     if (inso != NULL)
     {
@@ -359,7 +359,7 @@ tcp_input(PNATState pData, register struct mbuf *m, int iphlen, struct socket *i
     ip = mtod(m, struct ip *);
 
     /* ip_input() subtracts iphlen from ip::ip_len */
-    AssertStmt((ip->ip_len + iphlen == m_length(m, NULL)), goto drop);
+    AssertStmt(ip->ip_len + iphlen == (ssize_t)m_length(m, NULL), goto drop);
     if (RT_UNLIKELY(ip->ip_len < sizeof(struct tcphdr)))
     {
         /* tcps_rcvshort++; */
@@ -480,7 +480,7 @@ findso:
         || so->so_faddr.s_addr != ti->ti_dst.s_addr)
     {
         QSOCKET_UNLOCK(tcb);
-        /* @todo fix SOLOOKUP macrodefinition to be usable here */
+        /** @todo fix SOLOOKUP macrodefinition to be usable here */
         so = solookup(&tcb, ti->ti_src, ti->ti_sport,
                       ti->ti_dst, ti->ti_dport);
         if (so)
@@ -529,13 +529,8 @@ findso:
             goto dropwithreset;
         }
         SOCKET_LOCK(so);
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
         sbreserve(pData, &so->so_snd, tcp_sndspace);
         sbreserve(pData, &so->so_rcv, tcp_rcvspace);
-#else
-        sbuf_new(&so->so_snd, NULL, tcp_sndspace, SBUF_AUTOEXTEND);
-        sbuf_new(&so->so_rcv, NULL, tcp_rcvspace, SBUF_AUTOEXTEND);
-#endif
 
 /*      tcp_last_so = so; */  /* XXX ? */
 /*      tp = sototcpcb(so);    */
@@ -661,15 +656,7 @@ findso:
               acked = ti->ti_ack - tp->snd_una;
               tcpstat.tcps_rcvackpack++;
               tcpstat.tcps_rcvackbyte += acked;
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
               sbdrop(&so->so_snd, acked);
-#else
-              if (sbuf_len(&so->so_snd) < acked)
-                /* drop all what sbuf have */
-                sbuf_setpos(&so->so_snd, 0);
-              else
-                sbuf_setpos(&so->so_snd, sbuf_len(&so->so_snd) - acked);
-#endif
               tp->snd_una = ti->ti_ack;
               m_freem(pData, m);
 
@@ -709,7 +696,7 @@ findso:
             }
         }
         else if (   ti->ti_ack == tp->snd_una
-                 && LIST_FIRST(&tp->t_segq)
+                 && LIST_EMPTY(&tp->t_segq)
                  && ti->ti_len <= sbspace(&so->so_rcv))
         {
             /*
@@ -1269,7 +1256,7 @@ close:
                 if (ti->ti_len == 0 && tiwin == tp->snd_wnd)
                 {
                     tcpstat.tcps_rcvdupack++;
-                    Log2((" dup ack  m = %lx, so = %lx\n", (long)m, (long)so));
+                    Log2((" dup ack  m = %p, so = %p\n", m, so));
                     /*
                      * If we have outstanding data (other than
                      * a window probe), this is a completely
@@ -1396,20 +1383,12 @@ synrx_to_est:
             if (acked > SBUF_LEN(&so->so_snd))
             {
                 tp->snd_wnd -= SBUF_LEN(&so->so_snd);
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
                 sbdrop(&so->so_snd, (int)so->so_snd.sb_cc);
-#else
-                sbuf_clear(&so->so_snd);
-#endif
                 ourfinisacked = 1;
             }
             else
             {
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
                 sbdrop(&so->so_snd, acked);
-#else
-                sbuf_setpos(&so->so_snd, sbuf_len(&so->so_snd) - acked);
-#endif
                 tp->snd_wnd -= acked;
                 ourfinisacked = 0;
             }
@@ -1526,8 +1505,6 @@ step6:
     if ((tiflags & TH_URG) && ti->ti_urp &&
             TCPS_HAVERCVDFIN(tp->t_state) == 0)
     {
-    /* BSD's sbufs are auto extent so we shouldn't worry here */
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
         /*
          * This is a kludge, but if we receive and accept
          * random urgent pointers, we'll crash in
@@ -1541,7 +1518,7 @@ step6:
             LogFlowFunc(("%d -> dodata\n", __LINE__));
             goto dodata;
         }
-#endif
+
         /*
          * If this segment advances the known urgent pointer,
          * then mark the data stream.  This should not happen
@@ -1580,7 +1557,13 @@ dodata:
      *      congestion avoidance sender won't send more until
      *      he gets an ACK.
      *
-     * See above.
+     * XXX: In case you wonder...  The magic "27" below is ESC that
+     * presumably starts a terminal escape-sequence and that we want
+     * to ACK ASAP.  [Original slirp code had three different
+     * heuristics to chose from here and in the header prediction case
+     * above, but the commented out alternatives were lost and the
+     * header prediction case that had an expanded comment about this
+     * has been modified to always send an ACK].
      */
     if (   ti->ti_len
         && (unsigned)ti->ti_len <= 5
@@ -1800,7 +1783,7 @@ tcp_fconnect_failed(PNATState pData, struct socket *so, int sockerr)
     if (code >= 0)
     {
         struct ip *oip;
-        size_t ohdrlen;
+        unsigned ohdrlen;
         struct mbuf *m;
 
         if (RT_UNLIKELY(so->so_ohdr == NULL))
@@ -2042,13 +2025,8 @@ tcp_mss(PNATState pData, register struct tcpcb *tp, u_int offer)
 
     tp->snd_cwnd = mss;
 
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
     sbreserve(pData, &so->so_snd, tcp_sndspace+((tcp_sndspace%mss)?(mss-(tcp_sndspace%mss)):0));
     sbreserve(pData, &so->so_rcv, tcp_rcvspace+((tcp_rcvspace%mss)?(mss-(tcp_rcvspace%mss)):0));
-#else
-    sbuf_new(&so->so_snd, NULL, tcp_sndspace+((tcp_sndspace%mss)?(mss-(tcp_sndspace%mss)):0), SBUF_AUTOEXTEND);
-    sbuf_new(&so->so_rcv, NULL, tcp_rcvspace+((tcp_rcvspace%mss)?(mss-(tcp_rcvspace%mss)):0), SBUF_AUTOEXTEND);
-#endif
 
     Log2((" returning mss = %d\n", mss));
 

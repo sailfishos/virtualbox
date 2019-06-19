@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,11 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define VBOX_WITH_IEM
 #define LOG_GROUP LOG_GROUP_EM
 #include <VBox/vmm/em.h>
 #include <VBox/vmm/mm.h>
@@ -41,14 +43,10 @@
 #include <VBox/dis.h>
 #include <VBox/disopcode.h>
 #include <VBox/log.h>
-#include "internal/pgm.h"
 #include <iprt/assert.h>
 #include <iprt/asm.h>
 #include <iprt/string.h>
 
-#ifndef IN_RC
-#undef VBOX_WITH_IEM
-#endif
 #ifdef VBOX_WITH_IEM
 //# define VBOX_COMPARE_IEM_AND_EM /* debugging... */
 //# define VBOX_SAME_AS_EM
@@ -60,9 +58,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @def EM_ASSERT_FAULT_RETURN
  * Safety check.
  *
@@ -79,18 +77,18 @@
 #endif
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #if !defined(VBOX_WITH_IEM) || defined(VBOX_COMPARE_IEM_AND_EM)
 DECLINLINE(VBOXSTRICTRC) emInterpretInstructionCPUOuter(PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE pRegFrame,
                                                         RTGCPTR pvFault, EMCODETYPE enmCodeType, uint32_t *pcbSize);
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef VBOX_COMPARE_IEM_AND_EM
 static const uint32_t g_fInterestingFFs = VMCPU_FF_TO_R3
     | VMCPU_FF_CSAM_PENDING_ACTION | VMCPU_FF_CSAM_SCAN_PAGE | VMCPU_FF_INHIBIT_INTERRUPTS
@@ -120,17 +118,19 @@ static size_t  g_cbIemWrote;
  * Get the current execution manager status.
  *
  * @returns Current status.
- * @param   pVCpu         Pointer to the VMCPU.
+ * @param   pVCpu         The cross context virtual CPU structure.
  */
 VMM_INT_DECL(EMSTATE) EMGetState(PVMCPU pVCpu)
 {
     return pVCpu->em.s.enmState;
 }
 
+
 /**
  * Sets the current execution manager status. (use only when you know what you're doing!)
  *
- * @param   pVCpu         Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
+ * @param   enmNewState The new state, EMSTATE_WAIT_SIPI or EMSTATE_HALTED.
  */
 VMM_INT_DECL(void)    EMSetState(PVMCPU pVCpu, EMSTATE enmNewState)
 {
@@ -143,7 +143,7 @@ VMM_INT_DECL(void)    EMSetState(PVMCPU pVCpu, EMSTATE enmNewState)
 /**
  * Sets the PC for which interrupts should be inhibited.
  *
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   PC          The PC.
  */
 VMMDECL(void) EMSetInhibitInterruptsPC(PVMCPU pVCpu, RTGCUINTPTR PC)
@@ -163,7 +163,7 @@ VMMDECL(void) EMSetInhibitInterruptsPC(PVMCPU pVCpu, RTGCUINTPTR PC)
  *      - POP SS
  *
  * @returns The PC for which interrupts should be inhibited.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  *
  */
 VMMDECL(RTGCUINTPTR) EMGetInhibitInterruptsPC(PVMCPU pVCpu)
@@ -176,7 +176,7 @@ VMMDECL(RTGCUINTPTR) EMGetInhibitInterruptsPC(PVMCPU pVCpu)
  * Prepare an MWAIT - essentials of the MONITOR instruction.
  *
  * @returns VINF_SUCCESS
- * @param   pVCpu               The current CPU.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @param   rax                 The content of RAX.
  * @param   rcx                 The content of RCX.
  * @param   rdx                 The content of RDX.
@@ -189,8 +189,21 @@ VMM_INT_DECL(int) EMMonitorWaitPrepare(PVMCPU pVCpu, uint64_t rax, uint64_t rcx,
     pVCpu->em.s.MWait.uMonitorRDX = rdx;
     pVCpu->em.s.MWait.fWait |= EMMWAIT_FLAG_MONITOR_ACTIVE;
     /** @todo Make use of GCPhys. */
+    NOREF(GCPhys);
     /** @todo Complete MONITOR implementation.  */
     return VINF_SUCCESS;
+}
+
+
+/**
+ * Checks if the monitor hardware is armed / active.
+ *
+ * @returns true if armed, false otherwise.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
+ */
+VMM_INT_DECL(bool) EMMonitorIsArmed(PVMCPU pVCpu)
+{
+    return RT_BOOL(pVCpu->em.s.MWait.fWait & EMMWAIT_FLAG_MONITOR_ACTIVE);
 }
 
 
@@ -198,7 +211,7 @@ VMM_INT_DECL(int) EMMonitorWaitPrepare(PVMCPU pVCpu, uint64_t rax, uint64_t rcx,
  * Performs an MWAIT.
  *
  * @returns VINF_SUCCESS
- * @param   pVCpu               The current CPU.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @param   rax                 The content of RAX.
  * @param   rcx                 The content of RCX.
  */
@@ -218,12 +231,13 @@ VMM_INT_DECL(int) EMMonitorWaitPerform(PVMCPU pVCpu, uint64_t rax, uint64_t rcx)
 
 
 /**
- * Determine if we should continue after encountering a mwait instruction.
+ * Determine if we should continue execution in HM after encountering an mwait
+ * instruction.
  *
  * Clears MWAIT flags if returning @c true.
  *
  * @returns true if we should continue, false if we should halt.
- * @param   pVCpu           Pointer to the VMCPU.
+ * @param   pVCpu           The cross context virtual CPU structure.
  * @param   pCtx            Current CPU context.
  */
 VMM_INT_DECL(bool) EMMonitorWaitShouldContinue(PVMCPU pVCpu, PCPUMCTX pCtx)
@@ -232,7 +246,7 @@ VMM_INT_DECL(bool) EMMonitorWaitShouldContinue(PVMCPU pVCpu, PCPUMCTX pCtx)
         || (   (pVCpu->em.s.MWait.fWait & (EMMWAIT_FLAG_ACTIVE | EMMWAIT_FLAG_BREAKIRQIF0))
             ==                            (EMMWAIT_FLAG_ACTIVE | EMMWAIT_FLAG_BREAKIRQIF0)) )
     {
-        if (VMCPU_FF_IS_PENDING(pVCpu, (VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC)))
+        if (VMCPU_FF_IS_PENDING(pVCpu, (VMCPU_FF_UPDATE_APIC | VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC)))
         {
             pVCpu->em.s.MWait.fWait &= ~(EMMWAIT_FLAG_ACTIVE | EMMWAIT_FLAG_BREAKIRQIF0);
             return true;
@@ -244,24 +258,71 @@ VMM_INT_DECL(bool) EMMonitorWaitShouldContinue(PVMCPU pVCpu, PCPUMCTX pCtx)
 
 
 /**
- * Determine if we should continue after encountering a hlt instruction.
+ * Determine if we should continue execution in HM after encountering a hlt
+ * instruction.
  *
  * @returns true if we should continue, false if we should halt.
- * @param   pVCpu           Pointer to the VMCPU.
+ * @param   pVCpu           The cross context virtual CPU structure.
  * @param   pCtx            Current CPU context.
  */
 VMM_INT_DECL(bool) EMShouldContinueAfterHalt(PVMCPU pVCpu, PCPUMCTX pCtx)
 {
     if (pCtx->eflags.Bits.u1IF)
-        return !!VMCPU_FF_IS_PENDING(pVCpu, (VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC));
+        return !!VMCPU_FF_IS_PENDING(pVCpu, (VMCPU_FF_UPDATE_APIC | VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC));
     return false;
+}
+
+
+/**
+ * Unhalts and wakes up the given CPU.
+ *
+ * This is an API for assisting the KVM hypercall API in implementing KICK_CPU.
+ * It sets VMCPU_FF_UNHALT for @a pVCpuDst and makes sure it is woken up.   If
+ * the CPU isn't currently in a halt, the next HLT instruction it executes will
+ * be affected.
+ *
+ * @returns GVMMR0SchedWakeUpEx result or VINF_SUCCESS depending on context.
+ * @param   pVM             The cross context VM structure.
+ * @param   pVCpuDst        The cross context virtual CPU structure of the
+ *                          CPU to unhalt and wake up.  This is usually not the
+ *                          same as the caller.
+ * @thread  EMT
+ */
+VMM_INT_DECL(int) EMUnhaltAndWakeUp(PVM pVM, PVMCPU pVCpuDst)
+{
+    /*
+     * Flag the current(/next) HLT to unhalt immediately.
+     */
+    VMCPU_FF_SET(pVCpuDst, VMCPU_FF_UNHALT);
+
+    /*
+     * Wake up the EMT (technically should be abstracted by VMM/VMEmt, but
+     * just do it here for now).
+     */
+#ifdef IN_RING0
+    /* We might be here with preemption disabled or enabled (i.e. depending on
+       thread-context hooks being used), so don't try obtaining the GVMMR0 used
+       lock here. See @bugref{7270#c148}. */
+    int rc = GVMMR0SchedWakeUpNoGVMNoLock(pVM, pVCpuDst->idCpu);
+    AssertRC(rc);
+
+#elif defined(IN_RING3)
+    int rc = SUPR3CallVMMR0(pVM->pVMR0, pVCpuDst->idCpu, VMMR0_DO_GVMM_SCHED_WAKE_UP, NULL /* pvArg */);
+    AssertRC(rc);
+
+#else
+    /* Nothing to do for raw-mode, shouldn't really be used by raw-mode guests anyway. */
+    Assert(pVM->cCpus == 1); NOREF(pVM);
+    int rc = VINF_SUCCESS;
+#endif
+    return rc;
 }
 
 
 /**
  * Locks REM execution to a single VCPU.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMDECL(void) EMRemLock(PVM pVM)
 {
@@ -273,6 +334,8 @@ VMMDECL(void) EMRemLock(PVM pVM)
     Assert(!IOMIsLockWriteOwner(pVM));
     int rc = PDMCritSectEnter(&pVM->em.s.CritSectREM, VERR_SEM_BUSY);
     AssertRCSuccess(rc);
+#else
+    RT_NOREF(pVM);
 #endif
 }
 
@@ -280,7 +343,7 @@ VMMDECL(void) EMRemLock(PVM pVM)
 /**
  * Unlocks REM execution
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMDECL(void) EMRemUnlock(PVM pVM)
 {
@@ -289,6 +352,8 @@ VMMDECL(void) EMRemUnlock(PVM pVM)
         return;     /* early init */
 
     PDMCritSectLeave(&pVM->em.s.CritSectREM);
+#else
+    RT_NOREF(pVM);
 #endif
 }
 
@@ -297,7 +362,7 @@ VMMDECL(void) EMRemUnlock(PVM pVM)
  * Check if this VCPU currently owns the REM lock.
  *
  * @returns bool owner/not owner
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMDECL(bool) EMRemIsLockOwner(PVM pVM)
 {
@@ -307,6 +372,7 @@ VMMDECL(bool) EMRemIsLockOwner(PVM pVM)
 
     return PDMCritSectIsOwner(&pVM->em.s.CritSectREM);
 #else
+    RT_NOREF(pVM);
     return true;
 #endif
 }
@@ -316,7 +382,7 @@ VMMDECL(bool) EMRemIsLockOwner(PVM pVM)
  * Try to acquire the REM lock.
  *
  * @returns VBox status code
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMM_INT_DECL(int) EMRemTryLock(PVM pVM)
 {
@@ -326,6 +392,7 @@ VMM_INT_DECL(int) EMRemTryLock(PVM pVM)
 
     return PDMCritSectTryEnter(&pVM->em.s.CritSectREM);
 #else
+    RT_NOREF(pVM);
     return VINF_SUCCESS;
 #endif
 }
@@ -337,7 +404,7 @@ VMM_INT_DECL(int) EMRemTryLock(PVM pVM)
 static DECLCALLBACK(int) emReadBytes(PDISCPUSTATE pDis, uint8_t offInstr, uint8_t cbMinRead, uint8_t cbMaxRead)
 {
     PVMCPU      pVCpu    = (PVMCPU)pDis->pvUser;
-#if defined(IN_RC) || defined(IN_RING3)
+#if defined(VBOX_WITH_RAW_MODE) && (defined(IN_RC) || defined(IN_RING3))
     PVM         pVM      = pVCpu->CTX_SUFF(pVM);
 #endif
     RTUINTPTR   uSrcAddr = pDis->uInstrAddr + offInstr;
@@ -356,12 +423,12 @@ static DECLCALLBACK(int) emReadBytes(PDISCPUSTATE pDis, uint8_t offInstr, uint8_
     /*
      * We might be called upon to interpret an instruction in a patch.
      */
-    if (PATMIsPatchGCAddr(pVCpu->CTX_SUFF(pVM), uSrcAddr))
+    if (PATMIsPatchGCAddr(pVM, uSrcAddr))
     {
 # ifdef IN_RC
         memcpy(&pDis->abInstr[offInstr], (void *)(uintptr_t)uSrcAddr, cbToRead);
 # else
-        memcpy(&pDis->abInstr[offInstr], PATMR3GCPtrToHCPtr(pVCpu->CTX_SUFF(pVM), uSrcAddr), cbToRead);
+        memcpy(&pDis->abInstr[offInstr], PATMR3GCPtrToHCPtr(pVM, uSrcAddr), cbToRead);
 # endif
         rc = VINF_SUCCESS;
     }
@@ -416,10 +483,13 @@ static DECLCALLBACK(int) emReadBytes(PDISCPUSTATE pDis, uint8_t offInstr, uint8_
 }
 
 
+#if !defined(VBOX_WITH_IEM) || defined(VBOX_COMPARE_IEM_AND_EM)
 DECLINLINE(int) emDisCoreOne(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, RTGCUINTPTR InstrGC, uint32_t *pOpsize)
 {
+    NOREF(pVM);
     return DISInstrWithReader(InstrGC, (DISCPUMODE)pDis->uCpuMode, emReadBytes, pVCpu, pDis, pOpsize);
 }
+#endif
 
 
 /**
@@ -428,8 +498,8 @@ DECLINLINE(int) emDisCoreOne(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, RTGCUINTP
  * @returns VBox status code, see SELMToFlatEx and EMInterpretDisasOneEx for
  *          details.
  *
- * @param   pVM             Pointer to the VM.
- * @param   pVCpu           Pointer to the VMCPU.
+ * @param   pVM             The cross context VM structure.
+ * @param   pVCpu           The cross context virtual CPU structure.
  * @param   pDis            Where to return the parsed instruction info.
  * @param   pcbInstr        Where to return the instruction size. (optional)
  */
@@ -461,8 +531,8 @@ VMM_INT_DECL(int) EMInterpretDisasCurrent(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pD
  *
  * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
- * @param   pVCpu           Pointer to the VMCPU.
+ * @param   pVM             The cross context VM structure.
+ * @param   pVCpu           The cross context virtual CPU structure.
  * @param   GCPtrInstr      The flat address of the instruction.
  * @param   pCtxCore        The context core (used to determine the cpu mode).
  * @param   pDis            Where to return the parsed instruction info.
@@ -471,7 +541,8 @@ VMM_INT_DECL(int) EMInterpretDisasCurrent(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pD
 VMM_INT_DECL(int) EMInterpretDisasOneEx(PVM pVM, PVMCPU pVCpu, RTGCUINTPTR GCPtrInstr, PCCPUMCTXCORE pCtxCore,
                                         PDISCPUSTATE pDis, unsigned *pcbInstr)
 {
-    Assert(pCtxCore == CPUMGetGuestCtxCore(pVCpu));
+    NOREF(pVM);
+    Assert(pCtxCore == CPUMGetGuestCtxCore(pVCpu)); NOREF(pCtxCore);
     DISCPUMODE enmCpuMode = CPUMGetGuestDisMode(pVCpu);
     /** @todo Deal with too long instruction (=> \#GP), opcode read errors (=>
      *        \#PF, \#GP, \#??), undefined opcodes (=> \#UD), and such. */
@@ -691,11 +762,10 @@ static void emCompareWithIem(PVMCPU pVCpu, PCCPUMCTX pEmCtx, PCCPUMCTX pIemCtx,
  * @retval  VERR_EM_INTERPRETER     Something we can't cope with.
  * @retval  VERR_*                  Fatal errors.
  *
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  *                      Updates the EIP if an instruction was executed successfully.
  * @param   pvFault     The fault address (CR2).
- * @param   pcbSize     Size of the write (if applicable).
  *
  * @remark  Invalid opcode exceptions have a higher priority than GP (see Intel
  *          Architecture System Developers Manual, Vol 3, 5.5) so we don't need
@@ -819,8 +889,7 @@ VMM_INT_DECL(VBOXSTRICTRC) EMInterpretInstruction(PVMCPU pVCpu, PCPUMCTXCORE pRe
  * @retval  VERR_EM_INTERPRETER     Something we can't cope with.
  * @retval  VERR_*                  Fatal errors.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  * @param   pRegFrame   The register frame.
  *                      Updates the EIP if an instruction was executed successfully.
  * @param   pvFault     The fault address (CR2).
@@ -956,13 +1025,11 @@ VMM_INT_DECL(VBOXSTRICTRC) EMInterpretInstructionEx(PVMCPU pVCpu, PCPUMCTXCORE p
  * @retval  VERR_EM_INTERPRETER     Something we can't cope with.
  * @retval  VERR_*                  Fatal errors.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  * @param   pDis        The disassembler cpu state for the instruction to be
  *                      interpreted.
  * @param   pRegFrame   The register frame. IP/EIP/RIP *IS* changed!
  * @param   pvFault     The fault address (CR2).
- * @param   pcbSize     Size of the write (if applicable).
  * @param   enmCodeType Code type (user/supervisor)
  *
  * @remark  Invalid opcode exceptions have a higher priority than GP (see Intel
@@ -1065,8 +1132,8 @@ DECLINLINE(int) emRCStackRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pCtxCore, void
  * Interpret IRET (currently only to V86 code) - PATM only.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  *
  */
@@ -1116,13 +1183,14 @@ VMM_INT_DECL(int) EMInterpretIretV86ForPatm(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE 
     return VINF_SUCCESS;
 }
 
+# ifndef VBOX_WITH_IEM
 /**
  * IRET Emulation.
  */
 static int emInterpretIret(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault, uint32_t *pcbSize)
 {
 #ifdef VBOX_WITH_RAW_RING1
-    NOREF(pvFault); NOREF(pcbSize);
+    NOREF(pvFault); NOREF(pcbSize); NOREF(pDis);
     if (EMIsRawRing1Enabled(pVM))
     {
         RTGCUINTPTR pIretStack = (RTGCUINTPTR)pRegFrame->esp;
@@ -1131,7 +1199,7 @@ static int emInterpretIret(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
         uint32_t    cpl, rpl;
 
         /* We only execute 32-bits protected mode code in raw mode, so no need to bother to check for 16-bits code here. */
-        /* @todo: we don't verify all the edge cases that generate #GP faults */
+        /** @todo we don't verify all the edge cases that generate #GP faults */
 
         Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
         Assert(!CPUMIsGuestIn64BitCode(pVCpu));
@@ -1159,7 +1227,7 @@ static int emInterpretIret(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
             rc |= emRCStackRead(pVM, pVCpu, pRegFrame, &ss,       (RTGCPTR)(pIretStack + 16), 4);
             AssertRCReturn(rc, VERR_EM_INTERPRETER);
             Log(("emInterpretIret: return to different privilege level (rpl=%d cpl=%d)\n", rpl, cpl));
-            Log(("emInterpretIret: SS:ESP=%04X:08X\n", ss, esp));
+            Log(("emInterpretIret: SS:ESP=%04x:%08x\n", ss, esp));
             pRegFrame->ss.Sel = ss;
             pRegFrame->esp    = esp;
         }
@@ -1182,6 +1250,7 @@ static int emInterpretIret(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
 #endif
     return VERR_EM_INTERPRETER;
 }
+# endif /* !VBOX_WITH_IEM */
 
 #endif /* IN_RC */
 
@@ -1202,26 +1271,27 @@ static int emInterpretIret(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
  * Interpret CPUID given the parameters in the CPU context.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  *
  */
 VMM_INT_DECL(int) EMInterpretCpuId(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
 {
     Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
-    uint32_t iLeaf = pRegFrame->eax;
+    uint32_t iLeaf    = pRegFrame->eax;
+    uint32_t iSubLeaf = pRegFrame->ecx;
     NOREF(pVM);
 
     /* cpuid clears the high dwords of the affected 64 bits registers. */
     pRegFrame->rax = 0;
     pRegFrame->rbx = 0;
-    pRegFrame->rcx &= UINT64_C(0x00000000ffffffff);
+    pRegFrame->rcx = 0;
     pRegFrame->rdx = 0;
 
     /* Note: operates the same in 64 and non-64 bits mode. */
-    CPUMGetGuestCpuId(pVCpu, iLeaf, &pRegFrame->eax, &pRegFrame->ebx, &pRegFrame->ecx, &pRegFrame->edx);
-    Log(("Emulate: CPUID %x -> %08x %08x %08x %08x\n", iLeaf, pRegFrame->eax, pRegFrame->ebx, pRegFrame->ecx, pRegFrame->edx));
+    CPUMGetGuestCpuId(pVCpu, iLeaf, iSubLeaf, &pRegFrame->eax, &pRegFrame->ebx, &pRegFrame->ecx, &pRegFrame->edx);
+    Log(("Emulate: CPUID %x/%x -> %08x %08x %08x %08x\n", iLeaf, iSubLeaf, pRegFrame->eax, pRegFrame->ebx, pRegFrame->ecx, pRegFrame->edx));
     return VINF_SUCCESS;
 }
 
@@ -1230,8 +1300,8 @@ VMM_INT_DECL(int) EMInterpretCpuId(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame
  * Interpret RDTSC.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  *
  */
@@ -1246,8 +1316,8 @@ VMM_INT_DECL(int) EMInterpretRdtsc(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame
     uint64_t uTicks = TMCpuTickGet(pVCpu);
 
     /* Same behaviour in 32 & 64 bits mode */
-    pRegFrame->rax = (uint32_t)uTicks;
-    pRegFrame->rdx = (uTicks >> 32ULL);
+    pRegFrame->rax = RT_LO_U32(uTicks);
+    pRegFrame->rdx = RT_HI_U32(uTicks);
 #ifdef VBOX_COMPARE_IEM_AND_EM
     g_fIgnoreRaxRdx = true;
 #endif
@@ -1260,8 +1330,8 @@ VMM_INT_DECL(int) EMInterpretRdtsc(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame
  * Interpret RDTSCP.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pCtx        The CPU context.
  *
  */
@@ -1270,7 +1340,7 @@ VMM_INT_DECL(int) EMInterpretRdtscp(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
     Assert(pCtx == CPUMQueryGuestCtxPtr(pVCpu));
     uint32_t uCR4 = CPUMGetGuestCR4(pVCpu);
 
-    if (!CPUMGetGuestCpuIdFeature(pVM, CPUMCPUIDFEATURE_RDTSCP))
+    if (!pVM->cpum.ro.GuestFeatures.fRdTscP)
     {
         AssertFailed();
         return VERR_EM_INTERPRETER; /* genuine #UD */
@@ -1282,13 +1352,13 @@ VMM_INT_DECL(int) EMInterpretRdtscp(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
     uint64_t uTicks = TMCpuTickGet(pVCpu);
 
     /* Same behaviour in 32 & 64 bits mode */
-    pCtx->rax = (uint32_t)uTicks;
-    pCtx->rdx = (uTicks >> 32ULL);
+    pCtx->rax = RT_LO_U32(uTicks);
+    pCtx->rdx = RT_HI_U32(uTicks);
 #ifdef VBOX_COMPARE_IEM_AND_EM
     g_fIgnoreRaxRdx = true;
 #endif
     /* Low dword of the TSC_AUX msr only. */
-    CPUMQueryGuestMsr(pVCpu, MSR_K8_TSC_AUX, &pCtx->rcx);
+    VBOXSTRICTRC rc2 = CPUMQueryGuestMsr(pVCpu, MSR_K8_TSC_AUX, &pCtx->rcx); Assert(rc2 == VINF_SUCCESS); NOREF(rc2);
     pCtx->rcx &= UINT32_C(0xffffffff);
 
     return VINF_SUCCESS;
@@ -1298,8 +1368,8 @@ VMM_INT_DECL(int) EMInterpretRdtscp(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx)
  * Interpret RDPMC.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  *
  */
@@ -1319,8 +1389,8 @@ VMM_INT_DECL(int) EMInterpretRdpmc(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame
     /* Just return zero here; rather tricky to properly emulate this, especially as the specs are a mess. */
     pRegFrame->rax = 0;
     pRegFrame->rdx = 0;
-    /** @todo We should trigger a #GP here if the CPU doesn't support the index in ecx
-     *        but see @bugref{3472}! */
+    /** @todo We should trigger a \#GP here if the CPU doesn't support the index in
+     *        ecx but see @bugref{3472}! */
 
     NOREF(pVM);
     return VINF_SUCCESS;
@@ -1341,7 +1411,7 @@ VMM_INT_DECL(VBOXSTRICTRC) EMInterpretMWait(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE 
     if (cpl != 0)
         return VERR_EM_INTERPRETER; /* supervisor only */
 
-    CPUMGetGuestCpuId(pVCpu, 1, &u32Dummy, &u32Dummy, &u32ExtFeatures, &u32Dummy);
+    CPUMGetGuestCpuId(pVCpu, 1, 0, &u32Dummy, &u32Dummy, &u32ExtFeatures, &u32Dummy);
     if (!(u32ExtFeatures & X86_CPUID_FEATURE_ECX_MONITOR))
         return VERR_EM_INTERPRETER; /* not supported */
 
@@ -1349,7 +1419,7 @@ VMM_INT_DECL(VBOXSTRICTRC) EMInterpretMWait(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE 
      * CPUID.05H.ECX[0] defines support for power management extensions (eax)
      * CPUID.05H.ECX[1] defines support for interrupts as break events for mwait even when IF=0
      */
-    CPUMGetGuestCpuId(pVCpu, 5, &u32Dummy, &u32Dummy, &u32MWaitFeatures, &u32Dummy);
+    CPUMGetGuestCpuId(pVCpu, 5, 0, &u32Dummy, &u32Dummy, &u32MWaitFeatures, &u32Dummy);
     if (pRegFrame->ecx > 1)
     {
         Log(("EMInterpretMWait: unexpected ecx value %x -> recompiler\n", pRegFrame->ecx));
@@ -1386,7 +1456,7 @@ VMM_INT_DECL(int) EMInterpretMonitor(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFra
     if (cpl != 0)
         return VERR_EM_INTERPRETER; /* supervisor only */
 
-    CPUMGetGuestCpuId(pVCpu, 1, &u32Dummy, &u32Dummy, &u32ExtFeatures, &u32Dummy);
+    CPUMGetGuestCpuId(pVCpu, 1, 0, &u32Dummy, &u32Dummy, &u32ExtFeatures, &u32Dummy);
     if (!(u32ExtFeatures & X86_CPUID_FEATURE_ECX_MONITOR))
         return VERR_EM_INTERPRETER; /* not supported */
 
@@ -1401,8 +1471,8 @@ VMM_INT_DECL(int) EMInterpretMonitor(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFra
  * Interpret INVLPG.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  * @param   pAddrGC     Operand address.
  *
@@ -1425,227 +1495,6 @@ VMM_INT_DECL(VBOXSTRICTRC) EMInterpretInvlpg(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE
                     ("%Rrc addr=%RGv\n", VBOXSTRICTRC_VAL(rc), pAddrGC),
                     VERR_EM_INTERPRETER);
     return rc;
-}
-
-
-/**
- * Update CRx.
- *
- * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
- * @param   pRegFrame   The register frame.
- * @param   DestRegCRx  CRx register index (DISUSE_REG_CR*)
- * @param   val         New CRx value
- *
- */
-static int emUpdateCRx(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegCrx, uint64_t val)
-{
-    uint64_t oldval;
-    uint64_t msrEFER;
-    int      rc, rc2;
-    NOREF(pVM);
-
-    /** @todo Clean up this mess. */
-    LogFlow(("EMInterpretCRxWrite at %RGv CR%d <- %RX64\n", (RTGCPTR)pRegFrame->rip, DestRegCrx, val));
-    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
-    switch (DestRegCrx)
-    {
-    case DISCREG_CR0:
-        oldval = CPUMGetGuestCR0(pVCpu);
-#ifdef IN_RC
-        /* CR0.WP and CR0.AM changes require a reschedule run in ring 3. */
-        if (    (val    & (X86_CR0_WP | X86_CR0_AM))
-            !=  (oldval & (X86_CR0_WP | X86_CR0_AM)))
-            return VERR_EM_INTERPRETER;
-#endif
-        rc = VINF_SUCCESS;
-#if !defined(VBOX_COMPARE_IEM_AND_EM) || !defined(VBOX_COMPARE_IEM_LAST)
-        CPUMSetGuestCR0(pVCpu, val);
-#else
-        CPUMQueryGuestCtxPtr(pVCpu)->cr0 = val | X86_CR0_ET;
-#endif
-        val = CPUMGetGuestCR0(pVCpu);
-        if (    (oldval & (X86_CR0_PG | X86_CR0_WP | X86_CR0_PE))
-            !=  (val    & (X86_CR0_PG | X86_CR0_WP | X86_CR0_PE)))
-        {
-            /* global flush */
-            rc = PGMFlushTLB(pVCpu, CPUMGetGuestCR3(pVCpu), true /* global */);
-            AssertRCReturn(rc, rc);
-        }
-
-        /* Deal with long mode enabling/disabling. */
-        msrEFER = CPUMGetGuestEFER(pVCpu);
-        if (msrEFER & MSR_K6_EFER_LME)
-        {
-            if (    !(oldval & X86_CR0_PG)
-                &&  (val & X86_CR0_PG))
-            {
-                /* Illegal to have an active 64 bits CS selector (AMD Arch. Programmer's Manual Volume 2: Table 14-5) */
-                if (pRegFrame->cs.Attr.n.u1Long)
-                {
-                    AssertMsgFailed(("Illegal enabling of paging with CS.u1Long = 1!!\n"));
-                    return VERR_EM_INTERPRETER; /** @todo generate #GP(0) */
-                }
-
-                /* Illegal to switch to long mode before activating PAE first (AMD Arch. Programmer's Manual Volume 2: Table 14-5) */
-                if (!(CPUMGetGuestCR4(pVCpu) & X86_CR4_PAE))
-                {
-                    AssertMsgFailed(("Illegal enabling of paging with PAE disabled!!\n"));
-                    return VERR_EM_INTERPRETER; /** @todo generate #GP(0) */
-                }
-                msrEFER |= MSR_K6_EFER_LMA;
-            }
-            else
-            if (    (oldval & X86_CR0_PG)
-                &&  !(val & X86_CR0_PG))
-            {
-                msrEFER &= ~MSR_K6_EFER_LMA;
-                /** @todo Do we need to cut off rip here? High dword of rip is undefined, so it shouldn't really matter. */
-            }
-            CPUMSetGuestEFER(pVCpu, msrEFER);
-        }
-        rc2 = PGMChangeMode(pVCpu, CPUMGetGuestCR0(pVCpu), CPUMGetGuestCR4(pVCpu), CPUMGetGuestEFER(pVCpu));
-        return rc2 == VINF_SUCCESS ? rc : rc2;
-
-    case DISCREG_CR2:
-        rc = CPUMSetGuestCR2(pVCpu, val); AssertRC(rc);
-        return VINF_SUCCESS;
-
-    case DISCREG_CR3:
-        /* Reloading the current CR3 means the guest just wants to flush the TLBs */
-        rc = CPUMSetGuestCR3(pVCpu, val); AssertRC(rc);
-        if (CPUMGetGuestCR0(pVCpu) & X86_CR0_PG)
-        {
-            /* flush */
-            rc = PGMFlushTLB(pVCpu, val, !(CPUMGetGuestCR4(pVCpu) & X86_CR4_PGE));
-            AssertRC(rc);
-        }
-        return rc;
-
-    case DISCREG_CR4:
-        oldval = CPUMGetGuestCR4(pVCpu);
-        rc = CPUMSetGuestCR4(pVCpu, val); AssertRC(rc);
-        val = CPUMGetGuestCR4(pVCpu);
-
-        /* Illegal to disable PAE when long mode is active. (AMD Arch. Programmer's Manual Volume 2: Table 14-5) */
-        msrEFER = CPUMGetGuestEFER(pVCpu);
-        if (    (msrEFER & MSR_K6_EFER_LMA)
-            &&  (oldval & X86_CR4_PAE)
-            &&  !(val & X86_CR4_PAE))
-        {
-            return VERR_EM_INTERPRETER; /** @todo generate #GP(0) */
-        }
-
-        rc = VINF_SUCCESS;
-        if (    (oldval & (X86_CR4_PGE|X86_CR4_PAE|X86_CR4_PSE))
-            !=  (val    & (X86_CR4_PGE|X86_CR4_PAE|X86_CR4_PSE)))
-        {
-            /* global flush */
-            rc = PGMFlushTLB(pVCpu, CPUMGetGuestCR3(pVCpu), true /* global */);
-            AssertRCReturn(rc, rc);
-        }
-
-        /* Feeling extremely lazy. */
-# ifdef IN_RC
-        if (    (oldval & (X86_CR4_OSFSXR|X86_CR4_OSXMMEEXCPT|X86_CR4_PCE|X86_CR4_MCE|X86_CR4_PAE|X86_CR4_DE|X86_CR4_TSD|X86_CR4_PVI|X86_CR4_VME))
-            !=  (val    & (X86_CR4_OSFSXR|X86_CR4_OSXMMEEXCPT|X86_CR4_PCE|X86_CR4_MCE|X86_CR4_PAE|X86_CR4_DE|X86_CR4_TSD|X86_CR4_PVI|X86_CR4_VME)))
-        {
-            Log(("emInterpretMovCRx: CR4: %#RX64->%#RX64 => R3\n", oldval, val));
-            VMCPU_FF_SET(pVCpu, VMCPU_FF_TO_R3);
-        }
-# endif
-# ifdef VBOX_WITH_RAW_MODE
-        if (((val ^ oldval) & X86_CR4_VME) && !HMIsEnabled(pVM))
-            VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_TSS);
-# endif
-
-        rc2 = PGMChangeMode(pVCpu, CPUMGetGuestCR0(pVCpu), CPUMGetGuestCR4(pVCpu), CPUMGetGuestEFER(pVCpu));
-        return rc2 == VINF_SUCCESS ? rc : rc2;
-
-    case DISCREG_CR8:
-        return PDMApicSetTPR(pVCpu, val << 4);  /* cr8 bits 3-0 correspond to bits 7-4 of the task priority mmio register. */
-
-    default:
-        AssertFailed();
-    case DISCREG_CR1: /* illegal op */
-        break;
-    }
-    return VERR_EM_INTERPRETER;
-}
-
-
-/**
- * Interpret CRx write.
- *
- * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
- * @param   pRegFrame   The register frame.
- * @param   DestRegCRx  CRx register index (DISUSE_REG_CR*)
- * @param   SrcRegGen   General purpose register index (USE_REG_E**))
- *
- */
-VMM_INT_DECL(int) EMInterpretCRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegCrx, uint32_t SrcRegGen)
-{
-    uint64_t val;
-    int      rc;
-    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
-
-    if (CPUMIsGuestIn64BitCode(pVCpu))
-        rc = DISFetchReg64(pRegFrame, SrcRegGen, &val);
-    else
-    {
-        uint32_t val32;
-        rc = DISFetchReg32(pRegFrame, SrcRegGen, &val32);
-        val = val32;
-    }
-
-    if (RT_SUCCESS(rc))
-        return emUpdateCRx(pVM, pVCpu, pRegFrame, DestRegCrx, val);
-
-    return VERR_EM_INTERPRETER;
-}
-
-/**
- * Interpret LMSW.
- *
- * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
- * @param   pRegFrame   The register frame.
- * @param   u16Data     LMSW source data.
- *
- */
-VMM_INT_DECL(int) EMInterpretLMSW(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint16_t u16Data)
-{
-    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
-    uint64_t OldCr0 = CPUMGetGuestCR0(pVCpu);
-
-    /* Only PE, MP, EM and TS can be changed; note that PE can't be cleared by this instruction. */
-    uint64_t NewCr0 = ( OldCr0 & ~(             X86_CR0_MP | X86_CR0_EM | X86_CR0_TS))
-                    | (u16Data &  (X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS));
-
-    return emUpdateCRx(pVM, pVCpu, pRegFrame, DISCREG_CR0, NewCr0);
-}
-
-
-/**
- * Interpret CLTS.
- *
- * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
- *
- */
-VMM_INT_DECL(int) EMInterpretCLTS(PVM pVM, PVMCPU pVCpu)
-{
-    NOREF(pVM);
-
-    uint64_t cr0 = CPUMGetGuestCR0(pVCpu);
-    if (!(cr0 & X86_CR0_TS))
-        return VINF_SUCCESS;
-    return CPUMSetGuestCR0(pVCpu, cr0 & ~X86_CR0_TS);
 }
 
 
@@ -1707,8 +1556,8 @@ static const char *emMSRtoString(uint32_t uMsr)
  * Interpret RDMSR
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  */
 VMM_INT_DECL(int) EMInterpretRdmsr(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
@@ -1723,17 +1572,17 @@ VMM_INT_DECL(int) EMInterpretRdmsr(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame
     }
 
     uint64_t uValue;
-    int rc = CPUMQueryGuestMsr(pVCpu, pRegFrame->ecx, &uValue);
-    if (RT_UNLIKELY(rc != VINF_SUCCESS))
+    VBOXSTRICTRC rcStrict = CPUMQueryGuestMsr(pVCpu, pRegFrame->ecx, &uValue);
+    if (RT_UNLIKELY(rcStrict != VINF_SUCCESS))
     {
-        Assert(rc == VERR_CPUM_RAISE_GP_0);
-        Log4(("EM: Refuse RDMSR: rc=%Rrc\n", rc));
+        Log4(("EM: Refuse RDMSR: rc=%Rrc\n", VBOXSTRICTRC_VAL(rcStrict)));
+        Assert(rcStrict == VERR_CPUM_RAISE_GP_0 || rcStrict == VERR_EM_INTERPRETER || rcStrict == VINF_CPUM_R3_MSR_READ);
         return VERR_EM_INTERPRETER;
     }
-    pRegFrame->rax = (uint32_t) uValue;
-    pRegFrame->rdx = (uint32_t)(uValue >> 32);
+    pRegFrame->rax = RT_LO_U32(uValue);
+    pRegFrame->rdx = RT_HI_U32(uValue);
     LogFlow(("EMInterpretRdmsr %s (%x) -> %RX64\n", emMSRtoString(pRegFrame->ecx), pRegFrame->ecx, uValue));
-    return rc;
+    return VINF_SUCCESS;
 }
 
 
@@ -1741,8 +1590,8 @@ VMM_INT_DECL(int) EMInterpretRdmsr(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame
  * Interpret WRMSR
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  */
 VMM_INT_DECL(int) EMInterpretWrmsr(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame)
@@ -1756,50 +1605,17 @@ VMM_INT_DECL(int) EMInterpretWrmsr(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame
         return VERR_EM_INTERPRETER; /** @todo raise \#GP(0) */
     }
 
-    int rc = CPUMSetGuestMsr(pVCpu, pRegFrame->ecx, RT_MAKE_U64(pRegFrame->eax, pRegFrame->edx));
-    if (rc != VINF_SUCCESS)
+    VBOXSTRICTRC rcStrict = CPUMSetGuestMsr(pVCpu, pRegFrame->ecx, RT_MAKE_U64(pRegFrame->eax, pRegFrame->edx));
+    if (rcStrict != VINF_SUCCESS)
     {
-        Assert(rc == VERR_CPUM_RAISE_GP_0);
-        Log4(("EM: Refuse WRMSR: rc=%d\n", rc));
+        Log4(("EM: Refuse WRMSR: CPUMSetGuestMsr returned %Rrc\n",  VBOXSTRICTRC_VAL(rcStrict)));
+        Assert(rcStrict == VERR_CPUM_RAISE_GP_0 || rcStrict == VERR_EM_INTERPRETER || rcStrict == VINF_CPUM_R3_MSR_WRITE);
         return VERR_EM_INTERPRETER;
     }
     LogFlow(("EMInterpretWrmsr %s (%x) val=%RX64\n", emMSRtoString(pRegFrame->ecx), pRegFrame->ecx,
              RT_MAKE_U64(pRegFrame->eax, pRegFrame->edx)));
     NOREF(pVM);
-    return rc;
-}
-
-
-/**
- * Interpret CRx read.
- *
- * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
- * @param   pRegFrame   The register frame.
- * @param   DestRegGen  General purpose register index (USE_REG_E**))
- * @param   SrcRegCRx   CRx register index (DISUSE_REG_CR*)
- *
- */
-VMM_INT_DECL(int) EMInterpretCRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegGen, uint32_t SrcRegCrx)
-{
-    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
-    uint64_t val64;
-    int rc = CPUMGetGuestCRx(pVCpu, SrcRegCrx, &val64);
-    AssertMsgRCReturn(rc, ("CPUMGetGuestCRx %d failed\n", SrcRegCrx), VERR_EM_INTERPRETER);
-    NOREF(pVM);
-
-    if (CPUMIsGuestIn64BitCode(pVCpu))
-        rc = DISWriteReg64(pRegFrame, DestRegGen, val64);
-    else
-        rc = DISWriteReg32(pRegFrame, DestRegGen, val64);
-
-    if (RT_SUCCESS(rc))
-    {
-        LogFlow(("MOV_CR: gen32=%d CR=%d val=%RX64\n", DestRegGen, SrcRegCrx, val64));
-        return VINF_SUCCESS;
-    }
-    return VERR_EM_INTERPRETER;
+    return VINF_SUCCESS;
 }
 
 
@@ -1807,10 +1623,10 @@ VMM_INT_DECL(int) EMInterpretCRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFra
  * Interpret DRx write.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
- * @param   DestRegDRx  DRx register index (USE_REG_DR*)
+ * @param   DestRegDrx  DRx register index (USE_REG_DR*)
  * @param   SrcRegGen   General purpose register index (USE_REG_E**))
  *
  */
@@ -1857,12 +1673,11 @@ VMM_INT_DECL(int) EMInterpretDRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFr
  * Interpret DRx read.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pRegFrame   The register frame.
  * @param   DestRegGen  General purpose register index (USE_REG_E**))
- * @param   SrcRegDRx   DRx register index (USE_REG_DR*)
- *
+ * @param   SrcRegDrx   DRx register index (USE_REG_DR*)
  */
 VMM_INT_DECL(int) EMInterpretDRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegGen, uint32_t SrcRegDrx)
 {
@@ -2399,7 +2214,7 @@ static int emInterpretLockOrXorAnd(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCP
     DISQPVPARAMVAL param1, param2;
     NOREF(pvFault);
 
-#if HC_ARCH_BITS == 32 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0)
+#if HC_ARCH_BITS == 32
     Assert(pDis->Param1.cb <= 4);
 #endif
 
@@ -2615,7 +2430,7 @@ static int emInterpretBitTest(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTX
 
             Log2(("emInterpret%s: pvFault=%RGv pParam1=%RGv val2=%x\n", emGetMnemonic(pDis), pvFault, pParam1, valpar2));
             pParam1 = (RTGCPTR)((RTGCUINTPTR)pParam1 + valpar2/8);
-            EM_ASSERT_FAULT_RETURN((RTGCPTR)((RTGCUINTPTR)pParam1 & ~3) == pvFault, VERR_EM_INTERPRETER);
+            EM_ASSERT_FAULT_RETURN((RTGCPTR)((RTGCUINTPTR)pParam1 & ~3) == pvFault, VERR_EM_INTERPRETER); NOREF(pvFault);
             rc = emRamRead(pVM, pVCpu, pRegFrame, &valpar1, pParam1, 1);
             if (RT_FAILURE(rc))
             {
@@ -2691,6 +2506,7 @@ static int emInterpretLockBitTest(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPU
     AssertRCReturn(rc, VERR_EM_INTERPRETER);
 
     Log2(("emInterpretLockBitTest %s: pvFault=%RGv GCPtrPar1=%RGv imm=%RX64\n", emGetMnemonic(pDis), pvFault, GCPtrPar1, ValPar2));
+    NOREF(pvFault);
 
     /* Try emulate it with a one-shot #PF handler in place. (RC) */
     RTGCUINTREG32 eflags = 0;
@@ -2730,6 +2546,12 @@ static int emInterpretMov(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE
     if(RT_FAILURE(rc))
         return VERR_EM_INTERPRETER;
 
+    /* If destination is a segment register, punt. We can't handle it here.
+     * NB: Source can be a register and still trigger a #PF!
+     */
+    if (RT_UNLIKELY(pDis->Param1.fUse == DISUSE_REG_SEG))
+        return VERR_EM_INTERPRETER;
+
     if (param1.type == DISQPV_TYPE_ADDRESS)
     {
         RTGCPTR pDest;
@@ -2740,7 +2562,7 @@ static int emInterpretMov(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE
         case DISQPV_TYPE_IMMEDIATE:
             if(!(param1.flags  & (DISQPV_FLAG_32|DISQPV_FLAG_64)))
                 return VERR_EM_INTERPRETER;
-            /* fallthru */
+            RT_FALL_THRU();
 
         case DISQPV_TYPE_ADDRESS:
             pDest = (RTGCPTR)param1.val.val64;
@@ -2813,7 +2635,7 @@ static int emInterpretMov(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE
         case DISQPV_TYPE_IMMEDIATE:
             if(!(param2.flags & (DISQPV_FLAG_32|DISQPV_FLAG_64)))
                 return VERR_EM_INTERPRETER;
-            /* fallthru */
+            RT_FALL_THRU();
 
         case DISQPV_TYPE_ADDRESS:
             pSrc = (RTGCPTR)param2.val.val64;
@@ -3025,7 +2847,7 @@ static int emInterpretCmpXchg(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTX
     DISQPVPARAMVAL param1, param2;
     NOREF(pvFault);
 
-#if HC_ARCH_BITS == 32 && !defined(VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0)
+#if HC_ARCH_BITS == 32
     Assert(pDis->Param1.cb <= 4);
 #endif
 
@@ -3135,7 +2957,7 @@ static int emInterpretCmpXchg8b(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMC
         return VERR_EM_INTERPRETER;
     }
 
-    LogFlow(("%s %RGv=%08x eax=%08x\n", emGetMnemonic(pDis), pvParam1, pRegFrame->eax));
+    LogFlow(("%s %RGv=%p eax=%08x\n", emGetMnemonic(pDis), GCPtrPar1, pvParam1, pRegFrame->eax));
 
 #ifndef VBOX_COMPARE_IEM_AND_EM
     if (pDis->fPrefix & DISPREFIX_LOCK)
@@ -3148,7 +2970,7 @@ static int emInterpretCmpXchg8b(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMC
     int rc2 = emRamWrite(pVM, pVCpu, pRegFrame, GCPtrPar1, &u64, sizeof(u64)); AssertRCSuccess(rc2);
 #endif /* VBOX_COMPARE_IEM_AND_EM */
 
-    LogFlow(("%s %RGv=%08x eax=%08x ZF=%d\n", emGetMnemonic(pDis), pvParam1, pRegFrame->eax, !!(eflags & X86_EFL_ZF)));
+    LogFlow(("%s %RGv=%p eax=%08x ZF=%d\n", emGetMnemonic(pDis), GCPtrPar1, pvParam1, pRegFrame->eax, !!(eflags & X86_EFL_ZF)));
 
     /* Update guest's eflags and finish; note that *only* ZF is affected. */
     pRegFrame->eflags.u32 =   (pRegFrame->eflags.u32 & ~(X86_EFL_ZF))
@@ -3321,8 +3143,178 @@ static int emInterpretCpuId(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCO
  */
 static int emInterpretClts(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault, uint32_t *pcbSize)
 {
-    NOREF(pDis); NOREF(pRegFrame); NOREF(pvFault); NOREF(pcbSize);
-    return EMInterpretCLTS(pVM, pVCpu);
+    NOREF(pVM); NOREF(pDis); NOREF(pRegFrame); NOREF(pvFault); NOREF(pcbSize);
+
+    uint64_t cr0 = CPUMGetGuestCR0(pVCpu);
+    if (!(cr0 & X86_CR0_TS))
+        return VINF_SUCCESS;
+    return CPUMSetGuestCR0(pVCpu, cr0 & ~X86_CR0_TS);
+}
+
+
+/**
+ * Update CRx.
+ *
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
+ * @param   pRegFrame   The register frame.
+ * @param   DestRegCrx  CRx register index (DISUSE_REG_CR*)
+ * @param   val         New CRx value
+ *
+ */
+static int emUpdateCRx(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegCrx, uint64_t val)
+{
+    uint64_t oldval;
+    uint64_t msrEFER;
+    uint32_t fValid;
+    int      rc, rc2;
+    NOREF(pVM);
+
+    /** @todo Clean up this mess. */
+    LogFlow(("emInterpretCRxWrite at %RGv CR%d <- %RX64\n", (RTGCPTR)pRegFrame->rip, DestRegCrx, val));
+    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
+    switch (DestRegCrx)
+    {
+    case DISCREG_CR0:
+        oldval = CPUMGetGuestCR0(pVCpu);
+#ifdef IN_RC
+        /* CR0.WP and CR0.AM changes require a reschedule run in ring 3. */
+        if (    (val    & (X86_CR0_WP | X86_CR0_AM))
+            !=  (oldval & (X86_CR0_WP | X86_CR0_AM)))
+            return VERR_EM_INTERPRETER;
+#endif
+        rc = VINF_SUCCESS;
+#if !defined(VBOX_COMPARE_IEM_AND_EM) || !defined(VBOX_COMPARE_IEM_LAST)
+        CPUMSetGuestCR0(pVCpu, val);
+#else
+        CPUMQueryGuestCtxPtr(pVCpu)->cr0 = val | X86_CR0_ET;
+#endif
+        val = CPUMGetGuestCR0(pVCpu);
+        if (    (oldval & (X86_CR0_PG | X86_CR0_WP | X86_CR0_PE))
+            !=  (val    & (X86_CR0_PG | X86_CR0_WP | X86_CR0_PE)))
+        {
+            /* global flush */
+            rc = PGMFlushTLB(pVCpu, CPUMGetGuestCR3(pVCpu), true /* global */);
+            AssertRCReturn(rc, rc);
+        }
+
+        /* Deal with long mode enabling/disabling. */
+        msrEFER = CPUMGetGuestEFER(pVCpu);
+        if (msrEFER & MSR_K6_EFER_LME)
+        {
+            if (    !(oldval & X86_CR0_PG)
+                &&  (val & X86_CR0_PG))
+            {
+                /* Illegal to have an active 64 bits CS selector (AMD Arch. Programmer's Manual Volume 2: Table 14-5) */
+                if (pRegFrame->cs.Attr.n.u1Long)
+                {
+                    AssertMsgFailed(("Illegal enabling of paging with CS.u1Long = 1!!\n"));
+                    return VERR_EM_INTERPRETER; /** @todo generate \#GP(0) */
+                }
+
+                /* Illegal to switch to long mode before activating PAE first (AMD Arch. Programmer's Manual Volume 2: Table 14-5) */
+                if (!(CPUMGetGuestCR4(pVCpu) & X86_CR4_PAE))
+                {
+                    AssertMsgFailed(("Illegal enabling of paging with PAE disabled!!\n"));
+                    return VERR_EM_INTERPRETER; /** @todo generate \#GP(0) */
+                }
+                msrEFER |= MSR_K6_EFER_LMA;
+            }
+            else
+            if (    (oldval & X86_CR0_PG)
+                &&  !(val & X86_CR0_PG))
+            {
+                msrEFER &= ~MSR_K6_EFER_LMA;
+                /** @todo Do we need to cut off rip here? High dword of rip is undefined, so it shouldn't really matter. */
+            }
+            CPUMSetGuestEFER(pVCpu, msrEFER);
+        }
+        rc2 = PGMChangeMode(pVCpu, CPUMGetGuestCR0(pVCpu), CPUMGetGuestCR4(pVCpu), CPUMGetGuestEFER(pVCpu));
+        return rc2 == VINF_SUCCESS ? rc : rc2;
+
+    case DISCREG_CR2:
+        rc = CPUMSetGuestCR2(pVCpu, val); AssertRC(rc);
+        return VINF_SUCCESS;
+
+    case DISCREG_CR3:
+        /* Reloading the current CR3 means the guest just wants to flush the TLBs */
+        rc = CPUMSetGuestCR3(pVCpu, val); AssertRC(rc);
+        if (CPUMGetGuestCR0(pVCpu) & X86_CR0_PG)
+        {
+            /* flush */
+            rc = PGMFlushTLB(pVCpu, val, !(CPUMGetGuestCR4(pVCpu) & X86_CR4_PGE));
+            AssertRC(rc);
+        }
+        return rc;
+
+    case DISCREG_CR4:
+        oldval = CPUMGetGuestCR4(pVCpu);
+        rc = CPUMSetGuestCR4(pVCpu, val); AssertRC(rc);
+        val = CPUMGetGuestCR4(pVCpu);
+
+        /* Illegal to disable PAE when long mode is active. (AMD Arch. Programmer's Manual Volume 2: Table 14-5) */
+        msrEFER = CPUMGetGuestEFER(pVCpu);
+        if (    (msrEFER & MSR_K6_EFER_LMA)
+            &&  (oldval & X86_CR4_PAE)
+            &&  !(val & X86_CR4_PAE))
+        {
+            return VERR_EM_INTERPRETER; /** @todo generate \#GP(0) */
+        }
+
+        /* From IEM iemCImpl_load_CrX. */
+        /** @todo Check guest CPUID bits for determining corresponding valid bits. */
+        fValid = X86_CR4_VME | X86_CR4_PVI
+               | X86_CR4_TSD | X86_CR4_DE
+               | X86_CR4_PSE | X86_CR4_PAE
+               | X86_CR4_MCE | X86_CR4_PGE
+               | X86_CR4_PCE | X86_CR4_OSFXSR
+               | X86_CR4_OSXMMEEXCPT;
+        //if (xxx)
+        //    fValid |= X86_CR4_VMXE;
+        //if (xxx)
+        //    fValid |= X86_CR4_OSXSAVE;
+        if (val & ~(uint64_t)fValid)
+        {
+            Log(("Trying to set reserved CR4 bits: NewCR4=%#llx InvalidBits=%#llx\n", val, val & ~(uint64_t)fValid));
+            return VERR_EM_INTERPRETER; /** @todo generate \#GP(0) */
+        }
+
+        rc = VINF_SUCCESS;
+        if (    (oldval & (X86_CR4_PGE|X86_CR4_PAE|X86_CR4_PSE))
+            !=  (val    & (X86_CR4_PGE|X86_CR4_PAE|X86_CR4_PSE)))
+        {
+            /* global flush */
+            rc = PGMFlushTLB(pVCpu, CPUMGetGuestCR3(pVCpu), true /* global */);
+            AssertRCReturn(rc, rc);
+        }
+
+        /* Feeling extremely lazy. */
+# ifdef IN_RC
+        if (    (oldval & (X86_CR4_OSFXSR|X86_CR4_OSXMMEEXCPT|X86_CR4_PCE|X86_CR4_MCE|X86_CR4_PAE|X86_CR4_DE|X86_CR4_TSD|X86_CR4_PVI|X86_CR4_VME))
+            !=  (val    & (X86_CR4_OSFXSR|X86_CR4_OSXMMEEXCPT|X86_CR4_PCE|X86_CR4_MCE|X86_CR4_PAE|X86_CR4_DE|X86_CR4_TSD|X86_CR4_PVI|X86_CR4_VME)))
+        {
+            Log(("emInterpretMovCRx: CR4: %#RX64->%#RX64 => R3\n", oldval, val));
+            VMCPU_FF_SET(pVCpu, VMCPU_FF_TO_R3);
+        }
+# endif
+# ifdef VBOX_WITH_RAW_MODE
+        if (((val ^ oldval) & X86_CR4_VME) && !HMIsEnabled(pVM))
+            VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_TSS);
+# endif
+
+        rc2 = PGMChangeMode(pVCpu, CPUMGetGuestCR0(pVCpu), CPUMGetGuestCR4(pVCpu), CPUMGetGuestEFER(pVCpu));
+        return rc2 == VINF_SUCCESS ? rc : rc2;
+
+    case DISCREG_CR8:
+        return APICSetTpr(pVCpu, val << 4);  /* cr8 bits 3-0 correspond to bits 7-4 of the task priority mmio register. */
+
+    default:
+        AssertFailed();
+    case DISCREG_CR1: /* illegal op */
+        break;
+    }
+    return VERR_EM_INTERPRETER;
 }
 
 
@@ -3334,6 +3326,7 @@ static int emInterpretLmsw(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
     DISQPVPARAMVAL param1;
     uint32_t    val;
     NOREF(pvFault); NOREF(pcbSize);
+    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
 
     int rc = DISQueryParamVal(pRegFrame, pDis, &pDis->Param1, &param1, DISQPVWHICH_SRC);
     if(RT_FAILURE(rc))
@@ -3353,7 +3346,14 @@ static int emInterpretLmsw(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
     }
 
     LogFlow(("emInterpretLmsw %x\n", val));
-    return EMInterpretLMSW(pVM, pVCpu, pRegFrame, val);
+    uint64_t OldCr0 = CPUMGetGuestCR0(pVCpu);
+
+    /* Only PE, MP, EM and TS can be changed; note that PE can't be cleared by this instruction. */
+    uint64_t NewCr0 = ( OldCr0 & ~(             X86_CR0_MP | X86_CR0_EM | X86_CR0_TS))
+                    | (val     &  (X86_CR0_PE | X86_CR0_MP | X86_CR0_EM | X86_CR0_TS));
+
+    return emUpdateCRx(pVM, pVCpu, pRegFrame, DISCREG_CR0, NewCr0);
+
 }
 
 #ifdef EM_EMULATE_SMSW
@@ -3362,6 +3362,7 @@ static int emInterpretLmsw(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
  */
 static int emInterpretSmsw(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault, uint32_t *pcbSize)
 {
+    NOREF(pvFault); NOREF(pcbSize);
     DISQPVPARAMVAL param1;
     uint64_t    cr0 = CPUMGetGuestCR0(pVCpu);
 
@@ -3408,6 +3409,73 @@ static int emInterpretSmsw(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCOR
 }
 #endif
 
+
+/**
+ * Interpret CRx read.
+ *
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
+ * @param   pRegFrame   The register frame.
+ * @param   DestRegGen  General purpose register index (USE_REG_E**))
+ * @param   SrcRegCrx   CRx register index (DISUSE_REG_CR*)
+ *
+ */
+static int emInterpretCRxRead(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegGen, uint32_t SrcRegCrx)
+{
+    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
+    uint64_t val64;
+    int rc = CPUMGetGuestCRx(pVCpu, SrcRegCrx, &val64);
+    AssertMsgRCReturn(rc, ("CPUMGetGuestCRx %d failed\n", SrcRegCrx), VERR_EM_INTERPRETER);
+    NOREF(pVM);
+
+    if (CPUMIsGuestIn64BitCode(pVCpu))
+        rc = DISWriteReg64(pRegFrame, DestRegGen, val64);
+    else
+        rc = DISWriteReg32(pRegFrame, DestRegGen, val64);
+
+    if (RT_SUCCESS(rc))
+    {
+        LogFlow(("MOV_CR: gen32=%d CR=%d val=%RX64\n", DestRegGen, SrcRegCrx, val64));
+        return VINF_SUCCESS;
+    }
+    return VERR_EM_INTERPRETER;
+}
+
+
+/**
+ * Interpret CRx write.
+ *
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
+ * @param   pRegFrame   The register frame.
+ * @param   DestRegCrx  CRx register index (DISUSE_REG_CR*)
+ * @param   SrcRegGen   General purpose register index (USE_REG_E**))
+ *
+ */
+static int emInterpretCRxWrite(PVM pVM, PVMCPU pVCpu, PCPUMCTXCORE pRegFrame, uint32_t DestRegCrx, uint32_t SrcRegGen)
+{
+    uint64_t val;
+    int      rc;
+    Assert(pRegFrame == CPUMGetGuestCtxCore(pVCpu));
+
+    if (CPUMIsGuestIn64BitCode(pVCpu))
+        rc = DISFetchReg64(pRegFrame, SrcRegGen, &val);
+    else
+    {
+        uint32_t val32;
+        rc = DISFetchReg32(pRegFrame, SrcRegGen, &val32);
+        val = val32;
+    }
+
+    if (RT_SUCCESS(rc))
+        return emUpdateCRx(pVM, pVCpu, pRegFrame, DestRegCrx, val);
+
+    return VERR_EM_INTERPRETER;
+}
+
+
 /**
  * MOV CRx
  */
@@ -3415,10 +3483,10 @@ static int emInterpretMovCRx(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXC
 {
     NOREF(pvFault); NOREF(pcbSize);
     if ((pDis->Param1.fUse == DISUSE_REG_GEN32 || pDis->Param1.fUse == DISUSE_REG_GEN64) && pDis->Param2.fUse == DISUSE_REG_CR)
-        return EMInterpretCRxRead(pVM, pVCpu, pRegFrame, pDis->Param1.Base.idxGenReg, pDis->Param2.Base.idxCtrlReg);
+        return emInterpretCRxRead(pVM, pVCpu, pRegFrame, pDis->Param1.Base.idxGenReg, pDis->Param2.Base.idxCtrlReg);
 
     if (pDis->Param1.fUse == DISUSE_REG_CR && (pDis->Param2.fUse == DISUSE_REG_GEN32 || pDis->Param2.fUse == DISUSE_REG_GEN64))
-        return EMInterpretCRxWrite(pVM, pVCpu, pRegFrame, pDis->Param1.Base.idxCtrlReg, pDis->Param2.Base.idxGenReg);
+        return emInterpretCRxWrite(pVM, pVCpu, pRegFrame, pDis->Param1.Base.idxCtrlReg, pDis->Param2.Base.idxGenReg);
 
     AssertMsgFailedReturn(("Unexpected control register move\n"), VERR_EM_INTERPRETER);
 }
@@ -3640,6 +3708,7 @@ static int emInterpretWrmsr(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCO
 /**
  * Internal worker.
  * @copydoc emInterpretInstructionCPUOuter
+ * @param   pVM     The cross context VM structure.
  */
 DECLINLINE(VBOXSTRICTRC) emInterpretInstructionCPU(PVM pVM, PVMCPU pVCpu, PDISCPUSTATE pDis, PCPUMCTXCORE pRegFrame,
                                                    RTGCPTR pvFault, EMCODETYPE enmCodeType, uint32_t *pcbSize)
@@ -3726,16 +3795,6 @@ DECLINLINE(VBOXSTRICTRC) emInterpretInstructionCPU(PVM pVM, PVMCPU pVCpu, PDISCP
             &&  uOpCode != OP_BTS
             &&  uOpCode != OP_BTR
             &&  uOpCode != OP_BTC
-# ifdef VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
-            &&  uOpCode != OP_CMPXCHG /* solaris */
-            &&  uOpCode != OP_AND     /* windows */
-            &&  uOpCode != OP_OR      /* windows */
-            &&  uOpCode != OP_XOR     /* because we can */
-            &&  uOpCode != OP_ADD     /* windows (dripple) */
-            &&  uOpCode != OP_ADC     /* because we can */
-            &&  uOpCode != OP_SUB     /* because we can */
-            /** @todo OP_BTS or is that a different kind of failure? */
-# endif
             )
         {
 # ifdef VBOX_WITH_STATISTICS
@@ -3940,7 +3999,7 @@ DECLINLINE(VBOXSTRICTRC) emInterpretInstructionCPU(PVM pVM, PVMCPU pVCpu, PDISCP
  * @retval  VERR_EM_INTERPRETER     Something we can't cope with.
  * @retval  VERR_*                  Fatal errors.
  *
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pDis        The disassembler cpu state for the instruction to be
  *                      interpreted.
  * @param   pRegFrame   The register frame. EIP is *NOT* changed!

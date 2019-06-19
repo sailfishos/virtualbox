@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/heap.h>
 #include <iprt/initterm.h>
 #include <iprt/err.h>
@@ -38,8 +39,10 @@
 #include <iprt/test.h>
 
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
+    RT_NOREF_PV(argc); RT_NOREF_PV(argv);
+
     /*
      * Init runtime.
      */
@@ -94,7 +97,7 @@ int main(int argc, char *argv[])
         {        16,          0,    NULL,  7 },
     };
     unsigned i;
-    RTHeapSimpleDump(Heap, (PFNRTHEAPSIMPLEPRINTF)RTPrintf); /** @todo Add some detail info output with a signature identical to RTPrintf. */
+    RTHeapSimpleDump(Heap, (PFNRTHEAPSIMPLEPRINTF)(uintptr_t)RTPrintf); /** @todo Add some detail info output with a signature identical to RTPrintf. */
     size_t cbBefore = RTHeapSimpleGetFreeSize(Heap);
     static char szFill[] = "01234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
@@ -177,7 +180,7 @@ int main(int argc, char *argv[])
         RTTestIPrintf(RTTESTLVL_ALWAYS,
                       "Warning: Either we've split out an alignment chunk at the start, or we've got\n"
                       "         an alloc/free accounting bug: cbBefore=%d cbAfter=%d\n", cbBefore, cbAfter);
-        RTHeapSimpleDump(Heap, (PFNRTHEAPSIMPLEPRINTF)RTPrintf);
+        RTHeapSimpleDump(Heap, (PFNRTHEAPSIMPLEPRINTF)(uintptr_t)RTPrintf);
     }
 
     /* relocate and free the bits in heap2 now. */

@@ -1,11 +1,10 @@
 /* $Id: VBoxMPTypes.h $ */
-
 /** @file
  * VBox WDDM Miniport driver
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -129,6 +128,7 @@ typedef struct VBOXWDDM_SOURCE
     uint8_t u8SyncState;
     BOOLEAN fTargetsReported;
     BOOLEAN bVisible;
+    BOOLEAN bBlankedByPowerOff;
 #ifdef VBOX_WITH_CROGL
     /* specifies whether the source has 3D overlay data visible */
     BOOLEAN fHas3DVrs;
@@ -160,6 +160,11 @@ typedef struct VBOXWDDM_TARGET
     uint8_t u8SyncState;
     bool fConnected;
     bool fConfigured;
+    bool fBlankedByPowerOff;
+
+    /* Whether the host has disabled the virtual screen. */
+    /** @todo This should be merged with fConnected. */
+    bool fDisabled;
 } VBOXWDDM_TARGET, *PVBOXWDDM_TARGET;
 
 /* allocation */

@@ -127,6 +127,7 @@ void  STATE_APIENTRY crStatePolygonMode (GLenum face, GLenum mode)
             break;
         case GL_FRONT_AND_BACK:
             p->frontMode = mode;
+            RT_FALL_THRU();
         case GL_BACK:
             p->backMode = mode;
             break;
@@ -184,7 +185,7 @@ void STATE_APIENTRY crStatePolygonStipple (const GLubyte *p)
         return;
     }
 
-    /*@todo track mask if buffer is bound?*/
+    /** @todo track mask if buffer is bound?*/
     if (!crStateIsBufferBound(GL_PIXEL_UNPACK_BUFFER_ARB))
     {
         crMemcpy((char*)poly->stipple, (char*)p, 128);

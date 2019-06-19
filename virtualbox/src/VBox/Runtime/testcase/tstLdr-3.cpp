@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/ldr.h>
 #include <iprt/alloc.h>
 #include <iprt/stream.h>
@@ -38,13 +38,14 @@
 #include <VBox/dis.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTUINTPTR g_uLoadAddr;
 static RTLDRMOD  g_hLdrMod;
 static void     *g_pvBits;
 static uint8_t   g_cBits;
+static uint8_t   g_fNearImports;
 
 /**
  * Current nearest symbol.
@@ -72,6 +73,7 @@ typedef struct TESTNEARSYM
  */
 static DECLCALLBACK(int) testEnumSymbol2(RTLDRMOD hLdrMod, const char *pszSymbol, unsigned uSymbol, RTUINTPTR Value, void *pvUser)
 {
+    RT_NOREF1(hLdrMod);
     PTESTNEARSYM pSym = (PTESTNEARSYM)pvUser;
 
     /* less or equal */
@@ -128,6 +130,8 @@ static DECLCALLBACK(int) MyGetSymbol(PCDISCPUSTATE pCpu, uint32_t u32Sel, RTUINT
                                      char *pszBuf, size_t cchBuf, RTINTPTR *poff,
                                      void *pvUser)
 {
+    RT_NOREF3(pCpu, u32Sel, pvUser);
+
     if (   uAddress > RTLdrSize(g_hLdrMod) + g_uLoadAddr
         || uAddress < g_uLoadAddr)
         return VERR_SYMBOL_NOT_FOUND;
@@ -148,6 +152,7 @@ static DECLCALLBACK(int) MyGetSymbol(PCDISCPUSTATE pCpu, uint32_t u32Sel, RTUINT
  */
 static DECLCALLBACK(int) MyReadBytes(PDISCPUSTATE pDis, uint8_t offInstr, uint8_t cbMinRead, uint8_t cbMaxRead)
 {
+    RT_NOREF1(cbMaxRead);
     uint8_t const *pbSrc = (uint8_t const *)((uintptr_t)pDis->uInstrAddr + (uintptr_t)pDis->pvUser + offInstr);
     memcpy(&pDis->abInstr[offInstr], pbSrc, cbMinRead);
     pDis->cbCachedInstr = offInstr + cbMinRead;
@@ -173,6 +178,11 @@ static bool MyDisBlock(DISCPUMODE enmCpuMode, RTHCUINTPTR pvCodeBlock, int32_t c
         RTAssertSetQuiet(fQuiet);
         if (RT_FAILURE(rc))
             return false;
+
+        TESTNEARSYM NearSym;
+        rc = FindNearSymbol(uNearAddr + i, &NearSym);
+        if (RT_SUCCESS(rc) && NearSym.aSyms[0].Value == NearSym.Addr)
+            RTPrintf("%s:\n", NearSym.aSyms[0].szName);
 
         DISFormatYasmEx(&Cpu, szOutput, sizeof(szOutput),
                         DIS_FMT_FLAGS_RELATIVE_BRANCH | DIS_FMT_FLAGS_BYTES_RIGHT | DIS_FMT_FLAGS_ADDR_LEFT  | DIS_FMT_FLAGS_BYTES_SPACED,
@@ -201,16 +211,33 @@ static bool MyDisBlock(DISCPUMODE enmCpuMode, RTHCUINTPTR pvCodeBlock, int32_t c
  * @param   pValue          Where to store the symbol value (address).
  * @param   pvUser          User argument.
  */
-static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol, unsigned uSymbol, RTUINTPTR *pValue, void *pvUser)
+static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol,
+                                       unsigned uSymbol, RTUINTPTR *pValue, void *pvUser)
 {
-#if 1
+    RT_NOREF5(hLdrMod, pszModule, pszSymbol, uSymbol, pvUser);
     RTUINTPTR BaseAddr = *(PCRTUINTPTR)pvUser;
-    *pValue = BaseAddr + UINT32_C(0x604020f0);
-#else
-    *pValue = UINT64_C(0xffffff7f820df000);
-#endif
+    if (g_fNearImports)
+        *pValue = BaseAddr + UINT32_C(0x604020f0);
+    else if (   BaseAddr < UINT64_C(0xffffff7f820df000) - _4G
+             || BaseAddr > UINT64_C(0xffffff7f820df000) + _4G)
+        *pValue = UINT64_C(0xffffff7f820df000);
+    else
+        *pValue = UINT64_C(0xffffff7c820df000);
     if (g_cBits == 32)
         *pValue &= UINT32_MAX;
+    return VINF_SUCCESS;
+}
+
+static uint32_t g_iSegNo = 0;
+static DECLCALLBACK(int) testEnumSegment1(RTLDRMOD hLdrMod, PCRTLDRSEG pSeg, void *pvUser)
+{
+    if (hLdrMod != g_hLdrMod || pvUser != NULL)
+        return VERR_INTERNAL_ERROR_3;
+    RTPrintf("Seg#%02u: %RTptr LB %RTptr %s\n"
+             "   link=%RTptr LB %RTptr align=%RTptr fProt=%#x offFile=%RTfoff\n"
+             , g_iSegNo++, pSeg->RVA, pSeg->cbMapped, pSeg->pszName,
+             pSeg->LinkAddress, pSeg->cb, pSeg->Alignment, pSeg->fProt, pSeg->offFile);
+
     return VINF_SUCCESS;
 }
 
@@ -227,6 +254,8 @@ static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, 
  */
 static DECLCALLBACK(int) testEnumSymbol1(RTLDRMOD hLdrMod, const char *pszSymbol, unsigned uSymbol, RTUINTPTR Value, void *pvUser)
 {
+    if (hLdrMod != g_hLdrMod || pvUser != NULL)
+        return VERR_INTERNAL_ERROR_3;
     RTPrintf("  %RTptr %s (%d)\n", Value, pszSymbol, uSymbol);
     return VINF_SUCCESS;
 }
@@ -250,7 +279,7 @@ static int testDisasNear(uint64_t uAddr)
         uint8_t *pbCode = (uint8_t *)g_pvBits + (NearSym.aSyms[0].Value - g_uLoadAddr);
         MyDisBlock(enmDisCpuMode, (uintptr_t)pbCode,
                    RT_MAX(NearSym.aSyms[1].Value - NearSym.aSyms[0].Value, 0x20000),
-                   NearSym.aSyms[0].Value - (RTUINTPTR)pbCode,
+                   NearSym.aSyms[0].Value - (uintptr_t)pbCode,
                    NearSym.aSyms[0].Value,
                    NearSym.Addr);
     }
@@ -262,38 +291,49 @@ int main(int argc, char **argv)
 {
     RTR3InitExe(argc, &argv, 0);
 
-    int rcRet = 0;
-    if (argc <= 2)
-    {
-        RTPrintf("usage: %s <load-addr> <module> [addr1 []]\n", argv[0]);
-        return 1;
-    }
-
     /*
      * Module & code bitness (optional).
      */
     g_cBits = ARCH_BITS;
-    if (!strcmp(argv[1], "--32"))
+#if !defined(RT_OS_WINDOWS) || defined(RT_OS_DARWIN)
+    g_fNearImports = false;
+#else
+    g_fNearImports = true;
+#endif
+    while (argc > 1)
     {
-        g_cBits = 32;
+        if (!strcmp(argv[1], "--32"))
+            g_cBits = 32;
+        else if (!strcmp(argv[1], "--64"))
+            g_cBits = 64;
+        else if (!strcmp(argv[1], "--near-imports"))
+            g_fNearImports = true;
+        else if (!strcmp(argv[1], "--wide-imports"))
+            g_fNearImports = false;
+        else
+            break;
         argc--;
         argv++;
     }
-    else if (!strcmp(argv[1], "--64"))
+
+    int rcRet = 0;
+    if (argc <= 2)
     {
-        g_cBits = 64;
-        argc--;
-        argv++;
+        RTPrintf("usage: %s [--32|--64] [--<near|wide>-imports] <load-addr> <module> [addr1 []]\n", argv[0]);
+        return 1;
     }
 
     /*
      * Load the module.
      */
+    RTERRINFOSTATIC ErrInfo;
     g_uLoadAddr = (RTUINTPTR)RTStrToUInt64(argv[1]);
-    int rc = RTLdrOpen(argv[2], 0, RTLDRARCH_WHATEVER, &g_hLdrMod);
+    int rc = RTLdrOpenEx(argv[2], 0, RTLDRARCH_WHATEVER, &g_hLdrMod, RTErrInfoInitStatic(&ErrInfo));
     if (RT_FAILURE(rc))
     {
         RTPrintf("tstLdr-3: Failed to open '%s': %Rra\n", argv[2], rc);
+        if (ErrInfo.szMsg[0])
+            RTPrintf("tstLdr-3: %s\n", ErrInfo.szMsg);
         return 1;
     }
 
@@ -333,6 +373,68 @@ int main(int argc, char **argv)
              * Enumerate symbols.
              */
             rc = RTLdrEnumSymbols(g_hLdrMod, RTLDR_ENUM_SYMBOL_FLAGS_ALL, g_pvBits, g_uLoadAddr, testEnumSymbol1, NULL);
+            if (RT_FAILURE(rc))
+            {
+                RTPrintf("tstLdr-3: Failed to enumerate symbols: %Rra\n", rc);
+                rcRet++;
+            }
+
+            /*
+             * Query various properties.
+             */
+            union
+            {
+                char        szName[256];
+                uint32_t    iImpModule;
+                RTUUID      Uuid;
+            } uBuf;
+            rc = RTLdrQueryProp(g_hLdrMod, RTLDRPROP_INTERNAL_NAME, &uBuf, sizeof(uBuf));
+            if (RT_SUCCESS(rc))
+                RTPrintf("tstLdr-3: Internal name: %s\n", uBuf.szName);
+            else if (rc != VERR_NOT_FOUND && rc != VERR_NOT_SUPPORTED)
+            {
+                RTPrintf("tstLdr-3: Internal name: failed - %Rrc\n", rc);
+                rcRet++;
+            }
+
+            uint32_t cImports = 0;
+            rc = RTLdrQueryProp(g_hLdrMod, RTLDRPROP_IMPORT_COUNT, &cImports, sizeof(cImports));
+            if (RT_SUCCESS(rc))
+            {
+                RTPrintf("tstLdr-3: Import count: %u\n", cImports);
+                for (uint32_t i = 0; i < cImports; i++)
+                {
+                    uBuf.iImpModule = i;
+                    rc = RTLdrQueryProp(g_hLdrMod, RTLDRPROP_IMPORT_MODULE, &uBuf, sizeof(uBuf));
+                    if (RT_SUCCESS(rc))
+                        RTPrintf("tstLdr-3: Import module #%u: %s\n", i, uBuf.szName);
+                    else
+                    {
+                        RTPrintf("tstLdr-3: Import module #%u: failed - %Rrc\n", i, rc);
+                        rcRet++;
+                    }
+                }
+            }
+            else if (rc != VERR_NOT_FOUND && rc != VERR_NOT_SUPPORTED)
+            {
+                RTPrintf("tstLdr-3: Import count: failed - %Rrc\n", rc);
+                rcRet++;
+            }
+
+            rc = RTLdrQueryProp(g_hLdrMod, RTLDRPROP_UUID, &uBuf.Uuid, sizeof(uBuf.Uuid));
+            if (RT_SUCCESS(rc))
+                RTPrintf("tstLdr-3: UUID: %RTuuid\n", uBuf.Uuid);
+            else if (rc != VERR_NOT_FOUND && rc != VERR_NOT_SUPPORTED)
+            {
+                RTPrintf("tstLdr-3: UUID: failed - %Rrc\n", rc);
+                rcRet++;
+            }
+
+            /*
+             * Enumerate segments.
+             */
+            RTPrintf("tstLdr-3: Segments:\n");
+            rc = RTLdrEnumSegments(g_hLdrMod, testEnumSegment1, NULL);
             if (RT_FAILURE(rc))
             {
                 RTPrintf("tstLdr-3: Failed to enumerate symbols: %Rra\n", rc);

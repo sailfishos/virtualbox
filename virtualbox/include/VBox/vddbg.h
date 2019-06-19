@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,8 +23,8 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-#ifndef ___VBox_VDDbg_h
-#define ___VBox_VDDbg_h
+#ifndef ___VBox_vddbg_h
+#define ___VBox_vddbg_h
 
 #include <VBox/cdefs.h>
 #include <VBox/types.h>
@@ -39,6 +39,7 @@ RT_C_DECLS_BEGIN
 #endif
 
 /** @defgroup grp_vddbg            VD Debug API
+ * @ingroup grp_vd
  * @{
  */
 
@@ -202,7 +203,7 @@ VBOXDDU_DECL(int) VDDbgIoLogEventTypeGetNext(VDIOLOGGER hIoLogger, VDIOLOGEVENT 
  *
  * @returns VBox status code.
  * @param   hIoLogger    The I/O logger to use.
- * @param   penmEvent    Where to store the next event on success.
+ * @param   penmReq      Where to store the next request on success.
  */
 VBOXDDU_DECL(int) VDDbgIoLogReqTypeGetNext(VDIOLOGGER hIoLogger, PVDDBGIOLOGREQ penmReq);
 

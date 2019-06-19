@@ -1,12 +1,10 @@
 /* $Id: WinKeyboard.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Windows keyboard handling.
+ * VBox Qt GUI - Windows keyboard handling..
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,12 +16,13 @@
  */
 
 #define LOG_GROUP LOG_GROUP_GUI
- 
+
 #include "WinKeyboard.h"
 #include <iprt/assert.h>
 #include <VBox/log.h>
 
 #include <stdio.h>
+
 
 /* Beautification of log output */
 #define VBOX_BOOL_TO_STR_STATE(x)   (x) ? "ON" : "OFF"
@@ -65,6 +64,11 @@ static void winSetModifierState(int idModifier, bool fState)
         /* Simulate KeyUp+KeyDown keystroke */
         keybd_event(idModifier, 0, KEYEVENTF_EXTENDEDKEY, 0);
         keybd_event(idModifier, 0, KEYEVENTF_EXTENDEDKEY | KEYEVENTF_KEYUP, 0);
+
+        /* Process posted above keyboard events immediately: */
+        MSG msg;
+        while (::PeekMessage(&msg, NULL, WM_KEYFIRST, WM_KEYLAST, PM_REMOVE))
+            ::DispatchMessage(&msg);
 
         LogRel2(("HID LEDs sync: setting %s state to %s (0x%X).\n",
                  VBOX_CONTROL_TO_STR_NAME(idModifier), VBOX_BOOL_TO_STR_STATE(fState), MapVirtualKey(idModifier, MAPVK_VK_TO_VSC)));
@@ -181,21 +185,21 @@ void WinHidDevicesBroadcastLeds(bool fNumLockOn, bool fCapsLockOn, bool fScrollL
   * early (it exits on the first iteration for my German layout). If there is
   * no AltGr key in the layout then it will run right through, but that should
   * hopefully not happen very often.
-  * 
+  *
   * In theory we could do this once and cache the result, but that involves
   * tracking layout switches to invalidate the cache, and I don't think that the
   * added complexity is worth the price. */
 static bool doesCurrentLayoutHaveAltGr()
 {
-    /** Keyboard state array with VK_CONTROL and VK_MENU depressed. */
-    const BYTE auKeyStates[256] =
-        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x80 };
+    /* Keyboard state array with VK_CONTROL and VK_MENU depressed. */
+    static const BYTE s_auKeyStates[256] =
+    { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x80, 0x80 };
     WORD ach;
     unsigned i;
 
     for (i = '0'; i <= VK_OEM_102; ++i)
     {
-        if (ToAscii(i, 0, auKeyStates, &ach, 0))
+        if (ToAscii(i, 0, s_auKeyStates, &ach, 0))
             break;
         /* Skip ranges of virtual keys which are undefined or not relevant. */
         if (i == '9')
@@ -242,7 +246,7 @@ void WinAltGrMonitor::updateStateFromKeyEvent(unsigned iDownScanCode,
             }
             else
                 m_enmFakeControlDetectionState = LEFT_CONTROL_DOWN;
-            /* Fall through. */
+            RT_FALL_THRU();
         case LEFT_CONTROL_DOWN:
             if (   iDownScanCode == 0x1D /* left control */
                 && !fKeyDown
@@ -264,23 +268,25 @@ bool WinAltGrMonitor::isCurrentEventDefinitelyFake(unsigned iDownScanCode,
                                                    bool fKeyDown,
                                                    bool fExtendedKey) const
 {
-    MSG peekMsg;
-    LONG messageTime = GetMessageTime();
-
-    if (   iDownScanCode != 0x1d /* scan code: Control */ || fExtendedKey)
+    if (iDownScanCode != 0x1d /* scan code: Control */ || fExtendedKey)
         return false;
+
+    LONG messageTime = GetMessageTime();
+    MSG peekMsg;
     if (!PeekMessage(&peekMsg, NULL, WM_KEYFIRST, WM_KEYLAST, PM_NOREMOVE))
         return false;
+    if (messageTime != (LONG)peekMsg.time)
+        return false;
 
-	if (messageTime != peekMsg.time)
-	    return false;
-	if (   fKeyDown
-        && (peekMsg.message != WM_KEYDOWN && peekMsg.message != WM_SYSKEYDOWN))
+    if (   fKeyDown
+        && peekMsg.message != WM_KEYDOWN
+        && peekMsg.message != WM_SYSKEYDOWN)
         return false;
     if (   !fKeyDown
-        && (peekMsg.message != WM_KEYUP && peekMsg.message != WM_SYSKEYUP))
+        && peekMsg.message != WM_KEYUP
+        && peekMsg.message != WM_SYSKEYUP)
         return false;
-    if (   ((RT_HIWORD(peekMsg.lParam) & 0xFF) != 0x38 /* scan code: Alt */)
+    if (   (RT_HIWORD(peekMsg.lParam) & 0xFF) != 0x38 /* scan code: Alt */
         || !(RT_HIWORD(peekMsg.lParam) & KF_EXTENDED))
         return false;
     if (!doesCurrentLayoutHaveAltGr())

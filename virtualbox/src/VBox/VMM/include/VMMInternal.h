@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,6 +28,10 @@
 #if !defined(IN_VMM_R3) && !defined(IN_VMM_R0) && !defined(IN_VMM_RC)
 # error "Not in VMM! This is an internal header!"
 #endif
+#if defined(RT_OS_DARWIN) && HC_ARCH_BITS == 32
+# error "32-bit darwin is no longer supported. Go back to 4.3 or earlier!"
+#endif
+
 
 
 /** @defgroup grp_vmm_int   Internals
@@ -45,7 +49,7 @@
  *
  * Ring-0 logging isn't 100% safe yet (thread id reuse / process exit cleanup),
  * so you have to sign up here by adding your defined(DEBUG_<userid>) to the
- * #if, or by adding VBOX_WITH_R0_LOGGING to your LocalConfig.kmk.
+ * \#if, or by adding VBOX_WITH_R0_LOGGING to your LocalConfig.kmk.
  */
 #if defined(DEBUG_sandervl) || defined(DEBUG_frank) || defined(DEBUG_ramshankar) || defined(DOXYGEN_RUNNING)
 # define VBOX_WITH_R0_LOGGING
@@ -69,7 +73,7 @@
 /**
  * Switcher function, HC to RC.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @returns Return code indicating the action to take.
  */
 typedef DECLASMTYPE(int) FNVMMSWITCHERHC(PVM pVM);
@@ -261,7 +265,7 @@ typedef struct VMM
     uint32_t                    cbRCRelLogger;
     /** Whether log flushing has been disabled or not. */
     bool                        fRCLoggerFlushingDisabled;
-    bool                        afAlignment[5]; /**< Alignment padding. */
+    bool                        afAlignment1[5]; /**< Alignment padding. */
     /** @} */
 
     /** Whether the stack guard pages have been stationed or not. */
@@ -291,6 +295,16 @@ typedef struct VMM
     RTSEMEVENTMULTI             hEvtMulRendezvousDone;
     /** Semaphore the VMMR3EmtRendezvous caller waits on at the end. */
     RTSEMEVENT                  hEvtRendezvousDoneCaller;
+    /** Semaphore to wait on upon recursing. */
+    RTSEMEVENTMULTI             hEvtMulRendezvousRecursionPush;
+    /** Semaphore to wait on after done with recursion (caller restoring state). */
+    RTSEMEVENTMULTI             hEvtMulRendezvousRecursionPop;
+    /** Semaphore the initiator waits on while the EMTs are getting into position
+     *  on hEvtMulRendezvousRecursionPush. */
+    RTSEMEVENT                  hEvtRendezvousRecursionPushCaller;
+    /** Semaphore the initiator waits on while the EMTs sitting on
+     *  hEvtMulRendezvousRecursionPop wakes up and leave. */
+    RTSEMEVENT                  hEvtRendezvousRecursionPopCaller;
     /** Callback. */
     R3PTRTYPE(PFNVMMEMTRENDEZVOUS) volatile pfnRendezvous;
     /** The user argument for the callback. */
@@ -307,11 +321,17 @@ typedef struct VMM
     volatile int32_t            i32RendezvousStatus;
     /** Spin lock. */
     volatile uint32_t           u32RendezvousLock;
-    /** @} */
+    /** The recursion depth. */
+    volatile uint32_t           cRendezvousRecursions;
+    /** The number of EMTs that have entered the recursion routine. */
+    volatile uint32_t           cRendezvousEmtsRecursingPush;
+    /** The number of EMTs that have leaft the recursion routine. */
+    volatile uint32_t           cRendezvousEmtsRecursingPop;
+    /** Triggers rendezvous recursion in the other threads. */
+    volatile bool               fRendezvousRecursion;
 
-#if HC_ARCH_BITS == 32
-    uint32_t                    u32Alignment; /**< Alignment padding. */
-#endif
+    /** @} */
+    bool                        afAlignment2[HC_ARCH_BITS == 32 ? 7 : 3]; /**< Alignment padding. */
 
     /** Buffer for storing the standard assertion message for a ring-0 assertion.
      * Used for saving the assertion message text for the release log and guru
@@ -338,16 +358,19 @@ typedef struct VMM
     STAMCOUNTER                 StatRZRetPatchEmulate;
     STAMCOUNTER                 StatRZRetIORead;
     STAMCOUNTER                 StatRZRetIOWrite;
+    STAMCOUNTER                 StatRZRetIOCommitWrite;
     STAMCOUNTER                 StatRZRetMMIORead;
     STAMCOUNTER                 StatRZRetMMIOWrite;
+    STAMCOUNTER                 StatRZRetMMIOCommitWrite;
     STAMCOUNTER                 StatRZRetMMIOPatchRead;
     STAMCOUNTER                 StatRZRetMMIOPatchWrite;
     STAMCOUNTER                 StatRZRetMMIOReadWrite;
+    STAMCOUNTER                 StatRZRetMSRRead;
+    STAMCOUNTER                 StatRZRetMSRWrite;
     STAMCOUNTER                 StatRZRetLDTFault;
     STAMCOUNTER                 StatRZRetGDTFault;
     STAMCOUNTER                 StatRZRetIDTFault;
     STAMCOUNTER                 StatRZRetTSSFault;
-    STAMCOUNTER                 StatRZRetPDFault;
     STAMCOUNTER                 StatRZRetCSAMTask;
     STAMCOUNTER                 StatRZRetSyncCR3;
     STAMCOUNTER                 StatRZRetMisc;
@@ -356,7 +379,8 @@ typedef struct VMM
     STAMCOUNTER                 StatRZRetPatchGP;
     STAMCOUNTER                 StatRZRetPatchIretIRQ;
     STAMCOUNTER                 StatRZRetRescheduleREM;
-    STAMCOUNTER                 StatRZRetToR3;
+    STAMCOUNTER                 StatRZRetToR3Total;
+    STAMCOUNTER                 StatRZRetToR3FF;
     STAMCOUNTER                 StatRZRetToR3Unknown;
     STAMCOUNTER                 StatRZRetToR3TMVirt;
     STAMCOUNTER                 StatRZRetToR3HandyPages;
@@ -365,6 +389,8 @@ typedef struct VMM
     STAMCOUNTER                 StatRZRetToR3Timer;
     STAMCOUNTER                 StatRZRetToR3DMA;
     STAMCOUNTER                 StatRZRetToR3CritSect;
+    STAMCOUNTER                 StatRZRetToR3Iem;
+    STAMCOUNTER                 StatRZRetToR3Iom;
     STAMCOUNTER                 StatRZRetTimerPending;
     STAMCOUNTER                 StatRZRetInterruptPending;
     STAMCOUNTER                 StatRZRetCallRing3;
@@ -417,25 +443,18 @@ typedef struct VMMCPU
      * This is NULL if logging is disabled. */
     R0PTRTYPE(PVMMR0LOGGER)     pR0LoggerR0;
 
-    /** @name Thread-context hooks.
-     *  @{*/
-    R0PTRTYPE(RTTHREADCTX)      hR0ThreadCtx;
-#if HC_ARCH_BITS == 32
-    uint32_t                    u32Padding;
-#else
-    uint64_t                    u64Padding;
-#endif
-    /** @} */
+    /** Thread context switching hook (ring-0). */
+    RTTHREADCTXHOOK             hCtxHook;
 
     /** @name Rendezvous
      * @{ */
     /** Whether the EMT is executing a rendezvous right now. For detecting
      *  attempts at recursive rendezvous. */
     bool volatile               fInRendezvous;
-    bool                        afPadding[HC_ARCH_BITS == 32 ? 3 : 7];
+    bool                        afPadding[HC_ARCH_BITS == 32 ? 3+4 : 7+8];
     /** @} */
 
-    /** @name Raw-mode context tracting data.
+    /** @name Raw-mode context tracing data.
      * @{ */
     SUPDRVTRACERUSRCTX          TracerCtx;
     /** @} */
@@ -470,59 +489,59 @@ typedef VMMCPU *PVMMCPU;
 
 
 /**
- * The VMMGCEntry() codes.
+ * The VMMRCEntry() codes.
  */
-typedef enum VMMGCOPERATION
+typedef enum VMMRCOPERATION
 {
     /** Do GC module init. */
-    VMMGC_DO_VMMGC_INIT = 1,
+    VMMRC_DO_VMMRC_INIT = 1,
 
     /** The first Trap testcase. */
-    VMMGC_DO_TESTCASE_TRAP_FIRST = 0x0dead000,
+    VMMRC_DO_TESTCASE_TRAP_FIRST = 0x0dead000,
     /** Trap 0 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_0 = VMMGC_DO_TESTCASE_TRAP_FIRST,
+    VMMRC_DO_TESTCASE_TRAP_0 = VMMRC_DO_TESTCASE_TRAP_FIRST,
     /** Trap 1 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_1,
+    VMMRC_DO_TESTCASE_TRAP_1,
     /** Trap 2 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_2,
+    VMMRC_DO_TESTCASE_TRAP_2,
     /** Trap 3 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_3,
+    VMMRC_DO_TESTCASE_TRAP_3,
     /** Trap 4 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_4,
+    VMMRC_DO_TESTCASE_TRAP_4,
     /** Trap 5 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_5,
+    VMMRC_DO_TESTCASE_TRAP_5,
     /** Trap 6 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_6,
+    VMMRC_DO_TESTCASE_TRAP_6,
     /** Trap 7 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_7,
+    VMMRC_DO_TESTCASE_TRAP_7,
     /** Trap 8 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_8,
+    VMMRC_DO_TESTCASE_TRAP_8,
     /** Trap 9 testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_9,
+    VMMRC_DO_TESTCASE_TRAP_9,
     /** Trap 0a testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_0A,
+    VMMRC_DO_TESTCASE_TRAP_0A,
     /** Trap 0b testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_0B,
+    VMMRC_DO_TESTCASE_TRAP_0B,
     /** Trap 0c testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_0C,
+    VMMRC_DO_TESTCASE_TRAP_0C,
     /** Trap 0d testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_0D,
+    VMMRC_DO_TESTCASE_TRAP_0D,
     /** Trap 0e testcases, uArg selects the variation. */
-    VMMGC_DO_TESTCASE_TRAP_0E,
+    VMMRC_DO_TESTCASE_TRAP_0E,
     /** The last trap testcase (exclusive). */
-    VMMGC_DO_TESTCASE_TRAP_LAST,
+    VMMRC_DO_TESTCASE_TRAP_LAST,
     /** Testcase for checking interrupt forwarding. */
-    VMMGC_DO_TESTCASE_HYPER_INTERRUPT,
+    VMMRC_DO_TESTCASE_HYPER_INTERRUPT,
     /** Switching testing and profiling stub. */
-    VMMGC_DO_TESTCASE_NOP,
-    /** Testcase for checking interrupt masking.. */
-    VMMGC_DO_TESTCASE_INTERRUPT_MASKING,
+    VMMRC_DO_TESTCASE_NOP,
+    /** Testcase for checking interrupt masking. */
+    VMMRC_DO_TESTCASE_INTERRUPT_MASKING,
     /** Switching testing and profiling stub. */
-    VMMGC_DO_TESTCASE_HM_NOP,
+    VMMRC_DO_TESTCASE_HM_NOP,
 
     /** The usual 32-bit hack. */
-    VMMGC_DO_32_BIT_HACK = 0x7fffffff
-} VMMGCOPERATION;
+    VMMRC_DO_32_BIT_HACK = 0x7fffffff
+} VMMRCOPERATION;
 
 
 
@@ -556,11 +575,11 @@ void vmmR3SwitcherRelocate(PVM pVM, RTGCINTPTR offDelta);
 #ifdef IN_RING0
 /**
  * World switcher assembly routine.
- * It will call VMMGCEntry().
+ * It will call VMMRCEntry().
  *
- * @returns return code from VMMGCEntry().
- * @param   pVM     Pointer to the VM.
- * @param   uArg    See VMMGCEntry().
+ * @returns return code from VMMRCEntry().
+ * @param   pVM         The cross context VM structure.
+ * @param   uArg        See VMMRCEntry().
  * @internal
  */
 DECLASM(int)    vmmR0WorldSwitch(PVM pVM, unsigned uArg);
@@ -569,7 +588,7 @@ DECLASM(int)    vmmR0WorldSwitch(PVM pVM, unsigned uArg);
  * Callback function for vmmR0CallRing3SetJmp.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 typedef DECLCALLBACK(int) FNVMMR0SETJMP(PVM pVM, PVMCPU pVCpu);
 /** Pointer to FNVMMR0SETJMP(). */
@@ -584,8 +603,9 @@ typedef FNVMMR0SETJMP *PFNVMMR0SETJMP;
  *
  * @returns VINF_SUCCESS on success or whatever is passed to vmmR0CallRing3LongJmp.
  * @param   pJmpBuf     The jmp_buf to set.
- * @param   pfn         The function to be called when not resuming..
- * @param   pVM         The argument of that function.
+ * @param   pfn         The function to be called when not resuming.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT.
  */
 DECLASM(int)    vmmR0CallRing3SetJmp(PVMMR0JMPBUF pJmpBuf, PFNVMMR0SETJMP pfn, PVM pVM, PVMCPU pVCpu);
 
@@ -604,7 +624,7 @@ typedef FNVMMR0SETJMPEX *PFNVMMR0SETJMPEX;
  *
  * @returns VINF_SUCCESS on success or whatever is passed to vmmR0CallRing3LongJmp.
  * @param   pJmpBuf     The jmp_buf to set.
- * @param   pfn         The function to be called when not resuming..
+ * @param   pfn         The function to be called when not resuming.
  * @param   pvUser      The argument of that function.
  */
 DECLASM(int)    vmmR0CallRing3SetJmpEx(PVMMR0JMPBUF pJmpBuf, PFNVMMR0SETJMPEX pfn, void *pvUser);
@@ -615,8 +635,8 @@ DECLASM(int)    vmmR0CallRing3SetJmpEx(PVMMR0JMPBUF pJmpBuf, PFNVMMR0SETJMPEX pf
  * This will save the stack and registers.
  *
  * @returns rc.
- * @param   pJmpBuf         Pointer to the jump buffer.
- * @param   rc              The return code.
+ * @param   pJmpBuf     Pointer to the jump buffer.
+ * @param   rc          The return code.
  */
 DECLASM(int)    vmmR0CallRing3LongJmp(PVMMR0JMPBUF pJmpBuf, int rc);
 

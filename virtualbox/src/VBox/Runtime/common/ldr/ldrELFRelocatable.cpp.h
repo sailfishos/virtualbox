@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -154,6 +154,32 @@ static int RTLDRELF_NAME(MapBits)(PRTLDRMODELF pModElf, bool fNeedsBits)
         if (pModElf->iStrSh != ~0U)
             pModElf->pStr   =    (const char *)(pu8 + pModElf->paShdrs[pModElf->iStrSh].sh_offset);
         pModElf->pShStr     =    (const char *)(pu8 + pModElf->paShdrs[pModElf->Ehdr.e_shstrndx].sh_offset);
+
+        /*
+         * Verify that the ends of the string tables have a zero terminator
+         * (this avoids duplicating the appropriate checks later in the code accessing the string tables).
+         *
+         * sh_offset and sh_size were verfied in RTLDRELF_NAME(ValidateSectionHeader)() already so they
+         * are safe to use.
+         */
+        AssertMsgStmt(   pModElf->iStrSh == ~0U
+                      || pModElf->pStr[pModElf->paShdrs[pModElf->iStrSh].sh_size - 1] == '\0',
+                      ("The string table is not zero terminated!\n"),
+                      rc = VERR_LDRELF_UNTERMINATED_STRING_TAB);
+        AssertMsgStmt(pModElf->pShStr[pModElf->paShdrs[pModElf->Ehdr.e_shstrndx].sh_size - 1] == '\0',
+                      ("The section header string table is not zero terminated!\n"),
+                      rc = VERR_LDRELF_UNTERMINATED_STRING_TAB);
+
+        if (RT_FAILURE(rc))
+        {
+            /* Unmap. */
+            int rc2 = pModElf->Core.pReader->pfnUnmap(pModElf->Core.pReader, pModElf->pvBits);
+            AssertRC(rc2);
+            pModElf->pvBits = NULL;
+            pModElf->paSyms = NULL;
+            pModElf->pStr   = NULL;
+            pModElf->pShStr = NULL;
+        }
     }
     return rc;
 }
@@ -240,7 +266,7 @@ static int RTLDRELF_NAME(RelocateSectionExecDyn)(PRTLDRMODELF pModElf, Elf_Addr 
             /* Try to resolve the symbol. */
             const char *pszName = ELF_STR(pModElf, pSym->st_name);
             RTUINTPTR   ExtValue;
-            int rc = pfnGetImport(&pModElf->Core, "", pszName, ~0, &ExtValue, pvUser);
+            int rc = pfnGetImport(&pModElf->Core, "", pszName, ~0U, &ExtValue, pvUser);
             AssertMsgRCReturn(rc, ("Failed to resolve '%s' rc=%Rrc\n", pszName, rc), rc);
             SymValue = (Elf_Addr)ExtValue;
             AssertMsgReturn((RTUINTPTR)SymValue == ExtValue, ("Symbol value overflowed! '%s'\n", pszName),
@@ -249,18 +275,19 @@ static int RTLDRELF_NAME(RelocateSectionExecDyn)(PRTLDRMODELF pModElf, Elf_Addr 
         }
         else
         {
-            AssertReturn(pSym->st_shndx < pModElf->cSyms || pSym->st_shndx == SHN_ABS, ("%#x\n", pSym->st_shndx));
+            AssertMsgReturn(pSym->st_shndx < pModElf->Ehdr.e_shnum || pSym->st_shndx == SHN_ABS, ("%#x\n", pSym->st_shndx),
+                            VERR_LDRELF_INVALID_RELOCATION_OFFSET);
 #if   ELF_MODE == 64
             SymValue = pSym->st_value;
 #endif
         }
 
 #if   ELF_MODE == 64
-        /* Calc the value. */
+        /* Calc the value (indexes checked above; assumes SHN_UNDEF == 0). */
         Elf_Addr Value;
-        if (pSym->st_shndx < pModElf->cSyms)
+        if (pSym->st_shndx < pModElf->Ehdr.e_shnum)
             Value = SymValue + offDelta;
-        else
+        else /* SHN_ABS: */
             Value = SymValue + paRels[iRel].r_addend;
 #endif
 
@@ -358,6 +385,7 @@ static int RTLDRELF_NAME(RelocateSectionExecDyn)(PRTLDRMODELF pModElf, Elf_Addr 
              * PC relative addressing.
              */
             case R_X86_64_PC32:
+            case R_X86_64_PLT32: /* binutils commit 451875b4f976a527395e9303224c7881b65e12ed feature/regression. */
             {
                 const Elf_Addr SourceAddr = SecAddr + paRels[iRel].r_offset + BaseAddr; /* Where the source really is. */
                 Value -= SourceAddr;
@@ -443,7 +471,7 @@ static int RTLDRELF_NAME(Symbol)(PRTLDRMODELF pModElf, Elf_Addr BaseAddr, PFNRTL
         {
             /* Try to resolve the symbol. */
             RTUINTPTR Value;
-            int rc = pfnGetImport(&pModElf->Core, "", pszName, ~0, &Value, pvUser);
+            int rc = pfnGetImport(&pModElf->Core, "", pszName, ~0U, &Value, pvUser);
             if (RT_FAILURE(rc))
             {
                 AssertMsgFailed(("Failed to resolve '%s' rc=%Rrc\n", pszName, rc));
@@ -630,6 +658,7 @@ static int RTLDRELF_NAME(RelocateSection)(PRTLDRMODELF pModElf, Elf_Addr BaseAdd
              * PC relative addressing.
              */
             case R_X86_64_PC32:
+            case R_X86_64_PLT32: /* binutils commit 451875b4f976a527395e9303224c7881b65e12ed feature/regression. */
             {
                 const Elf_Addr SourceAddr = SecAddr + paRels[iRel].r_offset + BaseAddr; /* Where the source really is. */
                 const Elf_Addr Value = SymValue + paRels[iRel].r_addend - SourceAddr;
@@ -694,7 +723,7 @@ static DECLCALLBACK(int) RTLDRELF_NAME(EnumSymbols)(PRTLDRMODINTERNAL pMod, unsi
      * Validate the input.
      */
     Elf_Addr BaseAddr = (Elf_Addr)BaseAddress;
-    AssertMsgReturn((RTUINTPTR)BaseAddr == BaseAddress, ("#RTptr", BaseAddress), VERR_IMAGE_BASE_TOO_HIGH);
+    AssertMsgReturn((RTUINTPTR)BaseAddr == BaseAddress, ("%RTptr", BaseAddress), VERR_IMAGE_BASE_TOO_HIGH);
 
     /*
      * Make sure we've got the string and symbol tables. (We don't need the pvBits.)
@@ -735,7 +764,13 @@ static DECLCALLBACK(int) RTLDRELF_NAME(EnumSymbols)(PRTLDRMODINTERNAL pMod, unsi
                 AssertMsgFailed(("Arg! paSyms[%u].st_shndx=" FMT_ELF_HALF "\n", iSym, paSyms[iSym].st_shndx));
                 return VERR_BAD_EXE_FORMAT;
             }
+
+            AssertMsgReturn(paSyms[iSym].st_name < pModElf->cbStr,
+                            ("String outside string table! iSym=%d paSyms[iSym].st_name=%#x\n", iSym, paSyms[iSym].st_name),
+                            VERR_LDRELF_INVALID_SYMBOL_NAME_OFFSET);
+
             const char *pszName = ELF_STR(pModElf, paSyms[iSym].st_name);
+            /* String termination was already checked when the string table was mapped. */
             if (    (pszName && *pszName)
                 &&  (   (fFlags & RTLDR_ENUM_SYMBOL_FLAGS_ALL)
                      || ELF_ST_BIND(paSyms[iSym].st_info) == STB_GLOBAL)
@@ -745,7 +780,7 @@ static DECLCALLBACK(int) RTLDRELF_NAME(EnumSymbols)(PRTLDRMODINTERNAL pMod, unsi
                  * Call back.
                  */
                 AssertMsgReturn(Value == (RTUINTPTR)Value, (FMT_ELF_ADDR "\n", Value), VERR_SYMBOL_VALUE_TOO_BIG);
-                rc = pfnCallback(pMod, pszName, ~0, (RTUINTPTR)Value, pvUser);
+                rc = pfnCallback(pMod, pszName, ~0U, (RTUINTPTR)Value, pvUser);
                 if (rc)
                     return rc;
             }
@@ -855,7 +890,7 @@ static DECLCALLBACK(int) RTLDRELF_NAME(Relocate)(PRTLDRMODINTERNAL pMod, void *p
      * Validate the input.
      */
     Elf_Addr BaseAddr = (Elf_Addr)NewBaseAddress;
-    AssertMsgReturn((RTUINTPTR)BaseAddr == NewBaseAddress, ("#RTptr", NewBaseAddress), VERR_IMAGE_BASE_TOO_HIGH);
+    AssertMsgReturn((RTUINTPTR)BaseAddr == NewBaseAddress, ("%RTptr", NewBaseAddress), VERR_IMAGE_BASE_TOO_HIGH);
 
     /*
      * Map the image bits if not already done and setup pointer into it.
@@ -960,7 +995,7 @@ static DECLCALLBACK(int) RTLDRELF_NAME(GetSymbolEx)(PRTLDRMODINTERNAL pMod, cons
      * Validate the input.
      */
     Elf_Addr uBaseAddr = (Elf_Addr)BaseAddress;
-    AssertMsgReturn((RTUINTPTR)uBaseAddr == BaseAddress, ("#RTptr", BaseAddress), VERR_IMAGE_BASE_TOO_HIGH);
+    AssertMsgReturn((RTUINTPTR)uBaseAddr == BaseAddress, ("%RTptr", BaseAddress), VERR_IMAGE_BASE_TOO_HIGH);
 
     /*
      * Map the image bits if not already done and setup pointer into it.
@@ -1018,6 +1053,7 @@ static DECLCALLBACK(int) RTLDRELF_NAME(EnumDbgInfo)(PRTLDRMODINTERNAL pMod, cons
                                                     PFNRTLDRENUMDBG pfnCallback, void *pvUser)
 {
     PRTLDRMODELF pModElf = (PRTLDRMODELF)pMod;
+    RT_NOREF_PV(pvBits);
 
     /*
      * Map the image bits if not already done and setup pointer into it.
@@ -1288,6 +1324,8 @@ static DECLCALLBACK(int) RTLDRELF_NAME(RvaToSegOffset)(PRTLDRMODINTERNAL pMod, R
 static DECLCALLBACK(int) RTLDRELF_NAME(GetImportStubCallback)(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol,
                                                               unsigned uSymbol, PRTLDRADDR pValue, void *pvUser)
 {
+    RT_NOREF_PV(hLdrMod); RT_NOREF_PV(pszModule); RT_NOREF_PV(pszSymbol);
+    RT_NOREF_PV(uSymbol); RT_NOREF_PV(pValue); RT_NOREF_PV(pvUser);
     return VERR_SYMBOL_NOT_FOUND;
 }
 
@@ -1308,9 +1346,8 @@ static DECLCALLBACK(int) RTLDRELF_NAME(ReadDbgInfo)(PRTLDRMODINTERNAL pMod, uint
     AssertReturn(pThis->paShdrs[iDbgInfo].sh_type   == SHT_PROGBITS, VERR_INVALID_PARAMETER);
     AssertReturn(pThis->paShdrs[iDbgInfo].sh_offset == (uint64_t)off, VERR_INVALID_PARAMETER);
     AssertReturn(pThis->paShdrs[iDbgInfo].sh_size   == cb, VERR_INVALID_PARAMETER);
-    RTFOFF cbRawImage = pThis->Core.pReader->pfnSize(pThis->Core.pReader);
-    AssertReturn(cbRawImage >= 0, VERR_INVALID_PARAMETER);
-    AssertReturn(off >= 0 && cb <= (uint64_t)cbRawImage && (uint64_t)off + cb <= (uint64_t)cbRawImage, VERR_INVALID_PARAMETER);
+    uint64_t cbRawImage = pThis->Core.pReader->pfnSize(pThis->Core.pReader);
+    AssertReturn(off >= 0 && cb <= cbRawImage && (uint64_t)off + cb <= cbRawImage, VERR_INVALID_PARAMETER);
 
     /*
      * Read it from the file and look for fixup sections.
@@ -1473,12 +1510,12 @@ static int RTLDRELF_NAME(ValidateElfHeader)(const Elf_Ehdr *pEhdr, const char *p
     }
     if (pEhdr->e_ident[EI_DATA] != ELFDATA2LSB)
     {
-        Log(("RTLdrELF: %s: ELF endian %x is unsupported\n", pEhdr->e_ident[EI_DATA]));
+        Log(("RTLdrELF: %s: ELF endian %x is unsupported\n", pszLogName, pEhdr->e_ident[EI_DATA]));
         return VERR_LDRELF_ODD_ENDIAN;
     }
     if (pEhdr->e_version != EV_CURRENT)
     {
-        Log(("RTLdrELF: %s: ELF version %x is unsupported\n", pEhdr->e_version));
+        Log(("RTLdrELF: %s: ELF version %x is unsupported\n", pszLogName, pEhdr->e_version));
         return VERR_LDRELF_VERSION;
     }
 
@@ -1527,7 +1564,7 @@ static int RTLDRELF_NAME(ValidateElfHeader)(const Elf_Ehdr *pEhdr, const char *p
             break;
 #endif
         default:
-            Log(("RTLdrELF: %s: machine type %u is not supported!\n", pEhdr->e_machine));
+            Log(("RTLdrELF: %s: machine type %u is not supported!\n", pszLogName, pEhdr->e_machine));
             return VERR_LDRELF_MACHINE;
     }
 
@@ -1615,7 +1652,7 @@ const char *RTLDRELF_NAME(GetSHdrName)(PRTLDRMODELF pModElf, Elf_Word offName, c
  * @param   pszLogName  The log name.
  * @param   cbRawImage  The size of the raw image.
  */
-static int RTLDRELF_NAME(ValidateSectionHeader)(PRTLDRMODELF pModElf, unsigned iShdr, const char *pszLogName, RTFOFF cbRawImage)
+static int RTLDRELF_NAME(ValidateSectionHeader)(PRTLDRMODELF pModElf, unsigned iShdr, const char *pszLogName, uint64_t cbRawImage)
 {
     const Elf_Shdr *pShdr = &pModElf->paShdrs[iShdr];
     char szSectionName[80]; NOREF(szSectionName);
@@ -1708,18 +1745,18 @@ static int RTLDRELF_NAME(ValidateSectionHeader)(PRTLDRMODELF pModElf, unsigned i
     if (    pShdr->sh_type != SHT_NOBITS
         &&  pShdr->sh_size)
     {
-        RTFOFF offEnd = pShdr->sh_offset + pShdr->sh_size;
+        uint64_t offEnd = pShdr->sh_offset + pShdr->sh_size;
         if (    offEnd > cbRawImage
-            ||  offEnd < (RTFOFF)pShdr->sh_offset)
+            ||  offEnd < (uint64_t)pShdr->sh_offset)
         {
-            Log(("RTLdrELF: %s: Shdr #%d: sh_offset (" FMT_ELF_OFF ") + sh_size (" FMT_ELF_XWORD " = %RTfoff) is beyond the end of the file (%RTfoff)!\n",
+            Log(("RTLdrELF: %s: Shdr #%d: sh_offset (" FMT_ELF_OFF ") + sh_size (" FMT_ELF_XWORD " = %RX64) is beyond the end of the file (%RX64)!\n",
                  pszLogName, iShdr, pShdr->sh_offset, pShdr->sh_size, offEnd, cbRawImage));
             return VERR_BAD_EXE_FORMAT;
         }
         if (pShdr->sh_offset < sizeof(Elf_Ehdr))
         {
             Log(("RTLdrELF: %s: Shdr #%d: sh_offset (" FMT_ELF_OFF ") + sh_size (" FMT_ELF_XWORD ") is starting in the ELF header!\n",
-                 pszLogName, iShdr, pShdr->sh_offset, pShdr->sh_size, cbRawImage));
+                 pszLogName, iShdr, pShdr->sh_offset, pShdr->sh_size));
             return VERR_BAD_EXE_FORMAT;
         }
     }
@@ -1741,7 +1778,8 @@ static int RTLDRELF_NAME(ValidateSectionHeader)(PRTLDRMODELF pModElf, unsigned i
 static int RTLDRELF_NAME(Open)(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH enmArch, PRTLDRMOD phLdrMod)
 {
     const char *pszLogName = pReader->pfnLogName(pReader);
-    RTFOFF      cbRawImage = pReader->pfnSize(pReader);
+    uint64_t    cbRawImage = pReader->pfnSize(pReader);
+    RT_NOREF_PV(fFlags);
 
     /*
      * Create the loader module instance.
@@ -1830,10 +1868,10 @@ static int RTLDRELF_NAME(Open)(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH 
                         }
                         pModElf->iSymSh = i;
                         pModElf->cSyms  = (unsigned)(paShdrs[i].sh_size / sizeof(Elf_Sym));
-                        AssertReturn(pModElf->cSyms == paShdrs[i].sh_size / sizeof(Elf_Sym), VERR_IMAGE_TOO_BIG);
+                        AssertBreakStmt(pModElf->cSyms == paShdrs[i].sh_size / sizeof(Elf_Sym), rc = VERR_IMAGE_TOO_BIG);
                         pModElf->iStrSh = paShdrs[i].sh_link;
                         pModElf->cbStr  = (unsigned)paShdrs[pModElf->iStrSh].sh_size;
-                        AssertReturn(pModElf->cbStr == paShdrs[pModElf->iStrSh].sh_size, VERR_IMAGE_TOO_BIG);
+                        AssertBreakStmt(pModElf->cbStr == paShdrs[pModElf->iStrSh].sh_size, rc = VERR_IMAGE_TOO_BIG);
                     }
 
                     /* Special checks for the section string table. */
@@ -1861,7 +1899,7 @@ static int RTLDRELF_NAME(Open)(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH 
                         {
                             Elf_Addr uAddr = RT_ALIGN_T(uNextAddr, paShdrs[i].sh_addralign, Elf_Addr);
                             Log(("RTLdrElf: Out of order section #%d; adjusting sh_addr from " FMT_ELF_ADDR " to " FMT_ELF_ADDR "\n",
-                                 paShdrs[i].sh_addr, uAddr));
+                                 i, paShdrs[i].sh_addr, uAddr));
                             paShdrs[i].sh_addr = uAddr;
                         }
                         uNextAddr = paShdrs[i].sh_addr + paShdrs[i].sh_size;
@@ -1902,7 +1940,7 @@ static int RTLDRELF_NAME(Open)(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH 
                             if (pModElf->cbImage < EndAddr)
                             {
                                 pModElf->cbImage = (size_t)EndAddr;
-                                AssertMsgReturn(pModElf->cbImage == EndAddr, (FMT_ELF_ADDR "\n", EndAddr), VERR_IMAGE_TOO_BIG);
+                                AssertMsgBreakStmt(pModElf->cbImage == EndAddr, (FMT_ELF_ADDR "\n", EndAddr), rc = VERR_IMAGE_TOO_BIG);
                             }
                             Log2(("RTLdrElf: %s: Assigned " FMT_ELF_ADDR " to section #%d\n", pszLogName, paShdrs[i].sh_addr, i));
                         }

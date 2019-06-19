@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,8 +36,9 @@
 #define PTEB    IncompleteWindows_PTEB
 
 #define IPRT_NT_USE_WINTERNL
+#define IPRT_NT_HAVE_CURRENT_TEB_MACRO
 #define WIN32_NO_STATUS
-#include <Windows.h>
+#include <iprt/win/windows.h>
 #undef WIN32_NO_STATUS
 
 #undef _PEB

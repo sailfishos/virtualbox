@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/crypto/spc.h>
 
@@ -68,8 +68,8 @@ RTCrSpcIndirectDataContent_GetPeImageObjAttrib(PCRTCRSPCINDIRECTDATACONTENT pThi
                 PCRTCRSPCSERIALIZEDOBJECTATTRIBUTES pData = pThis->Data.uValue.pPeImage->T0.File.u.pMoniker->u.pData;
                 if (pData)
                     for (uint32_t i = 0; i < pData->cItems; i++)
-                        if (pData->paItems[i].enmType == enmType)
-                            return &pData->paItems[i];
+                        if (pData->papItems[i]->enmType == enmType)
+                            return pData->papItems[i];
             }
         }
     }

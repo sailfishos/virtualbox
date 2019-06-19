@@ -1,10 +1,10 @@
 /* $Id: vscsi.h $ */
 /** @file
- * VBox storage drivers: Virtual SCSI driver
+ * VBox storage drivers - Virtual SCSI driver
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,6 +29,7 @@
 
 #include <VBox/cdefs.h>
 #include <VBox/types.h>
+#include <VBox/vdmedia.h>
 #include <iprt/sg.h>
 
 RT_C_DECLS_BEGIN
@@ -36,6 +37,12 @@ RT_C_DECLS_BEGIN
 #ifdef IN_RING0
 # error "There are no VBox VSCSI APIs available in Ring-0 Host Context!"
 #endif
+
+/** @defgroup grp_drv_vscsi  Virtual VSCSI Driver
+ * @ingroup grp_devdrv
+ * @{
+ */
+/** @todo figure better grouping.   */
 
 /** A virtual SCSI device handle */
 typedef struct VSCSIDEVICEINT *VSCSIDEVICE;
@@ -86,6 +93,8 @@ typedef enum VSCSILUNTYPE
     VSCSILUNTYPE_SBC,
     /** CD/DVD drive (MMC) */
     VSCSILUNTYPE_MMC,
+    /** Tape drive (SSC) */
+    VSCSILUNTYPE_SSC,
     /** Last value to indicate an invalid device */
     VSCSILUNTYPE_LAST,
     /** 32bit hack */
@@ -107,71 +116,149 @@ typedef VSCSILUNTYPE *PVSCSILUNTYPE;
 typedef struct VSCSILUNIOCALLBACKS
 {
     /**
-     * Retrieve the size of the underlying medium.
+     * Sets the size of the allocator specific memory for a I/O request.
      *
-     * @returns VBox status status code.
-     * @param   hVScsiLun        Virtual SCSI LUN handle.
-     * @param   pvScsiLunUser    Opaque user data which may
-     *                           be used to identify the medium.
-     * @param   pcbSize          Where to store the size of the
-     *                           medium.
+     * @returns VBox status code.
+     * @param   hVScsiLun            Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser        Opaque user data which may be used to identify the
+     *                               medium.
+     * @param   cbVScsiIoReqAlloc    The size of the allocator specific memory in bytes.
+     * @thread  EMT.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVScsiLunMediumGetSize, (VSCSILUN hVScsiLun,
-                                                         void *pvScsiLunUser,
-                                                         uint64_t *pcbSize));
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunReqAllocSizeSet, (VSCSILUN hVScsiLun, void *pvScsiLunUser,
+                                                           size_t cbVScsiIoReqAlloc));
 
     /**
-     * Retrieve the sector size of the underlying medium.
+     * Allocates a new I/O request.
      *
-     * @returns VBox status status code.
-     * @param   hVScsiLun        Virtual SCSI LUN handle.
-     * @param   pvScsiLunUser    Opaque user data which may
-     *                           be used to identify the medium.
-     * @param   pcbSectorSize    Where to store the sector size of the
-     *                           medium.
+     * @returns VBox status code.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     * @param   u64Tag          A tag to assign to the request handle for identification later on.
+     * @param   phVScsiIoReq    Where to store the handle to the allocated I/O request on success.
+     * @thread  Any thread.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVScsiLunMediumGetSectorSize, (VSCSILUN hVScsiLun,
-                                                              void *pvScsiLunUser,
-                                                              uint32_t *pcbSectorSize));
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunReqAlloc, (VSCSILUN hVScsiLun, void *pvScsiLunUser,
+                                                    uint64_t u64Tag, PVSCSIIOREQ phVScsiIoReq));
+
+    /**
+     * Frees a given I/O request.
+     *
+     * @returns VBox status code.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     * @param   hVScsiIoReq     The VSCSI I/O request to free.
+     * @thread  Any thread.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunReqFree, (VSCSILUN hVScsiLun, void *pvScsiLunUser, VSCSIIOREQ hVScsiIoReq));
+
+    /**
+     * Returns the number of regions for the medium.
+     *
+     * @returns Number of regions.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     */
+    DECLR3CALLBACKMEMBER(uint32_t, pfnVScsiLunMediumGetRegionCount,(VSCSILUN hVScsiLun, void *pvScsiLunUser));
+
+    /**
+     * Queries the properties for the given region.
+     *
+     * @returns VBox status code.
+     * @retval  VERR_NOT_FOUND if the region index is not known.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     * @param   uRegion         The region index to query the properties of.
+     * @param   pu64LbaStart    Where to store the starting LBA for the region on success.
+     * @param   pcBlocks        Where to store the number of blocks for the region on success.
+     * @param   pcbBlock        Where to store the size of one block in bytes on success.
+     * @param   penmDataForm    WHere to store the data form for the region on success.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunMediumQueryRegionProperties,(VSCSILUN hVScsiLun, void *pvScsiLunUser,
+                                                                      uint32_t uRegion, uint64_t *pu64LbaStart,
+                                                                      uint64_t *pcBlocks, uint64_t *pcbBlock,
+                                                                      PVDREGIONDATAFORM penmDataForm));
+
+    /**
+     * Queries the properties for the region covering the given LBA.
+     *
+     * @returns VBox status code.
+     * @retval  VERR_NOT_FOUND if the region index is not known.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     * @param   u64LbaStart     Where to store the starting LBA for the region on success.
+     * @param   puRegion        Where to store the region number on success.
+     * @param   pcBlocks        Where to store the number of blocks left in this region starting from the given LBA.
+     * @param   pcbBlock        Where to store the size of one block in bytes on success.
+     * @param   penmDataForm    WHere to store the data form for the region on success.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunMediumQueryRegionPropertiesForLba,(VSCSILUN hVScsiLun, void *pvScsiLunUser,
+                                                                            uint64_t u64LbaStart, uint32_t *puRegion,
+                                                                            uint64_t *pcBlocks, uint64_t *pcbBlock,
+                                                                            PVDREGIONDATAFORM penmDataForm));
 
     /**
      * Set the lock state of the underlying medium.
      *
      * @returns VBox status status code.
-     * @param   hVScsiLun        Virtual SCSI LUN handle.
-     * @param   pvScsiLunUser    Opaque user data which may
-     *                           be used to identify the medium.
-     * @param   fLocked          New lock state (locked/unlocked).
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     * @param   fLocked         New lock state (locked/unlocked).
      */
-    DECLR3CALLBACKMEMBER(int, pfnVScsiLunMediumSetLock, (VSCSILUN hVScsiLun,
-                                                         void *pvScsiLunUser,
-                                                         bool fLocked));
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunMediumSetLock,(VSCSILUN hVScsiLun, void *pvScsiLunUser, bool fLocked));
+
+    /**
+     * Eject the attached medium.
+     *
+     * @returns VBox status code.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunMediumEject, (VSCSILUN hVScsiLun, void *pvScsiLunUser));
+
     /**
      * Enqueue a read or write request from the medium.
      *
      * @returns VBox status status code.
-     * @param   hVScsiLun             Virtual SCSI LUN handle.
-     * @param   pvScsiLunUser         Opaque user data which may
-     *                                be used to identify the medium.
-     * @param   hVScsiIoReq           Virtual SCSI I/O request handle.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     * @param   hVScsiIoReq     Virtual SCSI I/O request handle.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVScsiLunReqTransferEnqueue, (VSCSILUN hVScsiLun,
-                                                              void *pvScsiLunUser,
-                                                              VSCSIIOREQ hVScsiIoReq));
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunReqTransferEnqueue,(VSCSILUN hVScsiLun, void *pvScsiLunUser, VSCSIIOREQ hVScsiIoReq));
 
     /**
      * Returns flags of supported features.
      *
      * @returns VBox status status code.
-     * @param   hVScsiLun             Virtual SCSI LUN handle.
-     * @param   pvScsiLunUser         Opaque user data which may
-     *                                be used to identify the medium.
-     * @param   hVScsiIoReq           Virtual SCSI I/O request handle.
+     * @param   hVScsiLun       Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser   Opaque user data which may be used to identify the
+     *                          medium.
+     * @param   pfFeatures      Where to return the queried features.
      */
-    DECLR3CALLBACKMEMBER(int, pfnVScsiLunGetFeatureFlags, (VSCSILUN hVScsiLun,
-                                                           void *pvScsiLunUser,
-                                                           uint64_t *pfFeatures));
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunGetFeatureFlags,(VSCSILUN hVScsiLun, void *pvScsiLunUser, uint64_t *pfFeatures));
 
+    /**
+     * Queries the vendor and product ID and revision to report for INQUIRY commands of the given LUN.
+     *
+     * @returns VBox status status code.
+     * @retval  VERR_NOT_FOUND if the data is not available and some defaults should be sued instead.
+     * @param   hVScsiLun        Virtual SCSI LUN handle.
+     * @param   pvScsiLunUser    Opaque user data which may be used to identify the
+     *                           medium.
+     * @param   ppszVendorId     Where to store the pointer to the vendor ID string to report.
+     * @param   ppszProductId    Where to store the pointer to the product ID string to report.
+     * @param   ppszProductLevel Where to store the pointer to the product level string to report.
+     */
+    DECLR3CALLBACKMEMBER(int, pfnVScsiLunQueryInqStrings, (VSCSILUN hVScsiLun, void *pvScsiLunUser, const char **ppszVendorId,
+                                                           const char **ppszProductId, const char **ppszProductLevel));
 
 } VSCSILUNIOCALLBACKS;
 /** Pointer to a virtual SCSI LUN I/O callback table. */
@@ -185,7 +272,8 @@ typedef DECLCALLBACK(void) FNVSCSIREQCOMPLETED(VSCSIDEVICE hVScsiDevice,
                                                void *pvVScsiReqUser,
                                                int rcScsiCode,
                                                bool fRedoPossible,
-                                               int rcReq);
+                                               int rcReq,
+                                               size_t cbXfer);
 /** Pointer to a virtual SCSI request completed callback. */
 typedef FNVSCSIREQCOMPLETED *PFNVSCSIREQCOMPLETED;
 
@@ -205,7 +293,7 @@ VBOXDDU_DECL(int) VSCSIDeviceCreate(PVSCSIDEVICE phVScsiDevice,
  * Destroy a SCSI device instance.
  *
  * @returns VBox status code.
- * @param   hScsiDevice    The SCSI device handle to destroy.
+ * @param   hVScsiDevice   The SCSI device handle to destroy.
  */
 VBOXDDU_DECL(int) VSCSIDeviceDestroy(VSCSIDEVICE hVScsiDevice);
 
@@ -213,8 +301,8 @@ VBOXDDU_DECL(int) VSCSIDeviceDestroy(VSCSIDEVICE hVScsiDevice);
  * Attach a LUN to the SCSI device.
  *
  * @returns VBox status code.
- * @param   hScsiDevice    The SCSI device handle to add the LUN to.
- * @param   hScsiLun       The LUN handle to add.
+ * @param   hVScsiDevice   The SCSI device handle to add the LUN to.
+ * @param   hVScsiLun      The LUN handle to add.
  * @param   iLun           The LUN number.
  */
 VBOXDDU_DECL(int) VSCSIDeviceLunAttach(VSCSIDEVICE hVScsiDevice, VSCSILUN hVScsiLun, uint32_t iLun);
@@ -231,15 +319,15 @@ VBOXDDU_DECL(int) VSCSIDeviceLunDetach(VSCSIDEVICE hVScsiDevice, uint32_t iLun,
                                        PVSCSILUN phVScsiLun);
 
 /**
- * Return the SCSI LUN handle.
+ * Query the SCSI LUN type.
  *
  * @returns VBox status code.
  * @param   hVScsiDevice    The SCSI device handle.
  * @param   iLun            The LUN number to get.
- * @param   phVScsiLun      Where to store the LUN handle.
+ * @param   pEnmLunType     Where to store the LUN type.
  */
-VBOXDDU_DECL(int) VSCSIDeviceLunGet(VSCSIDEVICE hVScsiDevice, uint32_t iLun,
-                                    PVSCSILUN phVScsiLun);
+VBOXDDU_DECL(int) VSCSIDeviceLunQueryType(VSCSIDEVICE hVScsiDevice, uint32_t iLun,
+                                          PVSCSILUNTYPE pEnmLunType);
 
 /**
  * Enqueue a request to the SCSI device.
@@ -254,7 +342,7 @@ VBOXDDU_DECL(int) VSCSIDeviceReqEnqueue(VSCSIDEVICE hVScsiDevice, VSCSIREQ hVScs
  * Allocate a new request handle.
  *
  * @returns VBox status code.
- * @param   phVScsiDevice     The SCSI device handle.
+ * @param   hVScsiDevice      The SCSI device handle.
  * @param   phVScsiReq        Where to SCSI request handle.
  * @param   iLun              The LUN the request is for.
  * @param   pbCDB             The CDB for the request.
@@ -359,6 +447,7 @@ VBOXDDU_DECL(int) VSCSIIoReqParamsGet(VSCSIIOREQ hVScsiIoReq, uint64_t *puOffset
 VBOXDDU_DECL(int) VSCSIIoReqUnmapParamsGet(VSCSIIOREQ hVScsiIoReq, PCRTRANGE *ppaRanges,
                                            unsigned *pcRanges);
 
+/** @}  */
 RT_C_DECLS_END
 
 #endif /* ___VBox_vscsi_h */

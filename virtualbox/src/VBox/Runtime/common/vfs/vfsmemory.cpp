@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/vfs.h>
 
@@ -42,9 +42,9 @@
 
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/vfs.h>
 
@@ -52,16 +52,16 @@
 #include <iprt/mem.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The max extent size. */
 #define RTVFSMEM_MAX_EXTENT_SIZE    _2M
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * Memory base object info.
@@ -169,7 +169,7 @@ static PRTVFSMEMEXTENT rtVfsMemFile_LocateExtentSlow(PRTVFSMEMFILE pThis, uint64
      * are very very simple, but whatever.
      */
     PRTVFSMEMEXTENT pExtent = pThis->pCurExt;
-    if (!pExtent || pExtent->off < off)
+    if (!pExtent || off < pExtent->off)
     {
         /* Consider the last entry first (for writes). */
         pExtent = RTListGetLast(&pThis->ExtentHead, RTVFSMEMEXTENT, Entry);
@@ -252,7 +252,6 @@ static DECLCALLBACK(int) rtVfsMemFile_Read(void *pvThis, RTFOFF off, PCRTSGBUF p
     PRTVFSMEMFILE pThis = (PRTVFSMEMFILE)pvThis;
 
     Assert(pSgBuf->cSegs == 1);
-    Assert(off < 0);
     NOREF(fBlocking);
 
     /*
@@ -421,7 +420,7 @@ static PRTVFSMEMEXTENT rtVfsMemFile_AllocExtent(PRTVFSMEMFILE pThis, uint64_t of
     /*
      * Allocate, initialize and insert the new extent.
      */
-    PRTVFSMEMEXTENT pNew = (PRTVFSMEMEXTENT)RTMemAllocZ(RT_OFFSETOF(RTVFSMEMEXTENT, abData[cbExtent]));
+    PRTVFSMEMEXTENT pNew = (PRTVFSMEMEXTENT)RTMemAllocZ(RT_UOFFSETOF_DYN(RTVFSMEMEXTENT, abData[cbExtent]));
     if (pNew)
     {
         pNew->off = offExtent;
@@ -447,7 +446,6 @@ static DECLCALLBACK(int) rtVfsMemFile_Write(void *pvThis, RTFOFF off, PCRTSGBUF 
     PRTVFSMEMFILE pThis = (PRTVFSMEMFILE)pvThis;
 
     Assert(pSgBuf->cSegs == 1);
-    Assert(off < 0);
     NOREF(fBlocking);
 
     /*
@@ -474,7 +472,7 @@ static DECLCALLBACK(int) rtVfsMemFile_Write(void *pvThis, RTFOFF off, PCRTSGBUF 
             Assert(!pExtent || pExtent->off > offUnsigned);
 
             /* Skip leading zeros if there is a whole bunch of them. */
-            uint8_t const *pbSrcNZ = (uint8_t const *)ASMMemIsAll8(pbSrc, cbLeftToWrite, 0);
+            uint8_t const *pbSrcNZ = (uint8_t const *)ASMMemFirstNonZero(pbSrc, cbLeftToWrite);
             size_t         cbZeros = pbSrcNZ ? pbSrcNZ - pbSrc            : cbLeftToWrite;
             if (cbZeros)
             {
@@ -513,7 +511,7 @@ static DECLCALLBACK(int) rtVfsMemFile_Write(void *pvThis, RTFOFF off, PCRTSGBUF 
             cbThisWrite = (uint32_t)cbLeftToWrite;
         memcpy(&pExtent->abData[offDst], pbSrc, cbThisWrite);
 
-        offUnsigned   += cbLeftToWrite;
+        offUnsigned   += cbThisWrite;
         cbLeftToWrite -= cbThisWrite;
         if (!cbLeftToWrite)
             break;
@@ -659,7 +657,7 @@ static DECLCALLBACK(int) rtVfsMemFile_Seek(void *pvThis, RTFOFF offSeek, unsigne
     }
 
     /*
-     * Calc new position, take care to stay without bounds.
+     * Calc new position, take care to stay within RTFOFF type bounds.
      */
     uint64_t offNew;
     if (offSeek == 0)
@@ -701,9 +699,9 @@ static DECLCALLBACK(int) rtVfsMemFile_QuerySize(void *pvThis, uint64_t *pcbFile)
 
 
 /**
- * Standard file operations.
+ * Memory file operations.
  */
-DECL_HIDDEN_CONST(const RTVFSFILEOPS) g_rtVfsStdFileOps =
+DECL_HIDDEN_CONST(const RTVFSFILEOPS) g_rtVfsMemFileOps =
 {
     { /* Stream */
         { /* Obj */
@@ -729,7 +727,7 @@ DECL_HIDDEN_CONST(const RTVFSFILEOPS) g_rtVfsStdFileOps =
     /*RTVFSIOFILEOPS_FEAT_NO_AT_OFFSET*/ 0,
     { /* ObjSet */
         RTVFSOBJSETOPS_VERSION,
-        RT_OFFSETOF(RTVFSFILEOPS, Stream.Obj) - RT_OFFSETOF(RTVFSFILEOPS, ObjSet),
+        RT_UOFFSETOF(RTVFSFILEOPS, ObjSet) - RT_UOFFSETOF(RTVFSFILEOPS, Stream.Obj),
         rtVfsMemFile_SetMode,
         rtVfsMemFile_SetTimes,
         rtVfsMemFile_SetOwner,
@@ -741,7 +739,164 @@ DECL_HIDDEN_CONST(const RTVFSFILEOPS) g_rtVfsStdFileOps =
 };
 
 
+/**
+ * Initialize the RTVFSMEMFILE::Base.ObjInfo  specific members.
+ *
+ * @param   pObjInfo        The object info to init.
+ * @param   cbObject        The object size set.
+ */
+static void rtVfsMemInitObjInfo(PRTFSOBJINFO pObjInfo, uint64_t cbObject)
+{
+    pObjInfo->cbObject                  = cbObject;
+    pObjInfo->cbAllocated               = cbObject;
+    pObjInfo->Attr.fMode                = RTFS_DOS_NT_NORMAL | RTFS_TYPE_FILE | RTFS_UNIX_IRWXU;
+    pObjInfo->Attr.enmAdditional        = RTFSOBJATTRADD_UNIX;
+    pObjInfo->Attr.u.Unix.uid           = NIL_RTUID;
+    pObjInfo->Attr.u.Unix.gid           = NIL_RTGID;
+    pObjInfo->Attr.u.Unix.cHardlinks    = 1;
+    pObjInfo->Attr.u.Unix.INodeIdDevice = 0;
+    pObjInfo->Attr.u.Unix.INodeId       = 0;
+    pObjInfo->Attr.u.Unix.fFlags        = 0;
+    pObjInfo->Attr.u.Unix.GenerationId  = 0;
+    pObjInfo->Attr.u.Unix.Device        = 0;
+    RTTimeNow(&pObjInfo->AccessTime);
+    pObjInfo->ModificationTime          = pObjInfo->AccessTime;
+    pObjInfo->ChangeTime                = pObjInfo->AccessTime;
+    pObjInfo->BirthTime                 = pObjInfo->AccessTime;
+}
 
+
+/**
+ * Initialize the RTVFSMEMFILE specific members.
+ *
+ * @param   pThis           The memory file to initialize.
+ * @param   cbObject        The object size for estimating extent size.
+ * @param   fFlags          The user specified flags.
+ */
+static void rtVfsMemFileInit(PRTVFSMEMFILE pThis, RTFOFF cbObject, uint32_t fFlags)
+{
+    pThis->offCurPos    = 0;
+    pThis->pCurExt      = NULL;
+    RTListInit(&pThis->ExtentHead);
+    if (cbObject <= 0)
+        pThis->cbExtent = _4K;
+    else if (cbObject < RTVFSMEM_MAX_EXTENT_SIZE)
+        pThis->cbExtent = fFlags & RTFILE_O_WRITE ? _4K : cbObject;
+    else
+        pThis->cbExtent = RTVFSMEM_MAX_EXTENT_SIZE;
+}
+
+
+/**
+ * Rewinds the file to position 0 and clears the WRITE flag if necessary.
+ *
+ * @param   pThis           The memory file instance.
+ * @param   fFlags          The user specified flags.
+ */
+static void rtVfsMemFileResetAndFixWriteFlag(PRTVFSMEMFILE pThis, uint32_t fFlags)
+{
+    pThis->pCurExt   = RTListGetFirst(&pThis->ExtentHead, RTVFSMEMEXTENT, Entry);
+    pThis->offCurPos = 0;
+
+    if (!(fFlags & RTFILE_O_WRITE))
+    {
+        /** @todo clear RTFILE_O_WRITE from the resulting. */
+    }
+}
+
+
+RTDECL(int) RTVfsMemFileCreate(RTVFSIOSTREAM hVfsIos, size_t cbEstimate, PRTVFSFILE phVfsFile)
+{
+    /*
+     * Create a memory file instance and set the extension size according to the
+     * buffer size.  Add the WRITE flag so we can use normal write APIs for
+     * copying the buffer.
+     */
+    RTVFSFILE       hVfsFile;
+    PRTVFSMEMFILE   pThis;
+    int rc = RTVfsNewFile(&g_rtVfsMemFileOps, sizeof(*pThis), RTFILE_O_READ | RTFILE_O_WRITE, NIL_RTVFS, NIL_RTVFSLOCK,
+                          &hVfsFile, (void **)&pThis);
+    if (RT_SUCCESS(rc))
+    {
+        rtVfsMemInitObjInfo(&pThis->Base.ObjInfo, 0);
+        rtVfsMemFileInit(pThis, cbEstimate, RTFILE_O_READ | RTFILE_O_WRITE);
+
+        if (hVfsIos != NIL_RTVFSIOSTREAM)
+        {
+            RTVFSIOSTREAM hVfsIosDst = RTVfsFileToIoStream(hVfsFile);
+            rc = RTVfsUtilPumpIoStreams(hVfsIos, hVfsIosDst, pThis->cbExtent);
+            RTVfsIoStrmRelease(hVfsIosDst);
+        }
+
+        if (RT_SUCCESS(rc))
+        {
+            *phVfsFile = hVfsFile;
+            return VINF_SUCCESS;
+        }
+
+        RTVfsFileRelease(hVfsFile);
+    }
+    return rc;
+}
+
+
+RTDECL(int) RTVfsMemIoStrmCreate(RTVFSIOSTREAM hVfsIos, size_t cbEstimate, PRTVFSIOSTREAM phVfsIos)
+{
+    RTVFSFILE hVfsFile;
+    int rc = RTVfsMemFileCreate(hVfsIos, cbEstimate, &hVfsFile);
+    if (RT_SUCCESS(rc))
+    {
+        *phVfsIos = RTVfsFileToIoStream(hVfsFile);
+        AssertStmt(*phVfsIos != NIL_RTVFSIOSTREAM, rc = VERR_INTERNAL_ERROR_2);
+        RTVfsFileRelease(hVfsFile);
+    }
+    return rc;
+}
+
+
+RTDECL(int) RTVfsFileFromBuffer(uint32_t fFlags, void const *pvBuf, size_t cbBuf, PRTVFSFILE phVfsFile)
+{
+    /*
+     * Create a memory file instance and set the extension size according to the
+     * buffer size.  Add the WRITE flag so we can use normal write APIs for
+     * copying the buffer.
+     */
+    RTVFSFILE       hVfsFile;
+    PRTVFSMEMFILE   pThis;
+    int rc = RTVfsNewFile(&g_rtVfsMemFileOps, sizeof(*pThis), fFlags | RTFILE_O_WRITE, NIL_RTVFS, NIL_RTVFSLOCK,
+                          &hVfsFile, (void **)&pThis);
+    if (RT_SUCCESS(rc))
+    {
+        rtVfsMemInitObjInfo(&pThis->Base.ObjInfo, cbBuf);
+        rtVfsMemFileInit(pThis, cbBuf, fFlags);
+
+        /*
+         * Copy the buffer and reposition the file pointer to the start.
+         */
+        rc = RTVfsFileWrite(hVfsFile, pvBuf, cbBuf, NULL);
+        if (RT_SUCCESS(rc))
+        {
+            rtVfsMemFileResetAndFixWriteFlag(pThis, fFlags);
+            *phVfsFile = hVfsFile;
+            return VINF_SUCCESS;
+        }
+        RTVfsFileRelease(hVfsFile);
+    }
+    return rc;
+}
+
+
+RTDECL(int) RTVfsIoStrmFromBuffer(uint32_t fFlags, void const *pvBuf, size_t cbBuf, PRTVFSIOSTREAM phVfsIos)
+{
+    RTVFSFILE hVfsFile;
+    int rc = RTVfsFileFromBuffer(fFlags, pvBuf, cbBuf, &hVfsFile);
+    if (RT_SUCCESS(rc))
+    {
+        *phVfsIos = RTVfsFileToIoStream(hVfsFile);
+        RTVfsFileRelease(hVfsFile);
+    }
+    return rc;
+}
 
 
 RTDECL(int) RTVfsMemorizeIoStreamAsFile(RTVFSIOSTREAM hVfsIos, uint32_t fFlags, PRTVFSFILE phVfsFile)
@@ -756,20 +911,12 @@ RTDECL(int) RTVfsMemorizeIoStreamAsFile(RTVFSIOSTREAM hVfsIos, uint32_t fFlags, 
     {
         RTVFSFILE       hVfsFile;
         PRTVFSMEMFILE   pThis;
-        rc = RTVfsNewFile(&g_rtVfsStdFileOps, sizeof(*pThis), fFlags | RTFILE_O_WRITE, NIL_RTVFS, NIL_RTVFSLOCK,
+        rc = RTVfsNewFile(&g_rtVfsMemFileOps, sizeof(*pThis), fFlags | RTFILE_O_WRITE, NIL_RTVFS, NIL_RTVFSLOCK,
                           &hVfsFile, (void **)&pThis);
         if (RT_SUCCESS(rc))
         {
             pThis->Base.ObjInfo = ObjInfo;
-            pThis->offCurPos    = 0;
-            pThis->pCurExt      = NULL;
-            RTListInit(&pThis->ExtentHead);
-            if (ObjInfo.cbObject <= 0)
-                pThis->cbExtent = _4K;
-            else if (ObjInfo.cbObject < RTVFSMEM_MAX_EXTENT_SIZE)
-                pThis->cbExtent = _4K /* ObjInfo.cbObject */;
-            else
-                pThis->cbExtent = RTVFSMEM_MAX_EXTENT_SIZE;
+            rtVfsMemFileInit(pThis, ObjInfo.cbObject, fFlags);
 
             /*
              * Copy the stream.
@@ -779,13 +926,7 @@ RTDECL(int) RTVfsMemorizeIoStreamAsFile(RTVFSIOSTREAM hVfsIos, uint32_t fFlags, 
             RTVfsIoStrmRelease(hVfsIosDst);
             if (RT_SUCCESS(rc))
             {
-                pThis->pCurExt   = RTListGetFirst(&pThis->ExtentHead, RTVFSMEMEXTENT, Entry);
-                pThis->offCurPos = 0;
-
-                if (!(fFlags & RTFILE_O_WRITE))
-                {
-                    /** @todo clear RTFILE_O_WRITE from the resulting. */
-                }
+                rtVfsMemFileResetAndFixWriteFlag(pThis, fFlags);
                 *phVfsFile = hVfsFile;
                 return VINF_SUCCESS;
             }
@@ -794,3 +935,4 @@ RTDECL(int) RTVfsMemorizeIoStreamAsFile(RTVFSIOSTREAM hVfsIos, uint32_t fFlags, 
     }
     return rc;
 }
+

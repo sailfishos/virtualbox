@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,14 +24,11 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_NET_ADP_DRV
-#ifdef DEBUG_ramshankar
-# define LOG_ENABLED
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
 #include <VBox/log.h>
 #include <VBox/err.h>
 #include <VBox/version.h>
@@ -58,20 +55,24 @@
 
 #include "../VBoxNetAdpInternal.h"
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define DEVICE_NAME              "vboxnet"
 /** The module descriptions as seen in 'modinfo'. */
 #define DEVICE_DESC_DRV          "VirtualBox NetAdp"
-#define VBOXNETADP_MTU           1500
+/** The maximum MTU size permittable, value taken from "Oracle Quad 10 Gb or Dual 40
+ *  Gb Ethernet Adapter User's Guide". */
+#define DEVICE_MAX_MTU_SIZE      9706
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int VBoxNetAdpSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd);
 static int VBoxNetAdpSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd);
+static int VBoxNetAdpSolarisQuiesceNotNeeded(dev_info_t *pDip);
 
 /**
  * Streams: module info.
@@ -163,7 +164,8 @@ static struct dev_ops g_VBoxNetAdpSolarisDevOps =
     nodev,                          /* reset */
     &g_VBoxNetAdpSolarisCbOps,
     (struct bus_ops *)0,
-    nodev                           /* power */
+    nodev,                          /* power */
+    VBoxNetAdpSolarisQuiesceNotNeeded
 };
 
 /**
@@ -189,9 +191,9 @@ static struct modlinkage g_VBoxNetAdpSolarisModLinkage =
 };
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The default ethernet broadcast address */
 static uchar_t achBroadcastAddr[] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
@@ -206,9 +208,9 @@ typedef struct vboxnetadp_state_t
 } vboxnetadp_state_t;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int vboxNetAdpSolarisGenerateMac(PRTMAC pMac);
 static int vboxNetAdpSolarisSetMacAddress(gld_mac_info_t *pMacInfo, unsigned char *pszMacAddr);
 static int vboxNetAdpSolarisSend(gld_mac_info_t *pMacInfo, mblk_t *pMsg);
@@ -261,9 +263,11 @@ int _fini(void)
     /*
      * Undo the work done during start (in reverse order).
      */
-    RTR0Term();
+    int rc = mod_remove(&g_VBoxNetAdpSolarisModLinkage);
+    if (!rc)
+        RTR0Term();
 
-    return mod_remove(&g_VBoxNetAdpSolarisModLinkage);
+    return rc;
 }
 
 
@@ -319,7 +323,7 @@ static int VBoxNetAdpSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t enmCmd)
                     pMacInfo->gldm_ident = DEVICE_NAME;
                     pMacInfo->gldm_type = DL_ETHER;
                     pMacInfo->gldm_minpkt = 0;
-                    pMacInfo->gldm_maxpkt = VBOXNETADP_MTU;
+                    pMacInfo->gldm_maxpkt = DEVICE_MAX_MTU_SIZE;
                     pMacInfo->gldm_capabilities = GLD_CAP_LINKSTATE;
                     AssertCompile(sizeof(RTMAC) == ETHERADDRL);
 
@@ -439,6 +443,20 @@ static int VBoxNetAdpSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd)
         default:
             return DDI_FAILURE;
     }
+}
+
+
+/**
+ * Quiesce not-needed entry point, as Solaris 10 doesn't have any
+ * ddi_quiesce_not_needed() function.
+ *
+ * @param   pDip            The module structure instance.
+ *
+ * @return  corresponding solaris error code.
+ */
+static int VBoxNetAdpSolarisQuiesceNotNeeded(dev_info_t *pDip)
+{
+    return DDI_SUCCESS;
 }
 
 

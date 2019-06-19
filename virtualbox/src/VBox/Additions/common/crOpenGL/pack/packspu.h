@@ -94,7 +94,7 @@ typedef struct {
     int idxThreadInUse; /*index of any used thread*/
 
 #if defined(WINDOWS) && defined(VBOX_WITH_WDDM)
-    bool bRunningUnderWDDM;
+    bool bIsWDDMCrHgsmi;
 #endif
 
     SPUDispatchTable self;
@@ -146,7 +146,7 @@ extern CRtsd _PackTSD;
     } while (0)
 
 #if defined(WINDOWS) && defined(VBOX_WITH_WDDM) && defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
-# define CRPACKSPU_IS_WDDM_CRHGSMI() (pack_spu.bRunningUnderWDDM)
+# define CRPACKSPU_IS_WDDM_CRHGSMI() (pack_spu.bIsWDDMCrHgsmi)
 #else
 # define CRPACKSPU_IS_WDDM_CRHGSMI() (GL_FALSE)
 #endif
@@ -161,13 +161,15 @@ extern void packspuConnectToServer( CRNetServer *server
 extern void packspuFlush( void *arg );
 extern void packspuHuge( CROpcode opcode, void *buf );
 
-extern void packspuInitStrings();
+extern void packspuInitStrings(void);
 
-extern GLboolean packspuSyncOnFlushes();
+extern GLboolean packspuSyncOnFlushes(void);
 
 extern ThreadInfo *packspuNewThread(
 #if defined(VBOX_WITH_CRHGSMI) && defined(IN_GUEST)
                 struct VBOXUHGSMI *pHgsmi
+#else
+                void
 #endif
         );
 

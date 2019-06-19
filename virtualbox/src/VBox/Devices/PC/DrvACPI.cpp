@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,13 +15,14 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_ACPI
 
 #ifdef RT_OS_WINDOWS
-# include <windows.h>
+# include <iprt/win/windows.h>
 #endif
 
 #include <VBox/vmm/pdmdrv.h>
@@ -42,6 +43,7 @@
 # include <Carbon/Carbon.h>
 # include <IOKit/ps/IOPowerSources.h>
 # include <IOKit/ps/IOPSKeys.h>
+# undef PVM                             /* This still messed up in the 10.9 SDK. Sigh. */
 #endif
 
 #ifdef RT_OS_FREEBSD
@@ -58,9 +60,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * ACPI driver instance data.
  *
@@ -124,6 +126,7 @@ static DECLCALLBACK(int) drvACPIQueryPowerSource(PPDMIACPICONNECTOR pInterface,
                                                  PDMACPIPOWERSOURCE *pPowerSource)
 {
 #if defined(RT_OS_WINDOWS)
+    RT_NOREF(pInterface);
     SYSTEM_POWER_STATUS powerStatus;
     if (GetSystemPowerStatus(&powerStatus))
     {
@@ -160,6 +163,7 @@ static DECLCALLBACK(int) drvACPIQueryPowerSource(PPDMIACPICONNECTOR pInterface,
     RTCritSectLeave(&pThis->CritSect);
 
 #elif defined (RT_OS_DARWIN)
+    RT_NOREF(pInterface);
     *pPowerSource = PDM_ACPI_POWER_SOURCE_UNKNOWN;
 
     CFTypeRef pBlob = IOPSCopyPowerSourcesInfo();
@@ -201,10 +205,11 @@ static DECLCALLBACK(int) drvACPIQueryPowerSource(PPDMIACPICONNECTOR pInterface,
     CFRelease(pSources);
 
 #elif defined(RT_OS_FREEBSD)
+    RT_NOREF(pInterface);
     int fAcLine = 0;
     size_t cbParameter = sizeof(fAcLine);
 
-    int rc = sysctlbyname("hw.acpi.acline", &fAcLine, &cbParameter, NULL, NULL);
+    int rc = sysctlbyname("hw.acpi.acline", &fAcLine, &cbParameter, NULL, 0);
 
     if (!rc)
     {
@@ -221,6 +226,7 @@ static DECLCALLBACK(int) drvACPIQueryPowerSource(PPDMIACPICONNECTOR pInterface,
         *pPowerSource = PDM_ACPI_POWER_SOURCE_OUTLET;
     }
 #else /* !RT_OS_FREEBSD either - what could this be? */
+    RT_NOREF(pInterface);
     *pPowerSource = PDM_ACPI_POWER_SOURCE_OUTLET;
 
 #endif /* !RT_OS_FREEBSD */
@@ -228,20 +234,21 @@ static DECLCALLBACK(int) drvACPIQueryPowerSource(PPDMIACPICONNECTOR pInterface,
 }
 
 /**
- * @copydoc PDMIACPICONNECTOR::pfnQueryBatteryStatus
+ * @interface_method_impl{PDMIACPICONNECTOR,pfnQueryBatteryStatus}
  */
 static DECLCALLBACK(int) drvACPIQueryBatteryStatus(PPDMIACPICONNECTOR pInterface, bool *pfPresent,
-        PPDMACPIBATCAPACITY penmRemainingCapacity,
-        PPDMACPIBATSTATE penmBatteryState,
-        uint32_t *pu32PresentRate)
+                                                   PPDMACPIBATCAPACITY penmRemainingCapacity,
+                                                   PPDMACPIBATSTATE penmBatteryState,
+                                                   uint32_t *pu32PresentRate)
 {
     /* default return values for all architectures */
-    *pfPresent              = false;   /* no battery present */
+    *pfPresent              = false;        /* no battery present */
     *penmBatteryState       = PDM_ACPI_BAT_STATE_CHARGED;
     *penmRemainingCapacity  = PDM_ACPI_BAT_CAPACITY_UNKNOWN;
-    *pu32PresentRate        = ~0;      /* present rate is unknown */
+    *pu32PresentRate        = UINT32_MAX;   /* present rate is unknown */
 
 #if defined(RT_OS_WINDOWS)
+    RT_NOREF(pInterface);
     SYSTEM_POWER_STATUS powerStatus;
     if (GetSystemPowerStatus(&powerStatus))
     {
@@ -277,6 +284,7 @@ static DECLCALLBACK(int) drvACPIQueryBatteryStatus(PPDMIACPICONNECTOR pInterface
     RTCritSectLeave(&pThis->CritSect);
 
 #elif defined(RT_OS_DARWIN)
+    RT_NOREF(pInterface);
     CFTypeRef pBlob = IOPSCopyPowerSourcesInfo();
     CFArrayRef pSources = IOPSCopyPowerSourcesList(pBlob);
 
@@ -381,6 +389,7 @@ static DECLCALLBACK(int) drvACPIQueryBatteryStatus(PPDMIACPICONNECTOR pInterface
     CFRelease(pSources);
 
 #elif defined(RT_OS_FREEBSD)
+    RT_NOREF(pInterface);
     /* We try to use /dev/acpi first and if that fails use the sysctls. */
     bool fSuccess = true;
     int FileAcpi = 0;
@@ -463,7 +472,7 @@ static DECLCALLBACK(int) drvACPIQueryBatteryStatus(PPDMIACPICONNECTOR pInterface
         int fBatteryState = 0;
         size_t cbParameter = sizeof(fBatteryState);
 
-        rc = sysctlbyname("hw.acpi.battery.state", &fBatteryState, &cbParameter, NULL, NULL);
+        rc = sysctlbyname("hw.acpi.battery.state", &fBatteryState, &cbParameter, NULL, 0);
         if (!rc)
         {
             if ((fBatteryState & ACPI_BATT_STAT_NOT_PRESENT) == ACPI_BATT_STAT_NOT_PRESENT)
@@ -485,7 +494,7 @@ static DECLCALLBACK(int) drvACPIQueryBatteryStatus(PPDMIACPICONNECTOR pInterface
                 /* Get battery level. */
                 int curCapacity = 0;
                 cbParameter = sizeof(curCapacity);
-                rc = sysctlbyname("hw.acpi.battery.life", &curCapacity, &cbParameter, NULL, NULL);
+                rc = sysctlbyname("hw.acpi.battery.life", &curCapacity, &cbParameter, NULL, 0);
                 if (!rc && curCapacity >= 0)
                     *penmRemainingCapacity = (PDMACPIBATCAPACITY)curCapacity;
 
@@ -524,18 +533,21 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
         PDMACPIPOWERSOURCE enmPowerSource = PDM_ACPI_POWER_SOURCE_UNKNOWN;
         PRTSTREAM  pStrmStatus;
         PRTSTREAM  pStrmType;
-        PRTDIR     pDir = NULL;
+        RTDIR      hDir = NIL_RTDIR;
         RTDIRENTRY DirEntry;
         char       szLine[1024];
         bool       fBatteryPresent = false;     /* one or more batteries present */
         bool       fCharging = false;           /* one or more batteries charging */
         bool       fDischarging = false;        /* one or more batteries discharging */
         bool       fCritical = false;           /* one or more batteries in critical state */
+        bool       fDataChanged;                /* if battery status data changed during last poll */
         int32_t    maxCapacityTotal = 0;        /* total capacity of all batteries */
         int32_t    currentCapacityTotal = 0;    /* total current capacity of all batteries */
         int32_t    presentRateTotal = 0;        /* total present (dis)charging rate of all batts */
+        PDMACPIBATCAPACITY enmBatteryRemainingCapacity; /* total remaining capacity of vbox batt */
+        uint32_t u32BatteryPresentRate;         /* total present (dis)charging rate of vbox batt */
 
-        int rc = RTDirOpen(&pDir, "/sys/class/power_supply/");
+        int rc = RTDirOpen(&hDir, "/sys/class/power_supply/");
         if (RT_SUCCESS(rc))
         {
             /*
@@ -543,7 +555,7 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
              */
             while (pThread->enmState == PDMTHREADSTATE_RUNNING)
             {
-                rc = RTDirRead(pDir, &DirEntry, NULL);
+                rc = RTDirRead(hDir, &DirEntry, NULL);
                 if (RT_FAILURE(rc))
                     break;
                 if (   strcmp(DirEntry.szName, ".") == 0
@@ -638,7 +650,9 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
                                     }
                                     RTStrmClose(pStrmStatus);
                                 }
-                                rc = POWER_OPEN(&pStrmStatus, "current_now");
+                                rc = POWER_OPEN(&pStrmStatus, "power_now");
+                                if (RT_FAILURE(rc))
+                                    rc = POWER_OPEN(&pStrmStatus, "current_now");
                                 if (RT_SUCCESS(rc))
                                 {
                                     rc = RTStrmGetLine(pStrmStatus, szLine, sizeof(szLine));
@@ -664,7 +678,7 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
                 RTStrmClose(pStrmType);
 #undef POWER_OPEN
             }
-            RTDirClose(pDir);
+            RTDirClose(hDir);
         }
         else /* !/sys */
         {
@@ -674,13 +688,13 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
             /*
              * Read the status of the powerline-adapter.
              */
-            rc = RTDirOpen(&pDir, "/proc/acpi/ac_adapter/");
+            rc = RTDirOpen(&hDir, "/proc/acpi/ac_adapter/");
             if (RT_SUCCESS(rc))
             {
 #define POWER_OPEN(s, n) RTStrmOpenF("r", s, "/proc/acpi/ac_adapter/%s/" n, DirEntry.szName)
                 while (pThread->enmState == PDMTHREADSTATE_RUNNING)
                 {
-                    rc = RTDirRead(pDir, &DirEntry, NULL);
+                    rc = RTDirRead(hDir, &DirEntry, NULL);
                     if (RT_FAILURE(rc))
                         break;
                     if (   strcmp(DirEntry.szName, ".") == 0
@@ -710,14 +724,14 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
                         break;
                     }
                 }
-                RTDirClose(pDir);
+                RTDirClose(hDir);
 #undef POWER_OPEN
             }
 
             /*
              * Read the status of all batteries and collect it into one.
              */
-            rc = RTDirOpen(&pDir, "/proc/acpi/battery/");
+            rc = RTDirOpen(&hDir, "/proc/acpi/battery/");
             if (RT_SUCCESS(rc))
             {
 #define POWER_OPEN(s, n) RTStrmOpenF("r", s, "/proc/acpi/battery/%s/" n, DirEntry.szName)
@@ -726,7 +740,7 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
 
                 while (pThread->enmState == PDMTHREADSTATE_RUNNING)
                 {
-                    rc = RTDirRead(pDir, &DirEntry, NULL);
+                    rc = RTDirRead(hDir, &DirEntry, NULL);
                     if (RT_FAILURE(rc))
                         break;
                     if (   strcmp(DirEntry.szName, ".") == 0
@@ -846,15 +860,13 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
                     RTStrmClose(pStrmStatus);
                     RTStrmClose(pStrmInfo);
                 }
-                RTDirClose(pDir);
+                RTDirClose(hDir);
 #undef POWER_OPEN
             }
         } /* /proc/acpi */
 
         /* atomic update of the state */
         RTCritSectEnter(&pThis->CritSect);
-        pThis->enmPowerSource = enmPowerSource;
-        pThis->fBatteryPresent = fBatteryPresent;
 
         /* charging/discharging bits are mutual exclusive */
         uint32_t uBs = PDM_ACPI_BAT_STATE_CHARGED;
@@ -864,7 +876,6 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
             uBs = PDM_ACPI_BAT_STATE_CHARGING;
         if (fCritical)
             uBs |= PDM_ACPI_BAT_STATE_CRITICAL;
-        pThis->enmBatteryState = (PDMACPIBATSTATE)uBs;
 
         if (maxCapacityTotal > 0 && currentCapacityTotal > 0)
         {
@@ -872,21 +883,45 @@ static DECLCALLBACK(int) drvACPIPoller(PPDMDRVINS pDrvIns, PPDMTHREAD pThread)
                 presentRateTotal = -presentRateTotal;
 
             /* calculate the percentage */
-            pThis->enmBatteryRemainingCapacity =
+
+            enmBatteryRemainingCapacity =
                                  (PDMACPIBATCAPACITY)( (  (float)currentCapacityTotal
                                                         / (float)maxCapacityTotal)
                                                       * PDM_ACPI_BAT_CAPACITY_MAX);
-            pThis->u32BatteryPresentRate =
+            u32BatteryPresentRate =
                                  (uint32_t)((  (float)presentRateTotal
                                              / (float)maxCapacityTotal) * 1000);
         }
         else
         {
             /* unknown capacity / state */
-            pThis->enmBatteryRemainingCapacity = PDM_ACPI_BAT_CAPACITY_UNKNOWN;
-            pThis->u32BatteryPresentRate = ~0;
+            enmBatteryRemainingCapacity = PDM_ACPI_BAT_CAPACITY_UNKNOWN;
+            u32BatteryPresentRate = ~0;
         }
+
+        if (   pThis->enmPowerSource  == enmPowerSource
+            && pThis->fBatteryPresent == fBatteryPresent
+            && pThis->enmBatteryState == (PDMACPIBATSTATE) uBs
+            && pThis->enmBatteryRemainingCapacity == enmBatteryRemainingCapacity
+            && pThis->u32BatteryPresentRate == u32BatteryPresentRate)
+        {
+            fDataChanged = false;
+        }
+        else
+        {
+            fDataChanged = true;
+
+            pThis->enmPowerSource = enmPowerSource;
+            pThis->fBatteryPresent = fBatteryPresent;
+            pThis->enmBatteryState = (PDMACPIBATSTATE)uBs;
+            pThis->enmBatteryRemainingCapacity = enmBatteryRemainingCapacity;
+            pThis->u32BatteryPresentRate = u32BatteryPresentRate;
+        }
+
         RTCritSectLeave(&pThis->CritSect);
+
+        if (fDataChanged)
+            pThis->pPort->pfnBatteryStatusChangeEvent(pThis->pPort);
 
         /* wait a bit (e.g. Ubuntu/GNOME polls every 30 seconds) */
         ASMAtomicWriteBool(&pThis->fDontPokePoller, true);
@@ -918,12 +953,11 @@ static DECLCALLBACK(int) drvACPIPollerWakeup(PPDMDRVINS pDrvIns, PPDMTHREAD pThr
  */
 static DECLCALLBACK(void) drvACPIDestruct(PPDMDRVINS pDrvIns)
 {
-    PDRVACPI pThis = PDMINS_2_DATA(pDrvIns, PDRVACPI);
-
     LogFlow(("drvACPIDestruct\n"));
     PDMDRV_CHECK_VERSIONS_RETURN_VOID(pDrvIns);
 
 #ifdef RT_OS_LINUX
+    PDRVACPI pThis = PDMINS_2_DATA(pDrvIns, PDRVACPI);
     if (pThis->hPollerSleepEvent != NIL_RTSEMEVENT)
     {
         RTSemEventDestroy(pThis->hPollerSleepEvent);
@@ -940,8 +974,9 @@ static DECLCALLBACK(void) drvACPIDestruct(PPDMDRVINS pDrvIns)
  */
 static DECLCALLBACK(int) drvACPIConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t fFlags)
 {
-    PDRVACPI pThis = PDMINS_2_DATA(pDrvIns, PDRVACPI);
+    RT_NOREF(fFlags);
     PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
+    PDRVACPI pThis = PDMINS_2_DATA(pDrvIns, PDRVACPI);
     int rc = VINF_SUCCESS;
 
     /*

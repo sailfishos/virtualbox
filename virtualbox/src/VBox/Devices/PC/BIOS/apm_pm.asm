@@ -1,19 +1,22 @@
-;;
-;; Copyright (C) 2006-2012 Oracle Corporation
-;;
-;; This file is part of VirtualBox Open Source Edition (OSE), as
-;; available from http://www.virtualbox.org. This file is free software;
-;; you can redistribute it and/or modify it under the terms of the GNU
-;; General Public License (GPL) as published by the Free Software
-;; Foundation, in version 2 as it comes in the "COPYING" file of the
-;; VirtualBox OSE distribution. VirtualBox OSE is distributed in the
-;; hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
-;;
-;; --------------------------------------------------------------------
-;;
-;; Protected-mode APM implementation.
-;;
+; $Id:
+;; @file
+; Protected-mode APM implementation.
+;
 
+;
+; Copyright (C) 2006-2017 Oracle Corporation
+;
+; This file is part of VirtualBox Open Source Edition (OSE), as
+; available from http://www.virtualbox.org. This file is free software;
+; you can redistribute it and/or modify it under the terms of the GNU
+; General Public License (GPL) as published by the Free Software
+; Foundation, in version 2 as it comes in the "COPYING" file of the
+; VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+; hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+;
+
+
+include commondefs.inc
 
 ;; 16-bit protected mode APM entry point
 
@@ -24,7 +27,7 @@ extern		_apm_function:near	; implemented in C code
 
 public		apm_pm16_entry
 
-.286
+SET_DEFAULT_CPU_286
 
 
 ; APM function dispatch table
@@ -131,7 +134,7 @@ apm_worker	endp
 apm_pm16_entry:
 
 		mov	ah, 2		; mark as originating in 16-bit PM
-		
+
 					; fall through
 
 apm_pm16_entry_from_32:

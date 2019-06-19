@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,7 +38,11 @@
 
 /** The maximum number of pages that can be allocated and mapped
  * by various MM, PGM and SUP APIs. */
-#define VBOX_MAX_ALLOC_PAGE_COUNT   (256U * _1M / PAGE_SIZE)
+#if ARCH_BITS == 64
+# define VBOX_MAX_ALLOC_PAGE_COUNT   (_512M / PAGE_SIZE)
+#else
+# define VBOX_MAX_ALLOC_PAGE_COUNT   (_256M / PAGE_SIZE)
+#endif
 
 /** @def VBOX_WITH_PAGE_SHARING
  * Enables the page sharing code.
@@ -52,7 +56,6 @@
 
 
 /** @defgroup   grp_vbox_param_mm  Memory Monitor Parameters
- * @ingroup grp_vbox_param
  * @{
  */
 /** Initial address of Hypervisor Memory Area.
@@ -85,11 +88,21 @@
 #endif
 /** The default size of the below 4GB RAM hole. */
 #define MM_RAM_HOLE_SIZE_DEFAULT    (512U * _1M)
+/** The maximum 64-bit MMIO BAR size.
+ * @remarks There isn't really any limit here other than the size of the
+ *          tracking structures we need (around 1/256 of the size). */
+#if HC_ARCH_BITS == 64
+# define MM_MMIO_64_MAX             _1T
+#else
+# define MM_MMIO_64_MAX             (_1G64 * 16)
+#endif
+/** The maximum 32-bit MMIO BAR size. */
+#define MM_MMIO_32_MAX              _2G
+
 /** @} */
 
 
 /** @defgroup   grp_vbox_param_pgm  Page Manager Parameters
- * @ingroup grp_vbox_param
  * @{
  */
 /** The number of handy pages.
@@ -123,7 +136,6 @@
 
 
 /** @defgroup   grp_vbox_param_vmm  VMM Parameters
- * @ingroup grp_vbox_param
  * @{
  */
 /** VMM stack size. */

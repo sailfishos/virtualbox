@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -32,14 +32,14 @@
  * @returns VINF_SUCCESS if it's ok to continue raw mode.
  * @returns VBox status code to return to the EM main loop.
  *
- * @param   pVM     Pointer to the VM.
- * @param   pVCpu   Pointer to the VMCPU.
- * @param   rc      The return code.
+ * @param   pVM     The cross context VM structure.
+ * @param   pVCpu   The cross context virtual CPU structure.
  * @param   pCtx    Pointer to the guest CPU context.
+ * @param   rc      The return code.
  */
 #ifdef EMHANDLERC_WITH_PATM
 int emR3RawHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
-#elif defined(EMHANDLERC_WITH_HM)
+#elif defined(EMHANDLERC_WITH_HM) || defined(DOXYGEN_RUNNING)
 int emR3HmHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
 #endif
 {
@@ -223,6 +223,50 @@ int emR3HmHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
             rc = emR3ExecuteInstruction(pVM, pVCpu, "MMIO");
             break;
 
+        /*
+         * Machine specific register access - emulate the instruction.
+         */
+        case VINF_CPUM_R3_MSR_READ:
+        case VINF_CPUM_R3_MSR_WRITE:
+            rc = emR3ExecuteInstruction(pVM, pVCpu, "MSR");
+            break;
+
+        /*
+         * GIM hypercall.
+         */
+        case VINF_GIM_R3_HYPERCALL:
+        {
+            /* Currently hypercall instruction (vmcall/vmmcall) emulation is compiled
+               only when Nested Hw. virt feature is enabled in IEM (for easier IEM backports). */
+#ifdef VBOX_WITH_NESTED_HWVIRT
+            rc = emR3ExecuteInstruction(pVM, pVCpu, "Hypercall");
+            break;
+#else
+            /** @todo IEM/REM need to handle VMCALL/VMMCALL, see
+             *        @bugref{7270#c168}. */
+            uint8_t cbInstr = 0;
+            VBOXSTRICTRC rcStrict = GIMExecHypercallInstr(pVCpu, pCtx, &cbInstr);
+            if (rcStrict == VINF_SUCCESS)
+            {
+                Assert(cbInstr);
+                pCtx->rip += cbInstr;
+                /* Update interrupt inhibition. */
+                if (   VMCPU_FF_IS_PENDING(pVCpu, VMCPU_FF_INHIBIT_INTERRUPTS)
+                    && pCtx->rip != EMGetInhibitInterruptsPC(pVCpu))
+                    VMCPU_FF_CLEAR(pVCpu, VMCPU_FF_INHIBIT_INTERRUPTS);
+                rc = VINF_SUCCESS;
+            }
+            else if (rcStrict == VINF_GIM_HYPERCALL_CONTINUING)
+                rc = VINF_SUCCESS;
+            else
+            {
+                Assert(rcStrict != VINF_GIM_R3_HYPERCALL);
+                rc = VBOXSTRICTRC_VAL(rcStrict);
+            }
+            break;
+#endif
+        }
+
 #ifdef EMHANDLERC_WITH_HM
         /*
          * (MM)IO intensive code block detected; fall back to the recompiler for better performance
@@ -252,13 +296,6 @@ int emR3HmHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
         case VINF_EM_RAW_EMULATE_INSTR_TSS_FAULT:
             rc = emR3ExecuteInstruction(pVM, pVCpu, "TSS FAULT: ");
             break;
-        case VINF_EM_RAW_EMULATE_INSTR_PD_FAULT:
-            rc = emR3ExecuteInstruction(pVM, pVCpu, "PD FAULT: ");
-            break;
-        case VINF_EM_RAW_EMULATE_INSTR_HLT:
-            /** @todo skip instruction and go directly to the halt state. (see REM for implementation details) */
-            rc = emR3RawPrivileged(pVM, pVCpu);
-            break;
 #endif
 
 #ifdef EMHANDLERC_WITH_PATM
@@ -273,6 +310,14 @@ int emR3HmHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
         case VINF_EM_RAW_EMULATE_INSTR:
             rc = emR3ExecuteInstruction(pVM, pVCpu, "EMUL: ");
             break;
+
+        case VINF_EM_RAW_INJECT_TRPM_EVENT:
+            rc = VBOXSTRICTRC_VAL(IEMInjectTrpmEvent(pVCpu));
+            /* The following condition should be removed when IEM_IMPLEMENTS_TASKSWITCH becomes true. */
+            if (rc == VERR_IEM_ASPECT_NOT_IMPLEMENTED)
+                rc = emR3ExecuteInstruction(pVM, pVCpu, "EVENT: ");
+            break;
+
 
 #ifdef EMHANDLERC_WITH_PATM
         /*
@@ -324,6 +369,7 @@ int emR3HmHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
         case VINF_EM_DBG_HYPER_STEPPED:
         case VINF_EM_DBG_HYPER_ASSERTION:
         case VINF_EM_DBG_STOP:
+        case VINF_EM_DBG_EVENT:
             break;
 
         /*
@@ -337,6 +383,7 @@ int emR3HmHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
         case VERR_VMM_RING3_CALL_DISABLED:
         case VERR_IEM_INSTR_NOT_IMPLEMENTED:
         case VERR_IEM_ASPECT_NOT_IMPLEMENTED:
+        case VERR_EM_GUEST_CPU_HANG:
             break;
 
 #ifdef EMHANDLERC_WITH_HM
@@ -364,6 +411,16 @@ int emR3HmHandleRC(PVM pVM, PVMCPU pVCpu, PCPUMCTX pCtx, int rc)
         case VERR_SVM_UNABLE_TO_START_VM:
             break;
 #endif
+
+        /*
+         * These two should be handled via the force flag already, but just in
+         * case they end up here deal with it.
+         */
+        case VINF_IOM_R3_IOPORT_COMMIT_WRITE:
+        case VINF_IOM_R3_MMIO_COMMIT_WRITE:
+            AssertFailed();
+            rc = VBOXSTRICTRC_TODO(IOMR3ProcessForceFlag(pVM, pVCpu, rc));
+            break;
 
         /*
          * Anything which is not known to us means an internal error

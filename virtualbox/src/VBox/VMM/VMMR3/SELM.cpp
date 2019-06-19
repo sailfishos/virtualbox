@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -55,9 +55,10 @@
  *
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SELM
 #include <VBox/vmm/selm.h>
 #include <VBox/vmm/cpum.h>
@@ -88,15 +89,12 @@
 #define SELM_SAVED_STATE_VERSION    5
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int)  selmR3Save(PVM pVM, PSSMHANDLE pSSM);
 static DECLCALLBACK(int)  selmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass);
 static DECLCALLBACK(int)  selmR3LoadDone(PVM pVM, PSSMHANDLE pSSM);
-static DECLCALLBACK(int)  selmR3GuestGDTWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPhys, void *pvBuf, size_t cbBuf, PGMACCESSTYPE enmAccessType, void *pvUser);
-static DECLCALLBACK(int)  selmR3GuestLDTWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPhys, void *pvBuf, size_t cbBuf, PGMACCESSTYPE enmAccessType, void *pvUser);
-static DECLCALLBACK(int)  selmR3GuestTSSWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPhys, void *pvBuf, size_t cbBuf, PGMACCESSTYPE enmAccessType, void *pvUser);
 static DECLCALLBACK(void) selmR3InfoGdt(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs);
 static DECLCALLBACK(void) selmR3InfoGdtGuest(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs);
 static DECLCALLBACK(void) selmR3InfoLdt(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs);
@@ -105,10 +103,10 @@ static DECLCALLBACK(void) selmR3InfoLdtGuest(PVM pVM, PCDBGFINFOHLP pHlp, const 
 //static DECLCALLBACK(void) selmR3InfoTssGuest(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
-#ifdef LOG_ENABLED
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+#if defined(VBOX_WITH_RAW_MODE) && defined(LOG_ENABLED)
 /** Segment register names. */
 static char const g_aszSRegNms[X86_SREG_COUNT][4] = { "ES", "CS", "SS", "DS", "FS", "GS" };
 #endif
@@ -118,7 +116,7 @@ static char const g_aszSRegNms[X86_SREG_COUNT][4] = { "ES", "CS", "SS", "DS", "F
  * Initializes the SELM.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) SELMR3Init(PVM pVM)
 {
@@ -130,19 +128,19 @@ VMMR3DECL(int) SELMR3Init(PVM pVM)
      * (The TSS block requires contiguous back.)
      */
     AssertCompile(sizeof(pVM->selm.s) <= sizeof(pVM->selm.padding));    AssertRelease(sizeof(pVM->selm.s) <= sizeof(pVM->selm.padding));
-    AssertCompileMemberAlignment(VM, selm.s, 32);                       AssertRelease(!(RT_OFFSETOF(VM, selm.s) & 31));
+    AssertCompileMemberAlignment(VM, selm.s, 32);                       AssertRelease(!(RT_UOFFSETOF(VM, selm.s) & 31));
 #if 0 /* doesn't work */
     AssertCompile((RT_OFFSETOF(VM, selm.s.Tss)       & PAGE_OFFSET_MASK) <= PAGE_SIZE - sizeof(pVM->selm.s.Tss));
     AssertCompile((RT_OFFSETOF(VM, selm.s.TssTrap08) & PAGE_OFFSET_MASK) <= PAGE_SIZE - sizeof(pVM->selm.s.TssTrap08));
 #endif
-    AssertRelease((RT_OFFSETOF(VM, selm.s.Tss)       & PAGE_OFFSET_MASK) <= PAGE_SIZE - sizeof(pVM->selm.s.Tss));
-    AssertRelease((RT_OFFSETOF(VM, selm.s.TssTrap08) & PAGE_OFFSET_MASK) <= PAGE_SIZE - sizeof(pVM->selm.s.TssTrap08));
+    AssertRelease((RT_UOFFSETOF(VM, selm.s.Tss)       & PAGE_OFFSET_MASK) <= PAGE_SIZE - sizeof(pVM->selm.s.Tss));
+    AssertRelease((RT_UOFFSETOF(VM, selm.s.TssTrap08) & PAGE_OFFSET_MASK) <= PAGE_SIZE - sizeof(pVM->selm.s.TssTrap08));
     AssertRelease(sizeof(pVM->selm.s.Tss.IntRedirBitmap) == 0x20);
 
     /*
      * Init the structure.
      */
-    pVM->selm.s.offVM                                = RT_OFFSETOF(VM, selm);
+    pVM->selm.s.offVM                                = RT_UOFFSETOF(VM, selm);
     pVM->selm.s.aHyperSel[SELM_HYPER_SEL_CS]         = (SELM_GDT_ELEMENTS - 0x1) << 3;
     pVM->selm.s.aHyperSel[SELM_HYPER_SEL_DS]         = (SELM_GDT_ELEMENTS - 0x2) << 3;
     pVM->selm.s.aHyperSel[SELM_HYPER_SEL_CS64]       = (SELM_GDT_ELEMENTS - 0x3) << 3;
@@ -186,6 +184,57 @@ VMMR3DECL(int) SELMR3Init(PVM pVM)
     pVM->selm.s.Tss.offIoBitmap = sizeof(VBOXTSS);
     /* bit set to 1 means no redirection */
     memset(pVM->selm.s.Tss.IntRedirBitmap, 0xff, sizeof(pVM->selm.s.Tss.IntRedirBitmap));
+
+    /*
+     * Register the virtual access handlers.
+     */
+    pVM->selm.s.hShadowGdtWriteHandlerType = NIL_PGMVIRTHANDLERTYPE;
+    pVM->selm.s.hShadowLdtWriteHandlerType = NIL_PGMVIRTHANDLERTYPE;
+    pVM->selm.s.hShadowTssWriteHandlerType = NIL_PGMVIRTHANDLERTYPE;
+    pVM->selm.s.hGuestGdtWriteHandlerType  = NIL_PGMVIRTHANDLERTYPE;
+    pVM->selm.s.hGuestLdtWriteHandlerType  = NIL_PGMVIRTHANDLERTYPE;
+    pVM->selm.s.hGuestTssWriteHandlerType  = NIL_PGMVIRTHANDLERTYPE;
+#ifdef VBOX_WITH_RAW_MODE
+    if (!HMIsEnabled(pVM))
+    {
+# ifdef SELM_TRACK_SHADOW_GDT_CHANGES
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_HYPERVISOR, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, NULL /*pfnHandlerR3*/,
+                                             NULL /*pszHandlerRC*/, "selmRCShadowGDTWritePfHandler",
+                                             "Shadow GDT write access handler", &pVM->selm.s.hShadowGdtWriteHandlerType);
+        AssertRCReturn(rc, rc);
+# endif
+# ifdef SELM_TRACK_SHADOW_TSS_CHANGES
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_HYPERVISOR, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, NULL /*pfnHandlerR3*/,
+                                             NULL /*pszHandlerRC*/, "selmRCShadowTSSWritePfHandler",
+                                             "Shadow TSS write access handler", &pVM->selm.s.hShadowTssWriteHandlerType);
+        AssertRCReturn(rc, rc);
+# endif
+# ifdef SELM_TRACK_SHADOW_LDT_CHANGES
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_HYPERVISOR, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, NULL /*pfnHandlerR3*/,
+                                             NULL /*pszHandlerRC*/, "selmRCShadowLDTWritePfHandler",
+                                             "Shadow LDT write access handler", &pVM->selm.s.hShadowLdtWriteHandlerType);
+        AssertRCReturn(rc, rc);
+# endif
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_WRITE, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, selmGuestGDTWriteHandler,
+                                             "selmGuestGDTWriteHandler", "selmRCGuestGDTWritePfHandler",
+                                             "Guest GDT write access handler", &pVM->selm.s.hGuestGdtWriteHandlerType);
+        AssertRCReturn(rc, rc);
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_WRITE, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, selmGuestLDTWriteHandler,
+                                             "selmGuestLDTWriteHandler", "selmRCGuestLDTWritePfHandler",
+                                             "Guest LDT write access handler", &pVM->selm.s.hGuestLdtWriteHandlerType);
+        AssertRCReturn(rc, rc);
+        rc = PGMR3HandlerVirtualTypeRegister(pVM, PGMVIRTHANDLERKIND_WRITE, false /*fRelocUserRC*/,
+                                             NULL /*pfnInvalidateR3*/, selmGuestTSSWriteHandler,
+                                             "selmGuestTSSWriteHandler", "selmRCGuestTSSWritePfHandler",
+                                             "Guest TSS write access handler", &pVM->selm.s.hGuestTssWriteHandlerType);
+        AssertRCReturn(rc, rc);
+    }
+#endif /* VBOX_WITH_RAW_MODE */
 
     /*
      * Register the saved state data unit.
@@ -278,7 +327,7 @@ VMMR3DECL(int) SELMR3Init(PVM pVM)
  * Finalizes HMA page attributes.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(int) SELMR3InitFinalize(PVM pVM)
 {
@@ -315,7 +364,9 @@ VMMR3DECL(int) SELMR3InitFinalize(PVM pVM)
                            X86_PTE_RW | X86_PTE_P | X86_PTE_A | X86_PTE_D);
         AssertRC(rc);
     }
-#endif /* VBOX_WITH_RAW_MODE */
+#else  /* !VBOX_WITH_RAW_MODE */
+    RT_NOREF(pVM);
+#endif /* !VBOX_WITH_RAW_MODE */
     return VINF_SUCCESS;
 }
 
@@ -323,7 +374,7 @@ VMMR3DECL(int) SELMR3InitFinalize(PVM pVM)
 /**
  * Setup the hypervisor GDT selectors in our shadow table
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 static void selmR3SetupHyperGDTSelectors(PVM pVM)
 {
@@ -424,7 +475,7 @@ static void selmR3SetupHyperGDTSelectors(PVM pVM)
  * component. This function will be called at init and
  * whenever the VMM need to relocate it self inside the GC.
  *
- * @param   pVM     The VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) SELMR3Relocate(PVM pVM)
 {
@@ -498,29 +549,32 @@ VMMR3DECL(void) SELMR3Relocate(PVM pVM)
         /*
          * Update shadow GDT/LDT/TSS write access handlers.
          */
+        PVMCPU pVCpu = VMMGetCpu(pVM); NOREF(pVCpu);
         int rc; NOREF(rc);
 #ifdef SELM_TRACK_SHADOW_GDT_CHANGES
         if (pVM->selm.s.paGdtRC != NIL_RTRCPTR)
         {
-            rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.paGdtRC);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.paGdtRC, true /*fHypervisor*/);
             AssertRC(rc);
         }
         pVM->selm.s.paGdtRC = MMHyperR3ToRC(pVM, paGdt);
-        rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_HYPERVISOR, pVM->selm.s.paGdtRC,
+        rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hShadowGdtWriteHandlerType,
+                                         pVM->selm.s.paGdtRC,
                                          pVM->selm.s.paGdtRC + SELM_GDT_ELEMENTS * sizeof(paGdt[0]) - 1,
-                                         0, 0, "selmRCShadowGDTWriteHandler", 0, "Shadow GDT write access handler");
+                                         NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
         AssertRC(rc);
 #endif
 #ifdef SELM_TRACK_SHADOW_TSS_CHANGES
         if (pVM->selm.s.pvMonShwTssRC != RTRCPTR_MAX)
         {
-            rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.pvMonShwTssRC);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.pvMonShwTssRC, true /*fHypervisor*/);
             AssertRC(rc);
         }
         pVM->selm.s.pvMonShwTssRC = VM_RC_ADDR(pVM, &pVM->selm.s.Tss);
-        rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_HYPERVISOR, pVM->selm.s.pvMonShwTssRC,
+        rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hShadowTssWriteHandlerType,
+                                         pVM->selm.s.pvMonShwTssRC,
                                          pVM->selm.s.pvMonShwTssRC + sizeof(pVM->selm.s.Tss) - 1,
-                                         0, 0, "selmRCShadowTSSWriteHandler", 0, "Shadow TSS write access handler");
+                                         NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
         AssertRC(rc);
 #endif
 
@@ -530,15 +584,16 @@ VMMR3DECL(void) SELMR3Relocate(PVM pVM)
 #ifdef SELM_TRACK_SHADOW_LDT_CHANGES
         if (pVM->selm.s.pvLdtRC != RTRCPTR_MAX)
         {
-            rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.pvLdtRC);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.pvLdtRC, true /*fHypervisor*/);
             AssertRC(rc);
         }
 #endif
         pVM->selm.s.pvLdtRC = MMHyperR3ToRC(pVM, pVM->selm.s.pvLdtR3);
 #ifdef SELM_TRACK_SHADOW_LDT_CHANGES
-        rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_HYPERVISOR, pVM->selm.s.pvLdtRC,
+        rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hShadowLdtWriteHandlerType,
+                                         pVM->selm.s.pvLdtRC,
                                          pVM->selm.s.pvLdtRC + _64K + PAGE_SIZE - 1,
-                                         0, 0, "selmRCShadowLDTWriteHandler", 0, "Shadow LDT write access handler");
+                                         NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
         AssertRC(rc);
 #endif
     }
@@ -552,7 +607,7 @@ VMMR3DECL(void) SELMR3Relocate(PVM pVM)
  * the VM it self is at this point powered off or suspended.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) SELMR3Term(PVM pVM)
 {
@@ -567,7 +622,7 @@ VMMR3DECL(int) SELMR3Term(PVM pVM)
  * For the SELM component this means that any GDT/LDT/TSS monitors
  * needs to be removed.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) SELMR3Reset(PVM pVM)
 {
@@ -577,11 +632,11 @@ VMMR3DECL(void) SELMR3Reset(PVM pVM)
     /*
      * Uninstall guest GDT/LDT/TSS write access handlers.
      */
-    int rc = VINF_SUCCESS;
+    PVMCPU pVCpu = VMMGetCpu(pVM); NOREF(pVCpu);
     if (pVM->selm.s.GuestGdtr.pGdt != RTRCPTR_MAX && pVM->selm.s.fGDTRangeRegistered)
     {
 #ifdef SELM_TRACK_GUEST_GDT_CHANGES
-        rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GuestGdtr.pGdt);
+        int rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GuestGdtr.pGdt, false /*fHypervisor*/);
         AssertRC(rc);
 #endif
         pVM->selm.s.GuestGdtr.pGdt = RTRCPTR_MAX;
@@ -591,7 +646,7 @@ VMMR3DECL(void) SELMR3Reset(PVM pVM)
     if (pVM->selm.s.GCPtrGuestLdt != RTRCPTR_MAX)
     {
 #ifdef SELM_TRACK_GUEST_LDT_CHANGES
-        rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GCPtrGuestLdt);
+        int rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GCPtrGuestLdt, false /*fHypervisor*/);
         AssertRC(rc);
 #endif
         pVM->selm.s.GCPtrGuestLdt = RTRCPTR_MAX;
@@ -599,7 +654,7 @@ VMMR3DECL(void) SELMR3Reset(PVM pVM)
     if (pVM->selm.s.GCPtrGuestTss != RTRCPTR_MAX)
     {
 #ifdef SELM_TRACK_GUEST_TSS_CHANGES
-        rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GCPtrGuestTss);
+        int rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GCPtrGuestTss, false /*fHypervisor*/);
         AssertRC(rc);
 #endif
         pVM->selm.s.GCPtrGuestTss = RTRCPTR_MAX;
@@ -621,7 +676,6 @@ VMMR3DECL(void) SELMR3Reset(PVM pVM)
         /*
          * Default action when entering raw mode for the first time
          */
-        PVMCPU pVCpu = &pVM->aCpus[0];  /* raw mode implies on VCPU */
         VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_TSS);
         VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_GDT);
         VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_LDT);
@@ -634,7 +688,7 @@ VMMR3DECL(void) SELMR3Reset(PVM pVM)
  * Execute state save operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  */
 static DECLCALLBACK(int) selmR3Save(PVM pVM, PSSMHANDLE pSSM)
@@ -661,7 +715,7 @@ static DECLCALLBACK(int) selmR3Save(PVM pVM, PSSMHANDLE pSSM)
  * Execute state load operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  * @param   uVersion        Data layout version.
  * @param   uPass           The data pass.
@@ -727,7 +781,7 @@ static DECLCALLBACK(int) selmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion,
  * executing GC code.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  */
 static DECLCALLBACK(int) selmR3LoadDone(PVM pVM, PSSMHANDLE pSSM)
@@ -764,7 +818,10 @@ static DECLCALLBACK(int) selmR3LoadDone(PVM pVM, PSSMHANDLE pSSM)
         VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_LDT);
         VMCPU_FF_SET(pVCpu, VMCPU_FF_SELM_SYNC_TSS);
     }
-#endif /*VBOX_WITH_RAW_MODE*/
+
+#else  /* !VBOX_WITH_RAW_MODE */
+    RT_NOREF(pVM, pSSM);
+#endif /* !VBOX_WITH_RAW_MODE */
     return VINF_SUCCESS;
 }
 
@@ -774,11 +831,12 @@ static DECLCALLBACK(int) selmR3LoadDone(PVM pVM, PSSMHANDLE pSSM)
  * Updates (syncs) the shadow GDT.
  *
  * @returns VBox status code.
- * @param   pVM                 The VM handle.
- * @param   pVCpu               The current virtual CPU.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  */
 static int selmR3UpdateShadowGdt(PVM pVM, PVMCPU pVCpu)
 {
+    LogFlow(("selmR3UpdateShadowGdt\n"));
     Assert(!HMIsEnabled(pVM));
 
     /*
@@ -993,31 +1051,27 @@ static int selmR3UpdateShadowGdt(PVM pVM, PVMCPU pVCpu)
          */
         if (pVM->selm.s.GuestGdtr.pGdt != RTRCPTR_MAX && pVM->selm.s.fGDTRangeRegistered)
         {
-            rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GuestGdtr.pGdt);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GuestGdtr.pGdt, false /*fHypervisor*/);
             AssertRC(rc);
         }
-
-        rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_WRITE,
+        rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hGuestGdtWriteHandlerType,
                                          GDTR.pGdt, GDTR.pGdt + GDTR.cbGdt /* already inclusive */,
-                                         0, selmR3GuestGDTWriteHandler, "selmRCGuestGDTWriteHandler", 0,
-                                         "Guest GDT write access handler");
+                                         NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
 #  ifdef VBOX_WITH_RAW_RING1
         /** @todo !HACK ALERT!
          * Some guest OSes (QNX) share code and the GDT on the same page;
          * PGMR3HandlerVirtualRegister doesn't support more than one handler,
-         * so we kick out the  PATM handler as this one is more important.
-         * Fix this properly in PGMR3HandlerVirtualRegister?
+         * so we kick out the PATM handler as this one is more important. Fix this
+         * properly in PGMR3HandlerVirtualRegister?
          */
         if (rc == VERR_PGM_HANDLER_VIRTUAL_CONFLICT)
         {
             LogRel(("selmR3UpdateShadowGdt: Virtual handler conflict %RGv -> kick out PATM handler for the higher priority GDT page monitor\n", GDTR.pGdt));
-            rc = PGMHandlerVirtualDeregister(pVM, GDTR.pGdt & PAGE_BASE_GC_MASK);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, GDTR.pGdt & PAGE_BASE_GC_MASK, false /*fHypervisor*/);
             AssertRC(rc);
-
-            rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_WRITE,
+            rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hGuestGdtWriteHandlerType,
                                              GDTR.pGdt, GDTR.pGdt + GDTR.cbGdt /* already inclusive */,
-                                             0, selmR3GuestGDTWriteHandler, "selmRCGuestGDTWriteHandler", 0,
-                                             "Guest GDT write access handler");
+                                             NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
         }
 #  endif
         if (RT_FAILURE(rc))
@@ -1037,11 +1091,12 @@ static int selmR3UpdateShadowGdt(PVM pVM, PVMCPU pVCpu)
  * Updates (syncs) the shadow LDT.
  *
  * @returns VBox status code.
- * @param   pVM                 The VM handle.
- * @param   pVCpu               The current virtual CPU.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  */
 static int selmR3UpdateShadowLdt(PVM pVM, PVMCPU pVCpu)
 {
+    LogFlow(("selmR3UpdateShadowLdt\n"));
     int rc = VINF_SUCCESS;
     Assert(!HMIsEnabled(pVM));
 
@@ -1072,7 +1127,7 @@ static int selmR3UpdateShadowLdt(PVM pVM, PVMCPU pVCpu)
         CPUMSetHyperLDTR(pVCpu, 0);
         if (pVM->selm.s.GCPtrGuestLdt != RTRCPTR_MAX)
         {
-            rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GCPtrGuestLdt);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GCPtrGuestLdt, false /*fHypervisor*/);
             AssertRC(rc);
             pVM->selm.s.GCPtrGuestLdt = RTRCPTR_MAX;
         }
@@ -1105,7 +1160,7 @@ static int selmR3UpdateShadowLdt(PVM pVM, PVMCPU pVCpu)
         CPUMSetHyperLDTR(pVCpu, 0);
         if (pVM->selm.s.GCPtrGuestLdt != RTRCPTR_MAX)
         {
-            rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GCPtrGuestLdt);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GCPtrGuestLdt, false /*fHypervisor*/);
             AssertRC(rc);
             pVM->selm.s.GCPtrGuestLdt = RTRCPTR_MAX;
         }
@@ -1141,15 +1196,16 @@ static int selmR3UpdateShadowLdt(PVM pVM, PVMCPU pVCpu)
              */
             if (pVM->selm.s.GCPtrGuestLdt != RTRCPTR_MAX)
             {
-                rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GCPtrGuestLdt);
+                rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GCPtrGuestLdt, false /*fHypervisor*/);
                 AssertRC(rc);
             }
 #  ifdef LOG_ENABLED
             if (pDesc->Gen.u1Present)
                 Log(("LDT selector marked not present!!\n"));
 #  endif
-            rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_WRITE, GCPtrLdt, GCPtrLdt + cbLdt /* already inclusive */,
-                                             0, selmR3GuestLDTWriteHandler, "selmRCGuestLDTWriteHandler", 0, "Guest LDT write access handler");
+            rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hGuestLdtWriteHandlerType,
+                                             GCPtrLdt, GCPtrLdt + cbLdt /* already inclusive */,
+                                             NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
             if (rc == VERR_PGM_HANDLER_VIRTUAL_CONFLICT)
             {
                 /** @todo investigate the various cases where conflicts happen and try avoid them by enh. the instruction emulation. */
@@ -1199,6 +1255,7 @@ static int selmR3UpdateShadowLdt(PVM pVM, PVMCPU pVCpu)
      * Set Hyper LDTR and notify TRPM.
      */
     CPUMSetHyperLDTR(pVCpu, SelLdt);
+    LogFlow(("selmR3UpdateShadowLdt: Hyper LDTR %#x\n", SelLdt));
 
     /*
      * Loop synchronising the LDT page by page.
@@ -1272,8 +1329,8 @@ static int selmR3UpdateShadowLdt(PVM pVM, PVMCPU pVCpu)
  * @returns VBox strict status code.
  * @retval  VINF_EM_RESCHEDULE_REM if a stale register was found.
  *
- * @param   pVM                 The VM handle.
- * @param   pVCpu               The current virtual CPU.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  */
 static VBOXSTRICTRC selmR3UpdateSegmentRegisters(PVM pVM, PVMCPU pVCpu)
 {
@@ -1375,8 +1432,8 @@ static VBOXSTRICTRC selmR3UpdateSegmentRegisters(PVM pVM, PVMCPU pVCpu)
  * Updates the Guest GDT & LDT virtualization based on current CPU state.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  */
 VMMR3DECL(VBOXSTRICTRC) SELMR3UpdateFromCPUM(PVM pVM, PVMCPU pVCpu)
 {
@@ -1426,102 +1483,6 @@ VMMR3DECL(VBOXSTRICTRC) SELMR3UpdateFromCPUM(PVM pVM, PVMCPU pVCpu)
     return rcStrict;
 }
 
-#endif /*VBOX_WITH_RAW_MODE*/
-
-#ifdef SELM_TRACK_GUEST_GDT_CHANGES
-/**
- * \#PF Handler callback for virtual access handler ranges.
- *
- * Important to realize that a physical page in a range can have aliases, and
- * for ALL and WRITE handlers these will also trigger.
- *
- * @returns VINF_SUCCESS if the handler have carried out the operation.
- * @returns VINF_PGM_HANDLER_DO_DEFAULT if the caller should carry out the access operation.
- * @param   pVM             Pointer to the VM.
- * @param   GCPtr           The virtual address the guest is writing to. (not correct if it's an alias!)
- * @param   pvPtr           The HC mapping of that address.
- * @param   pvBuf           What the guest is reading/writing.
- * @param   cbBuf           How much it's reading/writing.
- * @param   enmAccessType   The access type.
- * @param   pvUser          User argument.
- */
-static DECLCALLBACK(int) selmR3GuestGDTWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
-                                                    PGMACCESSTYPE enmAccessType, void *pvUser)
-{
-    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
-    Log(("selmR3GuestGDTWriteHandler: write to %RGv size %d\n", GCPtr, cbBuf)); NOREF(GCPtr); NOREF(cbBuf);
-    NOREF(pvPtr); NOREF(pvBuf); NOREF(pvUser);
-
-    VMCPU_FF_SET(VMMGetCpu(pVM), VMCPU_FF_SELM_SYNC_GDT);
-    return VINF_PGM_HANDLER_DO_DEFAULT;
-}
-#endif
-
-#ifdef SELM_TRACK_GUEST_LDT_CHANGES
-/**
- * \#PF Handler callback for virtual access handler ranges.
- *
- * Important to realize that a physical page in a range can have aliases, and
- * for ALL and WRITE handlers these will also trigger.
- *
- * @returns VINF_SUCCESS if the handler have carried out the operation.
- * @returns VINF_PGM_HANDLER_DO_DEFAULT if the caller should carry out the access operation.
- * @param   pVM             Pointer to the VM.
- * @param   GCPtr           The virtual address the guest is writing to. (not correct if it's an alias!)
- * @param   pvPtr           The HC mapping of that address.
- * @param   pvBuf           What the guest is reading/writing.
- * @param   cbBuf           How much it's reading/writing.
- * @param   enmAccessType   The access type.
- * @param   pvUser          User argument.
- */
-static DECLCALLBACK(int) selmR3GuestLDTWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
-                                                    PGMACCESSTYPE enmAccessType, void *pvUser)
-{
-    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
-    Log(("selmR3GuestLDTWriteHandler: write to %RGv size %d\n", GCPtr, cbBuf)); NOREF(GCPtr); NOREF(cbBuf);
-    NOREF(pvPtr); NOREF(pvBuf); NOREF(pvUser);
-
-    VMCPU_FF_SET(VMMGetCpu(pVM), VMCPU_FF_SELM_SYNC_LDT);
-    return VINF_PGM_HANDLER_DO_DEFAULT;
-}
-#endif
-
-
-#ifdef SELM_TRACK_GUEST_TSS_CHANGES
-/**
- * \#PF Handler callback for virtual access handler ranges.
- *
- * Important to realize that a physical page in a range can have aliases, and
- * for ALL and WRITE handlers these will also trigger.
- *
- * @returns VINF_SUCCESS if the handler have carried out the operation.
- * @returns VINF_PGM_HANDLER_DO_DEFAULT if the caller should carry out the access operation.
- * @param   pVM             Pointer to the VM.
- * @param   GCPtr           The virtual address the guest is writing to. (not correct if it's an alias!)
- * @param   pvPtr           The HC mapping of that address.
- * @param   pvBuf           What the guest is reading/writing.
- * @param   cbBuf           How much it's reading/writing.
- * @param   enmAccessType   The access type.
- * @param   pvUser          User argument.
- */
-static DECLCALLBACK(int) selmR3GuestTSSWriteHandler(PVM pVM, RTGCPTR GCPtr, void *pvPtr, void *pvBuf, size_t cbBuf,
-                                                    PGMACCESSTYPE enmAccessType, void *pvUser)
-{
-    Assert(enmAccessType == PGMACCESSTYPE_WRITE); NOREF(enmAccessType);
-    Log(("selmR3GuestTSSWriteHandler: write %.*Rhxs to %RGv size %d\n", RT_MIN(8, cbBuf), pvBuf, GCPtr, cbBuf));
-    NOREF(pvBuf); NOREF(GCPtr); NOREF(cbBuf); NOREF(pvUser);NOREF(pvPtr);
-
-    /** @todo This can be optimized by checking for the ESP0 offset and tracking TR
-     *        reloads in REM (setting VM_FF_SELM_SYNC_TSS if TR is reloaded). We
-     *        should probably also deregister the virtual handler if TR.base/size
-     *        changes while we're in REM. */
-
-    VMCPU_FF_SET(VMMGetCpu(pVM), VMCPU_FF_SELM_SYNC_TSS);
-    return VINF_PGM_HANDLER_DO_DEFAULT;
-}
-#endif
-
-#ifdef VBOX_WITH_RAW_MODE
 
 /**
  * Synchronize the shadowed fields in the TSS.
@@ -1532,11 +1493,12 @@ static DECLCALLBACK(int) selmR3GuestTSSWriteHandler(PVM pVM, RTGCPTR GCPtr, void
  * loaded TR.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  */
 VMMR3DECL(int) SELMR3SyncTSS(PVM pVM, PVMCPU pVCpu)
 {
+    LogFlow(("SELMR3SyncTSS\n"));
     int rc;
     AssertReturnStmt(!HMIsEnabled(pVM), VMCPU_FF_CLEAR(pVCpu, VMCPU_FF_SELM_SYNC_TSS), VINF_SUCCESS);
 
@@ -1598,7 +1560,7 @@ VMMR3DECL(int) SELMR3SyncTSS(PVM pVM, PVMCPU pVCpu)
          */
         VBOXTSS Tss;
         uint32_t cr4 = CPUMGetGuestCR4(pVCpu);
-        rc = PGMPhysSimpleReadGCPtr(pVCpu, &Tss, GCPtrTss, RT_OFFSETOF(VBOXTSS, IntRedirBitmap));
+        rc = PGMPhysSimpleReadGCPtr(pVCpu, &Tss, GCPtrTss, RT_UOFFSETOF(VBOXTSS, IntRedirBitmap));
         if (    !(cr4 & X86_CR4_VME)
             ||   (  RT_SUCCESS(rc)
                  && Tss.offIoBitmap < sizeof(VBOXTSS) /* too small */
@@ -1629,7 +1591,7 @@ VMMR3DECL(int) SELMR3SyncTSS(PVM pVM, PVMCPU pVCpu)
         }
         else
         {
-            cbMonitoredTss = RT_OFFSETOF(VBOXTSS, IntRedirBitmap);
+            cbMonitoredTss = RT_UOFFSETOF(VBOXTSS, IntRedirBitmap);
             pVM->selm.s.offGuestIoBitmap = 0;
             /** @todo memset the bitmap? */
         }
@@ -1702,7 +1664,7 @@ VMMR3DECL(int) SELMR3SyncTSS(PVM pVM, PVMCPU pVCpu)
         /* Release the old range first. */
         if (pVM->selm.s.GCPtrGuestTss != RTRCPTR_MAX)
         {
-            rc = PGMHandlerVirtualDeregister(pVM, pVM->selm.s.GCPtrGuestTss);
+            rc = PGMHandlerVirtualDeregister(pVM, pVCpu, pVM->selm.s.GCPtrGuestTss, false /*fHypervisor*/);
             AssertRC(rc);
         }
 
@@ -1710,9 +1672,9 @@ VMMR3DECL(int) SELMR3SyncTSS(PVM pVM, PVMCPU pVCpu)
         if (cbMonitoredTss != 0)
         {
 # ifdef SELM_TRACK_GUEST_TSS_CHANGES
-            rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_WRITE, GCPtrTss, GCPtrTss + cbMonitoredTss - 1,
-                                             0, selmR3GuestTSSWriteHandler,
-                                             "selmRCGuestTSSWriteHandler", 0, "Guest TSS write access handler");
+            rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hGuestTssWriteHandlerType,
+                                             GCPtrTss, GCPtrTss + cbMonitoredTss - 1,
+                                             NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
             if (RT_FAILURE(rc))
             {
 #  ifdef VBOX_WITH_RAW_RING1
@@ -1725,12 +1687,12 @@ VMMR3DECL(int) SELMR3SyncTSS(PVM pVM, PVMCPU pVCpu)
                 if (rc == VERR_PGM_HANDLER_VIRTUAL_CONFLICT)
                 {
                     LogRel(("SELMR3SyncTSS: Virtual handler conflict %RGv -> kick out PATM handler for the higher priority TSS page monitor\n", GCPtrTss));
-                    rc = PGMHandlerVirtualDeregister(pVM, GCPtrTss & PAGE_BASE_GC_MASK);
+                    rc = PGMHandlerVirtualDeregister(pVM, pVCpu, GCPtrTss & PAGE_BASE_GC_MASK, false /*fHypervisor*/);
                     AssertRC(rc);
 
-                    rc = PGMR3HandlerVirtualRegister(pVM, PGMVIRTHANDLERTYPE_WRITE, GCPtrTss, GCPtrTss + cbMonitoredTss - 1,
-                                                     0, selmR3GuestTSSWriteHandler,
-                                                     "selmRCGuestTSSWriteHandler", 0, "Guest TSS write access handler");
+                    rc = PGMR3HandlerVirtualRegister(pVM, pVCpu, pVM->selm.s.hGuestTssWriteHandlerType,
+                                                     GCPtrTss, GCPtrTss + cbMonitoredTss - 1,
+                                                     NULL /*pvUserR3*/, NIL_RTR0PTR /*pvUserRC*/, NULL /*pszDesc*/);
                     if (RT_FAILURE(rc))
                     {
                         STAM_PROFILE_STOP(&pVM->selm.s.StatUpdateFromCPUM, a);
@@ -1769,11 +1731,11 @@ VMMR3DECL(int) SELMR3SyncTSS(PVM pVM, PVMCPU pVCpu)
  * This is a VBOX_STRICT only function.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) SELMR3DebugCheck(PVM pVM)
 {
-#ifdef VBOX_STRICT
+# ifdef VBOX_STRICT
     PVMCPU pVCpu = VMMGetCpu(pVM);
     AssertReturn(!HMIsEnabled(pVM), VERR_SELM_HM_IPE);
 
@@ -1894,9 +1856,9 @@ VMMR3DECL(int) SELMR3DebugCheck(PVM pVM)
         pLDTE++;
     }
 
-#else  /* !VBOX_STRICT */
+# else  /* !VBOX_STRICT */
     NOREF(pVM);
-#endif /* !VBOX_STRICT */
+# endif /* !VBOX_STRICT */
 
     return VINF_SUCCESS;
 }
@@ -1907,11 +1869,11 @@ VMMR3DECL(int) SELMR3DebugCheck(PVM pVM)
  *
  * @returns true if it matches.
  * @returns false and assertions on mismatch..
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(bool) SELMR3CheckTSS(PVM pVM)
 {
-#if defined(VBOX_STRICT) && defined(SELM_TRACK_GUEST_TSS_CHANGES)
+# if defined(VBOX_STRICT) && defined(SELM_TRACK_GUEST_TSS_CHANGES)
     PVMCPU pVCpu = VMMGetCpu(pVM);
 
     if (VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_SELM_SYNC_TSS))
@@ -1971,7 +1933,7 @@ VMMR3DECL(bool) SELMR3CheckTSS(PVM pVM)
     {
         VBOXTSS Tss;
         uint32_t cr4 = CPUMGetGuestCR4(pVCpu);
-        int rc = PGMPhysSimpleReadGCPtr(pVCpu, &Tss, GCPtrTss, RT_OFFSETOF(VBOXTSS, IntRedirBitmap));
+        int rc = PGMPhysSimpleReadGCPtr(pVCpu, &Tss, GCPtrTss, RT_UOFFSETOF(VBOXTSS, IntRedirBitmap));
         AssertReturn(   rc == VINF_SUCCESS
                         /* Happens early in XP boot during page table switching. */
                      || (   (rc == VERR_PAGE_TABLE_NOT_PRESENT || rc == VERR_PAGE_NOT_PRESENT)
@@ -1987,7 +1949,7 @@ VMMR3DECL(bool) SELMR3CheckTSS(PVM pVM)
         {
             cbMonitoredTss = Tss.offIoBitmap;
             AssertMsgReturn(pVM->selm.s.offGuestIoBitmap == Tss.offIoBitmap,
-                            ("#x %#x\n", pVM->selm.s.offGuestIoBitmap, Tss.offIoBitmap),
+                            ("%#x %#x\n", pVM->selm.s.offGuestIoBitmap, Tss.offIoBitmap),
                             false);
 
             /* check the bitmap */
@@ -2005,7 +1967,7 @@ VMMR3DECL(bool) SELMR3CheckTSS(PVM pVM)
                             false);
         }
         else
-            cbMonitoredTss = RT_OFFSETOF(VBOXTSS, IntRedirBitmap);
+            cbMonitoredTss = RT_UOFFSETOF(VBOXTSS, IntRedirBitmap);
 
         /*
          * Check SS0 and ESP0.
@@ -2037,10 +1999,10 @@ VMMR3DECL(bool) SELMR3CheckTSS(PVM pVM)
 
     return true;
 
-#else  /* !VBOX_STRICT */
+# else  /* !VBOX_STRICT */
     NOREF(pVM);
     return true;
-#endif /* !VBOX_STRICT */
+# endif /* !VBOX_STRICT */
 }
 
 
@@ -2050,7 +2012,7 @@ VMMR3DECL(bool) SELMR3CheckTSS(PVM pVM)
  *
  * @returns true if it matches.
  * @returns false and assertions on mismatch..
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(bool) SELMR3CheckShadowTR(PVM pVM)
 {
@@ -2081,6 +2043,8 @@ VMMR3DECL(bool) SELMR3CheckShadowTR(PVM pVM)
         AssertFailed();
         return false;
     }
+#  else
+    RT_NOREF_PV(pVM);
 #  endif
     return true;
 }
@@ -2095,7 +2059,7 @@ VMMR3DECL(bool) SELMR3CheckShadowTR(PVM pVM)
  *
  * @returns VBox status code, see SELMR3GetSelectorInfo for details.
  *
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   Sel         The selector to get info about.
  * @param   pSelInfo    Where to store the information.
  */
@@ -2255,8 +2219,8 @@ DECLINLINE(void) selmR3SelInfoFromDesc32(PDBGFSELINFO pSelInfo, PCX86DESC pDesc)
  *
  * @returns VBox status code, see SELMR3GetSelectorInfo for details.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   Sel         The selector to get info about.
  * @param   pSelInfo    Where to store the information.
  */
@@ -2362,8 +2326,8 @@ static int selmR3GetSelectorInfo32(PVM pVM, PVMCPU pVCpu, RTSEL Sel, PDBGFSELINF
  *          pagetable or page backing the selector table wasn't present.
  * @returns Other VBox status code on other errors.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   Sel         The selector to get info about.
  * @param   pSelInfo    Where to store the information.
  */
@@ -2392,7 +2356,7 @@ VMMR3DECL(int) SELMR3GetSelectorInfo(PVM pVM, PVMCPU pVCpu, RTSEL Sel, PDBGFSELI
  *          pagetable or page backing the selector table wasn't present.
  * @returns Other VBox status code on other errors.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   Sel         The selector to get info about.
  * @param   pSelInfo    Where to store the information.
  *
@@ -2541,19 +2505,25 @@ static void selmR3FormatDescriptor(X86DESC Desc, RTSEL Sel, char *pszOutput, siz
  * @param   Sel     Selector number.
  * @param   pszMsg  Message to prepend the log entry with.
  */
-VMMR3DECL(void) SELMR3DumpDescriptor(X86DESC  Desc, RTSEL Sel, const char *pszMsg)
+VMMR3DECL(void) SELMR3DumpDescriptor(X86DESC Desc, RTSEL Sel, const char *pszMsg)
 {
-    char szOutput[128];
-    selmR3FormatDescriptor(Desc, Sel, &szOutput[0], sizeof(szOutput));
-    Log(("%s: %s\n", pszMsg, szOutput));
-    NOREF(szOutput[0]);
+#ifdef LOG_ENABLED
+    if (LogIsEnabled())
+    {
+        char szOutput[128];
+        selmR3FormatDescriptor(Desc, Sel, &szOutput[0], sizeof(szOutput));
+        Log(("%s: %s\n", pszMsg, szOutput));
+    }
+#else
+    RT_NOREF3(Desc, Sel, pszMsg);
+#endif
 }
 
 
 /**
  * Display the shadow gdt.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pHlp        The info helpers.
  * @param   pszArgs     Arguments, ignored.
  */
@@ -2587,7 +2557,7 @@ static DECLCALLBACK(void) selmR3InfoGdt(PVM pVM, PCDBGFINFOHLP pHlp, const char 
 /**
  * Display the guest gdt.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pHlp        The info helpers.
  * @param   pszArgs     Arguments, ignored.
  */
@@ -2630,7 +2600,7 @@ static DECLCALLBACK(void) selmR3InfoGdtGuest(PVM pVM, PCDBGFINFOHLP pHlp, const 
 /**
  * Display the shadow ldt.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pHlp        The info helpers.
  * @param   pszArgs     Arguments, ignored.
  */
@@ -2655,7 +2625,7 @@ static DECLCALLBACK(void) selmR3InfoLdt(PVM pVM, PCDBGFINFOHLP pHlp, const char 
 /**
  * Display the guest ldt.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pHlp        The info helpers.
  * @param   pszArgs     Arguments, ignored.
  */
@@ -2703,7 +2673,7 @@ static DECLCALLBACK(void) selmR3InfoLdtGuest(PVM pVM, PCDBGFINFOHLP pHlp, const 
 /**
  * Dumps the hypervisor GDT
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) SELMR3DumpHyperGDT(PVM pVM)
 {
@@ -2714,7 +2684,7 @@ VMMR3DECL(void) SELMR3DumpHyperGDT(PVM pVM)
 /**
  * Dumps the hypervisor LDT
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) SELMR3DumpHyperLDT(PVM pVM)
 {
@@ -2725,7 +2695,7 @@ VMMR3DECL(void) SELMR3DumpHyperLDT(PVM pVM)
 /**
  * Dumps the guest GDT
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) SELMR3DumpGuestGDT(PVM pVM)
 {
@@ -2736,7 +2706,7 @@ VMMR3DECL(void) SELMR3DumpGuestGDT(PVM pVM)
 /**
  * Dumps the guest LDT
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) SELMR3DumpGuestLDT(PVM pVM)
 {

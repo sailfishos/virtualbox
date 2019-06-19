@@ -47,6 +47,12 @@
 #include "ipcConfig.h"
 #include "ipcLog.h"
 
+#ifdef VBOX
+# include "prenv.h"
+# include <stdio.h>
+# include <VBox/log.h>
+#endif
+
 
 //-----------------------------------------------------------------------------
 // NOTE: this code does not need to link with anything but NSPR.  that is by
@@ -413,7 +419,9 @@ TryConnect(PRFileDesc **result)
   PRFileDesc *fd;
   PRNetAddr addr;
   PRSocketOptionData opt;
-  nsresult rv = NS_ERROR_FAILURE;
+  // don't use NS_ERROR_FAILURE as we want to detect these kind of errors
+  // in the frontend
+  nsresult rv = NS_ERROR_SOCKET_FAIL;
 
   fd = PR_OpenTCPSocket(PR_AF_LOCAL);
   if (!fd)
@@ -425,6 +433,12 @@ TryConnect(PRFileDesc **result)
   // blocking connect... will fail if no one is listening.
   if (PR_Connect(fd, &addr, PR_INTERVAL_NO_TIMEOUT) == PR_FAILURE)
     goto end;
+
+#ifdef VBOX
+  if (PR_GetEnv("TESTBOX_UUID"))
+    fprintf(stderr, "IPC socket path: %s\n", addr.local.path);
+  LogRel(("IPC socket path: %s\n", addr.local.path));
+#endif
 
   // make socket non-blocking
   opt.option = PR_SockOpt_Nonblocking;
@@ -467,7 +481,9 @@ IPC_Connect(const char *daemonPath)
   rv = TryConnect(&fd);
   if (NS_FAILED(rv))
   {
-    rv = IPC_SpawnDaemon(daemonPath);
+    nsresult rv1 = IPC_SpawnDaemon(daemonPath);
+    if (NS_SUCCEEDED(rv1) || rv != NS_ERROR_SOCKET_FAIL)
+      rv = rv1; 
     if (NS_SUCCEEDED(rv))
       rv = TryConnect(&fd);
   }

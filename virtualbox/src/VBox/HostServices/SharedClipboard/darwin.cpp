@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -72,7 +72,7 @@ static int vboxClipboardChanged (VBOXCLIPBOARDCONTEXT *pCtx)
  * This thread will check for the arrival of new data on the clipboard.
  *
  * @returns VINF_SUCCESS (not used).
- * @param   Thread      Our thread handle.
+ * @param   ThreadSelf  Our thread handle.
  * @param   pvUser      Pointer to the VBOXCLIPBOARDCONTEXT structure.
  *
  */
@@ -150,10 +150,12 @@ void vboxClipboardDestroy (void)
  * Enable the shared clipboard - called by the hgcm clipboard subsystem.
  *
  * @param   pClient Structure containing context information about the guest system
+ * @param   fHeadless Whether headless.
  * @returns RT status code
  */
-int vboxClipboardConnect (VBOXCLIPBOARDCLIENTDATA *pClient, bool)
+int vboxClipboardConnect (VBOXCLIPBOARDCLIENTDATA *pClient, bool fHeadless)
 {
+    NOREF(fHeadless);
     if (g_ctx.pClient != NULL)
     {
         /* One client only. */

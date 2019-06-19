@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -40,7 +40,7 @@
 # define _InterlockedAddLargeStatistic  _InterlockedAddLargeStatistic_StupidDDKVsCompilerCrap
 # pragma warning(disable : 4163)
 RT_C_DECLS_BEGIN
-# include <ntddk.h>
+# include <iprt/nt/nt.h>
 RT_C_DECLS_END
 # pragma warning(default : 4163)
 # undef  _InterlockedExchange
@@ -49,7 +49,7 @@ RT_C_DECLS_END
 # undef  _InterlockedAddLargeStatistic
 #else
 RT_C_DECLS_BEGIN
-# include <ntddk.h>
+# include <iprt/nt/nt.h>
 RT_C_DECLS_END
 #endif
 
@@ -61,6 +61,11 @@ RT_C_DECLS_END
 #include <iprt/param.h>
 #ifndef PAGE_OFFSET_MASK
 # define PAGE_OFFSET_MASK (PAGE_SIZE - 1)
+#endif
+
+/* Missing if we're compiling against older WDKs. */
+#ifndef NonPagedPoolNx
+# define NonPagedPoolNx     ((POOL_TYPE)512)
 #endif
 
 /*
@@ -76,6 +81,8 @@ RT_C_DECLS_END
   NTKERNELAPI PVOID NTAPI ExAllocatePool(IN POOL_TYPE PoolType, IN SIZE_T NumberOfBytes);
 # undef ExFreePool
   NTKERNELAPI VOID NTAPI ExFreePool(IN PVOID P);
+# undef NonPagedPoolNx
+# define NonPagedPoolNx NonPagedPool
 #endif /* IPRT_TARGET_NT4 */
 
 /** @def IPRT_NT_POOL_TAG

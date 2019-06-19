@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2008-2012 Oracle Corporation
+# Copyright (C) 2008-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -24,15 +24,8 @@ include $(KBUILD_PATH)/subheader.kmk
 BLDDIRS += \
 	$(VBOX_PATH_CROGL_GENFILES)/
 
-DLLS.win += \
-    VBoxOGL \
-    VBoxOGLarrayspu \
-    VBoxOGLpassthroughspu \
-    VBoxOGLpackspu \
-    VBoxOGLfeedbackspu
-
-if1of ($(KBUILD_TARGET), linux solaris freebsd)
-DLLS += \
+if1of ($(KBUILD_TARGET), win linux solaris freebsd)
+ DLLS += \
     VBoxOGL \
     VBoxOGLarrayspu \
     VBoxOGLpassthroughspu \
@@ -53,7 +46,8 @@ endif
 
 if1of ($(KBUILD_TARGET), linux solaris freebsd)
  #VBoxOGL_DRI = 1
- ifn1of ($(KBUILD_TARGET),solaris)   # No DRI on Solaris yet
+ DLLS += VBoxEGL
+ ifn1of ($(KBUILD_TARGET),linux solaris)   # No DRI on Solaris yet
   VBoxOGL_FAKEDRI = 1
  endif
 
@@ -71,9 +65,10 @@ endif
 # VBoxOGL
 #
 VBoxOGL_TEMPLATE       = VBOXCROGLR3GUESTDLL
-VBoxOGL_INCS           = .
+VBoxOGL_INCS           = . $(VBOX_GRAPHICS_INCS)
 if1of ($(KBUILD_TARGET), linux solaris freebsd)
- VBoxOGL_INCS     += \
+ ifndef VBOX_USE_SYSTEM_GL_HEADERS
+  VBoxOGL_INCS     += \
 	$(VBOX_PATH_X11_ROOT)/libXdamage-1.1 \
 	$(VBOX_PATH_X11_ROOT)/libXcomposite-0.4.0 \
 	$(VBOX_PATH_X11_ROOT)/libXext-1.3.1 \
@@ -84,8 +79,8 @@ if1of ($(KBUILD_TARGET), linux solaris freebsd)
 	$(VBOX_PATH_X11_ROOT)/libx11-1.1.5-other \
 	$(VBOX_PATH_X11_ROOT)/xextproto-7.1.1 \
 	$(VBOX_PATH_X11_ROOT)/xproto-7.0.18 \
-	$(VBOX_MESA_INCS) \
-	$(PATH_ROOT)/src/VBox/Additions/x11/x11include/libdrm-2.4.13
+	$(VBOX_GL_INCS)
+ endif
  VBoxOGL_DEFS     += VBOX_NO_NATIVEGL
 endif
 
@@ -168,7 +163,7 @@ if1of ($(KBUILD_TARGET), linux solaris freebsd)
   endif
  else
   VBoxOGL_SOURCES.linux += \
-  	$(VBOX_PATH_CROGL_GENFILES)/linux_exports.asm
+  	$(VBOX_PATH_CROGL_GENFILES)/linux_exports.c
   VBoxOGL_SOURCES.solaris += \
   	$(VBOX_PATH_CROGL_GENFILES)/solaris_exports.c
   VBoxOGL_SOURCES.freebsd += \
@@ -187,7 +182,7 @@ VBoxOGL_CLEAN          = \
 	$(VBOX_PATH_CROGL_GENFILES)/NULLfuncs.c \
 	$(VBOX_PATH_CROGL_GENFILES)/tsfuncs.c
 VBoxOGL_CLEAN.linux        += \
-	$(VBOX_PATH_CROGL_GENFILES)/linux_exports.asm
+	$(VBOX_PATH_CROGL_GENFILES)/linux_exports.c
 VBoxOGL_CLEAN.solaris        += \
 	$(VBOX_PATH_CROGL_GENFILES)/solaris_exports.c
 VBoxOGL_CLEAN.win      = \
@@ -208,17 +203,29 @@ if1of ($(KBUILD_TARGET), linux solaris)
  	$(VBOX_PATH_CROGL_GENFILES)/solaris_glxapi_exports.asm
  endif
 endif
+# VBoxOGL_LIBS = \  # VBOX_LIB_OGL_CRUTIL includes these and caused an interesting conflict.
+#	$(VBOX_LIB_IPRT_GUEST_R3_SHARED) \
+#	$(VBOX_LIB_VBGL_R3_SHARED) \
+
 VBoxOGL_LIBS = \
-	$(VBOX_LIB_IPRT_GUEST_R3_SHARED) \
-	$(VBOX_LIB_VBGL_R3_SHARED) \
 	$(VBOX_LIB_OGL_CRUTIL) \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLspuload$(VBOX_SUFF_LIB)
+
+VBoxOGL_LIBS.win += \
+	$(PATH_STAGE_LIB)/additions/VBoxDispMpLogger$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxWddmUmKmt$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxCrHgsmi$(VBOX_SUFF_LIB)
+
 if1of ($(KBUILD_TARGET), linux solaris freebsd)
- VBoxOGL_LIBS += \
+ ifdef VBOX_USE_SYSTEM_GL_HEADERS
+  VBoxOGL_LIBS += Xcomposite Xdamage Xfixes Xext
+ else
+  VBoxOGL_LIBS += \
  	$(PATH_STAGE_LIB)/libXcomposite.so \
  	$(PATH_STAGE_LIB)/libXdamage.so \
  	$(PATH_STAGE_LIB)/libXfixes.so \
  	$(PATH_STAGE_LIB)/libXext.so
+ endif
  ifdef VBoxOGL_FAKEDRI
   ifeq ($(KBUILD_TARGET), freebsd)
     VBoxOGL_LIBS += \
@@ -227,6 +234,9 @@ if1of ($(KBUILD_TARGET), linux solaris freebsd)
     VBoxOGL_LIBS += \
   	dl
   endif
+ else
+  VBoxOGL_SONAME.linux = libGL.so.1
+  VBoxOGL_LDFLAGS.linux += -Wl,-e,LibMain
  endif
 endif
 ifdef VBOX_WITH_CRHGSMI
@@ -248,6 +258,13 @@ VBoxOGL-x86_LIBS = $(VBOX_LIB_IPRT_GUEST_R3_SHARED_X86) \
 	$(VBOX_LIB_VBGL_R3_SHARED_X86) \
 	$(VBOX_LIB_OGL_CRUTIL_X86) \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLspuload-x86$(VBOX_SUFF_LIB)
+
+VBoxOGL-x86_LIBS.win += \
+	$(PATH_STAGE_LIB)/additions/VBoxDispMpLogger-x86$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxWddmUmKmt-x86$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxCrHgsmi-x86$(VBOX_SUFF_LIB)
+
+
 VBoxOGL-x86_SOURCES.win = $(subst cropengl.def,cropengl-x86.def,$(VBoxOGL_SOURCES.win))
 VBoxOGL-x86_CLEAN.win = $(subst cropengl.def,cropengl-x86.def,$(VBoxOGL_CLEAN.win))
 VBoxOGL-x86_DEFS = $(VBoxOGL_DEFS) VBOX_WDDM_WOW64
@@ -325,8 +342,8 @@ $(VBOX_PATH_CROGL_GENFILES)/freebsd_exports.c: \
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $< $(VBOX_PATH_CROGL_GLAPI)
 
   else
-$(VBOX_PATH_CROGL_GENFILES)/linux_exports.asm: \
-		$(PATH_SUB_CURRENT)/Linux_i386_exports.py \
+$(VBOX_PATH_CROGL_GENFILES)/linux_exports.c: \
+		$(PATH_SUB_CURRENT)/Linux_exports.py \
 		$(VBOX_CROGL_API_FILES) $(PATH_SUB_CURRENT)/entrypoints.py \
 		| $$(dir $$@)
 	$(call MSG_GENERATE,python,$@,$<)
@@ -434,10 +451,11 @@ endif
 #
 VBoxOGLarrayspu_TEMPLATE      = VBOXCROGLR3GUESTDLL
 VBoxOGLarrayspu_INCS          = \
-	array
+	array \
+	$(VBOX_GRAPHICS_INCS)
 if1of ($(KBUILD_TARGET), linux solaris freebsd)
  VBoxOGLarrayspu_INCS += \
-        $(VBOX_MESA_INCS)
+        $(VBOX_GL_INCS)
 endif
 if defined(VBOX_SIGNING_MODE) && defined(VBOX_WITH_WDDM)
  VBoxOGLarrayspu_INSTTYPE.win = none
@@ -482,10 +500,11 @@ endif
 #
 VBoxOGLpassthroughspu_TEMPLATE    = VBOXCROGLR3GUESTDLL
 VBoxOGLpassthroughspu_INCS        = \
-	passthrough
+	passthrough \
+	$(VBOX_GRAPHICS_INCS)
 if1of ($(KBUILD_TARGET), linux solaris freebsd)
  VBoxOGLpassthroughspu_INCS += \
-        $(VBOX_MESA_INCS)
+        $(VBOX_GL_INCS)
 endif
 if defined(VBOX_SIGNING_MODE) && defined(VBOX_WITH_WDDM)
  VBoxOGLpassthroughspu_INSTTYPE.win = none
@@ -531,10 +550,11 @@ $(VBOX_PATH_CROGL_GENFILES)/passthroughspu.c: $(PATH_SUB_CURRENT)/passthrough/pa
 VBoxOGLpackspu_TEMPLATE      = VBOXCROGLR3GUESTDLL
 VBoxOGLpackspu_DEFS          = TRACKS_STATE=1 PACKS=1
 VBoxOGLpackspu_INCS          = \
-	pack
+	pack \
+	$(VBOX_GRAPHICS_INCS)
 if1of ($(KBUILD_TARGET), linux solaris freebsd)
  VBoxOGLpackspu_INCS += \
-        $(VBOX_MESA_INCS)
+        $(VBOX_GL_INCS)
 endif
 if defined(VBOX_SIGNING_MODE) && defined(VBOX_WITH_WDDM)
  VBoxOGLpackspu_INSTTYPE.win = none
@@ -576,6 +596,11 @@ VBoxOGLpackspu_LIBS        = \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLspuload$(VBOX_SUFF_LIB) \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLcrstate$(VBOX_SUFF_LIB) \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLcrpacker$(VBOX_SUFF_LIB)
+VBoxOGLpackspu_LIBS.win += \
+	$(PATH_STAGE_LIB)/additions/VBoxDispMpLogger$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxWddmUmKmt$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxCrHgsmi$(VBOX_SUFF_LIB)
+
 ifdef VBOX_WITH_CRHGSMI
 VBoxOGLpackspu_DEFS.win   += VBOX_WITH_CRHGSMI
 endif
@@ -599,6 +624,10 @@ VBoxOGLpackspu-x86_LIBS = $(VBOX_LIB_OGL_CRUTIL_X86) \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLspuload-x86$(VBOX_SUFF_LIB) \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLcrstate-x86$(VBOX_SUFF_LIB) \
 	$(PATH_STAGE_LIB)/additions/VBoxOGLcrpacker-x86$(VBOX_SUFF_LIB)
+VBoxOGLpackspu-x86_LIBS.win += \
+	$(PATH_STAGE_LIB)/additions/VBoxDispMpLogger-x86$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxWddmUmKmt-x86$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/additions/VBoxCrHgsmi-x86$(VBOX_SUFF_LIB)
 VBoxOGLpackspu-x86_DEFS = $(VBoxOGLpackspu_DEFS) VBOX_WDDM_WOW64
 endif
 
@@ -630,10 +659,11 @@ $(VBOX_PATH_CROGL_GENFILES)/packspu_proto.h: $(addprefix $(PATH_SUB_CURRENT)/pac
 #
 VBoxOGLfeedbackspu_TEMPLATE    = VBOXCROGLR3GUESTDLL
 VBoxOGLfeedbackspu_INCS        = \
-	feedback
+	feedback \
+	$(VBOX_GRAPHICS_INCS)
 if1of ($(KBUILD_TARGET), linux solaris freebsd)
  VBoxOGLfeedbackspu_INCS += \
-        $(VBOX_MESA_INCS)
+        $(VBOX_GL_INCS)
 endif
 if defined(VBOX_SIGNING_MODE) && defined(VBOX_WITH_WDDM)
  VBoxOGLfeedbackspu_INSTTYPE.win = none
@@ -691,6 +721,14 @@ $(VBOX_PATH_CROGL_GENFILES)/feedbackspu_state.c: $(addprefix $(PATH_SUB_CURRENT)
 $(VBOX_PATH_CROGL_GENFILES)/feedbackspu_proto.h: $(addprefix $(PATH_SUB_CURRENT)/feedback/,feedbackspu_proto.py feedback_special select_special feedback_state_special) $(VBOX_CROGL_API_FILES) | $$(dir $$@)
 	$(call MSG_GENERATE,python,$@,$<)
 	$(QUIET)$(call VBOX_CROGL_PYTHON_ENV,$(VBOX_PATH_CROGL_PYTHON_INCLUDE),$@) $(VBOX_BLD_PYTHON) $< $(VBOX_PATH_CROGL_GLAPI) $(<D)
+
+VBoxEGL_TEMPLATE       = VBOXCROGLR3GUESTDLL
+VBoxEGL_SOURCES        = egl.c
+ifndef VBOX_USE_SYSTEM_GL_HEADERS
+ VBoxEGL_INCS           = $(VBOX_PATH_X11_ROOT)/mesa-11.0.7
+endif
+VBoxEGL_LIBS           = $(VBOX_LIB_OGL) # $(VBOX_LIB_IPRT_GUEST_R3_SHARED)
+VBoxEGL_SONAME.linux   = libEGL.so.1
 
 include $(FILE_KBUILD_SUB_FOOTER)
 

@@ -1,11 +1,11 @@
 #!/bin/sh
 # $Id: autorun.sh $
-#
+## @file
 # VirtualBox Guest Additions installation script for *nix guests
 #
 
 #
-# Copyright (C) 2009-2011 Oracle Corporation
+# Copyright (C) 2009-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -18,7 +18,37 @@
 
 PATH=$PATH:/bin:/sbin:/usr/sbin
 
-#include sh-utils.sh
+# Deal with differing "which" semantics
+mywhich() {
+    which "$1" 2>/dev/null | grep -v "no $1"
+}
+
+# Get the name and execute switch for a useful terminal emulator
+#
+# Sets $gxtpath to the emulator path or empty
+# Sets $gxttitle to the "title" switch for that emulator
+# Sets $gxtexec to the "execute" switch for that emulator
+# May clobber $gtx*
+# Calls mywhich
+getxterm() {
+    # gnome-terminal and mate-terminal use -e differently to other emulators
+    for gxti in "konsole --title -e" "gnome-terminal --title -x" "mate-terminal --title -x" "xterm -T -e"; do
+        set $gxti
+        gxtpath="`mywhich $1`"
+        case "$gxtpath" in ?*)
+            gxttitle=$2
+            gxtexec=$3
+            return
+            ;;
+        esac
+    done
+}
+
+# Quotes its argument by inserting '\' in front of every character save
+# for 'A-Za-z0-9/'.  Prints the result to stdout.
+quotify() {
+    echo "$1" | sed -e 's/\([^a-zA-Z0-9/]\)/\\\1/g'
+}
 
 ostype=`uname -s`
 if test "$ostype" != "Linux" && test "$ostype" != "SunOS" ; then
@@ -26,8 +56,10 @@ if test "$ostype" != "Linux" && test "$ostype" != "SunOS" ; then
   exit 1
 fi
 
+# The below is GNU-specific.  See VBox.sh for the longer Solaris/OS X version.
+TARGET=`readlink -e -- "${0}"` || exit 1
+path="${TARGET%/[!/]*}"
 # 32-bit or 64-bit?
-path=`dirname $0`
 case `uname -m` in
   i[3456789]86|x86|i86pc)
     arch='x86'
@@ -111,6 +143,11 @@ elif test "$ostype" = "SunOS"; then
         fi
 
         # create temporary admin file for autoinstall
+        TMPFILE=`mktemp -q /tmp/vbox.XXXXXX`
+        if [ -z $TMPFILE ]; then
+            echo "Unable to create a temporary file"
+            exit 1
+        fi
         echo "basedir=default
 runlevel=nocheck
 conflict=quit
@@ -122,27 +159,27 @@ idepend=quit
 rdepend=quit
 space=quit
 mail=
-" > /tmp/vbox.autoinstall
+" > $TMPFILE
 
         # check gnome-terminal, use it if it exists.
         if test -f "/usr/bin/gnome-terminal"; then
             # use su/pfexec
             if test -z "$subin"; then
-                /usr/bin/gnome-terminal --title "Installing VirtualBox Additions" --command "/bin/sh -c '$pfexecbin $pkgaddbin -G -d $installfile -n -a /tmp/vbox.autoinstall SUNWvboxguest; /bin/echo press ENTER to close this window; /bin/read; /bin/rm -f /tmp/vbox.autoinstall'"
+                /usr/bin/gnome-terminal --title "Installing VirtualBox Additions" --command "/bin/sh -c '$pfexecbin $pkgaddbin -G -d $installfile -n -a $TMPFILE SUNWvboxguest; /bin/echo press ENTER to close this window; /bin/read'"
             else
-                /usr/bin/gnome-terminal --title "Installing VirtualBox Additions: Root password required." --command "/bin/sh -c '$subin - root -c \"$pkgaddbin -G -d $installfile -n -a /tmp/vbox.autoinstall SUNWvboxguest\"; /bin/echo press ENTER to close this window; /bin/read; /bin/rm -f /tmp/vbox.autoinstall'"
+                /usr/bin/gnome-terminal --title "Installing VirtualBox Additions: Root password required." --command "/bin/sh -c '$subin - root -c \"$pkgaddbin -G -d $installfile -n -a $TMPFILE SUNWvboxguest\"; /bin/echo press ENTER to close this window; /bin/read'"
             fi
         elif test -f "/usr/X11/bin/xterm"; then
             # use xterm
             if test -z "$subin"; then
-                /usr/X11/bin/xterm -title "Installing VirtualBox Additions" -e "$pfexecbin $pkgaddbin -G -d $installfile -n -a /tmp/vbox.autoinstall SUNWvboxguest; /bin/echo press ENTER to close this window; /bin/read; /bin/rm -f /tmp/vbox.autoinstall"
+                /usr/X11/bin/xterm -title "Installing VirtualBox Additions" -e "$pfexecbin $pkgaddbin -G -d $installfile -n -a $TMPFILE SUNWvboxguest; /bin/echo press ENTER to close this window; /bin/read"
             else
-                /usr/X11/bin/xterm -title "Installing VirtualBox Additions: Root password required." -e "$subin - root -c \"$pkgaddbin -G -d $installfile -n -a /tmp/vbox.autoinstall SUNWvboxguest\"; /bin/echo press ENTER to close this window; /bin/read; /bin/rm -f /tmp/vbox.autoinstall"
+                /usr/X11/bin/xterm -title "Installing VirtualBox Additions: Root password required." -e "$subin - root -c \"$pkgaddbin -G -d $installfile -n -a $TMPFILE SUNWvboxguest\"; /bin/echo press ENTER to close this window; /bin/read"
             fi
         else
             echo "No suitable terminal not found. -- install additions using pkgadd -d."
-            rm -f /tmp/vbox.autoinstall
         fi
+        rm -r $TMPFILE
 
         exit 0
     fi

@@ -29,9 +29,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-freebsd-kernel.h"
 
 #include <iprt/timer.h>
@@ -45,9 +45,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The internal representation of an FreeBSD timer handle.
  */
@@ -62,7 +62,7 @@ typedef struct RTTIMER
     /** Whether the timer must run on a specific CPU or not. */
     uint8_t                 fSpecificCpu;
     /** The CPU it must run on if fSpecificCpu is set. */
-    uint8_t                 iCpu;
+    uint32_t                iCpu;
     /** The FreeBSD callout structure. */
     struct callout          Callout;
     /** Callback. */
@@ -82,9 +82,9 @@ typedef struct RTTIMER
 } RTTIMER;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static void rtTimerFreeBSDCallback(void *pvTimer);
 
 
@@ -166,7 +166,7 @@ RTDECL(int) RTTimerStart(PRTTIMER pTimer, uint64_t u64First)
     if (!pTimer->fSuspended)
         return VERR_TIMER_ACTIVE;
     if (   pTimer->fSpecificCpu
-        && !RTMpIsCpuOnline(pTimer->idCpu))
+        && !RTMpIsCpuOnline(RTMpCpuIdFromSetIndex(pTimer->iCpu)))
         return VERR_CPU_OFFLINE;
 
     /*

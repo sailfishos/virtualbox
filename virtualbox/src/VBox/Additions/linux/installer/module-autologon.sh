@@ -1,8 +1,11 @@
 # Oracle VM VirtualBox
+# $Id: module-autologon.sh $
+## @file
 # VirtualBox Linux Guest Additions installer - autologon module
 #
 
-# Copyright (C) 2012 Oracle Corporation
+#
+# Copyright (C) 2012-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -104,7 +107,7 @@ mod_autologon_install_ex()
     fi
 
     # Link to required greeter files into $greeter_dir.
-    add_symlink "$INSTALLATION_DIR/share/VBoxGuestAdditions/vbox-greeter.desktop" "$greeter_dir/vbox-greeter.desktop"
+    add_symlink "$INSTALLATION_DIR/other/vbox-greeter.desktop" "$greeter_dir/vbox-greeter.desktop"
 
     # Backup and activate greeter config.
     if ! test -f "$lightdm_config.vbox-backup"; then

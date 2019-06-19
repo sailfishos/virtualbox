@@ -1,9 +1,10 @@
+/* $Id: PS2Dev.h $ */
 /** @file
  * PS/2 devices - Internal header file.
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -44,7 +45,7 @@ typedef struct PS2K *PPS2K;
 int  PS2KByteToKbd(PPS2K pThis, uint8_t cmd);
 int  PS2KByteFromKbd(PPS2K pThis, uint8_t *pVal);
 
-int  PS2KConstruct(PPS2K pThis, PPDMDEVINS pDevIns, void *pParent, int iInstance);
+int  PS2KConstruct(PPS2K pThis, PPDMDEVINS pDevIns, void *pParent, int iInstance, PCFGMNODE pCfg);
 int  PS2KAttach(PPS2K pThis, PPDMDEVINS pDevIns, unsigned iLUN, uint32_t fFlags);
 void PS2KReset(PPS2K pThis);
 void PS2KRelocate(PPS2K pThis, RTGCINTPTR offDelta, PPDMDEVINS pDevIns);
@@ -67,6 +68,7 @@ void PS2MReset(PPS2M pThis);
 void PS2MRelocate(PPS2M pThis, RTGCINTPTR offDelta, PPDMDEVINS pDevIns);
 void PS2MSaveState(PPS2M pThis, PSSMHANDLE pSSM);
 int  PS2MLoadState(PPS2M pThis, PSSMHANDLE pSSM, uint32_t uVersion);
+void PS2MFixupState(PPS2M pThis, uint8_t u8State, uint8_t u8Rate, uint8_t u8Proto);
 
 PS2M *KBDGetPS2MFromDevIns(PPDMDEVINS pDevIns);
 

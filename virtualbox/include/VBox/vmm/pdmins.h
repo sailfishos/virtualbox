@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,7 +42,7 @@
 #  define PDMBOTHCBDECL(type)   DECLEXPORT(type)
 # endif
 #else
-# define PDMBOTHCBDECL(type)    static type
+# define PDMBOTHCBDECL(type)    static DECLCALLBACK(type)
 #endif
 
 /** @def PDMINS_2_DATA

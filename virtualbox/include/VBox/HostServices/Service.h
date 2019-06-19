@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,20 +35,23 @@
 
 #include <memory>  /* for auto_ptr */
 
+/** @todo  document the poor classes.   */
 namespace HGCM
 {
 
 class Message
 {
+    /* Contains a copy of HGCM parameters. */
 public:
     Message(uint32_t uMsg, uint32_t cParms, VBOXHGCMSVCPARM aParms[])
-      : m_uMsg(0)
-      , m_cParms(0)
-      , m_paParms(0)
+        : m_uMsg(0)
+        , m_cParms(0)
+        , m_paParms(0)
     {
-        setData(uMsg, cParms, aParms);
+        initData(uMsg, cParms, aParms);
     }
-    ~Message()
+
+    virtual ~Message(void)
     {
         cleanup();
     }
@@ -60,47 +63,16 @@ public:
     {
         if (m_uMsg != uMsg)
         {
-            LogFlowFunc(("Message type does not match (%u (buffer), %u (guest))\n",
-                         m_uMsg, uMsg));
+            LogFlowFunc(("Message type does not match (%RU32 (buffer), %RU32 (guest))\n", m_uMsg, uMsg));
             return VERR_INVALID_PARAMETER;
         }
-        if (m_cParms != cParms)
+        if (m_cParms > cParms)
         {
-            LogFlowFunc(("Parameter count does not match (%u (buffer), %u (guest))\n",
-                         m_cParms, cParms));
+            LogFlowFunc(("Parameter count does not match (%RU32 (buffer), %RU32 (guest))\n", m_cParms, cParms));
             return VERR_INVALID_PARAMETER;
         }
 
-        int rc = copyParms(cParms, m_paParms, &aParms[0], false /* fCreatePtrs */);
-
-//        if (RT_FAILURE(rc))
-//            cleanup(aParms);
-        return rc;
-    }
-    int setData(uint32_t uMsg, uint32_t cParms, VBOXHGCMSVCPARM aParms[])
-    {
-        AssertReturn(cParms < 256, VERR_INVALID_PARAMETER);
-        AssertPtrNullReturn(aParms, VERR_INVALID_PARAMETER);
-
-        /* Cleanup old messages. */
-        cleanup();
-
-        m_uMsg = uMsg;
-        m_cParms = cParms;
-
-        if (cParms > 0)
-        {
-            m_paParms = (VBOXHGCMSVCPARM*)RTMemAllocZ(sizeof(VBOXHGCMSVCPARM) * m_cParms);
-            if (!m_paParms)
-                return VERR_NO_MEMORY;
-        }
-
-        int rc = copyParms(cParms, &aParms[0], m_paParms, true /* fCreatePtrs */);
-
-        if (RT_FAILURE(rc))
-            cleanup();
-
-        return rc;
+        return copyParmsInternal(&aParms[0], cParms, m_paParms, m_cParms, false /* fDeepCopy */);
     }
 
     int getParmU32Info(uint32_t iParm, uint32_t *pu32Info) const
@@ -113,6 +85,7 @@ public:
 
         return VINF_SUCCESS;
     }
+
     int getParmU64Info(uint32_t iParm, uint64_t *pu64Info) const
     {
         AssertPtrNullReturn(pu64Info, VERR_INVALID_PARAMETER);
@@ -123,6 +96,7 @@ public:
 
         return VINF_SUCCESS;
     }
+
     int getParmPtrInfo(uint32_t iParm, void **ppvAddr, uint32_t *pcSize) const
     {
         AssertPtrNullReturn(ppvAddr, VERR_INVALID_PARAMETER);
@@ -136,10 +110,61 @@ public:
         return VINF_SUCCESS;
     }
 
-    int copyParms(uint32_t cParms, PVBOXHGCMSVCPARM paParmsSrc, PVBOXHGCMSVCPARM paParmsDst, bool fCreatePtrs) const
+    static int copyParms(PVBOXHGCMSVCPARM paParmsDst, uint32_t cParmsDst, PVBOXHGCMSVCPARM paParmsSrc, uint32_t cParmsSrc)
     {
+        return copyParmsInternal(paParmsDst, cParmsDst, paParmsSrc, cParmsSrc, false /* fDeepCopy */);
+    }
+
+private:
+
+    /** Stored message type. */
+    uint32_t         m_uMsg;
+    /** Number of stored HGCM parameters. */
+    uint32_t         m_cParms;
+    /** Stored HGCM parameters. */
+    PVBOXHGCMSVCPARM m_paParms;
+
+    int initData(uint32_t uMsg, uint32_t cParms, VBOXHGCMSVCPARM aParms[])
+    {
+        AssertReturn(cParms < 256, VERR_INVALID_PARAMETER);
+        AssertPtrNullReturn(aParms, VERR_INVALID_PARAMETER);
+
+        /* Cleanup old messages. */
+        cleanup();
+
+        m_uMsg   = uMsg;
+        m_cParms = cParms;
+
         int rc = VINF_SUCCESS;
-        for (uint32_t i = 0; i < cParms; ++i)
+
+        if (cParms)
+        {
+            m_paParms = (VBOXHGCMSVCPARM*)RTMemAllocZ(sizeof(VBOXHGCMSVCPARM) * m_cParms);
+            if (m_paParms)
+            {
+                rc = copyParmsInternal(m_paParms, m_cParms, &aParms[0], cParms, true /* fDeepCopy */);
+                if (RT_FAILURE(rc))
+                    cleanup();
+            }
+            else
+                rc = VERR_NO_MEMORY;
+        }
+
+        return rc;
+    }
+
+    static int copyParmsInternal(PVBOXHGCMSVCPARM paParmsDst, uint32_t cParmsDst,
+                                 PVBOXHGCMSVCPARM paParmsSrc, uint32_t cParmsSrc,
+                                 bool fDeepCopy)
+    {
+        AssertPtrReturn(paParmsSrc, VERR_INVALID_POINTER);
+        AssertPtrReturn(paParmsDst, VERR_INVALID_POINTER);
+
+        if (cParmsSrc > cParmsDst)
+            return VERR_BUFFER_OVERFLOW;
+
+        int rc = VINF_SUCCESS;
+        for (uint32_t i = 0; i < cParmsSrc; i++)
         {
             paParmsDst[i].type = paParmsSrc[i].type;
             switch (paParmsSrc[i].type)
@@ -156,8 +181,8 @@ public:
                 }
                 case VBOX_HGCM_SVC_PARM_PTR:
                 {
-                    /* Do we have to recreate the memory? */
-                    if (fCreatePtrs)
+                    /* Do we have to perform a deep copy? */
+                    if (fDeepCopy)
                     {
                         /* Yes, do so. */
                         paParmsDst[i].u.pointer.size = paParmsSrc[i].u.pointer.size;
@@ -175,14 +200,24 @@ public:
                     {
                         /* No, but we have to check if there is enough room. */
                         if (paParmsDst[i].u.pointer.size < paParmsSrc[i].u.pointer.size)
+                        {
                             rc = VERR_BUFFER_OVERFLOW;
+                            break;
+                        }
                     }
-                    if (   paParmsDst[i].u.pointer.addr
-                        && paParmsSrc[i].u.pointer.size > 0
-                        && paParmsDst[i].u.pointer.size > 0)
-                        memcpy(paParmsDst[i].u.pointer.addr,
-                               paParmsSrc[i].u.pointer.addr,
-                               RT_MIN(paParmsDst[i].u.pointer.size, paParmsSrc[i].u.pointer.size));
+
+                    if (paParmsSrc[i].u.pointer.size)
+                    {
+                        if (   paParmsDst[i].u.pointer.addr
+                            && paParmsDst[i].u.pointer.size)
+                        {
+                            memcpy(paParmsDst[i].u.pointer.addr,
+                                   paParmsSrc[i].u.pointer.addr,
+                                   RT_MIN(paParmsDst[i].u.pointer.size, paParmsSrc[i].u.pointer.size));
+                        }
+                        else
+                            rc = VERR_INVALID_POINTER;
+                    }
                     break;
                 }
                 default:
@@ -218,26 +253,32 @@ public:
         m_cParms = 0;
         m_uMsg = 0;
     }
-
-protected:
-    uint32_t m_uMsg;
-    uint32_t m_cParms;
-    PVBOXHGCMSVCPARM m_paParms;
 };
 
 class Client
 {
 public:
-    Client(uint32_t uClientId, VBOXHGCMCALLHANDLE hHandle, uint32_t uMsg, uint32_t cParms, VBOXHGCMSVCPARM aParms[])
+    Client(uint32_t uClientId, VBOXHGCMCALLHANDLE hHandle = NULL,
+           uint32_t uMsg = 0, uint32_t cParms = 0, VBOXHGCMSVCPARM aParms[] = NULL)
       : m_uClientId(uClientId)
+      , m_uProtocol(0)
       , m_hHandle(hHandle)
       , m_uMsg(uMsg)
       , m_cParms(cParms)
       , m_paParms(aParms) {}
 
-    VBOXHGCMCALLHANDLE handle() const { return m_hHandle; }
-    uint32_t message() const { return m_uMsg; }
-    uint32_t clientId() const { return m_uClientId; }
+public:
+
+    VBOXHGCMCALLHANDLE handle(void) const { return m_hHandle; }
+    uint32_t message(void) const { return m_uMsg; }
+    uint32_t clientId(void) const { return m_uClientId; }
+    uint32_t protocol(void) const { return m_uProtocol; }
+
+public:
+
+    int setProtocol(uint32_t uProtocol) { m_uProtocol = uProtocol; return VINF_SUCCESS; }
+
+public:
 
     int addMessageInfo(uint32_t uMsg, uint32_t cParms)
     {
@@ -251,6 +292,7 @@ public:
     }
     int addMessageInfo(const Message *pMessage)
     {
+        AssertPtrReturn(pMessage, VERR_INVALID_POINTER);
         if (m_cParms != 3)
             return VERR_INVALID_PARAMETER;
 
@@ -261,15 +303,36 @@ public:
     }
     int addMessage(const Message *pMessage)
     {
+        AssertPtrReturn(pMessage, VERR_INVALID_POINTER);
         return pMessage->getData(m_uMsg, m_cParms, m_paParms);
     }
-private:
+
+protected:
+
     uint32_t m_uClientId;
+    /** Optional protocol version the client uses. */
+    uint32_t m_uProtocol;
     VBOXHGCMCALLHANDLE m_hHandle;
     uint32_t m_uMsg;
     uint32_t m_cParms;
     PVBOXHGCMSVCPARM m_paParms;
 };
+
+/**
+ * Structure for keeping a HGCM service context.
+ */
+typedef struct VBOXHGCMSVCTX
+{
+    /** HGCM helper functions. */
+    PVBOXHGCMSVCHELPERS pHelpers;
+    /*
+     * Callback function supplied by the host for notification of updates
+     * to properties.
+     */
+    PFNHGCMSVCEXT       pfnHostCallback;
+    /** User data pointer to be supplied to the host callback function. */
+    void               *pvHostData;
+} VBOXHGCMSVCTX, *PVBOXHGCMSVCTX;
 
 template <class T>
 class AbstractService: public RTCNonCopyable
@@ -294,6 +357,7 @@ public:
                 rc = VERR_VERSION_MISMATCH;
             else
             {
+                RT_GCC_NO_WARN_DEPRECATED_BEGIN
                 std::auto_ptr<AbstractService> apService;
                 /* No exceptions may propagate outside. */
                 try
@@ -306,7 +370,7 @@ public:
                 {
                     rc = VERR_UNRESOLVED_ERROR;
                 }
-
+                RT_GCC_NO_WARN_DEPRECATED_END
                 if (RT_SUCCESS(rc))
                 {
                     /*
@@ -343,31 +407,25 @@ public:
 
 protected:
     explicit AbstractService(PVBOXHGCMSVCHELPERS pHelpers)
-        : m_pHelpers(pHelpers)
-        , m_pfnHostCallback(NULL)
-        , m_pvHostData(NULL)
-    {}
-    virtual int  init(VBOXHGCMSVCFNTABLE *ptable) { return VINF_SUCCESS; }
+    {
+        RT_ZERO(m_SvcCtx);
+        m_SvcCtx.pHelpers = pHelpers;
+    }
+    virtual int  init(VBOXHGCMSVCFNTABLE *ptable) { RT_NOREF1(ptable); return VINF_SUCCESS; }
     virtual int  uninit() { return VINF_SUCCESS; }
     virtual int  clientConnect(uint32_t u32ClientID, void *pvClient) = 0;
     virtual int  clientDisconnect(uint32_t u32ClientID, void *pvClient) = 0;
     virtual void guestCall(VBOXHGCMCALLHANDLE callHandle, uint32_t u32ClientID, void *pvClient, uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paParms[]) = 0;
-    virtual int  hostCall(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paParms[]) { return VINF_SUCCESS; }
+    virtual int  hostCall(uint32_t eFunction, uint32_t cParms, VBOXHGCMSVCPARM paParms[])
+    { RT_NOREF3(eFunction, cParms, paParms); return VINF_SUCCESS; }
 
     /** Type definition for use in callback functions. */
     typedef AbstractService SELF;
-    /** HGCM helper functions. */
-    PVBOXHGCMSVCHELPERS m_pHelpers;
-    /*
-     * Callback function supplied by the host for notification of updates
-     * to properties.
-     */
-    PFNHGCMSVCEXT m_pfnHostCallback;
-    /** User data pointer to be supplied to the host callback function. */
-    void *m_pvHostData;
+    /** The HGCM service context this service is bound to. */
+    VBOXHGCMSVCTX m_SvcCtx;
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnUnload
+     * @copydoc VBOXHGCMSVCFNTABLE::pfnUnload
      * Simply deletes the service object
      */
     static DECLCALLBACK(int) svcUnload(void *pvService)
@@ -382,7 +440,7 @@ protected:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnConnect
+     * @copydoc VBOXHGCMSVCFNTABLE::pfnConnect
      * Stub implementation of pfnConnect and pfnDisconnect.
      */
     static DECLCALLBACK(int) svcConnect(void *pvService,
@@ -398,7 +456,7 @@ protected:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnConnect
+     * @copydoc VBOXHGCMSVCFNTABLE::pfnConnect
      * Stub implementation of pfnConnect and pfnDisconnect.
      */
     static DECLCALLBACK(int) svcDisconnect(void *pvService,
@@ -414,7 +472,7 @@ protected:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnCall
+     * @copydoc VBOXHGCMSVCFNTABLE::pfnCall
      * Wraps to the call member function
      */
     static DECLCALLBACK(void) svcCall(void * pvService,
@@ -433,7 +491,7 @@ protected:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnHostCall
+     * @copydoc VBOXHGCMSVCFNTABLE::pfnHostCall
      * Wraps to the hostCall member function
      */
     static DECLCALLBACK(int) svcHostCall(void *pvService,
@@ -450,7 +508,7 @@ protected:
     }
 
     /**
-     * @copydoc VBOXHGCMSVCHELPERS::pfnRegisterExtension
+     * @copydoc VBOXHGCMSVCFNTABLE::pfnRegisterExtension
      * Installs a host callback for notifications of property changes.
      */
     static DECLCALLBACK(int) svcRegisterExtension(void *pvService,
@@ -460,10 +518,12 @@ protected:
         AssertLogRelReturn(VALID_PTR(pvService), VERR_INVALID_PARAMETER);
         LogFlowFunc(("pvService=%p, pfnExtension=%p, pvExtention=%p\n", pvService, pfnExtension, pvExtension));
         SELF *pSelf = reinterpret_cast<SELF *>(pvService);
-        pSelf->m_pfnHostCallback = pfnExtension;
-        pSelf->m_pvHostData = pvExtension;
+        pSelf->m_SvcCtx.pfnHostCallback = pfnExtension;
+        pSelf->m_SvcCtx.pvHostData      = pvExtension;
         return VINF_SUCCESS;
     }
+
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(AbstractService);
 };
 
 }

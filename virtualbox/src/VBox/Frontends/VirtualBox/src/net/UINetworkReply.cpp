@@ -1,12 +1,10 @@
 /* $Id: UINetworkReply.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkReply stuff implementation
+ * VBox Qt GUI - UINetworkReply stuff implementation.
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,716 +15,1017 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QDir>
-#include <QFile>
-#include <QThread>
-#include <QRegExp>
+# include <QDir>
+# include <QFile>
+# include <QThread>
+# include <QRegExp>
+# include <QVector>
+# include <QVariant>
 
 /* GUI includes: */
-#include "UINetworkReply.h"
-#include "UINetworkManager.h"
-#include "VBoxGlobal.h"
-#include "VBoxUtils.h"
+# include "UINetworkReply.h"
+# include "UINetworkManager.h"
+# include "UIExtraDataManager.h"
+# ifndef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
+#  include "VBoxGlobal.h"
+#  include "VBoxUtils.h"
+# else /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
+#  include <VBox/log.h>
+# endif /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
 
-/* Other VBox includes; */
-#include <iprt/initterm.h>
-#include <iprt/http.h>
+/* Other VBox includes: */
+# include <iprt/initterm.h>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+/* Other VBox includes: */
+#include <iprt/crypto/pem.h>
+#include <iprt/crypto/store.h>
 #include <iprt/err.h>
+#include <iprt/http.h>
+#include <iprt/path.h>
+#include <iprt/sha.h>
+#include <iprt/string.h>
 #include <iprt/zip.h>
 
-/* Our network-reply thread: */
+
+/** QThread extension
+  * used as network-reply private thread interface. */
 class UINetworkReplyPrivateThread : public QThread
 {
+#ifndef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
     Q_OBJECT;
+
+signals:
+
+    /** Notifies listeners about reply progress change.
+      * @param  iBytesReceived  Holds the current amount of bytes received.
+      * @param  iBytesTotal     Holds the total amount of bytes to be received. */
+    void sigDownloadProgress(qint64 iBytesReceived, qint64 iBytesTotal);
+#endif /* !VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
 
 public:
 
-    /* Constructor: */
-    UINetworkReplyPrivateThread(const QNetworkRequest &request);
+    /** Constructs network-reply thread of the passed @a type for the passed @a url and @a requestHeaders. */
+    UINetworkReplyPrivateThread(UINetworkRequestType type, const QUrl &url, const UserDictionary &requestHeaders);
 
-    /* API: Read stuff: */
-    const QByteArray& readAll() const { return m_reply; }
+    /** @name APIs
+     * @{ */
+        /** Aborts reply. */
+        void abort();
 
-    /* API: Error stuff: */
-    int error() const { return m_iError; }
+        /** Returns the URL of the reply which is the URL of the request for now. */
+        const QUrl& url() const { return m_url; }
 
-    /* API: HTTP stuff: */
-    void abort();
+        /** Returns the last cached IPRT HTTP error of the reply. */
+        int error() const { return m_iError; }
+
+        /** Returns binary content of the reply. */
+        const QByteArray& readAll() const { return m_reply; }
+        /** Returns value for the cached reply header of the passed @a type. */
+        QString header(UINetworkReply::KnownHeader type) const;
+
+        /** Returns short descriptive context of thread's current operation. */
+        const QString context() const { return m_strContext; }
+    /** @} */
 
 private:
 
-    /* Helpers: HTTP stuff: */
-    int applyProxyRules();
-    int applyHttpsCertificates();
-    int applyRawHeaders();
-    int performMainRequest();
+    /** @name Helpers for HTTP and Certificates handling.
+     * @{ */
+        /** Applies configuration. */
+        int applyConfiguration();
+        /** Applies proxy rules. */
+        int applyProxyRules();
+        /** Applies security certificates. */
+        int applyHttpsCertificates();
+        /** Applies raw headers. */
+        int applyRawHeaders();
+        /** Performs main request. */
+        int performMainRequest();
 
-    /* Helper: Main thread runner: */
-    void run();
+        /** Performs whole thread functionality. */
+        void run();
 
-    /* Static helper: File stuff: */
-    static QString fullCertificateFileName();
+        /** Handles download progress callback.
+          * @param  cbDownloadTotal  Brings the total amount of bytes to be received.
+          * @param  cbDownloaded     Brings the current amount of bytes received. */
+        void handleProgressChange(uint64_t cbDownloadTotal, uint64_t cbDownloaded);
+    /** @} */
 
-    /* Static helpers: HTTP stuff: */
-    static int abort(RTHTTP pHttp);
-    static int applyProxyRules(RTHTTP pHttp, const QString &strHostName, int iPort);
-    static int applyCertificates(RTHTTP pHttp, const QString &strFullCertificateFileName);
-    static int applyRawHeaders(RTHTTP pHttp, const QList<QByteArray> &headers, const QNetworkRequest &request);
-    static int performGetRequestForText(RTHTTP pHttp, const QNetworkRequest &request, QByteArray &reply);
-    static int performGetRequestForBinary(RTHTTP pHttp, const QNetworkRequest &request, QByteArray &reply);
-    static int checkCertificates(RTHTTP pHttp, const QString &strFullCertificateFileName);
-    static int decompressCertificate(const QByteArray &package, QByteArray &certificate, const QString &strName);
-    static int downloadCertificates(RTHTTP pHttp, const QString &strFullCertificateFileName);
-    static int downloadCertificatePca3G5(RTHTTP pHttp, QByteArray &certificate);
-    static int downloadCertificatePca3(RTHTTP pHttp, QByteArray &certificate);
-    static int verifyCertificatePca3G5(RTHTTP pHttp, QByteArray &certificate);
-    static int verifyCertificatePca3(RTHTTP pHttp, QByteArray &certificate);
-    static int verifyCertificate(RTHTTP pHttp, QByteArray &certificate, const QByteArray &sha1, const QByteArray &sha512);
-    static int saveCertificates(const QString &strFullCertificateFileName, const QByteArray &certificatePca3G5, const QByteArray &certificatePca3);
-    static int saveCertificate(QFile &file, const QByteArray &certificate);
+    /** @name Static helpers for HTTP and Certificates handling.
+     * @{ */
+        /** Returns full certificate file-name. */
+        static QString fullCertificateFileName();
 
-    /* Variables: */
-    QNetworkRequest m_request;
+        /** Applies proxy rules.
+          * @remarks  Implementation doesn't exists, to be removed? */
+        static int applyProxyRules(RTHTTP hHttp, const QString &strHostName, int iPort);
+
+        /** Applies raw headers.
+          * @param  hHttp    Brings the HTTP client instance.
+          * @param  headers  Brings the map of headers to be applied. */
+        static int applyRawHeaders(RTHTTP hHttp, const UserDictionary &headers);
+
+        /** Returns the number of certificates found in a search result array.
+          * @param  pafFoundCerts  Brings the array parallel to s_aCerts with the status of each wanted certificate. */
+        static unsigned countCertsFound(bool const *pafFoundCerts);
+
+        /** Returns whether we've found all the necessary certificates.
+          * @param  pafFoundCerts  Brings the array parallel to s_aCerts with the status of each wanted certificate. */
+        static bool areAllCertsFound(bool const *pafFoundCerts);
+
+        /** Refreshes the certificates.
+          * @param  hHttp          Brings the HTTP client instance. (Can be NIL when running the testcase.)
+          * @param  phStore        On input, this holds the current store, so that we can fish out wanted
+          *                        certificates from it. On successful return, this is replaced with a new
+          *                        store reflecting the refrehsed content of @a pszCaCertFile.
+          * @param  pafFoundCerts  On input, this holds the certificates found in the current store.
+          *                        On return, this reflects what is current in the @a pszCaCertFile.
+          *                        The array runs parallel to s_aCerts.
+          * @param  pszCaCertFile  Where to write the refreshed certificates if we've managed to gather
+          *                        a collection that is at least as good as the old one. */
+        static int refreshCertificates(RTHTTP hHttp, PRTCRSTORE phStore, bool *pafFoundCerts, const char *pszCaCertFile);
+
+        /** Downloads missing certificates.
+          * @param  hNewStore         On successful return, this store will contain newly downloaded certificates.
+          * @param  pafNewFoundCerts  On successful return, this array parallel to s_aCerts will contain the
+          *                           status of each newly downloaded certificate.
+          * @param  hHttp             Brings the HTTP client instance.
+          * @param  pStaticErrInfo    Unused currently. */
+        static void downloadMissingCertificates(RTCRSTORE hNewStore, bool *pafNewFoundCerts, RTHTTP hHttp,
+                                                PRTERRINFOSTATIC pStaticErrInfo);
+
+        /** Converts a PEM certificate, verifies it against @a pCertInfo and adds it to the given store.
+          * @param  hStore       The store to add certificate to.
+          * @param  pvResponse   The raw PEM certificate file bytes.
+          * @param  cbResponse   The number of bytes.
+          * @param  pWantedCert  The certificate info (we use hashes and encoded size). */
+        static int convertVerifyAndAddPemCertificateToStore(RTCRSTORE hStore, void const *pvResponse,
+                                                            size_t cbResponse, PCRTCRCERTWANTED pWantedCert);
+
+        /** Redirects download progress callback to particular object which can handle it.
+          * @param  hHttp            Brings the HTTP client instance.
+          * @param  pvUser           Brings the convenience pointer for the
+          *                          user-agent object which should handle that callback.
+          * @param  cbDownloadTotal  Brings the total amount of bytes to be received.
+          * @param  cbDownloaded     Brings the current amount of bytes received. */
+        static DECLCALLBACK(void) handleProgressChange(RTHTTP hHttp, void *pvUser, uint64_t cbDownloadTotal, uint64_t cbDownloaded);
+    /** @} */
+
+    /** Additinoal download nfo about wanted certificate. */
+    typedef struct CERTINFO
+    {
+        /** Holds the filename of the zip file we download (PEM). */
+        const char *pszZipFile;
+        /** Lists direct URLs to PEM formatted files. */
+        const char *apszUrls[4];
+    } CERTINFO;
+
+    /** Holds the request type. */
+    const UINetworkRequestType m_type;
+    /** Holds the request url. */
+    const QUrl m_url;
+    /** Holds the request headers. */
+    const UserDictionary m_requestHeaders;
+
+    /** Holds the IPRT HTTP client instance handle. */
+    RTHTTP m_hHttp;
+    /** Holds the last cached IPRT HTTP error of the reply. */
     int m_iError;
-    RTHTTP m_pHttp;
+    /** Holds short descriptive context of thread's current operation. */
+    QString m_strContext;
+    /** Holds the reply instance. */
     QByteArray m_reply;
-    static const QString m_strCertificateFileName;
+    /** Holds the cached reply headers. */
+    UserDictionary m_headers;
+
+    /** Holds the URLs to root zip files containing certificates we want. */
+    static const char * const s_apszRootsZipUrls[];
+    /** Holds the download details. */
+    static const CERTINFO s_CertInfoPcaCls3Gen5;
+    /** Holds the details on the certificates we are after.
+      * The pvUser member points to a UINetworkReplyPrivateThread::CERTINFO. */
+    static const RTCRCERTWANTED s_aCerts[];
+    /** Holds the certificate file name (no path). */
+    static const QString s_strCertificateFileName;
+
+#ifdef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
+public:
+    /** Starts the test routine. */
+    static void testIt(RTTEST hTest);
+#endif /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
 };
 
-/* static */
-const QString UINetworkReplyPrivateThread::m_strCertificateFileName = QString("vbox-ssl-cacertificate.crt");
 
-UINetworkReplyPrivateThread::UINetworkReplyPrivateThread(const QNetworkRequest &request)
-    : m_request(request)
-    , m_iError(VINF_SUCCESS)
-    , m_pHttp(0)
-{
-}
-
-void UINetworkReplyPrivateThread::abort()
-{
-    /* Call for abort: */
-    abort(m_pHttp);
-}
-
-int UINetworkReplyPrivateThread::applyProxyRules()
-{
-    /* Make sure proxy is enabled in Proxy Manager: */
-    UIProxyManager proxyManager(vboxGlobal().settings().proxySettings());
-    if (!proxyManager.proxyEnabled())
-        return VINF_SUCCESS;
-
-    /* Apply proxy rules: */
-    return applyProxyRules(m_pHttp,
-                           proxyManager.proxyHost(),
-                           proxyManager.proxyPort().toUInt());
-}
-
-int UINetworkReplyPrivateThread::applyHttpsCertificates()
-{
-    /* Prepare variables: */
-    const QString strFullCertificateFileName(fullCertificateFileName());
-    int rc = VINF_SUCCESS;
-
-    /* Check certificates if present: */
-    if (QFile::exists(strFullCertificateFileName))
-        rc = checkCertificates(m_pHttp, strFullCertificateFileName);
-    else
-        rc = VERR_FILE_NOT_FOUND;
-
-    /* Download certificates if necessary: */
-    if (!RT_SUCCESS(rc))
-        rc = downloadCertificates(m_pHttp, strFullCertificateFileName);
-
-    /* Apply certificates: */
-    if (RT_SUCCESS(rc))
-        rc = applyCertificates(m_pHttp, strFullCertificateFileName);
-
-    /* Return result-code: */
-    return rc;
-}
-
-int UINetworkReplyPrivateThread::applyRawHeaders()
-{
-    /* Make sure we have a raw headers at all: */
-    QList<QByteArray> headers = m_request.rawHeaderList();
-    if (headers.isEmpty())
-        return VINF_SUCCESS;
-
-    /* Apply raw headers: */
-    return applyRawHeaders(m_pHttp, headers, m_request);
-}
-
-int UINetworkReplyPrivateThread::performMainRequest()
-{
-    /* Perform GET request: */
-    return performGetRequestForText(m_pHttp, m_request, m_reply);
-}
-
-void UINetworkReplyPrivateThread::run()
-{
-    /* Init: */
-    RTR3InitExeNoArguments(RTR3INIT_FLAGS_SUPLIB);
-
-    /* Create HTTP object: */
-    if (RT_SUCCESS(m_iError))
-        m_iError = RTHttpCreate(&m_pHttp);
-
-    /* Apply proxy-rules: */
-    if (RT_SUCCESS(m_iError))
-        m_iError = applyProxyRules();
-
-    /* Apply https-certificates: */
-    if (RT_SUCCESS(m_iError))
-        m_iError = applyHttpsCertificates();
-
-    /* Assign raw-headers: */
-    if (RT_SUCCESS(m_iError))
-        m_iError = applyRawHeaders();
-
-    /* Perform main request: */
-    if (RT_SUCCESS(m_iError))
-        m_iError = performMainRequest();
-
-    /* Destroy HTTP object: */
-    if (m_pHttp)
-    {
-        RTHttpDestroy(m_pHttp);
-        m_pHttp = 0;
-    }
-}
-
-/* static */
-QString UINetworkReplyPrivateThread::fullCertificateFileName()
-{
-    const QDir homeDir(QDir::toNativeSeparators(vboxGlobal().homeFolder()));
-    return QDir::toNativeSeparators(homeDir.absoluteFilePath(m_strCertificateFileName));
-}
-
-/* static */
-int UINetworkReplyPrivateThread::abort(RTHTTP pHttp)
-{
-    /* Make sure HTTP is created: */
-    if (!pHttp)
-        return VERR_INVALID_POINTER;
-
-    /* Call for HTTP abort: */
-    return RTHttpAbort(pHttp);
-}
-
-/* static */
-int UINetworkReplyPrivateThread::applyProxyRules(RTHTTP pHttp, const QString &strHostName, int iPort)
-{
-    /* Make sure HTTP is created: */
-    if (!pHttp)
-        return VERR_INVALID_POINTER;
-
-    /* Apply HTTP proxy: */
-    return RTHttpSetProxy(pHttp,
-                          strHostName.toAscii().constData(),
-                          iPort,
-                          0 /* login */, 0 /* password */);
-}
-
-/* static */
-int UINetworkReplyPrivateThread::applyCertificates(RTHTTP pHttp, const QString &strFullCertificateFileName)
-{
-    /* Make sure HTTP is created: */
-    if (!pHttp)
-        return VERR_INVALID_POINTER;
-
-    /* Apply HTTPs certificates: */
-    return RTHttpSetCAFile(pHttp, strFullCertificateFileName.toUtf8().constData());
-}
-
-/* static */
-int UINetworkReplyPrivateThread::applyRawHeaders(RTHTTP pHttp, const QList<QByteArray> &headers, const QNetworkRequest &request)
-{
-    /* Make sure HTTP is created: */
-    if (!pHttp)
-        return VERR_INVALID_POINTER;
-
-    /* We should format them first: */
-    QVector<QByteArray> formattedHeaders;
-    QVector<const char*> formattedHeaderPointers;
-    foreach (const QByteArray &header, headers)
-    {
-        /* Prepare formatted representation: */
-        QString strFormattedString = QString("%1: %2").arg(QString(header), QString(request.rawHeader(header)));
-        formattedHeaders << strFormattedString.toAscii();
-        formattedHeaderPointers << formattedHeaders.last().constData();
-    }
-    const char **ppFormattedHeaders = formattedHeaderPointers.data();
-
-    /* Apply HTTP headers: */
-    return RTHttpSetHeaders(pHttp, formattedHeaderPointers.size(), ppFormattedHeaders);
-}
-
-/* static */
-int UINetworkReplyPrivateThread::performGetRequestForText(RTHTTP pHttp, const QNetworkRequest &request, QByteArray &reply)
-{
-    /* Make sure HTTP is created: */
-    if (!pHttp)
-        return VERR_INVALID_POINTER;
-
-    /* Perform blocking HTTP GET request: */
-    char *pszBuffer = 0;
-    int rc = RTHttpGetText(pHttp,
-                           request.url().toString().toAscii().constData(),
-                           &pszBuffer);
-    reply = QByteArray(pszBuffer);
-    RTMemFree(pszBuffer);
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::performGetRequestForBinary(RTHTTP pHttp, const QNetworkRequest &request, QByteArray &reply)
-{
-    /* Make sure HTTP is created: */
-    if (!pHttp)
-        return VERR_INVALID_POINTER;
-
-    /* Perform blocking HTTP GET request: */
-    void *pBuffer = 0;
-    size_t size = 0;
-    int rc = RTHttpGetBinary(pHttp,
-                             request.url().toString().toAscii().constData(),
-                             &pBuffer, &size);
-    reply = QByteArray((const char*)pBuffer, (int)size);
-    RTMemFree(pBuffer);
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::checkCertificates(RTHTTP pHttp, const QString &strFullCertificateFileName)
-{
-    /* Open certificates file: */
-    QFile file(strFullCertificateFileName);
-    bool fFileOpened = file.open(QIODevice::ReadOnly);
-    int rc = fFileOpened ? VINF_SUCCESS : VERR_OPEN_FAILED;
-
-    /* Read certificates file: */
-    if (RT_SUCCESS(rc))
-    {
-        /* Parse the file content: */
-        QString strData(file.readAll());
-#define CERT   "-{5}BEGIN CERTIFICATE-{5}[\\s\\S\\r{0,1}\\n]+-{5}END CERTIFICATE-{5}"
-#define REOLD  "(" CERT ")\\r{0,1}\\n(" CERT ")\\r{0,1}\\n(" CERT ")"
-#define RENEW  "(" CERT ")\\r{0,1}\\n(" CERT ")"
-        /* First check if we have the old format with three certificates: */
-        QRegExp regExp(REOLD);
-        regExp.setMinimal(true);
-
-        /* If so, fake an error to force re-downloading */
-        if (regExp.indexIn(strData) != -1)
-            rc = VERR_HTTP_CACERT_WRONG_FORMAT;
-
-        /* Otherwise, check for two certificates: */
-        if (RT_SUCCESS(rc))
-        {
-            regExp.setPattern(RENEW);
-            regExp.setMinimal(true);
-            if (regExp.indexIn(strData) == -1)
-                rc = VERR_FILE_IO_ERROR;
-        }
-
-        /* Verify certificates: */
-        if (RT_SUCCESS(rc))
-        {
-            QByteArray certificate = regExp.cap(1).toAscii();
-            rc = verifyCertificatePca3G5(pHttp, certificate);
-        }
-        if (RT_SUCCESS(rc))
-        {
-            QByteArray certificate = regExp.cap(2).toAscii();
-            rc = verifyCertificatePca3(pHttp, certificate);
-        }
-#undef CERT
-#undef REOLD
-#undef RENEW
-    }
-
-    /* Close certificates file: */
-    if (fFileOpened)
-        file.close();
-
-    /* Return result-code: */
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::decompressCertificate(const QByteArray &package, QByteArray &certificate, const QString &strName)
-{
-    /* Decompress certificate: */
-    void *pDecompressedBuffer;
-    size_t cDecompressedSize;
-    int rc = RTZipPkzipMemDecompress(&pDecompressedBuffer, &cDecompressedSize, package, package.size(), strName.toLatin1().constData());
-    if (RT_SUCCESS(rc))
-    {
-        /* Copy certificate: */
-        certificate = QByteArray((const char*)pDecompressedBuffer, (int)cDecompressedSize);
-        /* Free decompressed buffer: */
-        RTMemFree(pDecompressedBuffer);
-    }
-    /* Return result: */
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::downloadCertificates(RTHTTP pHttp, const QString &strFullCertificateFileName)
-{
-    /* Prepare certificates: */
-    QByteArray certificatePca3G5;
-    QByteArray certificatePca3;
-
-    /* Receive certificate package: */
-    QByteArray package;
-    const QNetworkRequest address(QUrl("http://www.verisign.com/support/roots.zip"));
-    int rc = performGetRequestForBinary(pHttp, address, package);
-    /* UnZIP PCA-3G5 certificate: */
-    if (RT_SUCCESS(rc))
-    {
-        rc = decompressCertificate(package, certificatePca3G5,
-                                   "VeriSign Root Certificates/Generation 5 (G5) PCA/VeriSign Class 3 Public Primary Certification Authority - G5.pem");
-        /* Verify PCA-3G5 certificate: */
-        if (RT_SUCCESS(rc))
-            rc = verifyCertificatePca3G5(pHttp, certificatePca3G5);
-    }
-    /* UnZIP PCA-3 certificate: */
-    if (RT_SUCCESS(rc))
-    {
-        rc = decompressCertificate(package, certificatePca3,
-                                   "VeriSign Root Certificates/Generation 1 (G1) PCAs/Class 3 Public Primary Certification Authority.pem");
-        /* Verify PCA-3 certificate: */
-        if (RT_SUCCESS(rc))
-            rc = verifyCertificatePca3(pHttp, certificatePca3);
-    }
-
-    /* Fallback.. download certificates separately: */
-    if (!RT_SUCCESS(rc))
-    {
-        /* Reset result: */
-        rc = VINF_SUCCESS;
-        /* Download PCA-3G5 certificate: */
-        if (RT_SUCCESS(rc))
-            rc = downloadCertificatePca3G5(pHttp, certificatePca3G5);
-        /* Download PCA-3 certificate: */
-        if (RT_SUCCESS(rc))
-            rc = downloadCertificatePca3(pHttp, certificatePca3);
-    }
-
-    /* Save certificates: */
-    if (RT_SUCCESS(rc))
-        saveCertificates(strFullCertificateFileName, certificatePca3G5, certificatePca3);
-
-    /* Return result-code: */
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::downloadCertificatePca3G5(RTHTTP pHttp, QByteArray &certificate)
-{
-    /* Receive certificate: */
-    const QNetworkRequest address(QUrl("http://www.verisign.com/repository/roots/root-certificates/PCA-3G5.pem"));
-    int rc = performGetRequestForText(pHttp, address, certificate);
-
-    /* Verify certificate: */
-    if (RT_SUCCESS(rc))
-        rc = verifyCertificatePca3G5(pHttp, certificate);
-
-    /* Return result-code: */
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::downloadCertificatePca3(RTHTTP pHttp, QByteArray &certificate)
-{
-    /* Receive certificate: */
-    const QNetworkRequest address(QUrl("http://www.verisign.com/repository/roots/root-certificates/PCA-3.pem"));
-    int rc = performGetRequestForText(pHttp, address, certificate);
-
-    /* Verify certificate: */
-    if (RT_SUCCESS(rc))
-        rc = verifyCertificatePca3(pHttp, certificate);
-
-    /* Return result-code: */
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::verifyCertificatePca3G5(RTHTTP pHttp, QByteArray &certificate)
-{
-    /* PCA 3G5 secure hash algorithm 1: */
-    const unsigned char baSha1PCA3G5[] =
-    {
-        0x4e, 0xb6, 0xd5, 0x78, 0x49, 0x9b, 0x1c, 0xcf, 0x5f, 0x58,
-        0x1e, 0xad, 0x56, 0xbe, 0x3d, 0x9b, 0x67, 0x44, 0xa5, 0xe5
-    };
-    /* PCA 3G5 secure hash algorithm 512: */
-    const unsigned char baSha512PCA3G5[] =
-    {
-        0xd4, 0xf8, 0x10, 0x54, 0x72, 0x77, 0x0a, 0x2d,
-        0xe3, 0x17, 0xb3, 0xcf, 0xed, 0x61, 0xae, 0x5c,
-        0x5d, 0x3e, 0xde, 0xa1, 0x41, 0x35, 0xb2, 0xdf,
-        0x60, 0xe2, 0x61, 0xfe, 0x3a, 0xc1, 0x66, 0xa3,
-        0x3c, 0x88, 0x54, 0x04, 0x4f, 0x1d, 0x13, 0x46,
-        0xe3, 0x8c, 0x06, 0x92, 0x9d, 0x70, 0x54, 0xc3,
-        0x44, 0xeb, 0x2c, 0x74, 0x25, 0x9e, 0x5d, 0xfb,
-        0xd2, 0x6b, 0xa8, 0x9a, 0xf0, 0xb3, 0x6a, 0x01
-    };
-    QByteArray pca3G5sha1 = QByteArray::fromRawData((const char *)baSha1PCA3G5, sizeof(baSha1PCA3G5));
-    QByteArray pca3G5sha512 = QByteArray::fromRawData((const char *)baSha512PCA3G5, sizeof(baSha512PCA3G5));
-
-    /* Verify certificate: */
-    return verifyCertificate(pHttp, certificate, pca3G5sha1, pca3G5sha512);
-}
-
-/* static */
-int UINetworkReplyPrivateThread::verifyCertificatePca3(RTHTTP pHttp, QByteArray &certificate)
-{
-    /* PCA 3 secure hash algorithm 1: */
-    const unsigned char baSha1PCA3[] =
-    {
-        0xa1, 0xdb, 0x63, 0x93, 0x91, 0x6f, 0x17, 0xe4, 0x18, 0x55,
-        0x09, 0x40, 0x04, 0x15, 0xc7, 0x02, 0x40, 0xb0, 0xae, 0x6b
-    };
-    /* PCA 3 secure hash algorithm 512: */
-    const unsigned char baSha512PCA3[] =
-    {
-        0xbb, 0xf7, 0x8a, 0x19, 0x9f, 0x37, 0xee, 0xa2,
-        0xce, 0xc8, 0xaf, 0xe3, 0xd6, 0x22, 0x54, 0x20,
-        0x74, 0x67, 0x6e, 0xa5, 0x19, 0xb7, 0x62, 0x1e,
-        0xc1, 0x2f, 0xd5, 0x08, 0xf4, 0x64, 0xc4, 0xc6,
-        0xbb, 0xc2, 0xf2, 0x35, 0xe7, 0xbe, 0x32, 0x0b,
-        0xde, 0xb2, 0xfc, 0x44, 0x92, 0x5b, 0x8b, 0x9b,
-        0x77, 0xa5, 0x40, 0x22, 0x18, 0x12, 0xcb, 0x3d,
-        0x0a, 0x67, 0x83, 0x87, 0xc5, 0x45, 0xc4, 0x99
-    };
-    QByteArray pca3sha1 = QByteArray::fromRawData((const char *)baSha1PCA3, sizeof(baSha1PCA3));
-    QByteArray pca3sha512 = QByteArray::fromRawData((const char *)baSha512PCA3, sizeof(baSha512PCA3));
-
-    /* Verify certificate: */
-    return verifyCertificate(pHttp, certificate, pca3sha1, pca3sha512);
-}
-
-/* static */
-int UINetworkReplyPrivateThread::verifyCertificate(RTHTTP pHttp, QByteArray &certificate, const QByteArray &sha1, const QByteArray &sha512)
-{
-    /* Make sure HTTP is created: */
-    if (!pHttp)
-        return VERR_INVALID_POINTER;
-
-    /* Create digest: */
-    uint8_t *abSha1;
-    size_t  cbSha1;
-    uint8_t *abSha512;
-    size_t  cbSha512;
-    int rc = RTHttpCertDigest(pHttp, certificate.data(), certificate.size(),
-                              &abSha1, &cbSha1, &abSha512, &cbSha512);
-
-    /* Verify digest: */
-    if (cbSha1 != (size_t)sha1.size())
-        rc = VERR_HTTP_CACERT_WRONG_FORMAT;
-    else if (memcmp(sha1.constData(), abSha1, cbSha1))
-        rc = VERR_HTTP_CACERT_WRONG_FORMAT;
-    if (cbSha512 != (size_t)sha512.size())
-        rc = VERR_HTTP_CACERT_WRONG_FORMAT;
-    else if (memcmp(sha512.constData(), abSha512, cbSha512))
-        rc = VERR_HTTP_CACERT_WRONG_FORMAT;
-
-    /* Cleanup digest: */
-    RTMemFree(abSha1);
-    RTMemFree(abSha512);
-
-    /* Return result-code: */
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::saveCertificates(const QString &strFullCertificateFileName,
-                                                  const QByteArray &certificatePca3G5,
-                                                  const QByteArray &certificatePca3)
-{
-    /* Open certificates file: */
-    QFile file(strFullCertificateFileName);
-    bool fFileOpened = file.open(QIODevice::WriteOnly);
-    int rc = fFileOpened ? VINF_SUCCESS : VERR_OPEN_FAILED;
-
-    /* Save certificates: */
-    if (RT_SUCCESS(rc))
-        rc = saveCertificate(file, certificatePca3G5);
-    if (RT_SUCCESS(rc))
-        rc = saveCertificate(file, certificatePca3);
-
-    /* Close certificates file: */
-    if (fFileOpened)
-        file.close();
-
-    /* Return result-code: */
-    return rc;
-}
-
-/* static */
-int UINetworkReplyPrivateThread::saveCertificate(QFile &file, const QByteArray &certificate)
-{
-    /* Save certificate: */
-    int rc = VINF_SUCCESS;
-    if (RT_SUCCESS(rc))
-        rc = file.write(certificate) != -1 ? VINF_SUCCESS : VERR_WRITE_ERROR;
-
-    /* Add 'new-line' character: */
-    if (RT_SUCCESS(rc))
-#ifdef Q_WS_WIN
-        rc = file.write("\r\n") != -1 ? VINF_SUCCESS : VERR_WRITE_ERROR;
-#else /* Q_WS_WIN */
-        rc = file.write("\n") != -1 ? VINF_SUCCESS : VERR_WRITE_ERROR;
-#endif /* !Q_WS_WIN */
-
-    /* Return result-code: */
-    return rc;
-}
-
-
-/* Our network-reply object: */
+#ifndef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
+/** QObject extension
+  * used as network-reply private data interface. */
 class UINetworkReplyPrivate : public QObject
 {
     Q_OBJECT;
 
 signals:
 
-    /* Notifiers: */
+    /** Notifies listeners about reply progress change.
+      * @param  iBytesReceived  Holds the current amount of bytes received.
+      * @param  iBytesTotal     Holds the total amount of bytes to be received. */
     void downloadProgress(qint64 iBytesReceived, qint64 iBytesTotal);
+
+    /** Notifies listeners about reply has finished processing. */
     void finished();
 
 public:
 
-    /* Constructor: */
-    UINetworkReplyPrivate(const QNetworkRequest &request)
-        : m_error(QNetworkReply::NoError)
-        , m_pThread(0)
-    {
-        /* Create and run network-reply thread: */
-        m_pThread = new UINetworkReplyPrivateThread(request);
-        connect(m_pThread, SIGNAL(finished()), this, SLOT(sltFinished()));
-        m_pThread->start();
-    }
+    /** Constructs network-reply private data of the passed @a type for the passed @a url and @a requestHeaders. */
+    UINetworkReplyPrivate(UINetworkRequestType type, const QUrl &url, const UserDictionary &requestHeaders);
+    /** Destructs reply private data. */
+    ~UINetworkReplyPrivate();
 
-    /* Destructor: */
-    ~UINetworkReplyPrivate()
-    {
-        /* Terminate network-reply thread: */
-        m_pThread->abort();
-        m_pThread->wait();
-        delete m_pThread;
-        m_pThread = 0;
-    }
+    /** Aborts reply. */
+    void abort() { m_pThread->abort(); }
 
-    /* API: Abort reply: */
-    void abort()
-    {
-        m_pThread->abort();
-    }
+    /** Returns URL of the reply. */
+    QUrl url() const { return m_pThread->url(); }
 
-    /* API: Error-code getter: */
-    QNetworkReply::NetworkError error() const { return m_error; }
+    /** Returns the last cached error of the reply. */
+    UINetworkReply::NetworkError error() const { return m_error; }
+    /** Returns the user-oriented string corresponding to the last cached error of the reply. */
+    QString errorString() const;
 
-    /* API: Error-string getter: */
-    QString errorString() const
-    {
-        switch (m_error)
-        {
-            case QNetworkReply::NoError:
-                break;
-            case QNetworkReply::HostNotFoundError:
-                return tr("Host not found");
-            case QNetworkReply::ContentAccessDenied:
-                return tr("Content access denied");
-            case QNetworkReply::ProtocolFailure:
-                return tr("Protocol failure");
-            case QNetworkReply::AuthenticationRequiredError:
-                return tr("Wrong SSL certificate format");
-            case QNetworkReply::SslHandshakeFailedError:
-                return tr("SSL authentication failed");
-            default:
-                return tr("Unknown reason");
-                break;
-        }
-        return QString();
-    }
-
-    /* API: Reply getter: */
-    QByteArray readAll() { return m_pThread->readAll(); }
+    /** Returns binary content of the reply. */
+    QByteArray readAll() const { return m_pThread->readAll(); }
+    /** Returns value for the cached reply header of the passed @a type. */
+    QString header(UINetworkReply::KnownHeader type) const { return m_pThread->header(type); }
 
 private slots:
 
-    /* Handler: Thread finished: */
-    void sltFinished()
-    {
-        switch (m_pThread->error())
-        {
-            case VINF_SUCCESS:
-                m_error = QNetworkReply::NoError;
-                break;
-            case VERR_HTTP_ABORTED:
-                m_error = QNetworkReply::OperationCanceledError;
-                break;
-            case VERR_HTTP_NOT_FOUND:
-                m_error = QNetworkReply::HostNotFoundError;
-                break;
-            case VERR_HTTP_ACCESS_DENIED:
-                m_error = QNetworkReply::ContentAccessDenied;
-                break;
-            case VERR_HTTP_BAD_REQUEST:
-                m_error = QNetworkReply::ProtocolFailure;
-                break;
-            case VERR_HTTP_CACERT_WRONG_FORMAT:
-                m_error = QNetworkReply::AuthenticationRequiredError;
-                break;
-            case VERR_HTTP_CACERT_CANNOT_AUTHENTICATE:
-                m_error = QNetworkReply::SslHandshakeFailedError;
-                break;
-            default:
-                m_error = QNetworkReply::UnknownNetworkError;
-                break;
-        }
-        emit finished();
-    }
+    /** Handles signal about reply has finished processing. */
+    void sltFinished();
 
 private:
 
-    /* Variables: */
-    QNetworkReply::NetworkError m_error;
+    /** Holds full error template in "Context description: Error description" form. */
+    QString m_strErrorTemplate;
+
+    /** Holds the last cached error of the reply. */
+    UINetworkReply::NetworkError m_error;
+
+    /** Holds the reply thread instance. */
     UINetworkReplyPrivateThread *m_pThread;
 };
+#endif /* !VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
 
-UINetworkReply::UINetworkReply(const QNetworkRequest &request, UINetworkRequestType requestType)
-    : m_replyType(UINetworkReplyType_Qt)
-    , m_pReply(0)
+
+/*********************************************************************************************************************************
+*   Class UINetworkReplyPrivateThread implementation.                                                                            *
+*********************************************************************************************************************************/
+
+/* static */
+const char * const UINetworkReplyPrivateThread::s_apszRootsZipUrls[] =
 {
-    /* Create network-reply object: */
-    switch (requestType)
+    "http://www.symantec.com/content/en/us/enterprise/verisign/roots/roots.zip"
+};
+
+/* static */
+const UINetworkReplyPrivateThread::CERTINFO UINetworkReplyPrivateThread::s_CertInfoPcaCls3Gen5 =
+{
+    /*.pszZipFile     =*/
+    "VeriSign Root Certificates/Generation 5 (G5) PCA/VeriSign Class 3 Public Primary Certification Authority - G5.pem",
+    /*.apszUrls[]     =*/
     {
-        /* Prepare Qt network-reply (HEAD): */
+        "http://www.symantec.com/content/en/us/enterprise/verisign/roots/VeriSign-Class%203-Public-Primary-Certification-Authority-G5.pem",
+        "http://www.symantec.com/content/en/us/enterprise/verisign/roots/VeriSign-Class-3-Public-Primary-Certification-Authority-G5.pem", /* (in case they correct above typo) */
+        "http://www.verisign.com/repository/roots/root-certificates/PCA-3G5.pem", /* dead */
+        NULL,
+    }
+};
+
+/* static */
+const RTCRCERTWANTED UINetworkReplyPrivateThread::s_aCerts[] =
+{
+    /*[0] =*/
+    {
+        /*.pszSubject        =*/
+        "C=US, O=VeriSign, Inc., OU=VeriSign Trust Network, OU=(c) 2006 VeriSign, Inc. - For authorized use only, "
+        "CN=VeriSign Class 3 Public Primary Certification Authority - G5",
+        /*.cbEncoded         =*/    0x4d7,
+        /*.Sha1Fingerprint   =*/    true,
+        /*.Sha512Fingerprint =*/    true,
+        /*.abSha1            =*/
+        {
+            0x4e, 0xb6, 0xd5, 0x78, 0x49, 0x9b, 0x1c, 0xcf, 0x5f, 0x58,
+            0x1e, 0xad, 0x56, 0xbe, 0x3d, 0x9b, 0x67, 0x44, 0xa5, 0xe5
+        },
+        /*.abSha512          =*/
+        {
+            0xd4, 0xf8, 0x10, 0x54, 0x72, 0x77, 0x0a, 0x2d,
+            0xe3, 0x17, 0xb3, 0xcf, 0xed, 0x61, 0xae, 0x5c,
+            0x5d, 0x3e, 0xde, 0xa1, 0x41, 0x35, 0xb2, 0xdf,
+            0x60, 0xe2, 0x61, 0xfe, 0x3a, 0xc1, 0x66, 0xa3,
+            0x3c, 0x88, 0x54, 0x04, 0x4f, 0x1d, 0x13, 0x46,
+            0xe3, 0x8c, 0x06, 0x92, 0x9d, 0x70, 0x54, 0xc3,
+            0x44, 0xeb, 0x2c, 0x74, 0x25, 0x9e, 0x5d, 0xfb,
+            0xd2, 0x6b, 0xa8, 0x9a, 0xf0, 0xb3, 0x6a, 0x01
+        },
+        /*.pvUser */ &UINetworkReplyPrivateThread::s_CertInfoPcaCls3Gen5
+    },
+};
+
+/* static */
+const QString UINetworkReplyPrivateThread::s_strCertificateFileName = QString("vbox-ssl-cacertificate.crt");
+
+UINetworkReplyPrivateThread::UINetworkReplyPrivateThread(UINetworkRequestType type, const QUrl &url, const UserDictionary &requestHeaders)
+    : m_type(type)
+    , m_url(url)
+    , m_requestHeaders(requestHeaders)
+    , m_hHttp(NIL_RTHTTP)
+    , m_iError(VINF_SUCCESS)
+{
+}
+
+void UINetworkReplyPrivateThread::abort()
+{
+    /* Call for abort: */
+    if (m_hHttp != NIL_RTHTTP)
+        RTHttpAbort(m_hHttp);
+}
+
+QString UINetworkReplyPrivateThread::header(UINetworkReply::KnownHeader type) const
+{
+    /* Look for known header type: */
+    switch (type)
+    {
+        case UINetworkReply::ContentTypeHeader:   return m_headers.value("Content-Type");
+        case UINetworkReply::ContentLengthHeader: return m_headers.value("Content-Length");
+        case UINetworkReply::LastModifiedHeader:  return m_headers.value("Last-Modified");
+        case UINetworkReply::LocationHeader:      return m_headers.value("Location");
+        default: break;
+    }
+    /* Return null-string by default: */
+    return QString();
+}
+
+int UINetworkReplyPrivateThread::applyConfiguration()
+{
+    /* Install downloading progress callback: */
+    return RTHttpSetDownloadProgressCallback(m_hHttp, &UINetworkReplyPrivateThread::handleProgressChange, this);
+}
+
+int UINetworkReplyPrivateThread::applyProxyRules()
+{
+    /* Set thread context: */
+    m_strContext = tr("During proxy configuration");
+
+#ifndef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
+    /* Get the proxy-manager: */
+    UIProxyManager proxyManager(gEDataManager->proxySettings());
+
+    /* If the specific proxy settings are enabled, we'll use them
+     * unless user disabled that functionality manually. */
+    switch (proxyManager.proxyState())
+    {
+        case UIProxyManager::ProxyState_Enabled:
+            return RTHttpSetProxy(m_hHttp,
+                                  proxyManager.proxyHost().toUtf8().constData(),
+                                  proxyManager.proxyPort().toUInt(),
+                                  NULL /* pszProxyUser */, NULL /* pszProxyPwd */);
+        case UIProxyManager::ProxyState_Disabled:
+            return VINF_SUCCESS;
+        default:
+            break;
+    }
+#endif /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
+
+    /* By default, use system proxy: */
+    return RTHttpUseSystemProxySettings(m_hHttp);
+}
+
+int UINetworkReplyPrivateThread::applyHttpsCertificates()
+{
+    /* Check if we really need SSL: */
+    if (!url().toString().startsWith("https:", Qt::CaseInsensitive))
+        return VINF_SUCCESS;
+
+    /* Set thread context: */
+    m_strContext = tr("During certificate downloading");
+
+    /*
+     * Calc the filename of the CA certificate file.
+     */
+    const QString strFullCertificateFileName(fullCertificateFileName());
+    QByteArray utf8FullCertificateFileName = strFullCertificateFileName.toUtf8();
+    const char *pszCaCertFile = utf8FullCertificateFileName.constData();
+
+    /*
+     * Check the state of our CA certificate file, it's one of the following:
+     *      - Missing, recreate from scratch (= refresh).
+     *      - Everything is there and it is less than 28 days old, do nothing.
+     *      - Everything is there but it's older than 28 days, refresh.
+     *      - Missing certificates and is older than 1 min, refresh.
+     *
+     * Start by creating a store for loading the current state into, as we'll
+     * be need that for the refresh.
+     */
+    RTCRSTORE hCurStore = NIL_RTCRSTORE;
+    int rc = RTCrStoreCreateInMem(&hCurStore, 256);
+    if (RT_SUCCESS(rc))
+    {
+        bool fRefresh    = true;
+        bool afCertsFound[RT_ELEMENTS(s_aCerts)];
+        RT_ZERO(afCertsFound);
+
+        /*
+         * Load the file if it exists.
+         *
+         * To effect regular updates, we need the modification date of the file,
+         * so we use RTPathQueryInfoEx here and not RTFileExists.
+         */
+        RTFSOBJINFO Info;
+        int rc = RTPathQueryInfoEx(pszCaCertFile, &Info, RTFSOBJATTRADD_NOTHING, RTPATH_F_FOLLOW_LINK);
+        if (   RT_SUCCESS(rc)
+            && RTFS_IS_FILE(Info.Attr.fMode))
+        {
+            RTERRINFOSTATIC StaticErrInfo;
+            rc = RTCrStoreCertAddFromFile(hCurStore, RTCRCERTCTX_F_ADD_CONTINUE_ON_ERROR, pszCaCertFile,
+                                          RTErrInfoInitStatic(&StaticErrInfo));
+            if (RTErrInfoIsSet(&StaticErrInfo.Core))
+                LogRel(("checkCertificates: %s\n", StaticErrInfo.Core.pszMsg));
+            else
+                AssertRC(rc);
+
+            /*
+             * Scan the store the for certificates we need, then see what we
+             * need to do wrt file age.
+             */
+            rc = RTCrStoreCertCheckWanted(hCurStore, s_aCerts, RT_ELEMENTS(s_aCerts), afCertsFound);
+            AssertRC(rc);
+            RTTIMESPEC RefreshAge;
+            uint32_t   cSecRefresh = rc == VINF_SUCCESS  ? 28 * RT_SEC_1DAY /* all found */ : 60 /* stuff missing */;
+            fRefresh = RTTimeSpecCompare(&Info.ModificationTime, RTTimeSpecSubSeconds(RTTimeNow(&RefreshAge), cSecRefresh)) <= 0;
+        }
+
+        /*
+         * Refresh the file if necessary.
+         */
+        if (fRefresh)
+            refreshCertificates(m_hHttp, &hCurStore, afCertsFound, pszCaCertFile);
+
+        RTCrStoreRelease(hCurStore);
+
+        /*
+         * Final verdict.
+         */
+        if (areAllCertsFound(afCertsFound))
+            rc = VINF_SUCCESS;
+        else
+            rc = VERR_NOT_FOUND; /** @todo r=bird: Why not try and let RTHttpGet* bitch if the necessary certs are missing? */
+
+        /*
+         * Set our custom CA file.
+         */
+        if (RT_SUCCESS(rc))
+            rc = RTHttpSetCAFile(m_hHttp, pszCaCertFile);
+    }
+    return rc;
+}
+
+int UINetworkReplyPrivateThread::applyRawHeaders()
+{
+    /* Set thread context: */
+    m_strContext = tr("During network request");
+
+    /* Make sure we have a raw headers at all: */
+    if (m_requestHeaders.isEmpty())
+        return VINF_SUCCESS;
+
+    /* Apply raw headers: */
+    return applyRawHeaders(m_hHttp, m_requestHeaders);
+}
+
+int UINetworkReplyPrivateThread::performMainRequest()
+{
+    /* Set thread context: */
+    m_strContext = tr("During network request");
+
+    /* Paranoia: */
+    m_reply.clear();
+
+    /* Prepare result: */
+    int rc = 0;
+
+    /* Depending on request type: */
+    switch (m_type)
+    {
         case UINetworkRequestType_HEAD:
-            m_replyType = UINetworkReplyType_Qt;
-            m_pReply = gNetworkManager->head(request);
+        {
+            /* Perform blocking HTTP HEAD request: */
+            void   *pvResponse = 0;
+            size_t  cbResponse = 0;
+            rc = RTHttpGetHeaderBinary(m_hHttp, m_url.toString().toUtf8().constData(), &pvResponse, &cbResponse);
+            if (RT_SUCCESS(rc))
+            {
+                m_reply = QByteArray((char*)pvResponse, (int)cbResponse);
+                RTHttpFreeResponse(pvResponse);
+            }
+
+            /* Paranoia: */
+            m_headers.clear();
+
+            /* Parse header contents: */
+            const QString strHeaders = QString(m_reply);
+            const QStringList headers = strHeaders.split("\n", QString::SkipEmptyParts);
+            foreach (const QString &strHeader, headers)
+            {
+                const QStringList values = strHeader.split(": ", QString::SkipEmptyParts);
+                if (values.size() > 1)
+                    m_headers[values.at(0)] = values.at(1);
+            }
+
+            /* Special handling of redirection header: */
+            if (rc == VERR_HTTP_REDIRECTED)
+            {
+                char *pszBuf = 0;
+                const int rrc = RTHttpGetRedirLocation(m_hHttp, &pszBuf);
+                if (RT_SUCCESS(rrc))
+                    m_headers["Location"] = QString(pszBuf);
+                if (pszBuf)
+                    RTMemFree(pszBuf);
+            }
+
             break;
-        /* Prepare Qt network-reply (GET): */
+        }
         case UINetworkRequestType_GET:
-            m_replyType = UINetworkReplyType_Qt;
-            m_pReply = gNetworkManager->get(request);
+        {
+            /* Perform blocking HTTP GET request: */
+            void   *pvResponse = 0;
+            size_t  cbResponse = 0;
+            rc = RTHttpGetBinary(m_hHttp, m_url.toString().toUtf8().constData(), &pvResponse, &cbResponse);
+            if (RT_SUCCESS(rc))
+            {
+                m_reply = QByteArray((char*)pvResponse, (int)cbResponse);
+                RTHttpFreeResponse(pvResponse);
+            }
+
             break;
-        /* Prepare our network-reply (GET): */
-        case UINetworkRequestType_GET_Our:
-            m_replyType = UINetworkReplyType_Our;
-            m_pReply = new UINetworkReplyPrivate(request);
+        }
+        default:
             break;
     }
 
+    /* Return result: */
+    return rc;
+}
+
+void UINetworkReplyPrivateThread::run()
+{
+    /* Init: */
+    RTR3InitExeNoArguments(RTR3INIT_FLAGS_SUPLIB); /** @todo r=bird: WTF? */
+
+    /* Create HTTP client: */
+    m_iError = RTHttpCreate(&m_hHttp);
+    if (RT_SUCCESS(m_iError))
+    {
+        /* Apply configuration: */
+        if (RT_SUCCESS(m_iError))
+            m_iError = applyConfiguration();
+
+        /* Apply proxy-rules: */
+        if (RT_SUCCESS(m_iError))
+            m_iError = applyProxyRules();
+
+        /* Apply https-certificates: */
+        if (RT_SUCCESS(m_iError))
+            m_iError = applyHttpsCertificates();
+
+        /* Assign raw-headers: */
+        if (RT_SUCCESS(m_iError))
+            m_iError = applyRawHeaders();
+
+        /* Perform main request: */
+        if (RT_SUCCESS(m_iError))
+            m_iError = performMainRequest();
+
+        /* Destroy HTTP client: */
+        RTHTTP hHttp = m_hHttp;
+        if (hHttp != NIL_RTHTTP)
+        {
+            /** @todo r=bird: There is a race here between this and abort()! */
+            m_hHttp = NIL_RTHTTP;
+            RTHttpDestroy(hHttp);
+        }
+    }
+}
+
+void UINetworkReplyPrivateThread::handleProgressChange(uint64_t cbDownloadTotal, uint64_t cbDownloaded)
+{
+#ifndef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
+    /* Notify listeners about progress change: */
+    emit sigDownloadProgress(cbDownloaded, cbDownloadTotal);
+#else /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
+    Q_UNUSED(cbDownloaded);
+    Q_UNUSED(cbDownloadTotal);
+#endif /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
+}
+
+/* static */
+QString UINetworkReplyPrivateThread::fullCertificateFileName()
+{
+#ifndef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
+    const QDir homeDir(QDir::toNativeSeparators(vboxGlobal().homeFolder()));
+    return QDir::toNativeSeparators(homeDir.absoluteFilePath(s_strCertificateFileName));
+#else /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
+    return QString("/not/such/agency/non-existing-file.cer");
+#endif /* VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
+}
+
+/* static */
+int UINetworkReplyPrivateThread::applyRawHeaders(RTHTTP hHttp, const UserDictionary &headers)
+{
+    /* Make sure HTTP is created: */
+    if (hHttp == NIL_RTHTTP)
+        return VERR_INVALID_HANDLE;
+
+    /* We should format them first: */
+    QVector<QByteArray> formattedHeaders;
+    QVector<const char*> formattedHeaderPointers;
+    foreach (const QString &header, headers.keys())
+    {
+        /* Prepare formatted representation: */
+        QString strFormattedString = QString("%1: %2").arg(header, headers.value(header));
+        formattedHeaders << strFormattedString.toUtf8();
+        formattedHeaderPointers << formattedHeaders.last().constData();
+    }
+    const char **ppFormattedHeaders = formattedHeaderPointers.data();
+
+    /* Apply HTTP headers: */
+    return RTHttpSetHeaders(hHttp, formattedHeaderPointers.size(), ppFormattedHeaders);
+}
+
+/* static */
+unsigned UINetworkReplyPrivateThread::countCertsFound(bool const *pafFoundCerts)
+{
+    unsigned cFound = 0;
+    for (uint32_t i = 0; i < RT_ELEMENTS(s_aCerts); i++)
+        cFound += pafFoundCerts[i];
+    return cFound;
+}
+
+/* static */
+bool UINetworkReplyPrivateThread::areAllCertsFound(bool const *pafFoundCerts)
+{
+    for (uint32_t i = 0; i < RT_ELEMENTS(s_aCerts); i++)
+        if (!pafFoundCerts[i])
+            return false;
+    return true;
+}
+
+/* static */
+int UINetworkReplyPrivateThread::refreshCertificates(RTHTTP hHttp, PRTCRSTORE phStore, bool *pafFoundCerts,
+                                                     const char *pszCaCertFile)
+{
+    /*
+     * Collect the standard assortment of SSL certificates.
+     */
+    uint32_t  cHint = RTCrStoreCertCount(*phStore);
+    RTCRSTORE hNewStore;
+    int rc = RTCrStoreCreateInMem(&hNewStore, cHint > 32 && cHint < _32K ? cHint + 16 : 256);
+    if (RT_SUCCESS(rc))
+    {
+        RTERRINFOSTATIC StaticErrInfo;
+        rc = RTHttpGatherCaCertsInStore(hNewStore, 0 /*fFlags*/, RTErrInfoInitStatic(&StaticErrInfo));
+        if (RTErrInfoIsSet(&StaticErrInfo.Core))
+            LogRel(("refreshCertificates/#1: %s\n", StaticErrInfo.Core.pszMsg));
+        else if (rc == VERR_NOT_FOUND)
+            LogRel(("refreshCertificates/#1: No trusted SSL certs found on the system, will try download...\n"));
+        else
+            AssertLogRelRC(rc);
+        if (RT_SUCCESS(rc) || rc == VERR_NOT_FOUND)
+        {
+            /*
+             * Check and see what we've got.  If we haven't got all we desire,
+             * try add it from the previous store.
+             */
+            bool afNewFoundCerts[RT_ELEMENTS(s_aCerts)];
+            RT_ZERO(afNewFoundCerts); /* paranoia */
+
+            rc = RTCrStoreCertCheckWanted(hNewStore, s_aCerts, RT_ELEMENTS(s_aCerts), afNewFoundCerts);
+            AssertLogRelRC(rc);
+            Assert(rc != VINF_SUCCESS || areAllCertsFound(afNewFoundCerts));
+            if (rc != VINF_SUCCESS)
+            {
+                rc = RTCrStoreCertAddWantedFromStore(hNewStore,
+                                                     RTCRCERTCTX_F_ADD_IF_NOT_FOUND | RTCRCERTCTX_F_ADD_CONTINUE_ON_ERROR,
+                                                     *phStore, s_aCerts, RT_ELEMENTS(s_aCerts), afNewFoundCerts);
+                AssertLogRelRC(rc);
+                Assert(rc != VINF_SUCCESS || areAllCertsFound(afNewFoundCerts));
+            }
+
+            /*
+             * If that didn't help, seek out certificates in more obscure places,
+             * like java, mozilla and mutt.
+             */
+            if (rc != VINF_SUCCESS)
+            {
+                rc = RTCrStoreCertAddWantedFromFishingExpedition(hNewStore,
+                                                                 RTCRCERTCTX_F_ADD_IF_NOT_FOUND
+                                                                 | RTCRCERTCTX_F_ADD_CONTINUE_ON_ERROR,
+                                                                 s_aCerts, RT_ELEMENTS(s_aCerts), afNewFoundCerts,
+                                                                 RTErrInfoInitStatic(&StaticErrInfo));
+                if (RTErrInfoIsSet(&StaticErrInfo.Core))
+                    LogRel(("refreshCertificates/#2: %s\n", StaticErrInfo.Core.pszMsg));
+                Assert(rc != VINF_SUCCESS || areAllCertsFound(afNewFoundCerts));
+            }
+
+            /*
+             * If that didn't help, try download the certificates.
+             */
+            if (rc != VINF_SUCCESS && hHttp != NIL_RTHTTP)
+                downloadMissingCertificates(hNewStore, afNewFoundCerts, hHttp, &StaticErrInfo);
+
+            /*
+             * If we've got the same or better hit rate than the old store,
+             * replace the CA certs file.
+             */
+            if (   areAllCertsFound(afNewFoundCerts)
+                || countCertsFound(afNewFoundCerts) >= countCertsFound(pafFoundCerts) )
+            {
+                rc = RTCrStoreCertExportAsPem(hNewStore, 0 /*fFlags*/, pszCaCertFile);
+                if (RT_SUCCESS(rc))
+                {
+                    LogRel(("refreshCertificates/#3: Found %u/%u SSL certs we/you trust (previously %u/%u).\n",
+                            countCertsFound(afNewFoundCerts), RTCrStoreCertCount(hNewStore),
+                            countCertsFound(pafFoundCerts), RTCrStoreCertCount(*phStore) ));
+
+                    memcpy(pafFoundCerts, afNewFoundCerts, sizeof(afNewFoundCerts));
+                    RTCrStoreRelease(*phStore);
+                    *phStore  = hNewStore;
+                    hNewStore = NIL_RTCRSTORE;
+                }
+                else
+                {
+                    RT_ZERO(pafFoundCerts);
+                    LogRel(("refreshCertificates/#3: RTCrStoreCertExportAsPem unexpectedly failed with %Rrc\n", rc));
+                }
+            }
+            else
+                LogRel(("refreshCertificates/#3: Sticking with the old file, missing essential certs.\n"));
+        }
+        RTCrStoreRelease(hNewStore);
+    }
+    return rc;
+}
+
+/* static */
+void UINetworkReplyPrivateThread::downloadMissingCertificates(RTCRSTORE hNewStore, bool *pafNewFoundCerts, RTHTTP hHttp,
+                                                              PRTERRINFOSTATIC pStaticErrInfo)
+{
+    NOREF(pStaticErrInfo);
+    int rc;
+
+    /*
+     * Must disable SSL certification verification here as we cannot use the
+     * SSL certificates before we've downloaded them.   We must also enable
+     * redirections in case the certificates moves around.
+     */
+    bool const     fSavedVerifyPeer   = RTHttpGetVerifyPeer(hHttp);
+    uint32_t const cSavedMaxRedirects = RTHttpGetFollowRedirects(hHttp);
+    RTHttpSetVerifyPeer(hHttp, false);
+    RTHttpSetFollowRedirects(hHttp, 8);
+
+    /*
+     * Try get the roots.zip from symantec (or virtualbox.org) first.
+     */
+    for (uint32_t iUrl = 0; iUrl < RT_ELEMENTS(s_apszRootsZipUrls); iUrl++)
+    {
+        void   *pvRootsZip;
+        size_t  cbRootsZip;
+        rc = RTHttpGetBinary(hHttp, s_apszRootsZipUrls[iUrl], &pvRootsZip, &cbRootsZip);
+        if (RT_SUCCESS(rc))
+        {
+            for (uint32_t i = 0; i < RT_ELEMENTS(s_aCerts); i++)
+                if (!pafNewFoundCerts[i])
+                {
+                    CERTINFO const *pInfo = (CERTINFO const *)s_aCerts[i].pvUser;
+                    if (pInfo->pszZipFile)
+                    {
+                        void  *pvFile;
+                        size_t cbFile;
+                        rc = RTZipPkzipMemDecompress(&pvFile, &cbFile, pvRootsZip, cbRootsZip, pInfo->pszZipFile);
+                        if (RT_SUCCESS(rc))
+                        {
+                            rc = convertVerifyAndAddPemCertificateToStore(hNewStore, pvFile, cbFile, &s_aCerts[i]);
+                            RTMemFree(pvFile);
+                            if (RT_SUCCESS(rc))
+                            {
+                                /*
+                                 * Successfully added. Mark it as found and return if we've got them all.
+                                 */
+                                pafNewFoundCerts[i] = true;
+                                if (areAllCertsFound(pafNewFoundCerts))
+                                {
+                                    RTHttpFreeResponse(pvRootsZip);
+                                    RTHttpSetVerifyPeer(hHttp, fSavedVerifyPeer);
+                                    RTHttpSetFollowRedirects(hHttp, cSavedMaxRedirects);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+            RTHttpFreeResponse(pvRootsZip);
+        }
+    }
+
+    /*
+     * Try download certificates separately.
+     */
+    for (uint32_t i = 0; i < RT_ELEMENTS(s_aCerts); i++)
+        if (!pafNewFoundCerts[i])
+        {
+            CERTINFO const *pInfo = (CERTINFO const *)s_aCerts[i].pvUser;
+            for (uint32_t iUrl = 0; iUrl < RT_ELEMENTS(pInfo->apszUrls); iUrl++)
+                if (pInfo->apszUrls[iUrl])
+                {
+                    void  *pvResponse;
+                    size_t cbResponse;
+                    rc = RTHttpGetBinary(hHttp, pInfo->apszUrls[iUrl], &pvResponse, &cbResponse);
+                    if (RT_SUCCESS(rc))
+                    {
+                        rc = convertVerifyAndAddPemCertificateToStore(hNewStore, pvResponse, cbResponse, &s_aCerts[i]);
+                        RTHttpFreeResponse(pvResponse);
+                        if (RT_SUCCESS(rc))
+                        {
+                            pafNewFoundCerts[i] = true;
+                            break;
+                        }
+                    }
+                }
+        }
+
+    RTHttpSetVerifyPeer(hHttp, fSavedVerifyPeer);
+    RTHttpSetFollowRedirects(hHttp, cSavedMaxRedirects);
+}
+
+/* static */
+int UINetworkReplyPrivateThread::convertVerifyAndAddPemCertificateToStore(RTCRSTORE hStore,
+                                                                          void const *pvResponse, size_t cbResponse,
+                                                                          PCRTCRCERTWANTED pWantedCert)
+{
+    /*
+     * Convert the PEM certificate to its binary form so we can hash it.
+     */
+    static RTCRPEMMARKERWORD const s_aWords_Certificate[]  = { { RT_STR_TUPLE("CERTIFICATE") } };
+    static RTCRPEMMARKER     const s_aCertificateMarkers[] = { { s_aWords_Certificate, RT_ELEMENTS(s_aWords_Certificate) }, };
+    RTERRINFOSTATIC StaticErrInfo;
+    PCRTCRPEMSECTION pSectionHead;
+    int rc = RTCrPemParseContent(pvResponse, cbResponse, 0 /*fFlags*/,
+                                 &s_aCertificateMarkers[0], RT_ELEMENTS(s_aCertificateMarkers),
+                                 &pSectionHead, RTErrInfoInitStatic(&StaticErrInfo));
+    if (RTErrInfoIsSet(&StaticErrInfo.Core))
+        LogRel(("RTCrPemParseContent: %s\n", StaticErrInfo.Core.pszMsg));
+    if (RT_SUCCESS(rc))
+    {
+        /*
+         * Look at what we got back and hash it.
+         */
+        rc = VERR_NOT_FOUND;
+        for (PCRTCRPEMSECTION pCur = pSectionHead; pCur; pCur = pCur->pNext)
+            if (pCur->cbData == pWantedCert->cbEncoded)
+            {
+                if (   RTSha1Check(pCur->pbData, pCur->cbData, pWantedCert->abSha1)
+                    && RTSha512Check(pCur->pbData, pCur->cbData, pWantedCert->abSha512))
+                {
+                    /*
+                     * Matching, add it to the store.
+                     */
+                    rc = RTCrStoreCertAddEncoded(hStore,
+                                                 RTCRCERTCTX_F_ENC_X509_DER | RTCRCERTCTX_F_ADD_IF_NOT_FOUND,
+                                                 pCur->pbData, pCur->cbData,
+                                                 RTErrInfoInitStatic(&StaticErrInfo));
+                    if (RTErrInfoIsSet(&StaticErrInfo.Core))
+                        LogRel(("RTCrStoreCertAddEncoded: %s\n", StaticErrInfo.Core.pszMsg));
+                    else if (RT_FAILURE(rc))
+                        LogRel(("RTCrStoreCertAddEncoded: %Rrc\n", rc));
+                    if (RT_SUCCESS(rc))
+                        break;
+                }
+                else
+                    LogRel(("convertVerifyAndAddPemCertificateToStore: hash mismatch (cbData=%#zx)\n", pCur->cbData));
+            }
+            else
+                LogRel(("convertVerifyAndAddPemCertificateToStore: cbData=%#zx expected %#zx\n",
+                        pCur->cbData, pWantedCert->cbEncoded));
+
+        RTCrPemFreeSections(pSectionHead);
+    }
+    return rc;
+}
+
+/* static */
+DECLCALLBACK(void) UINetworkReplyPrivateThread::handleProgressChange(RTHTTP hHttp, void *pvUser, uint64_t cbDownloadTotal, uint64_t cbDownloaded)
+{
+    /* Redirect callback to particular object: */
+    Q_UNUSED(hHttp);
+    AssertPtrReturnVoid(pvUser);
+    static_cast<UINetworkReplyPrivateThread*>(pvUser)->handleProgressChange(cbDownloadTotal, cbDownloaded);
+}
+
+
+#ifndef VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS
+
+
+/*********************************************************************************************************************************
+*   Class UINetworkReplyPrivate implementation.                                                                                  *
+*********************************************************************************************************************************/
+
+UINetworkReplyPrivate::UINetworkReplyPrivate(UINetworkRequestType type, const QUrl &url, const UserDictionary &requestHeaders)
+    : m_error(UINetworkReply::NoError)
+    , m_pThread(0)
+{
+    /* Prepare full error template: */
+    m_strErrorTemplate = tr("%1: %2", "Context description: Error description");
+
+    /* Create and run reply thread: */
+    m_pThread = new UINetworkReplyPrivateThread(type, url, requestHeaders);
+    connect(m_pThread, &UINetworkReplyPrivateThread::sigDownloadProgress,
+            this, &UINetworkReplyPrivate::downloadProgress, Qt::QueuedConnection);
+    connect(m_pThread, &UINetworkReplyPrivateThread::finished,
+            this, &UINetworkReplyPrivate::sltFinished);
+    m_pThread->start();
+}
+
+UINetworkReplyPrivate::~UINetworkReplyPrivate()
+{
+    /* Terminate network-reply thread: */
+    m_pThread->abort();
+    m_pThread->wait();
+    delete m_pThread;
+    m_pThread = 0;
+}
+
+QString UINetworkReplyPrivate::errorString() const
+{
+    /* Look for known error codes: */
+    switch (m_error)
+    {
+        case UINetworkReply::NoError:                     break;
+        case UINetworkReply::RemoteHostClosedError:       return m_strErrorTemplate.arg(m_pThread->context(), tr("Unable to initialize HTTP library"));
+        case UINetworkReply::UrlNotFoundError:            return m_strErrorTemplate.arg(m_pThread->context(), tr("Url not found on the server"));
+        case UINetworkReply::HostNotFoundError:           return m_strErrorTemplate.arg(m_pThread->context(), tr("Host not found"));
+        case UINetworkReply::ContentAccessDenied:         return m_strErrorTemplate.arg(m_pThread->context(), tr("Content access denied"));
+        case UINetworkReply::ProtocolFailure:             return m_strErrorTemplate.arg(m_pThread->context(), tr("Protocol failure"));
+        case UINetworkReply::ConnectionRefusedError:      return m_strErrorTemplate.arg(m_pThread->context(), tr("Connection refused"));
+        case UINetworkReply::SslHandshakeFailedError:     return m_strErrorTemplate.arg(m_pThread->context(), tr("SSL authentication failed"));
+        case UINetworkReply::AuthenticationRequiredError: return m_strErrorTemplate.arg(m_pThread->context(), tr("Wrong SSL certificate format"));
+        case UINetworkReply::ContentReSendError:          return m_strErrorTemplate.arg(m_pThread->context(), tr("Content moved"));
+        case UINetworkReply::ProxyNotFoundError:          return m_strErrorTemplate.arg(m_pThread->context(), tr("Proxy not found"));
+        default:                                          return m_strErrorTemplate.arg(m_pThread->context(), tr("Unknown reason"));
+    }
+    /* Return null-string by default: */
+    return QString();
+}
+
+void UINetworkReplyPrivate::sltFinished()
+{
+    /* Look for known error codes: */
+    switch (m_pThread->error())
+    {
+        case VINF_SUCCESS:                         m_error = UINetworkReply::NoError; break;
+        case VERR_HTTP_INIT_FAILED:                m_error = UINetworkReply::RemoteHostClosedError; break;
+        case VERR_HTTP_NOT_FOUND:                  m_error = UINetworkReply::UrlNotFoundError; break;
+        case VERR_HTTP_HOST_NOT_FOUND:             m_error = UINetworkReply::HostNotFoundError; break;
+        case VERR_HTTP_ACCESS_DENIED:              m_error = UINetworkReply::ContentAccessDenied; break;
+        case VERR_HTTP_BAD_REQUEST:                m_error = UINetworkReply::ProtocolFailure; break;
+        case VERR_HTTP_COULDNT_CONNECT:            m_error = UINetworkReply::ConnectionRefusedError; break;
+        case VERR_HTTP_SSL_CONNECT_ERROR:          m_error = UINetworkReply::SslHandshakeFailedError; break;
+        case VERR_HTTP_CACERT_WRONG_FORMAT:        m_error = UINetworkReply::AuthenticationRequiredError; break;
+        case VERR_HTTP_CACERT_CANNOT_AUTHENTICATE: m_error = UINetworkReply::AuthenticationRequiredError; break;
+        case VERR_HTTP_ABORTED:                    m_error = UINetworkReply::OperationCanceledError; break;
+        case VERR_HTTP_REDIRECTED:                 m_error = UINetworkReply::ContentReSendError; break;
+        case VERR_HTTP_PROXY_NOT_FOUND:            m_error = UINetworkReply::ProxyNotFoundError; break;
+        default:                                   m_error = UINetworkReply::UnknownNetworkError; break;
+    }
+    /* Redirect signal to external listeners: */
+    emit finished();
+}
+
+
+/*********************************************************************************************************************************
+*   Class UINetworkReply implementation.                                                                                         *
+*********************************************************************************************************************************/
+
+UINetworkReply::UINetworkReply(UINetworkRequestType type, const QUrl &url, const UserDictionary &requestHeaders)
+    : m_pReply(new UINetworkReplyPrivate(type, url, requestHeaders))
+{
     /* Prepare network-reply object connections: */
-    connect(m_pReply, SIGNAL(downloadProgress(qint64, qint64)), this, SIGNAL(downloadProgress(qint64, qint64)));
-    connect(m_pReply, SIGNAL(finished()), this, SIGNAL(finished()));
+    connect(m_pReply, &UINetworkReplyPrivate::downloadProgress, this, &UINetworkReply::downloadProgress);
+    connect(m_pReply, &UINetworkReplyPrivate::finished,         this, &UINetworkReply::finished);
 }
 
 UINetworkReply::~UINetworkReply()
@@ -739,80 +1038,37 @@ UINetworkReply::~UINetworkReply()
     }
 }
 
-QVariant UINetworkReply::header(QNetworkRequest::KnownHeaders header) const
-{
-    QVariant result;
-    switch (m_replyType)
-    {
-        case UINetworkReplyType_Qt: result = qobject_cast<QNetworkReply*>(m_pReply)->header(header); break;
-        case UINetworkReplyType_Our: /* TODO: header() */ break;
-    }
-    return result;
-}
-
-QVariant UINetworkReply::attribute(QNetworkRequest::Attribute code) const
-{
-    QVariant result;
-    switch (m_replyType)
-    {
-        case UINetworkReplyType_Qt: result = qobject_cast<QNetworkReply*>(m_pReply)->attribute(code); break;
-        case UINetworkReplyType_Our: /* TODO: attribute() */ break;
-    }
-    return result;
-}
-
 void UINetworkReply::abort()
 {
-    switch (m_replyType)
-    {
-        case UINetworkReplyType_Qt: qobject_cast<QNetworkReply*>(m_pReply)->abort(); break;
-        case UINetworkReplyType_Our: qobject_cast<UINetworkReplyPrivate*>(m_pReply)->abort(); break;
-    }
-}
-
-QNetworkReply::NetworkError UINetworkReply::error() const
-{
-    QNetworkReply::NetworkError result = QNetworkReply::NoError;
-    switch (m_replyType)
-    {
-        case UINetworkReplyType_Qt: result = qobject_cast<QNetworkReply*>(m_pReply)->error(); break;
-        case UINetworkReplyType_Our: result = qobject_cast<UINetworkReplyPrivate*>(m_pReply)->error(); break;
-    }
-    return result;
-}
-
-QString UINetworkReply::errorString() const
-{
-    QString strResult;
-    switch (m_replyType)
-    {
-        case UINetworkReplyType_Qt: strResult = qobject_cast<QNetworkReply*>(m_pReply)->errorString(); break;
-        case UINetworkReplyType_Our: strResult = qobject_cast<UINetworkReplyPrivate*>(m_pReply)->errorString(); break;
-    }
-    return strResult;
-}
-
-QByteArray UINetworkReply::readAll()
-{
-    QByteArray result;
-    switch (m_replyType)
-    {
-        case UINetworkReplyType_Qt: result = qobject_cast<QNetworkReply*>(m_pReply)->readAll(); break;
-        case UINetworkReplyType_Our: result = qobject_cast<UINetworkReplyPrivate*>(m_pReply)->readAll(); break;
-    }
-    return result;
+    return m_pReply->abort();
 }
 
 QUrl UINetworkReply::url() const
 {
-    QUrl result;
-    switch (m_replyType)
-    {
-        case UINetworkReplyType_Qt: result = qobject_cast<QNetworkReply*>(m_pReply)->url(); break;
-        case UINetworkReplyType_Our: /* TODO: url() */ break;
-    }
-    return result;
+    return m_pReply->url();
+}
+
+UINetworkReply::NetworkError UINetworkReply::error() const
+{
+    return m_pReply->error();
+}
+
+QString UINetworkReply::errorString() const
+{
+    return m_pReply->errorString();
+}
+
+QByteArray UINetworkReply::readAll() const
+{
+    return m_pReply->readAll();
+}
+
+QVariant UINetworkReply::header(UINetworkReply::KnownHeader header) const
+{
+    return m_pReply->header(header);
 }
 
 #include "UINetworkReply.moc"
+
+#endif /* !VBOX_GUI_IN_TST_SSL_CERT_DOWNLOADS */
 

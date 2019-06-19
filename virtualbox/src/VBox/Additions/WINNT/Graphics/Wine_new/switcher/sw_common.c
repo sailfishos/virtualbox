@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,7 +15,7 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include <windows.h>
+#include <iprt/win/windows.h>
 #include "switcher.h"
 
 static char* gsBlackListExe[] = {"Dwm.exe", "java.exe", "javaw.exe", "javaws.exe"/*, "taskeng.exe"*/, NULL};
@@ -82,8 +82,8 @@ BOOL checkOptionsExe(void)
     char *filename = name, *pName;
     int i;
 
-	if (!GetModuleFileName(NULL, name, 1000))
-		return TRUE;
+        if (!GetModuleFileName(NULL, name, 1000))
+                return TRUE;
 
     /*Extract filename*/
     for (pName=name; *pName; ++pName)
@@ -129,6 +129,6 @@ void InitD3DExports(const char *vboxName, const char *msName)
         dllName = msName;
 
     hDLL = loadSystemDll(dllName);
-    FillD3DExports(hDLL); 
+    FillD3DExports(hDLL);
 }
 

@@ -1,12 +1,10 @@
 /* $Id: tstGuestCtrlContextID.cpp $ */
-
 /** @file
- *
  * Context ID makeup/extraction test cases.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,7 +17,6 @@
 
 #define LOG_ENABLED
 #define LOG_GROUP LOG_GROUP_MAIN
-#define LOG_INSTANCE NULL
 #include <VBox/log.h>
 
 #include "../include/GuestCtrlImplPrivate.h"

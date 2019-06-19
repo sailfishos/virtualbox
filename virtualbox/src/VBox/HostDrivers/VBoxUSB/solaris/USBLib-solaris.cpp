@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,15 +13,21 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#ifdef DEBUG_ramshankar
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/usblib.h>
 #include <VBox/err.h>
 #include <VBox/log.h>
@@ -43,25 +49,25 @@
 # include <strings.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Logging class. */
 #define USBLIBR3    "USBLibR3"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Reference counter. */
 static uint32_t volatile g_cUsers = 0;
 /** VBoxUSB Device handle. */
 static RTFILE g_hFile = NIL_RTFILE;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int usblibDoIOCtl(unsigned iFunction, void *pvData, size_t cbData);
 
 
@@ -212,13 +218,18 @@ USBLIB_DECL(int) USBLibResetDevice(char *pszDevicePath, bool fReattach)
 {
     LogFlow((USBLIBR3 ":USBLibResetDevice pszDevicePath=%s\n", pszDevicePath));
 
-    size_t cbReq = sizeof(VBOXUSBREQ_RESET_DEVICE) + strlen(pszDevicePath);
+    size_t cbPath = strlen(pszDevicePath) + 1;
+    size_t cbReq  = sizeof(VBOXUSBREQ_RESET_DEVICE) + cbPath;
     VBOXUSBREQ_RESET_DEVICE *pReq = (VBOXUSBREQ_RESET_DEVICE *)RTMemTmpAllocZ(cbReq);
     if (RT_UNLIKELY(!pReq))
         return VERR_NO_MEMORY;
 
     pReq->fReattach = fReattach;
-    strcpy(pReq->szDevicePath, pszDevicePath);
+    if (strlcpy(pReq->szDevicePath, pszDevicePath, cbPath) >= cbPath)
+    {
+        LogRel((USBLIBR3 ":USBLibResetDevice buffer overflow. cbPath=%u pszDevicePath=%s\n", cbPath, pszDevicePath));
+        return VERR_BUFFER_OVERFLOW;
+    }
 
     int rc = usblibDoIOCtl(VBOXUSBMON_IOCTL_RESET_DEVICE, pReq, cbReq);
     if (RT_FAILURE(rc))

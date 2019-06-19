@@ -1,12 +1,10 @@
 /* $Id: QILabel.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QILabel class implementation
+ * VBox Qt GUI - VirtualBox Qt extensions: QILabel class implementation.
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,19 +19,27 @@
  * This class is based on the original QLabel implementation.
  */
 
-/* Global includes */
-#include <QApplication>
-#include <QClipboard>
-#include <QContextMenuEvent>
-#include <QFocusEvent>
-#include <QMenu>
-#include <QMimeData>
-#include <QMouseEvent>
-#include <QPainter>
-#include <QStyleOptionFocusRect>
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
-/* Local includes */
-#include "QILabel.h"
+/* Qt includes: */
+# include <QApplication>
+# include <QClipboard>
+# include <QContextMenuEvent>
+# include <QFocusEvent>
+# include <QMenu>
+# include <QMimeData>
+# include <QMouseEvent>
+# include <QPainter>
+# include <QStyleOptionFocusRect>
+# include <QDrag>
+
+/* GUI includes: */
+# include "QILabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* Some constant regular expressions */
 const QRegExp QILabel::mCopyRegExp = QRegExp ("<[^>]*>");
@@ -248,7 +254,7 @@ void QILabel::init()
     addAction (mCopyAction);
     mCopyAction->setShortcut (QKeySequence (QKeySequence::Copy));
     mCopyAction->setShortcutContext (Qt::WidgetShortcut);
-    connect (mCopyAction, SIGNAL (triggered()), this, SLOT (copy()));
+    connect(mCopyAction, &QAction::triggered, this, &QILabel::copy);
 }
 
 void QILabel::updateSizeHint() const

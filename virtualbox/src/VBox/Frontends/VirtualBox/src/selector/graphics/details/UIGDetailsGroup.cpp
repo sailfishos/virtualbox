@@ -1,12 +1,10 @@
 /* $Id: UIGDetailsGroup.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetailsGroup class implementation
+ * VBox Qt GUI - UIGDetailsGroup class implementation.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +15,23 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt include: */
-#include <QGraphicsScene>
+# include <QGraphicsScene>
 
 /* GUI includes: */
-#include "UIGDetailsGroup.h"
-#include "UIGDetailsSet.h"
-#include "UIGDetailsModel.h"
-#include "UIConverter.h"
-#include "VBoxGlobal.h"
-#include "UIVMItem.h"
+# include "UIGDetailsGroup.h"
+# include "UIGDetailsSet.h"
+# include "UIGDetailsModel.h"
+# include "UIExtraDataManager.h"
+# include "VBoxGlobal.h"
+# include "UIVMItem.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIGDetailsGroup::UIGDetailsGroup(QGraphicsScene *pParent)
     : UIGDetailsItem(0)
@@ -65,9 +70,6 @@ void UIGDetailsGroup::buildGroup(const QList<UIVMItem*> &machineItems)
 
 void UIGDetailsGroup::rebuildGroup()
 {
-    /* Load settings: */
-    loadSettings();
-
     /* Cleanup build-step: */
     delete m_pBuildStep;
     m_pBuildStep = 0;
@@ -110,7 +112,7 @@ void UIGDetailsGroup::sltBuildStep(QString strStepId, int iStepNumber)
         m_pBuildStep = new UIBuildStep(this, pSet, strStepId, iStepNumber + 1);
 
         /* Build set: */
-        pSet->buildSet(m_machineItems[iStepNumber], m_machineItems.size() == 1, m_settings);
+        pSet->buildSet(m_machineItems[iStepNumber], m_machineItems.size() == 1, model()->settings());
     }
     else
     {
@@ -125,8 +127,8 @@ QVariant UIGDetailsGroup::data(int iKey) const
     switch (iKey)
     {
         /* Layout hints: */
-        case GroupData_Margin: return 2;
-        case GroupData_Spacing: return 10;
+        case GroupData_Margin: return QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize) / 6;
+        case GroupData_Spacing: return QApplication::style()->pixelMetric(QStyle::PM_SmallIconSize) / 2;
         /* Default: */
         default: break;
     }
@@ -190,28 +192,6 @@ void UIGDetailsGroup::prepareConnections()
             model(), SIGNAL(sigRootItemMinimumWidthHintChanged(int)));
     connect(this, SIGNAL(sigMinimumHeightHintChanged(int)),
             model(), SIGNAL(sigRootItemMinimumHeightHintChanged(int)));
-}
-
-void UIGDetailsGroup::loadSettings()
-{
-    /* Load settings: */
-    m_settings = vboxGlobal().virtualBox().GetExtraDataStringList(GUI_DetailsPageBoxes);
-    /* If settings are empty: */
-    if (m_settings.isEmpty())
-    {
-        /* Propose the defaults: */
-        m_settings << gpConverter->toInternalString(DetailsElementType_General);
-        m_settings << gpConverter->toInternalString(DetailsElementType_Preview);
-        m_settings << gpConverter->toInternalString(DetailsElementType_System);
-        m_settings << gpConverter->toInternalString(DetailsElementType_Display);
-        m_settings << gpConverter->toInternalString(DetailsElementType_Storage);
-        m_settings << gpConverter->toInternalString(DetailsElementType_Audio);
-        m_settings << gpConverter->toInternalString(DetailsElementType_Network);
-        m_settings << gpConverter->toInternalString(DetailsElementType_USB);
-        m_settings << gpConverter->toInternalString(DetailsElementType_SF);
-        m_settings << gpConverter->toInternalString(DetailsElementType_Description);
-        vboxGlobal().virtualBox().SetExtraDataStringList(GUI_DetailsPageBoxes, m_settings);
-    }
 }
 
 void UIGDetailsGroup::updateGeometry()

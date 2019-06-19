@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2014 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,14 +20,13 @@
 #include <iprt/param.h>
 #include <iprt/s3.h>
 #include <iprt/manifest.h>
-#include <iprt/tar.h>
 #include <iprt/stream.h>
+#include <iprt/zip.h>
 
 #include <VBox/version.h>
 
 #include "ApplianceImpl.h"
 #include "VirtualBoxImpl.h"
-
 #include "ProgressImpl.h"
 #include "MachineImpl.h"
 #include "MediumImpl.h"
@@ -53,29 +52,34 @@ using namespace std;
 
 /**
 * Public method implementation.
-* @param appliance
+* @param aAppliance     Appliance object.
+* @param aLocation      Where to store the appliance.
+* @param aDescription   Appliance description.
 * @return
 */
-STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtualSystemDescription **aDescription)
+HRESULT Machine::exportTo(const ComPtr<IAppliance> &aAppliance, const com::Utf8Str &aLocation,
+                          ComPtr<IVirtualSystemDescription> &aDescription)
 {
     HRESULT rc = S_OK;
 
     if (!aAppliance)
         return E_POINTER;
 
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     ComObjPtr<VirtualSystemDescription> pNewDesc;
 
     try
     {
-        Appliance *pAppliance = static_cast<Appliance*>(aAppliance);
-        AutoCaller autoCaller1(pAppliance);
-        if (FAILED(autoCaller1.rc())) return autoCaller1.rc();
+        IAppliance *iAppliance = aAppliance;
+        Appliance *pAppliance = static_cast<Appliance*>(iAppliance);
 
         LocationInfo locInfo;
-        parseURI(location, locInfo);
+        i_parseURI(aLocation, locInfo);
+
+        Utf8Str strBasename(locInfo.strPath);
+        strBasename.stripPath().stripSuffix();
+        if (locInfo.strPath.endsWith(".tar.gz", Utf8Str::CaseSensitive))
+            strBasename.stripSuffix();
+
         // create a new virtual system to store in the appliance
         rc = pNewDesc.createObject();
         if (FAILED(rc)) throw rc;
@@ -91,7 +95,7 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
         rc = COMGETTER(USBControllers)(ComSafeArrayAsOutParam(usbControllers));
         if (SUCCEEDED(rc))
         {
-            for (unsigned i = 0; i < usbControllers.size(); i++)
+            for (unsigned i = 0; i < usbControllers.size(); ++i)
             {
                 USBControllerType_T enmType;
 
@@ -141,36 +145,36 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
 
         /* Guest OS type */
         ovf::CIMOSType_T cim = convertVBoxOSType2CIMOSType(strOsTypeVBox.c_str(), fLongMode);
-        pNewDesc->addEntry(VirtualSystemDescriptionType_OS,
-                           "",
-                           Utf8StrFmt("%RI32", cim),
-                           strOsTypeVBox);
+        pNewDesc->i_addEntry(VirtualSystemDescriptionType_OS,
+                             "",
+                             Utf8StrFmt("%RI32", cim),
+                             strOsTypeVBox);
 
         /* VM name */
-        pNewDesc->addEntry(VirtualSystemDescriptionType_Name,
-                           "",
-                           strVMName,
-                           strVMName);
+        pNewDesc->i_addEntry(VirtualSystemDescriptionType_Name,
+                             "",
+                             strVMName,
+                             strVMName);
 
         // description
-        pNewDesc->addEntry(VirtualSystemDescriptionType_Description,
-                           "",
-                           strDescription,
-                           strDescription);
+        pNewDesc->i_addEntry(VirtualSystemDescriptionType_Description,
+                             "",
+                             strDescription,
+                             strDescription);
 
         /* CPU count*/
         Utf8Str strCpuCount = Utf8StrFmt("%RI32", cCPUs);
-        pNewDesc->addEntry(VirtualSystemDescriptionType_CPU,
-                           "",
-                           strCpuCount,
-                           strCpuCount);
+        pNewDesc->i_addEntry(VirtualSystemDescriptionType_CPU,
+                             "",
+                             strCpuCount,
+                             strCpuCount);
 
         /* Memory */
         Utf8Str strMemory = Utf8StrFmt("%RI64", (uint64_t)ulMemSizeMB * _1M);
-        pNewDesc->addEntry(VirtualSystemDescriptionType_Memory,
-                           "",
-                           strMemory,
-                           strMemory);
+        pNewDesc->i_addEntry(VirtualSystemDescriptionType_Memory,
+                             "",
+                             strMemory,
+                             strMemory);
 
         // the one VirtualBox IDE controller has two channels with two ports each, which is
         // considered two IDE controllers with two ports each by OVF, so export it as two
@@ -210,29 +214,31 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
 //     <const name="HardDiskControllerIDE" value="6" />
         if (!pIDEController.isNull())
         {
-            Utf8Str strVBox;
             StorageControllerType_T ctlr;
             rc = pIDEController->COMGETTER(ControllerType)(&ctlr);
             if (FAILED(rc)) throw rc;
-            switch(ctlr)
+
+            Utf8Str strVBox;
+            switch (ctlr)
             {
                 case StorageControllerType_PIIX3: strVBox = "PIIX3"; break;
                 case StorageControllerType_PIIX4: strVBox = "PIIX4"; break;
                 case StorageControllerType_ICH6: strVBox = "ICH6"; break;
+                default: break; /* Shut up MSC. */
             }
 
             if (strVBox.length())
             {
-                lIDEControllerPrimaryIndex = (int32_t)pNewDesc->m->llDescriptions.size();
-                pNewDesc->addEntry(VirtualSystemDescriptionType_HardDiskControllerIDE,
-                                   Utf8StrFmt("%d", lIDEControllerPrimaryIndex),        // strRef
-                                   strVBox,     // aOvfValue
-                                   strVBox);    // aVBoxValue
+                lIDEControllerPrimaryIndex = (int32_t)pNewDesc->m->maDescriptions.size();
+                pNewDesc->i_addEntry(VirtualSystemDescriptionType_HardDiskControllerIDE,
+                                     Utf8StrFmt("%d", lIDEControllerPrimaryIndex),        // strRef
+                                     strVBox,     // aOvfValue
+                                     strVBox);    // aVBoxValue
                 lIDEControllerSecondaryIndex = lIDEControllerPrimaryIndex + 1;
-                pNewDesc->addEntry(VirtualSystemDescriptionType_HardDiskControllerIDE,
-                                   Utf8StrFmt("%d", lIDEControllerSecondaryIndex),
-                                   strVBox,
-                                   strVBox);
+                pNewDesc->i_addEntry(VirtualSystemDescriptionType_HardDiskControllerIDE,
+                                     Utf8StrFmt("%d", lIDEControllerSecondaryIndex),
+                                     strVBox,
+                                     strVBox);
             }
         }
 
@@ -240,11 +246,11 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
         if (!pSATAController.isNull())
         {
             Utf8Str strVBox = "AHCI";
-            lSATAControllerIndex = (int32_t)pNewDesc->m->llDescriptions.size();
-            pNewDesc->addEntry(VirtualSystemDescriptionType_HardDiskControllerSATA,
-                               Utf8StrFmt("%d", lSATAControllerIndex),
-                               strVBox,
-                               strVBox);
+            lSATAControllerIndex = (int32_t)pNewDesc->m->maDescriptions.size();
+            pNewDesc->i_addEntry(VirtualSystemDescriptionType_HardDiskControllerSATA,
+                                 Utf8StrFmt("%d", lSATAControllerIndex),
+                                 strVBox,
+                                 strVBox);
         }
 
 //     <const name="HardDiskControllerSCSI" value="8" />
@@ -255,16 +261,17 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
             if (SUCCEEDED(rc))
             {
                 Utf8Str strVBox = "LsiLogic";       // the default in VBox
-                switch(ctlr)
+                switch (ctlr)
                 {
                     case StorageControllerType_LsiLogic: strVBox = "LsiLogic"; break;
                     case StorageControllerType_BusLogic: strVBox = "BusLogic"; break;
+                    default: break; /* Shut up MSC. */
                 }
-                lSCSIControllerIndex = (int32_t)pNewDesc->m->llDescriptions.size();
-                pNewDesc->addEntry(VirtualSystemDescriptionType_HardDiskControllerSCSI,
-                                   Utf8StrFmt("%d", lSCSIControllerIndex),
-                                   strVBox,
-                                   strVBox);
+                lSCSIControllerIndex = (int32_t)pNewDesc->m->maDescriptions.size();
+                pNewDesc->i_addEntry(VirtualSystemDescriptionType_HardDiskControllerSCSI,
+                                     Utf8StrFmt("%d", lSCSIControllerIndex),
+                                     strVBox,
+                                     strVBox);
             }
             else
                 throw rc;
@@ -275,23 +282,23 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
             // VirtualBox considers the SAS controller a class of its own but in OVF
             // it should be a SCSI controller
             Utf8Str strVBox = "LsiLogicSas";
-            lSCSIControllerIndex = (int32_t)pNewDesc->m->llDescriptions.size();
-            pNewDesc->addEntry(VirtualSystemDescriptionType_HardDiskControllerSAS,
-                               Utf8StrFmt("%d", lSCSIControllerIndex),
-                               strVBox,
-                               strVBox);
+            lSCSIControllerIndex = (int32_t)pNewDesc->m->maDescriptions.size();
+            pNewDesc->i_addEntry(VirtualSystemDescriptionType_HardDiskControllerSAS,
+                                 Utf8StrFmt("%d", lSCSIControllerIndex),
+                                 strVBox,
+                                 strVBox);
         }
 
 //     <const name="HardDiskImage" value="9" />
 //     <const name="Floppy" value="18" />
 //     <const name="CDROM" value="19" />
 
-        MediaData::AttachmentList::iterator itA;
-        for (itA = mMediaData->mAttachments.begin();
-             itA != mMediaData->mAttachments.end();
-             ++itA)
+        for (MediumAttachmentList::const_iterator
+             it = mMediumAttachments->begin();
+             it != mMediumAttachments->end();
+             ++it)
         {
-            ComObjPtr<MediumAttachment> pHDA = *itA;
+            ComObjPtr<MediumAttachment> pHDA = *it;
 
             // the attachment's data
             ComPtr<IMedium> pMedium;
@@ -347,8 +354,7 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
                         // returns pMedium if there are no diff images
                 if (FAILED(rc)) throw rc;
 
-                Utf8Str strName = Utf8Str(locInfo.strPath).stripPath().stripExt();
-                strTargetImageName = Utf8StrFmt("%s-disk%d.vmdk", strName.c_str(), ++pAppliance->m->cDisks);
+                strTargetImageName = Utf8StrFmt("%s-disk%.3d.vmdk", strBasename.c_str(), ++pAppliance->m->cDisks);
                 if (strTargetImageName.length() > RTTAR_NAME_MAX)
                     throw setError(VBOX_E_NOT_SUPPORTED,
                                 tr("Cannot attach disk '%s' -- file name too long"), strTargetImageName.c_str());
@@ -360,6 +366,44 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
 
                 rc = pBaseMedium->COMGETTER(Size)(&llSize);
                 if (FAILED(rc)) throw rc;
+
+                /* If the medium is encrypted add the key identifier to the list. */
+                IMedium *iBaseMedium = pBaseMedium;
+                Medium *pBase = static_cast<Medium*>(iBaseMedium);
+                const com::Utf8Str strKeyId = pBase->i_getKeyId();
+                if (!strKeyId.isEmpty())
+                {
+                    IMedium *iMedium = pMedium;
+                    Medium *pMed = static_cast<Medium*>(iMedium);
+                    com::Guid mediumUuid = pMed->i_getId();
+                    bool fKnown = false;
+
+                    /* Check whether the ID is already in our sequence, add it otherwise. */
+                    for (unsigned i = 0; i < pAppliance->m->m_vecPasswordIdentifiers.size(); i++)
+                    {
+                        if (strKeyId.equals(pAppliance->m->m_vecPasswordIdentifiers[i]))
+                        {
+                            fKnown = true;
+                            break;
+                        }
+                    }
+
+                    if (!fKnown)
+                    {
+                        GUIDVEC vecMediumIds;
+
+                        vecMediumIds.push_back(mediumUuid);
+                        pAppliance->m->m_vecPasswordIdentifiers.push_back(strKeyId);
+                        pAppliance->m->m_mapPwIdToMediumIds.insert(std::pair<com::Utf8Str, GUIDVEC>(strKeyId, vecMediumIds));
+                    }
+                    else
+                    {
+                        std::map<com::Utf8Str, GUIDVEC>::iterator itMap = pAppliance->m->m_mapPwIdToMediumIds.find(strKeyId);
+                        if (itMap == pAppliance->m->m_mapPwIdToMediumIds.end())
+                            throw setError(E_FAIL, tr("Internal error adding a medium UUID to the map"));
+                        itMap->second.push_back(mediumUuid);
+                    }
+                }
             }
             else if (   deviceType == DeviceType_DVD
                      && pMedium)
@@ -395,14 +439,13 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
                 strLocation = bstrLocation;
 
                 Utf8Str ext = strLocation;
-                ext.assignEx(RTPathExt(ext.c_str()));//returns extension with dot (".iso")
+                ext.assignEx(RTPathSuffix(ext.c_str()));//returns extension with dot (".iso")
 
                 int eq = ext.compare(".iso", Utf8Str::CaseInsensitive);
                 if (eq != 0)
                     continue;
 
-                Utf8Str strName = Utf8Str(locInfo.strPath).stripPath().stripExt();
-                strTargetImageName = Utf8StrFmt("%s-disk%d.iso", strName.c_str(), ++pAppliance->m->cDisks);
+                strTargetImageName = Utf8StrFmt("%s-disk%.3d.iso", strBasename.c_str(), ++pAppliance->m->cDisks);
                 if (strTargetImageName.length() > RTTAR_NAME_MAX)
                     throw setError(VBOX_E_NOT_SUPPORTED,
                                 tr("Cannot attach image '%s' -- file name too long"), strTargetImageName.c_str());
@@ -432,7 +475,8 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
                         lControllerVsys = lIDEControllerPrimaryIndex;
                         lChannelVsys = 1;
                     }
-                    else if (lChannel == 1 && lDevice == 0) // secondary master; by default this is the CD-ROM but as of VirtualBox 3.1 that can change
+                    else if (lChannel == 1 && lDevice == 0) // secondary master; by default this is the CD-ROM but
+                                                            // as of VirtualBox 3.1 that can change
                     {
                         lControllerVsys = lIDEControllerSecondaryIndex;
                         lChannelVsys = 0;
@@ -444,7 +488,7 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
                     }
                     else
                         throw setError(VBOX_E_NOT_SUPPORTED,
-                                    tr("Cannot handle medium attachment: channel is %d, device is %d"), lChannel, lDevice);
+                                       tr("Cannot handle medium attachment: channel is %d, device is %d"), lChannel, lDevice);
                 break;
 
                 case StorageBus_SATA:
@@ -465,7 +509,8 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
 
                 default:
                     throw setError(VBOX_E_NOT_SUPPORTED,
-                                tr("Cannot handle medium attachment: storageBus is %d, channel is %d, device is %d"), storageBus, lChannel, lDevice);
+                                   tr("Cannot handle medium attachment: storageBus is %d, channel is %d, device is %d"),
+                                   storageBus, lChannel, lDevice);
                 break;
             }
 
@@ -476,37 +521,39 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
             {
                 case DeviceType_HardDisk:
                     Log(("Adding VirtualSystemDescriptionType_HardDiskImage, disk size: %RI64\n", llSize));
-                    pNewDesc->addEntry(VirtualSystemDescriptionType_HardDiskImage,
-                                       strTargetImageName,   // disk ID: let's use the name
-                                       strTargetImageName,   // OVF value:
-                                       strLocation, // vbox value: media path
-                                       (uint32_t)(llSize / _1M),
-                                       strExtra);
-                break;
+                    pNewDesc->i_addEntry(VirtualSystemDescriptionType_HardDiskImage,
+                                         strTargetImageName,   // disk ID: let's use the name
+                                         strTargetImageName,   // OVF value:
+                                         strLocation, // vbox value: media path
+                                        (uint32_t)(llSize / _1M),
+                                         strExtra);
+                    break;
 
                 case DeviceType_DVD:
                     Log(("Adding VirtualSystemDescriptionType_CDROM, disk size: %RI64\n", llSize));
-                    pNewDesc->addEntry(VirtualSystemDescriptionType_CDROM,
-                                       strTargetImageName,   // disk ID
-                                       strTargetImageName,   // OVF value
-                                       strLocation, // vbox value
-                                       (uint32_t)(llSize / _1M),// ulSize
-                                       strExtra);
-                break;
+                    pNewDesc->i_addEntry(VirtualSystemDescriptionType_CDROM,
+                                         strTargetImageName,   // disk ID
+                                         strTargetImageName,   // OVF value
+                                         strLocation, // vbox value
+                                         (uint32_t)(llSize / _1M),// ulSize
+                                         strExtra);
+                    break;
 
                 case DeviceType_Floppy:
-                    pNewDesc->addEntry(VirtualSystemDescriptionType_Floppy,
-                                       strEmpty,      // disk ID
-                                       strEmpty,      // OVF value
-                                       strEmpty,      // vbox value
-                                       1,       // ulSize
-                                       strExtra);
-                break;
+                    pNewDesc->i_addEntry(VirtualSystemDescriptionType_Floppy,
+                                         strEmpty,      // disk ID
+                                         strEmpty,      // OVF value
+                                         strEmpty,      // vbox value
+                                         1,       // ulSize
+                                         strExtra);
+                    break;
+
+                default: break; /* Shut up MSC. */
             }
         }
 
 //     <const name="NetworkAdapter" />
-        uint32_t maxNetworkAdapters = Global::getMaxNetworkAdapters(getChipsetType());
+        uint32_t maxNetworkAdapters = Global::getMaxNetworkAdapters(i_getChipsetType());
         size_t a;
         for (a = 0; a < maxNetworkAdapters; ++a)
         {
@@ -530,7 +577,7 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
                 if (FAILED(rc)) throw rc;
 
                 Utf8Str strAttachmentType = convertNetworkAttachmentTypeToString(attachmentType);
-                pNewDesc->addEntry(VirtualSystemDescriptionType_NetworkAdapter,
+                pNewDesc->i_addEntry(VirtualSystemDescriptionType_NetworkAdapter,
                                    "",      // ref
                                    strAttachmentType,      // orig
                                    Utf8StrFmt("%RI32", (uint32_t)adapterType),   // conf
@@ -542,19 +589,19 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
 //     <const name="USBController"  />
 #ifdef VBOX_WITH_USB
         if (fUSBEnabled)
-            pNewDesc->addEntry(VirtualSystemDescriptionType_USBController, "", "", "");
+            pNewDesc->i_addEntry(VirtualSystemDescriptionType_USBController, "", "", "");
 #endif /* VBOX_WITH_USB */
 
 //     <const name="SoundCard"  />
         if (fAudioEnabled)
-            pNewDesc->addEntry(VirtualSystemDescriptionType_SoundCard,
-                               "",
-                               "ensoniq1371",       // this is what OVFTool writes and VMware supports
-                               Utf8StrFmt("%RI32", audioController));
+            pNewDesc->i_addEntry(VirtualSystemDescriptionType_SoundCard,
+                                 "",
+                                 "ensoniq1371",       // this is what OVFTool writes and VMware supports
+                                 Utf8StrFmt("%RI32", audioController));
 
         /* We return the new description to the caller */
         ComPtr<IVirtualSystemDescription> copy(pNewDesc);
-        copy.queryInterfaceTo(aDescription);
+        copy.queryInterfaceTo(aDescription.asOutParam());
 
         AutoWriteLock alock(pAppliance COMMA_LOCKVAL_SRC_POS);
         // finally, add the virtual system to the appliance
@@ -576,88 +623,99 @@ STDMETHODIMP Machine::ExportTo(IAppliance *aAppliance, IN_BSTR location, IVirtua
 
 /**
  * Public method implementation.
- * @param format
- * @param options
- * @param path
- * @param aProgress
+ * @param aFormat   Appliance format.
+ * @param aOptions  Export options.
+ * @param aPath     Path to write the appliance to.
+ * @param aProgress Progress object.
  * @return
  */
-STDMETHODIMP Appliance::Write(IN_BSTR format, ComSafeArrayIn(ImportOptions_T, options), IN_BSTR path, IProgress **aProgress)
+HRESULT Appliance::write(const com::Utf8Str &aFormat,
+                         const std::vector<ExportOptions_T> &aOptions,
+                         const com::Utf8Str &aPath,
+                         ComPtr<IProgress> &aProgress)
 {
-    if (!path) return E_POINTER;
-    CheckComArgOutPointerValid(aProgress);
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
 
-    if (options != NULL)
-        m->optListExport = com::SafeArray<ExportOptions_T>(ComSafeArrayInArg(options)).toList();
+    m->optListExport.clear();
+    if (aOptions.size())
+    {
+        for (size_t i = 0; i < aOptions.size(); ++i)
+        {
+            m->optListExport.insert(i, aOptions[i]);
+        }
+    }
 
-//    AssertReturn(!(m->optListExport.contains(ExportOptions_CreateManifest) && m->optListExport.contains(ExportOptions_ExportDVDImages)), E_INVALIDARG);
+//  AssertReturn(!(m->optListExport.contains(ExportOptions_CreateManifest)
+//  && m->optListExport.contains(ExportOptions_ExportDVDImages)), E_INVALIDARG);
 
     m->fExportISOImages = m->optListExport.contains(ExportOptions_ExportDVDImages);
 
     if (!m->fExportISOImages)/* remove all ISO images from VirtualSystemDescription */
     {
-        list< ComObjPtr<VirtualSystemDescription> >::const_iterator it;
-        for (it = m->virtualSystemDescriptions.begin();
+        for (list<ComObjPtr<VirtualSystemDescription> >::const_iterator
+             it = m->virtualSystemDescriptions.begin();
              it != m->virtualSystemDescriptions.end();
              ++it)
         {
-            ComObjPtr<VirtualSystemDescription> vsdescThis = (*it);
-            std::list<VirtualSystemDescriptionEntry*> skipped = vsdescThis->findByType(VirtualSystemDescriptionType_CDROM);
-            std::list<VirtualSystemDescriptionEntry*>:: iterator pItSkipped = skipped.begin();
-            while (pItSkipped != skipped.end())
+            ComObjPtr<VirtualSystemDescription> vsdescThis = *it;
+            std::list<VirtualSystemDescriptionEntry*> skipped = vsdescThis->i_findByType(VirtualSystemDescriptionType_CDROM);
+            std::list<VirtualSystemDescriptionEntry*>::const_iterator itSkipped = skipped.begin();
+            while (itSkipped != skipped.end())
             {
-                (*pItSkipped)->skipIt = true;
-                ++pItSkipped;
+                (*itSkipped)->skipIt = true;
+                ++itSkipped;
             }
         }
     }
 
     // do not allow entering this method if the appliance is busy reading or writing
-    if (!isApplianceIdle())
+    if (!i_isApplianceIdle())
         return E_ACCESSDENIED;
 
-    // see if we can handle this file; for now we insist it has an ".ovf" extension
-    Utf8Str strPath = path;
-    if (!(   strPath.endsWith(".ovf", Utf8Str::CaseInsensitive)
-          || strPath.endsWith(".ova", Utf8Str::CaseInsensitive)))
-        return setError(VBOX_E_FILE_ERROR,
-                        tr("Appliance file must have .ovf or .ova extension"));
-
-    m->fManifest = m->optListExport.contains(ExportOptions_CreateManifest);
-    Utf8Str strFormat(format);
-
+    // figure the export format.  We exploit the unknown version value for oracle public cloud.
     ovf::OVFVersion_T ovfF;
-    if (strFormat == "ovf-0.9")
-    {
+    if (aFormat == "ovf-0.9")
         ovfF = ovf::OVFVersion_0_9;
-    }
-    else if (strFormat == "ovf-1.0")
-    {
+    else if (aFormat == "ovf-1.0")
         ovfF = ovf::OVFVersion_1_0;
-    }
-    else if (strFormat == "ovf-2.0")
-    {
+    else if (aFormat == "ovf-2.0")
         ovfF = ovf::OVFVersion_2_0;
-    }
+    else if (aFormat == "opc-1.0")
+        ovfF = ovf::OVFVersion_unknown;
     else
         return setError(VBOX_E_FILE_ERROR,
-                        tr("Invalid format \"%s\" specified"), strFormat.c_str());
+                        tr("Invalid format \"%s\" specified"), aFormat.c_str());
 
-    /* as of OVF 2.0 we have to use SHA256 */
-    m->fSha256 = ovfF >= ovf::OVFVersion_2_0;
+    // Check the extension.
+    if (ovfF == ovf::OVFVersion_unknown)
+    {
+        if (!aPath.endsWith(".tar.gz", Utf8Str::CaseInsensitive))
+            return setError(VBOX_E_FILE_ERROR,
+                            tr("OPC appliance file must have .tar.gz extension"));
+    }
+    else if (   !aPath.endsWith(".ovf", Utf8Str::CaseInsensitive)
+             && !aPath.endsWith(".ova", Utf8Str::CaseInsensitive))
+        return setError(VBOX_E_FILE_ERROR, tr("Appliance file must have .ovf or .ova extension"));
+
+
+    /* As of OVF 2.0 we have to use SHA-256 in the manifest. */
+    m->fManifest = m->optListExport.contains(ExportOptions_CreateManifest);
+    if (m->fManifest)
+        m->fDigestTypes = ovfF >= ovf::OVFVersion_2_0 ? RTMANIFEST_ATTR_SHA256 : RTMANIFEST_ATTR_SHA1;
+    Assert(m->hOurManifest == NIL_RTMANIFEST);
+
+    /* Check whether all passwords are supplied or error out. */
+    if (m->m_cPwProvided < m->m_vecPasswordIdentifiers.size())
+        return setError(VBOX_E_INVALID_OBJECT_STATE,
+                        tr("Appliance export failed because not all passwords were provided for all encrypted media"));
 
     ComObjPtr<Progress> progress;
     HRESULT rc = S_OK;
     try
     {
         /* Parse all necessary info out of the URI */
-        parseURI(strPath, m->locInfo);
-        rc = writeImpl(ovfF, m->locInfo, progress);
+        i_parseURI(aPath, m->locInfo);
+        rc = i_writeImpl(ovfF, m->locInfo, progress);
     }
     catch (HRESULT aRC)
     {
@@ -666,7 +724,7 @@ STDMETHODIMP Appliance::Write(IN_BSTR format, ComSafeArrayIn(ImportOptions_T, op
 
     if (SUCCEEDED(rc))
         /* Return progress to the caller */
-        progress.queryInterfaceTo(aProgress);
+        progress.queryInterfaceTo(aProgress.asOutParam());
 
     return rc;
 }
@@ -689,35 +747,42 @@ STDMETHODIMP Appliance::Write(IN_BSTR format, ComSafeArrayIn(ImportOptions_T, op
  *
  * 1) from the public Appliance::Write().
  *
- * 2) in a second worker thread; in that case, Appliance::Write() called Appliance::writeImpl(), which
- *    called Appliance::writeFSOVA(), which called Appliance::writeImpl(), which then called this again.
- *
- * 3) from Appliance::writeS3(), which got called from a previous instance of Appliance::taskThreadWriteOVF().
+ * 2) in a second worker thread; in that case, Appliance::Write() called Appliance::i_writeImpl(), which
+ *    called Appliance::i_writeFSOVA(), which called Appliance::i_writeImpl(), which then called this again.
  *
  * @param aFormat
  * @param aLocInfo
  * @param aProgress
  * @return
  */
-HRESULT Appliance::writeImpl(ovf::OVFVersion_T aFormat, const LocationInfo &aLocInfo, ComObjPtr<Progress> &aProgress)
+HRESULT Appliance::i_writeImpl(ovf::OVFVersion_T aFormat, const LocationInfo &aLocInfo, ComObjPtr<Progress> &aProgress)
 {
-    HRESULT rc = S_OK;
+    HRESULT rc;
     try
     {
-        rc = setUpProgress(aProgress,
-                           BstrFmt(tr("Export appliance '%s'"), aLocInfo.strPath.c_str()),
-                           (aLocInfo.storageType == VFSType_File) ? WriteFile : WriteS3);
+        rc = i_setUpProgress(aProgress,
+                             BstrFmt(tr("Export appliance '%s'"), aLocInfo.strPath.c_str()),
+                             (aLocInfo.storageType == VFSType_File) ? WriteFile : WriteS3);
 
         /* Initialize our worker task */
-        std::auto_ptr<TaskOVF> task(new TaskOVF(this, TaskOVF::Write, aLocInfo, aProgress));
+        TaskOVF* task = NULL;
+        try
+        {
+            task = new TaskOVF(this, TaskOVF::Write, aLocInfo, aProgress);
+        }
+        catch(...)
+        {
+            delete task;
+            throw rc = setError(VBOX_E_OBJECT_NOT_FOUND,
+                                tr("Could not create TaskOVF object for for writing out the OVF to disk"));
+        }
+
         /* The OVF version to write */
         task->enFormat = aFormat;
 
-        rc = task->startThread();
+        rc = task->createThread();
         if (FAILED(rc)) throw rc;
 
-        /* Don't destruct on success */
-        task.release();
     }
     catch (HRESULT aRC)
     {
@@ -728,7 +793,7 @@ HRESULT Appliance::writeImpl(ovf::OVFVersion_T aFormat, const LocationInfo &aLoc
 }
 
 /**
- * Called from Appliance::writeFS() for creating a XML document for this
+ * Called from Appliance::i_writeFS() for creating a XML document for this
  * Appliance.
  *
  * @param writeLock                          The current write lock.
@@ -739,11 +804,11 @@ HRESULT Appliance::writeImpl(ovf::OVFVersion_T aFormat, const LocationInfo &aLoc
  *                                           instance for which to write XML.
  * @param enFormat                           OVF format (0.9 or 1.0).
  */
-void Appliance::buildXML(AutoWriteLockBase& writeLock,
-                         xml::Document &doc,
-                         XMLStack &stack,
-                         const Utf8Str &strPath,
-                         ovf::OVFVersion_T enFormat)
+void Appliance::i_buildXML(AutoWriteLockBase& writeLock,
+                           xml::Document &doc,
+                           XMLStack &stack,
+                           const Utf8Str &strPath,
+                           ovf::OVFVersion_T enFormat)
 {
     xml::ElementNode *pelmRoot = doc.createRootElement("Envelope");
 
@@ -847,175 +912,178 @@ void Appliance::buildXML(AutoWriteLockBase& writeLock,
     // this list receives pointers to the XML elements in the machine XML which
     // might have UUIDs that need fixing after we know the UUIDs of the exported images
     std::list<xml::ElementNode*> llElementsWithUuidAttributes;
-
-    list< ComObjPtr<VirtualSystemDescription> >::const_iterator it;
+    uint32_t ulFile = 1;
     /* Iterate through all virtual systems of that appliance */
-    for (it = m->virtualSystemDescriptions.begin();
-         it != m->virtualSystemDescriptions.end();
-         ++it)
+    for (list<ComObjPtr<VirtualSystemDescription> >::const_iterator
+         itV = m->virtualSystemDescriptions.begin();
+         itV != m->virtualSystemDescriptions.end();
+         ++itV)
     {
-        ComObjPtr<VirtualSystemDescription> vsdescThis = *it;
-        buildXMLForOneVirtualSystem(writeLock,
-                                    *pelmToAddVirtualSystemsTo,
-                                    &llElementsWithUuidAttributes,
-                                    vsdescThis,
-                                    enFormat,
-                                    stack);         // disks and networks stack
+        ComObjPtr<VirtualSystemDescription> vsdescThis = *itV;
+        i_buildXMLForOneVirtualSystem(writeLock,
+                                      *pelmToAddVirtualSystemsTo,
+                                      &llElementsWithUuidAttributes,
+                                      vsdescThis,
+                                      enFormat,
+                                      stack);         // disks and networks stack
+
+        list<Utf8Str> diskList;
+
+        for (list<Utf8Str>::const_iterator
+             itDisk = stack.mapDiskSequenceForOneVM.begin();
+             itDisk != stack.mapDiskSequenceForOneVM.end();
+             ++itDisk)
+        {
+            const Utf8Str &strDiskID = *itDisk;
+            const VirtualSystemDescriptionEntry *pDiskEntry = stack.mapDisks[strDiskID];
+
+            // source path: where the VBox image is
+            const Utf8Str &strSrcFilePath = pDiskEntry->strVBoxCurrent;
+            Bstr bstrSrcFilePath(strSrcFilePath);
+
+            //skip empty Medium. There are no information to add into section <References> or <DiskSection>
+            if (strSrcFilePath.isEmpty() ||
+                pDiskEntry->skipIt == true)
+                continue;
+
+            // Do NOT check here whether the file exists. FindMedium will figure
+            // that out, and filesystem-based tests are simply wrong in the
+            // general case (think of iSCSI).
+
+            // We need some info from the source disks
+            ComPtr<IMedium> pSourceDisk;
+            //DeviceType_T deviceType = DeviceType_HardDisk;// by default
+
+            Log(("Finding source disk \"%ls\"\n", bstrSrcFilePath.raw()));
+
+            HRESULT rc;
+
+            if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)
+            {
+                rc = mVirtualBox->OpenMedium(bstrSrcFilePath.raw(),
+                                             DeviceType_HardDisk,
+                                             AccessMode_ReadWrite,
+                                             FALSE /* fForceNewUuid */,
+                                             pSourceDisk.asOutParam());
+                if (FAILED(rc))
+                    throw rc;
+            }
+            else if (pDiskEntry->type == VirtualSystemDescriptionType_CDROM)//may be, this is CD/DVD
+            {
+                rc = mVirtualBox->OpenMedium(bstrSrcFilePath.raw(),
+                                             DeviceType_DVD,
+                                             AccessMode_ReadOnly,
+                                             FALSE,
+                                             pSourceDisk.asOutParam());
+                if (FAILED(rc))
+                    throw rc;
+            }
+
+            Bstr uuidSource;
+            rc = pSourceDisk->COMGETTER(Id)(uuidSource.asOutParam());
+            if (FAILED(rc)) throw rc;
+            Guid guidSource(uuidSource);
+
+            // output filename
+            const Utf8Str &strTargetFileNameOnly = pDiskEntry->strOvf;
+            // target path needs to be composed from where the output OVF is
+            Utf8Str strTargetFilePath(strPath);
+            strTargetFilePath.stripFilename();
+            strTargetFilePath.append("/");
+            strTargetFilePath.append(strTargetFileNameOnly);
+
+            // We are always exporting to VMDK stream optimized for now
+            //Bstr bstrSrcFormat = L"VMDK";//not used
+
+            diskList.push_back(strTargetFilePath);
+
+            LONG64 cbCapacity = 0;     // size reported to guest
+            rc = pSourceDisk->COMGETTER(LogicalSize)(&cbCapacity);
+            if (FAILED(rc)) throw rc;
+            /// @todo r=poetzsch: wrong it is reported in bytes ...
+            // capacity is reported in megabytes, so...
+            //cbCapacity *= _1M;
+
+            Guid guidTarget; /* Creates a new uniq number for the target disk. */
+            guidTarget.create();
+
+            // now handle the XML for the disk:
+            Utf8StrFmt strFileRef("file%RI32", ulFile++);
+            // <File ovf:href="WindowsXpProfessional-disk1.vmdk" ovf:id="file1" ovf:size="1710381056"/>
+            xml::ElementNode *pelmFile = pelmReferences->createChild("File");
+            pelmFile->setAttribute("ovf:id", strFileRef);
+            pelmFile->setAttribute("ovf:href", strTargetFileNameOnly);
+            /// @todo the actual size is not available at this point of time,
+            // cause the disk will be compressed. The 1.0 standard says this is
+            // optional! 1.1 isn't fully clear if the "gzip" format is used.
+            // Need to be checked. */
+            //            pelmFile->setAttribute("ovf:size", Utf8StrFmt("%RI64", cbFile).c_str());
+
+            // add disk to XML Disks section
+            // <Disk ovf:capacity="8589934592" ovf:diskId="vmdisk1" ovf:fileRef="file1" ovf:format="..."/>
+            xml::ElementNode *pelmDisk = pelmDiskSection->createChild("Disk");
+            pelmDisk->setAttribute("ovf:capacity", Utf8StrFmt("%RI64", cbCapacity).c_str());
+            pelmDisk->setAttribute("ovf:diskId", strDiskID);
+            pelmDisk->setAttribute("ovf:fileRef", strFileRef);
+
+            if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)//deviceType == DeviceType_HardDisk
+            {
+                pelmDisk->setAttribute("ovf:format",
+                                       (enFormat == ovf::OVFVersion_0_9)
+                                       ?  "http://www.vmware.com/specifications/vmdk.html#sparse"      // must be sparse or ovftoo
+                                       :  "http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"
+                                       // correct string as communicated to us by VMware (public bug #6612)
+                                      );
+            }
+            else //pDiskEntry->type == VirtualSystemDescriptionType_CDROM, deviceType == DeviceType_DVD
+            {
+                pelmDisk->setAttribute("ovf:format",
+                                       "http://www.ecma-international.org/publications/standards/Ecma-119.htm"
+                                      );
+            }
+
+            // add the UUID of the newly target image to the OVF disk element, but in the
+            // vbox: namespace since it's not part of the standard
+            pelmDisk->setAttribute("vbox:uuid", Utf8StrFmt("%RTuuid", guidTarget.raw()).c_str());
+
+            // now, we might have other XML elements from vbox:Machine pointing to this image,
+            // but those would refer to the UUID of the _source_ image (which we created the
+            // export image from); those UUIDs need to be fixed to the export image
+            Utf8Str strGuidSourceCurly = guidSource.toStringCurly();
+            for (std::list<xml::ElementNode*>::const_iterator
+                 it = llElementsWithUuidAttributes.begin();
+                 it != llElementsWithUuidAttributes.end();
+                 ++it)
+            {
+                xml::ElementNode *pelmImage = *it;
+                Utf8Str strUUID;
+                pelmImage->getAttributeValue("uuid", strUUID);
+                if (strUUID == strGuidSourceCurly)
+                    // overwrite existing uuid attribute
+                    pelmImage->setAttribute("uuid", guidTarget.toStringCurly());
+            }
+        }
+        llElementsWithUuidAttributes.clear();
+        stack.mapDiskSequenceForOneVM.clear();
     }
 
     // now, fill in the network section we set up empty above according
     // to the networks we found with the hardware items
-    map<Utf8Str, bool>::const_iterator itN;
-    for (itN = stack.mapNetworks.begin();
-         itN != stack.mapNetworks.end();
-         ++itN)
+    for (map<Utf8Str, bool>::const_iterator
+         it = stack.mapNetworks.begin();
+         it != stack.mapNetworks.end();
+         ++it)
     {
-        const Utf8Str &strNetwork = itN->first;
+        const Utf8Str &strNetwork = it->first;
         xml::ElementNode *pelmNetwork = pelmNetworkSection->createChild("Network");
         pelmNetwork->setAttribute("ovf:name", strNetwork.c_str());
         pelmNetwork->createChild("Description")->addContent("Logical network used by this appliance.");
     }
 
-    // Finally, write out the disk info
-    list<Utf8Str> diskList;
-    map<Utf8Str, const VirtualSystemDescriptionEntry*>::const_iterator itS;
-    uint32_t ulFile = 1;
-    for (itS = stack.mapDisks.begin();
-         itS != stack.mapDisks.end();
-         ++itS)
-    {
-        const Utf8Str &strDiskID = itS->first;
-        const VirtualSystemDescriptionEntry *pDiskEntry = itS->second;
-
-        // source path: where the VBox image is
-        const Utf8Str &strSrcFilePath = pDiskEntry->strVBoxCurrent;
-        Bstr bstrSrcFilePath(strSrcFilePath);
-
-        //skip empty Medium. There are no information to add into section <References> or <DiskSection>
-        if (strSrcFilePath.isEmpty() ||
-            pDiskEntry->skipIt == true)
-            continue;
-
-        // Do NOT check here whether the file exists. FindMedium will figure
-        // that out, and filesystem-based tests are simply wrong in the
-        // general case (think of iSCSI).
-
-        // We need some info from the source disks
-        ComPtr<IMedium> pSourceDisk;
-        //DeviceType_T deviceType = DeviceType_HardDisk;// by default
-
-        Log(("Finding source disk \"%ls\"\n", bstrSrcFilePath.raw()));
-
-        HRESULT rc;
-
-        if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)
-        {
-            rc = mVirtualBox->OpenMedium(bstrSrcFilePath.raw(),
-                                         DeviceType_HardDisk,
-                                         AccessMode_ReadWrite,
-                                         FALSE /* fForceNewUuid */,
-                                         pSourceDisk.asOutParam());
-            if (FAILED(rc))
-                throw rc;
-        }
-        else if (pDiskEntry->type == VirtualSystemDescriptionType_CDROM)//may be, this is CD/DVD
-        {
-            rc = mVirtualBox->OpenMedium(bstrSrcFilePath.raw(),
-                                         DeviceType_DVD,
-                                         AccessMode_ReadOnly,
-                                         FALSE,
-                                         pSourceDisk.asOutParam());
-            if (FAILED(rc))
-                throw rc;
-        }
-
-        Bstr uuidSource;
-        rc = pSourceDisk->COMGETTER(Id)(uuidSource.asOutParam());
-        if (FAILED(rc)) throw rc;
-        Guid guidSource(uuidSource);
-
-        // output filename
-        const Utf8Str &strTargetFileNameOnly = pDiskEntry->strOvf;
-        // target path needs to be composed from where the output OVF is
-        Utf8Str strTargetFilePath(strPath);
-        strTargetFilePath.stripFilename();
-        strTargetFilePath.append("/");
-        strTargetFilePath.append(strTargetFileNameOnly);
-
-        // We are always exporting to VMDK stream optimized for now
-        //Bstr bstrSrcFormat = L"VMDK";//not used
-
-        diskList.push_back(strTargetFilePath);
-
-        LONG64 cbCapacity = 0;     // size reported to guest
-        rc = pSourceDisk->COMGETTER(LogicalSize)(&cbCapacity);
-        if (FAILED(rc)) throw rc;
-        // Todo r=poetzsch: wrong it is reported in bytes ...
-        // capacity is reported in megabytes, so...
-        //cbCapacity *= _1M;
-
-        Guid guidTarget; /* Creates a new uniq number for the target disk. */
-        guidTarget.create();
-
-        // now handle the XML for the disk:
-        Utf8StrFmt strFileRef("file%RI32", ulFile++);
-        // <File ovf:href="WindowsXpProfessional-disk1.vmdk" ovf:id="file1" ovf:size="1710381056"/>
-        xml::ElementNode *pelmFile = pelmReferences->createChild("File");
-        pelmFile->setAttribute("ovf:href", strTargetFileNameOnly);
-        pelmFile->setAttribute("ovf:id", strFileRef);
-        // Todo: the actual size is not available at this point of time,
-        // cause the disk will be compressed. The 1.0 standard says this is
-        // optional! 1.1 isn't fully clear if the "gzip" format is used.
-        // Need to be checked. */
-        //            pelmFile->setAttribute("ovf:size", Utf8StrFmt("%RI64", cbFile).c_str());
-
-        // add disk to XML Disks section
-        // <Disk ovf:capacity="8589934592" ovf:diskId="vmdisk1" ovf:fileRef="file1" ovf:format="..."/>
-        xml::ElementNode *pelmDisk = pelmDiskSection->createChild("Disk");
-        pelmDisk->setAttribute("ovf:capacity", Utf8StrFmt("%RI64", cbCapacity).c_str());
-        pelmDisk->setAttribute("ovf:diskId", strDiskID);
-        pelmDisk->setAttribute("ovf:fileRef", strFileRef);
-
-        if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)//deviceType == DeviceType_HardDisk
-        {
-            pelmDisk->setAttribute("ovf:format",
-                                   (enFormat == ovf::OVFVersion_0_9)
-                                   ?  "http://www.vmware.com/specifications/vmdk.html#sparse"      // must be sparse or ovftool ch
-                                   :  "http://www.vmware.com/interfaces/specifications/vmdk.html#streamOptimized"
-                                   // correct string as communicated to us by VMware (public bug #6612)
-                                  );
-        }
-        else //pDiskEntry->type == VirtualSystemDescriptionType_CDROM, deviceType == DeviceType_DVD
-        {
-            pelmDisk->setAttribute("ovf:format",
-                                   "http://www.ecma-international.org/publications/standards/Ecma-119.htm"
-                                  );
-        }
-
-        // add the UUID of the newly target image to the OVF disk element, but in the
-        // vbox: namespace since it's not part of the standard
-        pelmDisk->setAttribute("vbox:uuid", Utf8StrFmt("%RTuuid", guidTarget.raw()).c_str());
-
-        // now, we might have other XML elements from vbox:Machine pointing to this image,
-        // but those would refer to the UUID of the _source_ image (which we created the
-        // export image from); those UUIDs need to be fixed to the export image
-        Utf8Str strGuidSourceCurly = guidSource.toStringCurly();
-        for (std::list<xml::ElementNode*>::iterator eit = llElementsWithUuidAttributes.begin();
-             eit != llElementsWithUuidAttributes.end();
-             ++eit)
-        {
-            xml::ElementNode *pelmImage = *eit;
-            Utf8Str strUUID;
-            pelmImage->getAttributeValue("uuid", strUUID);
-            if (strUUID == strGuidSourceCurly)
-                // overwrite existing uuid attribute
-                pelmImage->setAttribute("uuid", guidTarget.toStringCurly());
-        }
-    }
 }
 
 /**
- * Called from Appliance::buildXML() for each virtual system (machine) that
+ * Called from Appliance::i_buildXML() for each virtual system (machine) that
  * needs XML written out.
  *
  * @param writeLock                          The current write lock.
@@ -1029,12 +1097,12 @@ void Appliance::buildXML(AutoWriteLockBase& writeLock,
  * @param stack                              Structure for temporary private
  *                                           data shared with caller.
  */
-void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
-                                            xml::ElementNode &elmToAddVirtualSystemsTo,
-                                            std::list<xml::ElementNode*> *pllElementsWithUuidAttributes,
-                                            ComObjPtr<VirtualSystemDescription> &vsdescThis,
-                                            ovf::OVFVersion_T enFormat,
-                                            XMLStack &stack)
+void Appliance::i_buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
+                                              xml::ElementNode &elmToAddVirtualSystemsTo,
+                                              std::list<xml::ElementNode*> *pllElementsWithUuidAttributes,
+                                              ComObjPtr<VirtualSystemDescription> &vsdescThis,
+                                              ovf::OVFVersion_T enFormat,
+                                              XMLStack &stack)
 {
     LogFlowFunc(("ENTER appliance %p\n", this));
 
@@ -1050,18 +1118,18 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
 
     /*xml::ElementNode *pelmVirtualSystemInfo =*/ pelmVirtualSystem->createChild("Info")->addContent("A virtual machine");
 
-    std::list<VirtualSystemDescriptionEntry*> llName = vsdescThis->findByType(VirtualSystemDescriptionType_Name);
-    if (!llName.size())
+    std::list<VirtualSystemDescriptionEntry*> llName = vsdescThis->i_findByType(VirtualSystemDescriptionType_Name);
+    if (llName.empty())
         throw setError(VBOX_E_NOT_SUPPORTED, tr("Missing VM name"));
     Utf8Str &strVMName = llName.back()->strVBoxCurrent;
     pelmVirtualSystem->setAttribute("ovf:id", strVMName);
 
     // product info
-    std::list<VirtualSystemDescriptionEntry*> llProduct    = vsdescThis->findByType(VirtualSystemDescriptionType_Product);
-    std::list<VirtualSystemDescriptionEntry*> llProductUrl = vsdescThis->findByType(VirtualSystemDescriptionType_ProductUrl);
-    std::list<VirtualSystemDescriptionEntry*> llVendor     = vsdescThis->findByType(VirtualSystemDescriptionType_Vendor);
-    std::list<VirtualSystemDescriptionEntry*> llVendorUrl  = vsdescThis->findByType(VirtualSystemDescriptionType_VendorUrl);
-    std::list<VirtualSystemDescriptionEntry*> llVersion    = vsdescThis->findByType(VirtualSystemDescriptionType_Version);
+    std::list<VirtualSystemDescriptionEntry*> llProduct    = vsdescThis->i_findByType(VirtualSystemDescriptionType_Product);
+    std::list<VirtualSystemDescriptionEntry*> llProductUrl = vsdescThis->i_findByType(VirtualSystemDescriptionType_ProductUrl);
+    std::list<VirtualSystemDescriptionEntry*> llVendor     = vsdescThis->i_findByType(VirtualSystemDescriptionType_Vendor);
+    std::list<VirtualSystemDescriptionEntry*> llVendorUrl  = vsdescThis->i_findByType(VirtualSystemDescriptionType_VendorUrl);
+    std::list<VirtualSystemDescriptionEntry*> llVersion    = vsdescThis->i_findByType(VirtualSystemDescriptionType_Version);
     bool fProduct    = llProduct.size()    && !llProduct.back()->strVBoxCurrent.isEmpty();
     bool fProductUrl = llProductUrl.size() && !llProductUrl.back()->strVBoxCurrent.isEmpty();
     bool fVendor     = llVendor.size()     && !llVendor.back()->strVBoxCurrent.isEmpty();
@@ -1101,7 +1169,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
     }
 
     // description
-    std::list<VirtualSystemDescriptionEntry*> llDescription = vsdescThis->findByType(VirtualSystemDescriptionType_Description);
+    std::list<VirtualSystemDescriptionEntry*> llDescription = vsdescThis->i_findByType(VirtualSystemDescriptionType_Description);
     if (llDescription.size() &&
         !llDescription.back()->strVBoxCurrent.isEmpty())
     {
@@ -1124,7 +1192,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
     }
 
     // license
-    std::list<VirtualSystemDescriptionEntry*> llLicense = vsdescThis->findByType(VirtualSystemDescriptionType_License);
+    std::list<VirtualSystemDescriptionEntry*> llLicense = vsdescThis->i_findByType(VirtualSystemDescriptionType_License);
     if (llLicense.size() &&
         !llLicense.back()->strVBoxCurrent.isEmpty())
     {
@@ -1146,8 +1214,8 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
     }
 
     // operating system
-    std::list<VirtualSystemDescriptionEntry*> llOS = vsdescThis->findByType(VirtualSystemDescriptionType_OS);
-    if (!llOS.size())
+    std::list<VirtualSystemDescriptionEntry*> llOS = vsdescThis->i_findByType(VirtualSystemDescriptionType_OS);
+    if (llOS.empty())
         throw setError(VBOX_E_NOT_SUPPORTED, tr("Missing OS type"));
     /*  <OperatingSystemSection ovf:id="82">
             <Info>Guest Operating System</Info>
@@ -1234,12 +1302,12 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
     for (size_t uLoop = 1; uLoop <= 2; ++uLoop)
     {
         int32_t lIndexThis = 0;
-        list<VirtualSystemDescriptionEntry>::const_iterator itD;
-        for (itD = vsdescThis->m->llDescriptions.begin();
-            itD != vsdescThis->m->llDescriptions.end();
-            ++itD, ++lIndexThis)
+        for (vector<VirtualSystemDescriptionEntry>::const_iterator
+             it = vsdescThis->m->maDescriptions.begin();
+             it != vsdescThis->m->maDescriptions.end();
+             ++it, ++lIndexThis)
         {
-            const VirtualSystemDescriptionEntry &desc = *itD;
+            const VirtualSystemDescriptionEntry &desc = *it;
 
             LogFlowFunc(("Loop %u: handling description entry ulIndex=%u, type=%s, strRef=%s, strOvf=%s, strVBox=%s, strExtraConfig=%s\n",
                          uLoop,
@@ -1297,7 +1365,8 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         type = ovf::ResourceType_Processor; // 3
                         desc.strVBoxCurrent.toInt(uTemp);
                         lVirtualQuantity = (int32_t)uTemp;
-                        strCaption = Utf8StrFmt("%d virtual CPU", lVirtualQuantity);     // without this ovftool won't eat the item
+                        strCaption = Utf8StrFmt("%d virtual CPU", lVirtualQuantity);     // without this ovftool
+                                                                                         // won't eat the item
                     }
                 break;
 
@@ -1318,9 +1387,10 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         desc.strVBoxCurrent.toInt(uTemp);
                         lVirtualQuantity = (int32_t)(uTemp / _1M);
                         strAllocationUnits = "MegaBytes";
-                        strCaption = Utf8StrFmt("%d MB of memory", lVirtualQuantity);     // without this ovftool won't eat the item
+                        strCaption = Utf8StrFmt("%d MB of memory", lVirtualQuantity);     // without this ovftool
+                                                                                          // won't eat the item
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_HardDiskControllerIDE:
                     /* <Item>
@@ -1358,7 +1428,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                             lIDESecondaryControllerIndex = lIndexThis;
                         }
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_HardDiskControllerSATA:
                     /*  <Item>
@@ -1393,7 +1463,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         idSATAController = ulInstanceID;
                         lSATAControllerIndex = lIndexThis;
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_HardDiskControllerSCSI:
                 case VirtualSystemDescriptionType_HardDiskControllerSAS:
@@ -1427,13 +1497,14 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                             strResourceSubType = "lsilogicsas";
                         else
                             throw setError(VBOX_E_NOT_SUPPORTED,
-                                            tr("Invalid config string \"%s\" in SCSI/SAS controller"), desc.strVBoxCurrent.c_str());
+                                           tr("Invalid config string \"%s\" in SCSI/SAS controller"),
+                                           desc.strVBoxCurrent.c_str());
 
                         // remember this ID
                         idSCSIController = ulInstanceID;
                         lSCSIControllerIndex = lIndexThis;
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_HardDiskImage:
                     /*  <Item>
@@ -1446,7 +1517,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         </Item> */
                     if (uLoop == 2)
                     {
-                        uint32_t cDisks = stack.mapDisks.size();
+                        uint32_t cDisks = (uint32_t)stack.mapDisks.size();
                         Utf8Str strDiskID = Utf8StrFmt("vmdisk%RI32", ++cDisks);
 
                         strDescription = "Disk Image";
@@ -1476,17 +1547,24 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                             RTStrToInt32Ex(desc.strExtraConfigCurrent.c_str() + pos2 + 8, NULL, 0, &lAddressOnParent);
 
                         LogFlowFunc(("HardDiskImage details: pos1=%d, pos2=%d, lControllerIndex=%d, lIDEPrimaryControllerIndex=%d, lIDESecondaryControllerIndex=%d, ulParent=%d, lAddressOnParent=%d\n",
-                                     pos1, pos2, lControllerIndex, lIDEPrimaryControllerIndex, lIDESecondaryControllerIndex, ulParent, lAddressOnParent));
+                                     pos1, pos2, lControllerIndex, lIDEPrimaryControllerIndex, lIDESecondaryControllerIndex,
+                                     ulParent, lAddressOnParent));
 
                         if (    !ulParent
                              || lAddressOnParent == -1
                            )
                             throw setError(VBOX_E_NOT_SUPPORTED,
-                                            tr("Missing or bad extra config string in hard disk image: \"%s\""), desc.strExtraConfigCurrent.c_str());
+                                           tr("Missing or bad extra config string in hard disk image: \"%s\""),
+                                           desc.strExtraConfigCurrent.c_str());
 
                         stack.mapDisks[strDiskID] = &desc;
+
+                        //use the list stack.mapDiskSequence where the disks go as the "VirtualSystem" should be placed
+                        //in the OVF description file.
+                        stack.mapDiskSequence.push_back(strDiskID);
+                        stack.mapDiskSequenceForOneVM.push_back(strDiskID);
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_Floppy:
                     if (uLoop == 1)
@@ -1497,7 +1575,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         lAutomaticAllocation = 0;
                         lAddressOnParent = 0;           // this is what OVFTool writes
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_CDROM:
                     /*  <Item>
@@ -1510,9 +1588,9 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         </Item> */
                     if (uLoop == 2)
                     {
-                        //uint32_t cDisks = stack.mapDisks.size();
-                        Utf8Str strDiskID = Utf8StrFmt("iso%RI32", ++cDVDs);
-
+                        uint32_t cDisks = (uint32_t)stack.mapDisks.size();
+                        Utf8Str strDiskID = Utf8StrFmt("iso%RI32", ++cDisks);
+                        ++cDVDs;
                         strDescription = "CD-ROM Drive";
                         strCaption = Utf8StrFmt("cdrom%RI32", cDVDs);     // OVFTool starts with 1
                         type = ovf::ResourceType_CDDrive; // 15
@@ -1546,19 +1624,26 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                             RTStrToInt32Ex(desc.strExtraConfigCurrent.c_str() + pos2 + 8, NULL, 0, &lAddressOnParent);
 
                         LogFlowFunc(("DVD drive details: pos1=%d, pos2=%d, lControllerIndex=%d, lIDEPrimaryControllerIndex=%d, lIDESecondaryControllerIndex=%d, ulParent=%d, lAddressOnParent=%d\n",
-                                     pos1, pos2, lControllerIndex, lIDEPrimaryControllerIndex, lIDESecondaryControllerIndex, ulParent, lAddressOnParent));
+                                     pos1, pos2, lControllerIndex, lIDEPrimaryControllerIndex,
+                                     lIDESecondaryControllerIndex, ulParent, lAddressOnParent));
 
                         if (    !ulParent
                              || lAddressOnParent == -1
                            )
                             throw setError(VBOX_E_NOT_SUPPORTED,
-                                            tr("Missing or bad extra config string in DVD drive medium: \"%s\""), desc.strExtraConfigCurrent.c_str());
+                                           tr("Missing or bad extra config string in DVD drive medium: \"%s\""),
+                                           desc.strExtraConfigCurrent.c_str());
 
                         stack.mapDisks[strDiskID] = &desc;
+
+                        //use the list stack.mapDiskSequence where the disks go as the "VirtualSystem" should be placed
+                        //in the OVF description file.
+                        stack.mapDiskSequence.push_back(strDiskID);
+                        stack.mapDiskSequenceForOneVM.push_back(strDiskID);
                         // there is no DVD drive map to update because it is
                         // handled completely with this entry.
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_NetworkAdapter:
                     /* <Item>
@@ -1592,7 +1677,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
 
                         stack.mapNetworks[desc.strOvf] = true;
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_USBController:
                     /*  <Item ovf:required="false">
@@ -1611,7 +1696,7 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         lAddress = 0;                   // this is what OVFTool writes
                         lBusNumber = 0;                 // this is what OVFTool writes
                     }
-                break;
+                    break;
 
                 case VirtualSystemDescriptionType_SoundCard:
                 /*  <Item ovf:required="false">
@@ -1632,7 +1717,9 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
                         lAutomaticAllocation = 0;
                         lAddressOnParent = 3;               // what gives? this is what OVFTool writes
                     }
-                break;
+                    break;
+
+                default: break; /* Shut up MSC. */
             }
 
             if (type)
@@ -1821,21 +1908,23 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
     pelmVBoxMachine->createChild("ovf:Info")->addContent("Complete VirtualBox machine configuration in VirtualBox format");
 
     // create an empty machine config
-    settings::MachineConfigFile *pConfig = new settings::MachineConfigFile(NULL);
+    // use the same settings version as the current VM settings file
+    settings::MachineConfigFile *pConfig = new settings::MachineConfigFile(&vsdescThis->m->pMachine->i_getSettingsFileFull());
 
     writeLock.release();
     try
     {
         AutoWriteLock machineLock(vsdescThis->m->pMachine COMMA_LOCKVAL_SRC_POS);
         // fill the machine config
-        vsdescThis->m->pMachine->copyMachineDataToSettings(*pConfig);
+        vsdescThis->m->pMachine->i_copyMachineDataToSettings(*pConfig);
 
         // Apply export tweaks to machine settings
         bool fStripAllMACs = m->optListExport.contains(ExportOptions_StripAllMACs);
         bool fStripAllNonNATMACs = m->optListExport.contains(ExportOptions_StripAllNonNATMACs);
         if (fStripAllMACs || fStripAllNonNATMACs)
         {
-            for (settings::NetworkAdaptersList::iterator it = pConfig->hardwareMachine.llNetworkAdapters.begin();
+            for (settings::NetworkAdaptersList::iterator
+                 it = pConfig->hardwareMachine.llNetworkAdapters.begin();
                  it != pConfig->hardwareMachine.llNetworkAdapters.end();
                  ++it)
             {
@@ -1865,19 +1954,16 @@ void Appliance::buildXMLForOneVirtualSystem(AutoWriteLockBase& writeLock,
 
 /**
  * Actual worker code for writing out OVF/OVA to disk. This is called from Appliance::taskThreadWriteOVF()
- * and therefore runs on the OVF/OVA write worker thread. This runs in two contexts:
+ * and therefore runs on the OVF/OVA write worker thread.
  *
- * 1) in a first worker thread; in that case, Appliance::Write() called Appliance::writeImpl();
+ * This runs in one context:
  *
- * 2) in a second worker thread; in that case, Appliance::Write() called Appliance::writeImpl(), which
- *    called Appliance::writeS3(), which called Appliance::writeImpl(), which then called this. In other
- *    words, to write to the cloud, the first worker thread first starts a second worker thread to create
- *    temporary files and then uploads them to the S3 cloud server.
+ * 1) in a first worker thread; in that case, Appliance::Write() called Appliance::i_writeImpl();
  *
  * @param pTask
  * @return
  */
-HRESULT Appliance::writeFS(TaskOVF *pTask)
+HRESULT Appliance::i_writeFS(TaskOVF *pTask)
 {
     LogFlowFuncEnter();
     LogFlowFunc(("ENTER appliance %p\n", this));
@@ -1889,16 +1975,18 @@ HRESULT Appliance::writeFS(TaskOVF *pTask)
 
     // Lock the media tree early to make sure nobody else tries to make changes
     // to the tree. Also lock the IAppliance object for writing.
-    AutoMultiWriteLock2 multiLock(&mVirtualBox->getMediaTreeLockHandle(), this->lockHandle() COMMA_LOCKVAL_SRC_POS);
+    AutoMultiWriteLock2 multiLock(&mVirtualBox->i_getMediaTreeLockHandle(), this->lockHandle() COMMA_LOCKVAL_SRC_POS);
     // Additional protect the IAppliance object, cause we leave the lock
     // when starting the disk export and we don't won't block other
     // callers on this lengthy operations.
     m->state = Data::ApplianceExporting;
 
-    if (pTask->locInfo.strPath.endsWith(".ovf", Utf8Str::CaseInsensitive))
-        rc = writeFSOVF(pTask, multiLock);
+    if (pTask->enFormat == ovf::OVFVersion_unknown)
+        rc = i_writeFSOPC(pTask, multiLock);
+    else if (pTask->locInfo.strPath.endsWith(".ovf", Utf8Str::CaseInsensitive))
+        rc = i_writeFSOVF(pTask, multiLock);
     else
-        rc = writeFSOVA(pTask, multiLock);
+        rc = i_writeFSOVA(pTask, multiLock);
 
     // reset the state so others can call methods again
     m->state = Data::ApplianceIdle;
@@ -1908,162 +1996,317 @@ HRESULT Appliance::writeFS(TaskOVF *pTask)
     return rc;
 }
 
-HRESULT Appliance::writeFSOVF(TaskOVF *pTask, AutoWriteLockBase& writeLock)
+HRESULT Appliance::i_writeFSOVF(TaskOVF *pTask, AutoWriteLockBase& writeLock)
 {
     LogFlowFuncEnter();
 
-    HRESULT rc = S_OK;
-
-    PVDINTERFACEIO pShaIo = 0;
-    PVDINTERFACEIO pFileIo = 0;
-    do
-    {
-        pShaIo = ShaCreateInterface();
-        if (!pShaIo)
-        {
-            rc = E_OUTOFMEMORY;
-            break;
-        }
-        pFileIo = FileCreateInterface();
-        if (!pFileIo)
-        {
-            rc = E_OUTOFMEMORY;
-            break;
-        }
-
-        SHASTORAGE storage;
-        RT_ZERO(storage);
-        storage.fCreateDigest = m->fManifest;
-        storage.fSha256 = m->fSha256;
-
-
-        Utf8Str name = applianceIOName(applianceIOFile);
-
-        int vrc = VDInterfaceAdd(&pFileIo->Core, name.c_str(),
-                                 VDINTERFACETYPE_IO, 0, sizeof(VDINTERFACEIO),
-                                 &storage.pVDImageIfaces);
-        if (RT_FAILURE(vrc))
-        {
-            rc = E_FAIL;
-            break;
-        }
-        rc = writeFSImpl(pTask, writeLock, pShaIo, &storage);
-    } while (0);
-
-    /* Cleanup */
-    if (pShaIo)
-        RTMemFree(pShaIo);
-    if (pFileIo)
-        RTMemFree(pFileIo);
-
-    LogFlowFuncLeave();
-    return rc;
-}
-
-HRESULT Appliance::writeFSOVA(TaskOVF *pTask, AutoWriteLockBase& writeLock)
-{
-    LogFlowFuncEnter();
-
-    RTTAR tar;
-    int vrc = RTTarOpen(&tar, pTask->locInfo.strPath.c_str(), RTFILE_O_CREATE | RTFILE_O_WRITE | RTFILE_O_DENY_ALL, false);
-    if (RT_FAILURE(vrc))
-        return setError(VBOX_E_FILE_ERROR,
-                        tr("Could not create OVA file '%s' (%Rrc)"),
-                        pTask->locInfo.strPath.c_str(), vrc);
-
-    HRESULT rc = S_OK;
-
-    PVDINTERFACEIO pShaIo = 0;
-    PVDINTERFACEIO pTarIo = 0;
-    do
-    {
-        pShaIo = ShaCreateInterface();
-        if (!pShaIo)
-        {
-            rc = E_OUTOFMEMORY;
-            break;
-        }
-        pTarIo = TarCreateInterface();
-        if (!pTarIo)
-        {
-            rc = E_OUTOFMEMORY;
-            break;
-        }
-        SHASTORAGE storage;
-        RT_ZERO(storage);
-        storage.fCreateDigest = m->fManifest;
-        storage.fSha256 = m->fSha256;
-
-        Utf8Str name = applianceIOName(applianceIOTar);
-
-        vrc = VDInterfaceAdd(&pTarIo->Core, name.c_str(),
-                             VDINTERFACETYPE_IO, tar, sizeof(VDINTERFACEIO),
-                             &storage.pVDImageIfaces);
-
-        if (RT_FAILURE(vrc))
-        {
-            rc = E_FAIL;
-            break;
-        }
-        rc = writeFSImpl(pTask, writeLock, pShaIo, &storage);
-    } while (0);
-
-    RTTarClose(tar);
-
-    /* Cleanup */
-    if (pShaIo)
-        RTMemFree(pShaIo);
-    if (pTarIo)
-        RTMemFree(pTarIo);
-
-    /* Delete ova file on error */
-    if (FAILED(rc))
-        RTFileDelete(pTask->locInfo.strPath.c_str());
-
-    LogFlowFuncLeave();
-    return rc;
-}
-
-HRESULT Appliance::writeFSImpl(TaskOVF *pTask, AutoWriteLockBase& writeLock, PVDINTERFACEIO pIfIo, PSHASTORAGE pStorage)
-{
-    LogFlowFuncEnter();
-
-    HRESULT rc = S_OK;
-
-    list<STRPAIR> fileList;
+    /*
+     * Create write-to-dir file system stream for the target directory.
+     * This unifies the disk access with the TAR based OVA variant.
+     */
+    HRESULT         hrc;
+    int             vrc;
+    RTVFSFSSTREAM   hVfsFss2Dir = NIL_RTVFSFSSTREAM;
     try
     {
-        int vrc;
+        Utf8Str strTargetDir(pTask->locInfo.strPath);
+        strTargetDir.stripFilename();
+        vrc = RTVfsFsStrmToNormalDir(strTargetDir.c_str(), 0 /*fFlags*/, &hVfsFss2Dir);
+        if (RT_SUCCESS(vrc))
+            hrc = S_OK;
+        else
+            hrc = setErrorVrc(vrc, tr("Failed to open directory '%s' (%Rrc)"), strTargetDir.c_str(), vrc);
+    }
+    catch (std::bad_alloc &)
+    {
+        hrc = E_OUTOFMEMORY;
+    }
+    if (SUCCEEDED(hrc))
+    {
+        /*
+         * Join i_writeFSOVA.  On failure, delete (undo) anything we might
+         * have written to the disk before failing.
+         */
+        hrc = i_writeFSImpl(pTask, writeLock, hVfsFss2Dir);
+        if (FAILED(hrc))
+            RTVfsFsStrmToDirUndo(hVfsFss2Dir);
+        RTVfsFsStrmRelease(hVfsFss2Dir);
+    }
+
+    LogFlowFuncLeave();
+    return hrc;
+}
+
+HRESULT Appliance::i_writeFSOVA(TaskOVF *pTask, AutoWriteLockBase &writeLock)
+{
+    LogFlowFuncEnter();
+
+    /*
+     * Open the output file and attach a TAR creator to it.
+     * The OVF 1.1.0 spec specifies the TAR format to be compatible with USTAR
+     * according to POSIX 1003.1-2008.  We use the 1988 spec here as it's the
+     * only variant we currently implement.
+     */
+    HRESULT hrc;
+    RTVFSIOSTREAM hVfsIosTar;
+    int vrc = RTVfsIoStrmOpenNormal(pTask->locInfo.strPath.c_str(),
+                                    RTFILE_O_CREATE | RTFILE_O_WRITE | RTFILE_O_DENY_WRITE,
+                                    &hVfsIosTar);
+    if (RT_SUCCESS(vrc))
+    {
+        RTVFSFSSTREAM hVfsFssTar;
+        vrc = RTZipTarFsStreamToIoStream(hVfsIosTar, RTZIPTARFORMAT_USTAR, 0 /*fFlags*/, &hVfsFssTar);
+        RTVfsIoStrmRelease(hVfsIosTar);
+        if (RT_SUCCESS(vrc))
+        {
+            RTZipTarFsStreamSetFileMode(hVfsFssTar, 0660, 0440);
+            RTZipTarFsStreamSetOwner(hVfsFssTar, VBOX_VERSION_MAJOR,
+                                       pTask->enFormat == ovf::OVFVersion_0_9 ? "vboxovf09"
+                                     : pTask->enFormat == ovf::OVFVersion_1_0 ? "vboxovf10"
+                                     : pTask->enFormat == ovf::OVFVersion_2_0 ? "vboxovf20"
+                                     :                                          "vboxovf");
+            RTZipTarFsStreamSetGroup(hVfsFssTar, VBOX_VERSION_MINOR,
+                                     "vbox_v" RT_XSTR(VBOX_VERSION_MAJOR) "." RT_XSTR(VBOX_VERSION_MINOR) "."
+                                     RT_XSTR(VBOX_VERSION_BUILD) "r" RT_XSTR(VBOX_SVN_REV));
+
+            hrc = i_writeFSImpl(pTask, writeLock, hVfsFssTar);
+            RTVfsFsStrmRelease(hVfsFssTar);
+        }
+        else
+            hrc = setErrorVrc(vrc, tr("Failed create TAR creator for '%s' (%Rrc)"), pTask->locInfo.strPath.c_str(), vrc);
+
+        /* Delete the OVA on failure. */
+        if (FAILED(hrc))
+            RTFileDelete(pTask->locInfo.strPath.c_str());
+    }
+    else
+        hrc = setErrorVrc(vrc, tr("Failed to open '%s' for writing (%Rrc)"), pTask->locInfo.strPath.c_str(), vrc);
+
+    LogFlowFuncLeave();
+    return hrc;
+}
+
+/**
+ * Writes the Oracle Public Cloud appliance.
+ *
+ * It expect raw disk images inside a gzipped tarball.  We enable sparse files
+ * to save diskspace on the target host system.
+ */
+HRESULT Appliance::i_writeFSOPC(TaskOVF *pTask, AutoWriteLockBase &writeLock)
+{
+    LogFlowFuncEnter();
+    HRESULT hrc = S_OK;
+
+    /*
+     * We're duplicating parts of i_writeFSImpl here because that's simpler
+     * and creates less spaghetti code.
+     */
+    std::list<Utf8Str> lstTarballs;
+
+    /*
+     * Use i_buildXML to build a stack of disk images.  We don't care about the XML doc here.
+     */
+    XMLStack stack;
+    {
+        xml::Document doc;
+        i_buildXML(writeLock, doc, stack, pTask->locInfo.strPath, ovf::OVFVersion_2_0);
+    }
+
+    /*
+     * Process the disk images.
+     */
+    unsigned cTarballs = 0;
+    for (list<Utf8Str>::const_iterator it = stack.mapDiskSequence.begin();
+         it != stack.mapDiskSequence.end();
+         ++it)
+    {
+        const Utf8Str                       &strDiskID = *it;
+        const VirtualSystemDescriptionEntry *pDiskEntry = stack.mapDisks[strDiskID];
+        const Utf8Str                       &strSrcFilePath = pDiskEntry->strVBoxCurrent;  // where the VBox image is
+
+        /*
+         * Some skipping.
+         */
+        if (pDiskEntry->skipIt)
+            continue;
+
+        /* Skip empty media (DVD-ROM, floppy). */
+        if (strSrcFilePath.isEmpty())
+            continue;
+
+        /* Only deal with harddisk and DVD-ROMs, skip any floppies for now. */
+        if (   pDiskEntry->type != VirtualSystemDescriptionType_HardDiskImage
+            && pDiskEntry->type != VirtualSystemDescriptionType_CDROM)
+            continue;
+
+        /*
+         * Locate the Medium object for this entry (by location/path).
+         */
+        Log(("Finding source disk \"%s\"\n", strSrcFilePath.c_str()));
+        ComObjPtr<Medium> ptrSourceDisk;
+        if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)
+            hrc = mVirtualBox->i_findHardDiskByLocation(strSrcFilePath, true /*aSetError*/, &ptrSourceDisk);
+        else
+            hrc = mVirtualBox->i_findDVDOrFloppyImage(DeviceType_DVD, NULL /*aId*/, strSrcFilePath,
+                                                      true /*aSetError*/, &ptrSourceDisk);
+        if (FAILED(hrc))
+            break;
+        if (strSrcFilePath.isEmpty())
+            continue;
+
+        /*
+         * Figure out the names.
+         */
+
+        /* The name inside the tarball.  Replace the suffix of harddisk images with ".img". */
+        Utf8Str strInsideName = pDiskEntry->strOvf;
+        if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)
+            strInsideName.stripSuffix().append(".img");
+
+        /* The first tarball we create uses the specified name. Subsequent
+           takes the name from the disk entry or something. */
+        Utf8Str strTarballPath = pTask->locInfo.strPath;
+        if (cTarballs > 0)
+        {
+
+            strTarballPath.stripFilename().append(RTPATH_SLASH_STR).append(pDiskEntry->strOvf);
+            const char *pszExt = RTPathSuffix(pDiskEntry->strOvf.c_str());
+            if (pszExt && pszExt[0] == '.' && pszExt[1] != '\0')
+            {
+                strTarballPath.stripSuffix();
+                if (pDiskEntry->type != VirtualSystemDescriptionType_HardDiskImage)
+                    strTarballPath.append("_").append(&pszExt[1]);
+            }
+            strTarballPath.append(".tar.gz");
+        }
+        cTarballs++;
+
+        /*
+         * Create the tar output stream.
+         */
+        RTVFSIOSTREAM hVfsIosFile;
+        int vrc = RTVfsIoStrmOpenNormal(strTarballPath.c_str(),
+                                        RTFILE_O_CREATE | RTFILE_O_WRITE | RTFILE_O_DENY_WRITE,
+                                        &hVfsIosFile);
+        if (RT_SUCCESS(vrc))
+        {
+            RTVFSIOSTREAM hVfsIosGzip = NIL_RTVFSIOSTREAM;
+            vrc = RTZipGzipCompressIoStream(hVfsIosFile, 0 /*fFlags*/, 6 /*uLevel*/, &hVfsIosGzip);
+            RTVfsIoStrmRelease(hVfsIosFile);
+
+            /** @todo insert I/O thread here between gzip and the tar creator. Needs
+             *        implementing. */
+
+            RTVFSFSSTREAM hVfsFssTar = NIL_RTVFSFSSTREAM;
+            if (RT_SUCCESS(vrc))
+                vrc = RTZipTarFsStreamToIoStream(hVfsIosGzip, RTZIPTARFORMAT_GNU, RTZIPTAR_C_SPARSE, &hVfsFssTar);
+            RTVfsIoStrmRelease(hVfsIosGzip);
+            if (RT_SUCCESS(vrc))
+            {
+                RTZipTarFsStreamSetFileMode(hVfsFssTar, 0660, 0440);
+                RTZipTarFsStreamSetOwner(hVfsFssTar, VBOX_VERSION_MAJOR, "vboxopc10");
+                RTZipTarFsStreamSetGroup(hVfsFssTar, VBOX_VERSION_MINOR,
+                                         "vbox_v" RT_XSTR(VBOX_VERSION_MAJOR) "." RT_XSTR(VBOX_VERSION_MINOR) "."
+                                         RT_XSTR(VBOX_VERSION_BUILD) "r" RT_XSTR(VBOX_SVN_REV));
+
+                /*
+                 * Let the Medium code do the heavy work.
+                 *
+                 * The exporting requests a lock on the media tree. So temporarily
+                 * leave the appliance lock.
+                 */
+                writeLock.release();
+
+                pTask->pProgress->SetNextOperation(BstrFmt(tr("Exporting to disk image '%Rbn'"), strTarballPath.c_str()).raw(),
+                                                   pDiskEntry->ulSizeMB);     // operation's weight, as set up
+                                                                              // with the IProgress originally
+                hrc = ptrSourceDisk->i_addRawToFss(strInsideName.c_str(), m->m_pSecretKeyStore, hVfsFssTar,
+                                                   pTask->pProgress, true /*fSparse*/);
+
+                writeLock.acquire();
+                if (SUCCEEDED(hrc))
+                {
+                    /*
+                     * Complete and close the tarball.
+                     */
+                    vrc = RTVfsFsStrmEnd(hVfsFssTar);
+                    RTVfsFsStrmRelease(hVfsFssTar);
+                    hVfsFssTar = NIL_RTVFSFSSTREAM;
+                    if (RT_SUCCESS(vrc))
+                    {
+                        /* Remember the tarball name for cleanup. */
+                        try
+                        {
+                            lstTarballs.push_back(strTarballPath.c_str());
+                            strTarballPath.setNull();
+                        }
+                        catch (std::bad_alloc &)
+                        { hrc = E_OUTOFMEMORY; }
+                    }
+                    else
+                        hrc = setErrorBoth(VBOX_E_FILE_ERROR, vrc,
+                                           tr("Error completing TAR file '%s' (%Rrc)"), strTarballPath.c_str(), vrc);
+                }
+            }
+            else
+                hrc = setErrorVrc(vrc, tr("Failed to TAR creator instance for '%s' (%Rrc)"), strTarballPath.c_str(), vrc);
+
+            if (FAILED(hrc) && strTarballPath.isNotEmpty())
+                RTFileDelete(strTarballPath.c_str());
+        }
+        else
+            hrc = setErrorVrc(vrc, tr("Failed to create '%s' (%Rrc)"), strTarballPath.c_str(), vrc);
+        if (FAILED(hrc))
+            break;
+    }
+
+    /*
+     * Delete output files on failure.
+     */
+    if (FAILED(hrc))
+        for (list<Utf8Str>::const_iterator it = lstTarballs.begin(); it != lstTarballs.end(); ++it)
+            RTFileDelete(it->c_str());
+
+    LogFlowFuncLeave();
+    return hrc;
+
+}
+
+HRESULT Appliance::i_writeFSImpl(TaskOVF *pTask, AutoWriteLockBase &writeLock, RTVFSFSSTREAM hVfsFssDst)
+{
+    LogFlowFuncEnter();
+
+    HRESULT rc = S_OK;
+    int vrc;
+    try
+    {
         // the XML stack contains two maps for disks and networks, which allows us to
         // a) have a list of unique disk names (to make sure the same disk name is only added once)
         // and b) keep a list of all networks
         XMLStack stack;
         // Scope this to free the memory as soon as this is finished
         {
-            // Create a xml document
+            /* Construct the OVF name. */
+            Utf8Str strOvfFile(pTask->locInfo.strPath);
+            strOvfFile.stripPath().stripSuffix().append(".ovf");
+
+            /* Render a valid ovf document into a memory buffer.  The unknown
+               version upgrade relates to the OPC hack up in Appliance::write(). */
             xml::Document doc;
-            // Now fully build a valid ovf document in memory
-            buildXML(writeLock, doc, stack, pTask->locInfo.strPath, pTask->enFormat);
-            /* Extract the OVA file name */
-            Utf8Str strOvaFile = pTask->locInfo.strPath;
-            /* Extract the path */
-            Utf8Str strOvfFile = strOvaFile.stripExt().append(".ovf");
-            // Create a memory buffer containing the XML. */
-            void *pvBuf = 0;
-            size_t cbSize;
+            i_buildXML(writeLock, doc, stack, pTask->locInfo.strPath,
+                       pTask->enFormat != ovf::OVFVersion_unknown ? pTask->enFormat : ovf::OVFVersion_2_0);
+
+            void *pvBuf = NULL;
+            size_t cbSize = 0;
             xml::XmlMemWriter writer;
             writer.write(doc, &pvBuf, &cbSize);
             if (RT_UNLIKELY(!pvBuf))
-                throw setError(VBOX_E_FILE_ERROR,
-                               tr("Could not create OVF file '%s'"),
-                               strOvfFile.c_str());
-            /* Write the ovf file to disk. */
-            vrc = ShaWriteBuf(strOvfFile.c_str(), pvBuf, cbSize, pIfIo, pStorage);
-            if (RT_FAILURE(vrc))
-                throw setError(VBOX_E_FILE_ERROR,
-                               tr("Could not create OVF file '%s' (%Rrc)"),
-                               strOvfFile.c_str(), vrc);
-            fileList.push_back(STRPAIR(strOvfFile, pStorage->strDigest));
+                throw setError(VBOX_E_FILE_ERROR, tr("Could not create OVF file '%s'"), strOvfFile.c_str());
+
+            /* Write the ovf file to "disk". */
+            rc = i_writeBufferToFile(hVfsFssDst, strOvfFile.c_str(), pvBuf, cbSize);
+            if (FAILED(rc))
+                throw rc;
         }
 
         // We need a proper format description
@@ -2072,24 +2315,30 @@ HRESULT Appliance::writeFSImpl(TaskOVF *pTask, AutoWriteLockBase& writeLock, PVD
         ComObjPtr<MediumFormat> format;
         // Scope for the AutoReadLock
         {
-            SystemProperties *pSysProps = mVirtualBox->getSystemProperties();
+            SystemProperties *pSysProps = mVirtualBox->i_getSystemProperties();
             AutoReadLock propsLock(pSysProps COMMA_LOCKVAL_SRC_POS);
             // We are always exporting to VMDK stream optimized for now
-            formatTemp = pSysProps->mediumFormatFromExtension("iso");
+            formatTemp = pSysProps->i_mediumFormatFromExtension("iso");
 
-            format = pSysProps->mediumFormat("VMDK");
+            format = pSysProps->i_mediumFormat("VMDK");
             if (format.isNull())
                 throw setError(VBOX_E_NOT_SUPPORTED,
                                tr("Invalid medium storage format"));
         }
 
         // Finally, write out the disks!
-        map<Utf8Str, const VirtualSystemDescriptionEntry*>::const_iterator itS;
-        for (itS = stack.mapDisks.begin();
-             itS != stack.mapDisks.end();
-             ++itS)
+        //use the list stack.mapDiskSequence where the disks were put as the "VirtualSystem"s had been placed
+        //in the OVF description file. I.e. we have one "VirtualSystem" in the OVF file, we extract all disks
+        //attached to it. And these disks are stored in the stack.mapDiskSequence. Next we shift to the next
+        //"VirtualSystem" and repeat the operation.
+        //And here we go through the list and extract all disks in the same sequence
+        for (list<Utf8Str>::const_iterator
+             it = stack.mapDiskSequence.begin();
+             it != stack.mapDiskSequence.end();
+             ++it)
         {
-            const VirtualSystemDescriptionEntry *pDiskEntry = itS->second;
+            const Utf8Str &strDiskID = *it;
+            const VirtualSystemDescriptionEntry *pDiskEntry = stack.mapDisks[strDiskID];
 
             // source path: where the VBox image is
             const Utf8Str &strSrcFilePath = pDiskEntry->strVBoxCurrent;
@@ -2110,16 +2359,16 @@ HRESULT Appliance::writeFSImpl(TaskOVF *pTask, AutoWriteLockBase& writeLock, PVD
 
             if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)
             {
-                rc = mVirtualBox->findHardDiskByLocation(strSrcFilePath, true, &pSourceDisk);
+                rc = mVirtualBox->i_findHardDiskByLocation(strSrcFilePath, true, &pSourceDisk);
                 if (FAILED(rc)) throw rc;
             }
             else//may be CD or DVD
             {
-                rc = mVirtualBox->findDVDOrFloppyImage(DeviceType_DVD,
-                                                       NULL,
-                                                       strSrcFilePath,
-                                                       true,
-                                                       &pSourceDisk);
+                rc = mVirtualBox->i_findDVDOrFloppyImage(DeviceType_DVD,
+                                                         NULL,
+                                                         strSrcFilePath,
+                                                         true,
+                                                         &pSourceDisk);
                 if (FAILED(rc)) throw rc;
             }
 
@@ -2131,175 +2380,102 @@ HRESULT Appliance::writeFSImpl(TaskOVF *pTask, AutoWriteLockBase& writeLock, PVD
             // output filename
             const Utf8Str &strTargetFileNameOnly = pDiskEntry->strOvf;
             // target path needs to be composed from where the output OVF is
-            Utf8Str strTargetFilePath(pTask->locInfo.strPath);
-            strTargetFilePath.stripFilename()
-                .append("/")
-                .append(strTargetFileNameOnly);
+            const Utf8Str &strTargetFilePath = strTargetFileNameOnly;
 
             // The exporting requests a lock on the media tree. So leave our lock temporary.
             writeLock.release();
             try
             {
                 // advance to the next operation
-                pTask->pProgress->SetNextOperation(BstrFmt(tr("Exporting to disk image '%s'"), RTPathFilename(strTargetFilePath.c_str())).raw(),
-                                                   pDiskEntry->ulSizeMB);     // operation's weight, as set up with the IProgress originally
+                pTask->pProgress->SetNextOperation(BstrFmt(tr("Exporting to disk image '%s'"),
+                                                           RTPathFilename(strTargetFilePath.c_str())).raw(),
+                                                   pDiskEntry->ulSizeMB);     // operation's weight, as set up
+                                                                              // with the IProgress originally
 
                 // create a flat copy of the source disk image
                 if (pDiskEntry->type == VirtualSystemDescriptionType_HardDiskImage)
                 {
-                    ComObjPtr<Progress> pProgress2;
-                    pProgress2.createObject();
-                    rc = pProgress2->init(mVirtualBox, static_cast<IAppliance*>(this), BstrFmt(tr("Creating medium '%s'"), strTargetFilePath.c_str()).raw(), TRUE);
-                    if (FAILED(rc)) throw rc;
+                    /*
+                     * Export a disk image.
+                     */
+                    /* For compressed VMDK fun, we let i_exportFile produce the image bytes. */
+                    RTVFSIOSTREAM hVfsIosDst;
+                    vrc = RTVfsFsStrmPushFile(hVfsFssDst, strTargetFilePath.c_str(), UINT64_MAX,
+                                              NULL /*paObjInfo*/, 0 /*cObjInfo*/, RTVFSFSSTRM_PUSH_F_STREAM, &hVfsIosDst);
+                    if (RT_FAILURE(vrc))
+                        throw setErrorVrc(vrc, tr("RTVfsFsStrmPushFile failed for '%s' (%Rrc)"), strTargetFilePath.c_str(), vrc);
+                    hVfsIosDst = i_manifestSetupDigestCalculationForGivenIoStream(hVfsIosDst, strTargetFilePath.c_str(),
+                                                                                  false /*fRead*/);
+                    if (hVfsIosDst == NIL_RTVFSIOSTREAM)
+                        throw setError(E_FAIL, "i_manifestSetupDigestCalculationForGivenIoStream(%s)", strTargetFilePath.c_str());
 
-                    rc = pSourceDisk->exportFile(strTargetFilePath.c_str(),
-                                                 format,
-                                                 MediumVariant_VmdkStreamOptimized,
-                                                 pIfIo,
-                                                 pStorage,
-                                                 pProgress2);
-                    if (FAILED(rc)) throw rc;
-
-                    ComPtr<IProgress> pProgress3(pProgress2);
-                    // now wait for the background disk operation to complete; this throws HRESULTs on error
-                    waitForAsyncProgress(pTask->pProgress, pProgress3);
+                    rc = pSourceDisk->i_exportFile(strTargetFilePath.c_str(),
+                                                   format,
+                                                   MediumVariant_VmdkStreamOptimized,
+                                                   m->m_pSecretKeyStore,
+                                                   hVfsIosDst,
+                                                   pTask->pProgress);
+                    RTVfsIoStrmRelease(hVfsIosDst);
                 }
-                else//pDiskEntry->type == VirtualSystemDescriptionType_CDROM
+                else
                 {
-                    //copy/clone CD/DVD image
-                    /* Read the ISO file and add one to OVA/OVF package */
-                    {
-                        void *pvStorage;
-                        RTFILE pFile = NULL;
-                        void *pvUser = pStorage;
-
-                        vrc = pIfIo->pfnOpen(pvUser, strTargetFilePath.c_str(),
-                                             RTFILE_O_OPEN_CREATE | RTFILE_O_WRITE | RTFILE_O_DENY_NONE,
-                                             0,
-                                             &pvStorage);
-                        if (RT_FAILURE(vrc))
-                            throw setError(VBOX_E_FILE_ERROR,
-                                           tr("Could not create or open file '%s' (%Rrc)"),
-                                           strTargetFilePath.c_str(), vrc);
-
-                        vrc = RTFileOpen(&pFile,
-                                         strSrcFilePath.c_str(),
-                                         RTFILE_O_OPEN | RTFILE_O_READ | RTFILE_O_DENY_NONE);
-
-                        if (RT_FAILURE(vrc) || pFile == NULL)
-                        {
-                            pIfIo->pfnClose(pvUser, pvStorage);
-                            throw setError(VBOX_E_FILE_ERROR,
-                                           tr("Could not create or open file '%s' (%Rrc)"),
-                                           strSrcFilePath.c_str(), vrc);
-                        }
-
-                        void *pvTmpBuf = 0;
-                        size_t cbTmpSize = _1M;
-                        uint64_t cbAllWritten = 0;
-                        uint64_t cbFile = 0;
-                        size_t cbSize = 0;
-
-                        vrc = RTFileGetSize(pFile, &cbFile);
-
-                        do
-                        {
-                            pvTmpBuf = RTMemAlloc(cbTmpSize);
-                            if (!pvTmpBuf)
-                            {
-                                vrc = VERR_NO_MEMORY;
-                                break;
-                            }
-
-                            for (;;)
-                            {
-                                // copy raw data into the buffer pvTmpBuf
-                                vrc = RTFileRead(pFile, pvTmpBuf, cbTmpSize, &cbSize);
-
-                                if (RT_FAILURE(vrc) || cbSize == 0)
-                                    break;
-
-                                size_t cbToWrite = cbSize;
-                                size_t cbWritten = 0;
-
-                                vrc = pIfIo->pfnWriteSync(pvUser,
-                                                         pvStorage,
-                                                         cbAllWritten,
-                                                         pvTmpBuf,
-                                                         cbToWrite,&cbWritten);
-
-                                if (RT_FAILURE(vrc))
-                                    break;
-
-                                cbAllWritten += cbWritten;
-                            }
-                        } while (0);
-
-                        pIfIo->pfnClose(pvUser, pvStorage);
-                        RTFileClose(pFile);
-
-                        if (pvTmpBuf)
-                            RTMemFree(pvTmpBuf);
-
-                        if (RT_FAILURE(vrc))
-                        {
-                            if (vrc == VERR_EOF)
-                                vrc = VINF_SUCCESS;
-                            else
-                                throw setError(VBOX_E_FILE_ERROR,
-                                               tr("Error during copy CD/DVD image '%s' (%Rrc)"),
-                                               strSrcFilePath.c_str(), vrc);
-                        }
-                    }
+                    /*
+                     * Copy CD/DVD/floppy image.
+                     */
+                    Assert(pDiskEntry->type == VirtualSystemDescriptionType_CDROM);
+                    rc = pSourceDisk->i_addRawToFss(strTargetFilePath.c_str(), m->m_pSecretKeyStore, hVfsFssDst,
+                                                    pTask->pProgress, false /*fSparse*/);
                 }
+                if (FAILED(rc)) throw rc;
             }
             catch (HRESULT rc3)
             {
                 writeLock.acquire();
-                // Todo: file deletion on error? If not, we can remove that whole try/catch block.
+                /// @todo file deletion on error? If not, we can remove that whole try/catch block.
                 throw rc3;
             }
             // Finished, lock again (so nobody mess around with the medium tree
             // in the meantime)
             writeLock.acquire();
-            fileList.push_back(STRPAIR(strTargetFilePath, pStorage->strDigest));
         }
 
         if (m->fManifest)
         {
             // Create & write the manifest file
-            Utf8Str strMfFilePath = Utf8Str(pTask->locInfo.strPath).stripExt().append(".mf");
+            Utf8Str strMfFilePath = Utf8Str(pTask->locInfo.strPath).stripSuffix().append(".mf");
             Utf8Str strMfFileName = Utf8Str(strMfFilePath).stripPath();
             pTask->pProgress->SetNextOperation(BstrFmt(tr("Creating manifest file '%s'"), strMfFileName.c_str()).raw(),
-                                               m->ulWeightForManifestOperation);     // operation's weight, as set up with the IProgress originally);
-            PRTMANIFESTTEST paManifestFiles = (PRTMANIFESTTEST)RTMemAlloc(sizeof(RTMANIFESTTEST) * fileList.size());
-            size_t i = 0;
-            list<STRPAIR>::const_iterator it1;
-            for (it1 = fileList.begin();
-                 it1 != fileList.end();
-                 ++it1, ++i)
+                                               m->ulWeightForManifestOperation);     // operation's weight, as set up
+                                                                                     // with the IProgress originally);
+            /* Create a memory I/O stream and write the manifest to it. */
+            RTVFSIOSTREAM hVfsIosManifest;
+            vrc = RTVfsMemIoStrmCreate(NIL_RTVFSIOSTREAM, _1K, &hVfsIosManifest);
+            if (RT_FAILURE(vrc))
+                throw setErrorVrc(vrc, tr("RTVfsMemIoStrmCreate failed (%Rrc)"), vrc);
+            if (m->hOurManifest != NIL_RTMANIFEST) /* In case it's empty. */
+                vrc = RTManifestWriteStandard(m->hOurManifest, hVfsIosManifest);
+            if (RT_SUCCESS(vrc))
             {
-                paManifestFiles[i].pszTestFile   = (*it1).first.c_str();
-                paManifestFiles[i].pszTestDigest = (*it1).second.c_str();
+                /* Rewind the stream and add it to the output. */
+                size_t cbIgnored;
+                vrc = RTVfsIoStrmReadAt(hVfsIosManifest, 0 /*offset*/, &cbIgnored, 0, true /*fBlocking*/, &cbIgnored);
+                if (RT_SUCCESS(vrc))
+                {
+                    RTVFSOBJ hVfsObjManifest = RTVfsObjFromIoStream(hVfsIosManifest);
+                    vrc = RTVfsFsStrmAdd(hVfsFssDst, strMfFileName.c_str(), hVfsObjManifest, 0 /*fFlags*/);
+                    if (RT_SUCCESS(vrc))
+                        rc = S_OK;
+                    else
+                        rc = setErrorVrc(vrc, tr("RTVfsFsStrmAdd failed for the manifest (%Rrc)"), vrc);
+                }
+                else
+                    rc = setErrorVrc(vrc, tr("RTManifestWriteStandard failed (%Rrc)"), vrc);
             }
-            void *pvBuf;
-            size_t cbSize;
-            vrc = RTManifestWriteFilesBuf(&pvBuf, &cbSize, m->fSha256 ? RTDIGESTTYPE_SHA256 : RTDIGESTTYPE_SHA1,
-                                          paManifestFiles, fileList.size());
-            RTMemFree(paManifestFiles);
-            if (RT_FAILURE(vrc))
-                throw setError(VBOX_E_FILE_ERROR,
-                               tr("Could not create manifest file '%s' (%Rrc)"),
-                               strMfFileName.c_str(), vrc);
-            /* Disable digest creation for the manifest file. */
-            pStorage->fCreateDigest = false;
-            /* Write the manifest file to disk. */
-            vrc = ShaWriteBuf(strMfFilePath.c_str(), pvBuf, cbSize, pIfIo, pStorage);
-            RTMemFree(pvBuf);
-            if (RT_FAILURE(vrc))
-                throw setError(VBOX_E_FILE_ERROR,
-                               tr("Could not create manifest file '%s' (%Rrc)"),
-                               strMfFilePath.c_str(), vrc);
+            else
+                rc = setErrorVrc(vrc, tr("RTManifestWriteStandard failed (%Rrc)"), vrc);
+            RTVfsIoStrmRelease(hVfsIosManifest);
+            if (FAILED(rc))
+                throw rc;
         }
     }
     catch (RTCError &x)  // includes all XML exceptions
@@ -2312,191 +2488,52 @@ HRESULT Appliance::writeFSImpl(TaskOVF *pTask, AutoWriteLockBase& writeLock, PVD
         rc = aRC;
     }
 
-    /* Cleanup on error */
-    if (FAILED(rc))
-    {
-        list<STRPAIR>::const_iterator it1;
-        for (it1 = fileList.begin();
-             it1 != fileList.end();
-             ++it1)
-             pIfIo->pfnDelete(pStorage, (*it1).first.c_str());
-    }
-
     LogFlowFunc(("rc=%Rhrc\n", rc));
     LogFlowFuncLeave();
 
     return rc;
 }
 
-#ifdef VBOX_WITH_S3
+
 /**
- * Worker code for writing out OVF to the cloud. This is called from Appliance::taskThreadWriteOVF()
- * in S3 mode and therefore runs on the OVF write worker thread. This then starts a second worker
- * thread to create temporary files (see Appliance::writeFS()).
+ * Writes a memory buffer to a file in the output file system stream.
  *
- * @param pTask
- * @return
+ * @returns COM status code.
+ * @param   hVfsFssDst      The file system stream to add the file to.
+ * @param   pszFilename     The file name (w/ path if desired).
+ * @param   pvContent       Pointer to buffer containing the file content.
+ * @param   cbContent       Size of the content.
  */
-HRESULT Appliance::writeS3(TaskOVF *pTask)
+HRESULT Appliance::i_writeBufferToFile(RTVFSFSSTREAM hVfsFssDst, const char *pszFilename, const void *pvContent, size_t cbContent)
 {
-    LogFlowFuncEnter();
-    LogFlowFunc(("Appliance %p\n", this));
-
-    AutoCaller autoCaller(this);
-    if (FAILED(autoCaller.rc())) return autoCaller.rc();
-
-    HRESULT rc = S_OK;
-
-    AutoWriteLock appLock(this COMMA_LOCKVAL_SRC_POS);
-
-    int vrc = VINF_SUCCESS;
-    RTS3 hS3 = NIL_RTS3;
-    char szOSTmpDir[RTPATH_MAX];
-    RTPathTemp(szOSTmpDir, sizeof(szOSTmpDir));
-    /* The template for the temporary directory created below */
-    char *pszTmpDir = RTPathJoinA(szOSTmpDir, "vbox-ovf-XXXXXX");
-    list< pair<Utf8Str, ULONG> > filesList;
-
-    // todo:
-    // - usable error codes
-    // - seems snapshot filenames are problematic {uuid}.vdi
-    try
+    /*
+     * Create a VFS file around the memory, converting it to a base VFS object handle.
+     */
+    HRESULT hrc;
+    RTVFSIOSTREAM hVfsIosSrc;
+    int vrc = RTVfsIoStrmFromBuffer(RTFILE_O_READ, pvContent, cbContent, &hVfsIosSrc);
+    if (RT_SUCCESS(vrc))
     {
-        /* Extract the bucket */
-        Utf8Str tmpPath = pTask->locInfo.strPath;
-        Utf8Str bucket;
-        parseBucket(tmpPath, bucket);
+        hVfsIosSrc = i_manifestSetupDigestCalculationForGivenIoStream(hVfsIosSrc, pszFilename);
+        AssertReturn(hVfsIosSrc != NIL_RTVFSIOSTREAM,
+                     setErrorVrc(vrc, "i_manifestSetupDigestCalculationForGivenIoStream"));
 
-        /* We need a temporary directory which we can put the OVF file & all
-         * disk images in */
-        vrc = RTDirCreateTemp(pszTmpDir, 0700);
-        if (RT_FAILURE(vrc))
-            throw setError(VBOX_E_FILE_ERROR,
-                           tr("Cannot create temporary directory '%s' (%Rrc)"), pszTmpDir, vrc);
+        RTVFSOBJ hVfsObj = RTVfsObjFromIoStream(hVfsIosSrc);
+        RTVfsIoStrmRelease(hVfsIosSrc);
+        AssertReturn(hVfsObj != NIL_RTVFSOBJ, E_FAIL);
 
-        /* The temporary name of the target OVF file */
-        Utf8StrFmt strTmpOvf("%s/%s", pszTmpDir, RTPathFilename(tmpPath.c_str()));
-
-        /* Prepare the temporary writing of the OVF */
-        ComObjPtr<Progress> progress;
-        /* Create a temporary file based location info for the sub task */
-        LocationInfo li;
-        li.strPath = strTmpOvf;
-        rc = writeImpl(pTask->enFormat, li, progress);
-        if (FAILED(rc)) throw rc;
-
-        /* Unlock the appliance for the writing thread */
-        appLock.release();
-        /* Wait until the writing is done, but report the progress back to the
-           caller */
-        ComPtr<IProgress> progressInt(progress);
-        waitForAsyncProgress(pTask->pProgress, progressInt); /* Any errors will be thrown */
-
-        /* Again lock the appliance for the next steps */
-        appLock.acquire();
-
-        vrc = RTPathExists(strTmpOvf.c_str()); /* Paranoid check */
-        if (RT_FAILURE(vrc))
-            throw setError(VBOX_E_FILE_ERROR,
-                           tr("Cannot find source file '%s' (%Rrc)"), strTmpOvf.c_str(), vrc);
-        /* Add the OVF file */
-        filesList.push_back(pair<Utf8Str, ULONG>(strTmpOvf, m->ulWeightForXmlOperation)); /* Use 1% of the total for the OVF file upload */
-        /* Add the manifest file */
-        if (m->fManifest)
-        {
-            Utf8Str strMfFile = Utf8Str(strTmpOvf).stripExt().append(".mf");
-            filesList.push_back(pair<Utf8Str, ULONG>(strMfFile , m->ulWeightForXmlOperation)); /* Use 1% of the total for the manifest file upload */
-        }
-
-        /* Now add every disks of every virtual system */
-        list< ComObjPtr<VirtualSystemDescription> >::const_iterator it;
-        for (it = m->virtualSystemDescriptions.begin();
-             it != m->virtualSystemDescriptions.end();
-             ++it)
-        {
-            ComObjPtr<VirtualSystemDescription> vsdescThis = (*it);
-            std::list<VirtualSystemDescriptionEntry*> avsdeHDs = vsdescThis->findByType(VirtualSystemDescriptionType_HardDiskImage);
-            std::list<VirtualSystemDescriptionEntry*>::const_iterator itH;
-            for (itH = avsdeHDs.begin();
-                 itH != avsdeHDs.end();
-                 ++itH)
-            {
-                const Utf8Str &strTargetFileNameOnly = (*itH)->strOvf;
-                /* Target path needs to be composed from where the output OVF is */
-                Utf8Str strTargetFilePath(strTmpOvf);
-                strTargetFilePath.stripFilename();
-                strTargetFilePath.append("/");
-                strTargetFilePath.append(strTargetFileNameOnly);
-                vrc = RTPathExists(strTargetFilePath.c_str()); /* Paranoid check */
-                if (RT_FAILURE(vrc))
-                    throw setError(VBOX_E_FILE_ERROR,
-                                   tr("Cannot find source file '%s' (%Rrc)"), strTargetFilePath.c_str(), vrc);
-                filesList.push_back(pair<Utf8Str, ULONG>(strTargetFilePath, (*itH)->ulSizeMB));
-            }
-        }
-        /* Next we have to upload the OVF & all disk images */
-        vrc = RTS3Create(&hS3, pTask->locInfo.strUsername.c_str(), pTask->locInfo.strPassword.c_str(), pTask->locInfo.strHostname.c_str(), "virtualbox-agent/"VBOX_VERSION_STRING);
-        if (RT_FAILURE(vrc))
-            throw setError(VBOX_E_IPRT_ERROR,
-                           tr("Cannot create S3 service handler"));
-        RTS3SetProgressCallback(hS3, pTask->updateProgress, &pTask);
-
-        /* Upload all files */
-        for (list< pair<Utf8Str, ULONG> >::const_iterator it1 = filesList.begin(); it1 != filesList.end(); ++it1)
-        {
-            const pair<Utf8Str, ULONG> &s = (*it1);
-            char *pszFilename = RTPathFilename(s.first.c_str());
-            /* Advance to the next operation */
-            pTask->pProgress->SetNextOperation(BstrFmt(tr("Uploading file '%s'"), pszFilename).raw(), s.second);
-            vrc = RTS3PutKey(hS3, bucket.c_str(), pszFilename, s.first.c_str());
-            if (RT_FAILURE(vrc))
-            {
-                if (vrc == VERR_S3_CANCELED)
-                    break;
-                else if (vrc == VERR_S3_ACCESS_DENIED)
-                    throw setError(E_ACCESSDENIED,
-                                   tr("Cannot upload file '%s' to S3 storage server (Access denied). Make sure that your credentials are right. Also check that your host clock is properly synced"), pszFilename);
-                else if (vrc == VERR_S3_NOT_FOUND)
-                    throw setError(VBOX_E_FILE_ERROR,
-                                   tr("Cannot upload file '%s' to S3 storage server (File not found)"), pszFilename);
-                else
-                    throw setError(VBOX_E_IPRT_ERROR,
-                                   tr("Cannot upload file '%s' to S3 storage server (%Rrc)"), pszFilename, vrc);
-            }
-        }
+        /*
+         * Add it to the stream.
+         */
+        vrc = RTVfsFsStrmAdd(hVfsFssDst, pszFilename, hVfsObj, 0);
+        RTVfsObjRelease(hVfsObj);
+        if (RT_SUCCESS(vrc))
+            hrc = S_OK;
+        else
+            hrc = setErrorVrc(vrc, tr("RTVfsFsStrmAdd failed for '%s' (%Rrc)"), pszFilename, vrc);
     }
-    catch(HRESULT aRC)
-    {
-        rc = aRC;
-    }
-    /* Cleanup */
-    RTS3Destroy(hS3);
-    /* Delete all files which where temporary created */
-    for (list< pair<Utf8Str, ULONG> >::const_iterator it1 = filesList.begin(); it1 != filesList.end(); ++it1)
-    {
-        const char *pszFilePath = (*it1).first.c_str();
-        if (RTPathExists(pszFilePath))
-        {
-            vrc = RTFileDelete(pszFilePath);
-            if (RT_FAILURE(vrc))
-                rc = setError(VBOX_E_FILE_ERROR,
-                              tr("Cannot delete file '%s' (%Rrc)"), pszFilePath, vrc);
-        }
-    }
-    /* Delete the temporary directory */
-    if (RTPathExists(pszTmpDir))
-    {
-        vrc = RTDirRemove(pszTmpDir);
-        if (RT_FAILURE(vrc))
-            rc = setError(VBOX_E_FILE_ERROR,
-                          tr("Cannot delete temporary directory '%s' (%Rrc)"), pszTmpDir, vrc);
-    }
-    if (pszTmpDir)
-        RTStrFree(pszTmpDir);
-
-    LogFlowFunc(("rc=%Rhrc\n", rc));
-    LogFlowFuncLeave();
-
-    return rc;
+    else
+        hrc = setErrorVrc(vrc, "RTVfsIoStrmFromBuffer");
+    return hrc;
 }
-#endif /* VBOX_WITH_S3 */
+

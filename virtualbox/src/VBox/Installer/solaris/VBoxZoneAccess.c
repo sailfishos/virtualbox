@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <stdio.h>
 #include <signal.h>
 #include <unistd.h>
@@ -26,9 +27,10 @@
 
 #include <iprt/process.h>
 
-/*******************************************************************************
-*  Defined Constants And Macros                                                *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define DEVICE_NAME     "/devices/pseudo/vboxdrv@0:vboxdrv"
 #define DEVICE_NAME_USR "/devices/pseudo/vboxdrv@0:vboxdrvu"
 

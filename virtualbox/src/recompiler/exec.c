@@ -304,7 +304,7 @@ static void page_init(void)
     /* NOTE: we can always suppose that qemu_host_page_size >=
        TARGET_PAGE_SIZE */
 #ifdef VBOX
-    RTMemProtect(code_gen_buffer, sizeof(code_gen_buffer),
+    RTMemProtect(code_gen_buffer, code_gen_buffer_size,
                  RTMEM_PROT_EXEC | RTMEM_PROT_READ | RTMEM_PROT_WRITE);
     qemu_real_host_page_size = PAGE_SIZE;
 #else /* !VBOX */
@@ -4498,7 +4498,7 @@ void cpu_io_recompile(CPUState *env, void *retaddr)
     /* FIXME: In theory this could raise an exception.  In practice
        we have already translated the block once so it's probably ok.  */
     tb_gen_code(env, pc, cs_base, flags, cflags);
-    /* TODO: If env->pc != tb->pc (i.e. the faulting instruction was not
+    /** @todo If env->pc != tb->pc (i.e. the faulting instruction was not
        the first in the TB) then we end up generating a whole new TB and
        repeating the fault, which is horribly inefficient.
        Better would be to execute just this insn uncached, or generate a

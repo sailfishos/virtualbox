@@ -1,11 +1,10 @@
+/* $Id: UIMultiScreenLayout.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMultiScreenLayout class declaration
+ * VBox Qt GUI - UIMultiScreenLayout class declaration.
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,17 +34,15 @@ class UIMultiScreenLayout : public QObject
 
 signals:
 
-    /* Notifier: Layout change stuff: */
-    void sigScreenLayoutChanged();
+    /** Notifies about layout update. */
+    void sigScreenLayoutUpdate();
+    /** Notifies about layout change. */
+    void sigScreenLayoutChange();
 
 public:
 
     /* Constructor/destructor: */
     UIMultiScreenLayout(UIMachineLogic *pMachineLogic);
-    ~UIMultiScreenLayout();
-
-    /* API: View-menu stuff: */
-    void setViewMenu(QMenu *pViewMenu);
 
     /* API: Update stuff: */
     void update();
@@ -57,34 +54,29 @@ public:
     int hostScreenForGuestScreen(int iScreenId) const;
     bool hasHostScreenForGuestScreen(int iScreenId) const;
     quint64 memoryRequirements() const;
-    bool isHostTaskbarCovert() const;
 
 private slots:
 
     /* Handler: Screen change stuff: */
-    void sltScreenLayoutChanged(QAction *pAction);
+    void sltHandleScreenLayoutChange(int iRequestedGuestScreen, int iRequestedHostScreen);
 
 private:
 
     /* Helpers: Prepare stuff: */
     void calculateHostMonitorCount();
     void calculateGuestScreenCount();
-    void prepareViewMenu();
-
-    /* Helper: Cleanup stuff: */
-    void cleanupViewMenu();
 
     /* Other helpers: */
-    void updateMenuActions(bool fWithSave);
+    void saveScreenMapping();
     quint64 memoryRequirements(const QMap<int, int> &screenLayout) const;
 
     /* Variables: */
     UIMachineLogic *m_pMachineLogic;
     QList<int> m_guestScreens;
     QList<int> m_disabledGuestScreens;
+    const uint m_cGuestScreens;
     int m_cHostScreens;
     QMap<int, int> m_screenMap;
-    QMenu *m_pViewMenu;
     QList<QMenu*> m_screenMenuList;
 };
 

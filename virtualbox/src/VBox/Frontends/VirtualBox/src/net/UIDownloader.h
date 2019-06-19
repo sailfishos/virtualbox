@@ -1,11 +1,10 @@
+/* $Id: UIDownloader.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIDownloader class declaration
+ * VBox Qt GUI - UIDownloader class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,6 +14,9 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
+
+/// This class requires proper doxy.
+/// For now I'm keeping the old style consistent.
 
 #ifndef __UIDownloader_h__
 #define __UIDownloader_h__
@@ -42,6 +44,8 @@ signals:
     void sigToStartAcknowledging();
     /* Signal to start downloading: */
     void sigToStartDownloading();
+    /* Signal to start verifying: */
+    void sigToStartVerifying();
 
 public:
 
@@ -54,6 +58,8 @@ protected slots:
     void sltStartAcknowledging();
     /* Downloading part: */
     void sltStartDownloading();
+    /* Verifying part: */
+    void sltStartVerifying();
 
 protected:
 
@@ -62,7 +68,8 @@ protected:
     {
         UIDownloaderState_Null,
         UIDownloaderState_Acknowledging,
-        UIDownloaderState_Downloading
+        UIDownloaderState_Downloading,
+        UIDownloaderState_Verifying,
     };
 
     /* Constructor: */
@@ -80,14 +87,20 @@ protected:
     void setTarget(const QString &strTarget) { m_strTarget = strTarget; }
     const QString& target() const { return m_strTarget; }
 
-    /* Description stuff,
-     * allows to set/get Network Customer description for Network Access Manager: */
-    void setDescription(const QString &strDescription) { m_strDescription = strDescription; }
+    /* SHA-256 stuff,
+     * allows to set/get SHA-256 sum dictionary file for downloaded source. */
+    QString pathSHA256SumsFile() const { return m_strPathSHA256SumsFile; }
+    void setPathSHA256SumsFile(const QString &strPathSHA256SumsFile) { m_strPathSHA256SumsFile = strPathSHA256SumsFile; }
+
+    /** Returns description of the current network operation. */
+    virtual const QString description() const;
 
     /* Start delayed acknowledging: */
     void startDelayedAcknowledging() { emit sigToStartAcknowledging(); }
     /* Start delayed downloading: */
     void startDelayedDownloading() { emit sigToStartDownloading(); }
+    /* Start delayed verifying: */
+    void startDelayedVerifying() { emit sigToStartVerifying(); }
 
     /* Network-reply progress handler: */
     void processNetworkReplyProgress(qint64 iReceived, qint64 iTotal);
@@ -100,11 +113,15 @@ protected:
     virtual void handleAcknowledgingResult(UINetworkReply *pNetworkReply);
     /* Handle downloading result: */
     virtual void handleDownloadingResult(UINetworkReply *pNetworkReply);
+    /* Handle verifying result: */
+    virtual void handleVerifyingResult(UINetworkReply *pNetworkReply);
 
     /* Pure virtual function to ask user about downloading confirmation: */
     virtual bool askForDownloadingConfirmation(UINetworkReply *pNetworkReply) = 0;
     /* Pure virtual function to handle downloaded object: */
     virtual void handleDownloadedObject(UINetworkReply *pNetworkReply) = 0;
+    /* Base virtual function to handle verified object: */
+    virtual void handleVerifiedObject(UINetworkReply * /* pNetworkReply */) {}
 
 private:
 
@@ -113,7 +130,7 @@ private:
     QList<QUrl> m_sources;
     QUrl m_source;
     QString m_strTarget;
-    QString m_strDescription;
+    QString m_strPathSHA256SumsFile;
 };
 
 #endif // __UIDownloader_h__

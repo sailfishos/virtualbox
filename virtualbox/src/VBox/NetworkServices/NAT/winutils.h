@@ -1,10 +1,10 @@
-/* $Id$ */
+/* $Id: winutils.h $ */
 /** @file
  * NAT Network - winsock compatibility shim.
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,10 +21,10 @@
 # include <iprt/cdefs.h>
 
 # ifdef RT_OS_WINDOWS
-#  include <WinSock2.h>
-#  include <ws2tcpip.h>
+#  include <iprt/win/winsock2.h>
+#  include <iprt/win/ws2tcpip.h>
 #  include <mswsock.h>
-#  include <Windows.h>
+#  include <iprt/win/windows.h>
 #  include <iprt/err.h>
 #  include <iprt/net.h>
 #  include <iprt/log.h>
@@ -165,6 +165,7 @@ RT_C_DECLS_END
 # else /* !RT_OS_WINDOWS */
 
 #  include <errno.h>
+#  include <unistd.h>
 
 #  define SOCKET int
 #  define INVALID_SOCKET (-1)
@@ -191,15 +192,15 @@ proxy_error_is_transient(int error)
 # if !defined(RT_OS_WINDOWS)
     return error == EWOULDBLOCK
 #  if EAGAIN != EWOULDBLOCK
-	|| error == EAGAIN
+        || error == EAGAIN
 #  endif
-	|| error == EINTR
-	|| error == ENOBUFS
-	|| error == ENOMEM;
+        || error == EINTR
+        || error == ENOBUFS
+        || error == ENOMEM;
 # else
     return error == WSAEWOULDBLOCK
-	|| error == WSAEINTR	/* NB: we don't redefine EINTR above */
-	|| error == WSAENOBUFS;
+        || error == WSAEINTR    /* NB: we don't redefine EINTR above */
+        || error == WSAENOBUFS;
 # endif
 }
 

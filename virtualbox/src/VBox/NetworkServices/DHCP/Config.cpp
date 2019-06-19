@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,6 +31,7 @@
 #include <VBox/vmm/vmm.h>
 #include <VBox/version.h>
 
+#include <VBox/com/array.h>
 #include <VBox/com/string.h>
 
 #include <iprt/cpp/xml.h>
@@ -73,7 +74,7 @@ const ClientMatchCriteria *g_AnyClient = new AnyClientMatchCriteria();
 
 static ConfigurationManager *g_ConfigurationManager = ConfigurationManager::getConfigurationManager();
 
-static NetworkManager *g_NetworkManager = NetworkManager::getNetworkManager();
+NetworkManager *NetworkManager::g_NetworkManager;
 
 bool MACClientMatchCriteria::check(const Client& client) const
 {
@@ -83,7 +84,7 @@ bool MACClientMatchCriteria::check(const Client& client) const
 
 int BaseConfigEntity::match(Client& client, BaseConfigEntity **cfg)
 {
-    int iMatch = (m_criteria && m_criteria->check(client)? m_MatchLevel: 0);
+    int iMatch = (m_criteria && m_criteria->check(client) ? m_MatchLevel : 0);
     if (m_children.empty())
     {
         if (iMatch > 0)
@@ -175,16 +176,18 @@ const std::string tagXMLTimeAttributeExpiration = "expiration";
 const std::string tagXMLLeaseOptions = "Options";
 
 /**
- * <Leases version="1.0">
- *   <Lease mac="" network=""/>
- *    <Address value=""/>
- *    <Time issued="" expiration=""/>
- *    <options>
- *      <option name="" type=""/>
- *      </option>
- *    </options>
- *   </Lease>
- * </Leases>
+ * @verbatim
+   <Leases version="1.0">
+     <Lease mac="" network=""/>
+      <Address value=""/>
+      <Time issued="" expiration=""/>
+      <options>
+        <option name="" type=""/>
+        </option>
+      </options>
+     </Lease>
+   </Leases>
+   @endverbatim
  */
 int ConfigurationManager::loadFromFile(const com::Utf8Str& leaseStorageFileName)
 {
@@ -217,7 +220,6 @@ int ConfigurationManager::loadFromFile(const com::Utf8Str& leaseStorageFileName)
     /* XXX: version check */
     xml::NodesLoop leases(*root);
 
-    bool valueExists;
     const xml::ElementNode *lease;
     while ((lease = leases.forAllNodes()))
     {
@@ -235,7 +237,7 @@ int ConfigurationManager::loadFromFile(const com::Utf8Str& leaseStorageFileName)
             NetworkConfigEntity *pNetCfg = NULL;
             Client c(data);
             int rc = g_RootConfig->match(c, (BaseConfigEntity **)&pNetCfg);
-            Assert(rc >= 0 && pNetCfg);
+            Assert(rc >= 0 && pNetCfg); RT_NOREF(rc);
 
             l.setConfig(pNetCfg);
 
@@ -329,15 +331,18 @@ Client ConfigurationManager::getClientByDhcpPacket(const RTNETBOOTP *pDhcpMsg, s
  *          to the option length.
  *          On failure, NULL is returned and *pcbOpt unchanged.
  *
- * @param   uOption         The option to search for.
- * @param   pDhcpMsg        The DHCP message.
- *                          that this is adjusted if the option length is larger
- *                          than the message buffer.
+ * @param   uOption     The option to search for.
+ * @param   pDhcpMsg    The DHCP message.
+ *                      that this is adjusted if the option length is larger
+ *                      than the message buffer.
+ * @param   cbDhcpMsg   Size of the DHCP message.
+ * @param   opt         The actual option we found.
  */
 int
 ConfigurationManager::findOption(uint8_t uOption, PCRTNETBOOTP pDhcpMsg, size_t cbDhcpMsg, RawOption& opt)
 {
     Assert(uOption != RTNET_DHCP_OPT_PAD);
+    Assert(uOption != RTNET_DHCP_OPT_END);
 
     /*
      * Validate the DHCP bits and figure the max size of the options in the vendor field.
@@ -355,7 +360,6 @@ ConfigurationManager::findOption(uint8_t uOption, PCRTNETBOOTP pDhcpMsg, size_t 
     /*
      * Search the vendor field.
      */
-    bool            fExtended = false;
     uint8_t const  *pb = &pDhcpMsg->bp_vend.Dhcp.dhcp_opts[0];
     while (pb && cbLeft > 0)
     {
@@ -365,13 +369,15 @@ ConfigurationManager::findOption(uint8_t uOption, PCRTNETBOOTP pDhcpMsg, size_t 
             cbLeft--;
             pb++;
         }
+        else if (uCur == RTNET_DHCP_OPT_END)
+            break;
         else if (cbLeft <= 1)
             break;
         else
         {
-            size_t cbCur = pb[1];
+            uint8_t cbCur = pb[1];
             if (cbCur > cbLeft - 2)
-                cbCur = cbLeft - 2;
+                cbCur = (uint8_t)(cbLeft - 2);
             if (uCur == uOption)
             {
                 opt.u8OptId = uCur;
@@ -380,7 +386,7 @@ ConfigurationManager::findOption(uint8_t uOption, PCRTNETBOOTP pDhcpMsg, size_t 
                 return VINF_SUCCESS;
             }
             pb     += cbCur + 2;
-            cbLeft -= cbCur - 2;
+            cbLeft -= cbCur + 2;
         }
     }
 
@@ -649,15 +655,14 @@ int ConfigurationManager::setString(uint8_t u8OptId, const std::string& str)
 }
 
 
-const std::string& ConfigurationManager::getString(uint8_t u8OptId)
+const std::string &ConfigurationManager::getString(uint8_t u8OptId)
 {
     switch (u8OptId)
     {
         case RTNET_DHCP_OPT_DOMAIN_NAME:
             if (m->m_domainName.length())
                 return m->m_domainName;
-            else
-                return m_noString;
+            return m_noString;
         default:
             break;
     }
@@ -698,6 +703,8 @@ struct NetworkManager::Data
     RTNETADDRIPV4 m_OurAddress;
     RTNETADDRIPV4 m_OurNetmask;
     RTMAC m_OurMac;
+
+    ComPtr<IDHCPServer>  m_DhcpServer;
     const VBoxNetHlpUDPService *m_service;
 };
 
@@ -715,10 +722,13 @@ NetworkManager::~NetworkManager()
 }
 
 
-NetworkManager *NetworkManager::getNetworkManager()
+NetworkManager *NetworkManager::getNetworkManager(ComPtr<IDHCPServer> aDhcpServer)
 {
     if (!g_NetworkManager)
+    {
         g_NetworkManager = new NetworkManager();
+        g_NetworkManager->m->m_DhcpServer = aDhcpServer;
+    }
 
     return g_NetworkManager;
 }
@@ -994,12 +1004,160 @@ int NetworkManager::doReply(const Client& client, const std::vector<RawOption>& 
 }
 
 
-int NetworkManager::processParameterReqList(const Client& client, const uint8_t *pu8ReqList, 
+/*
+ * XXX: TODO: Share decoding code with DHCPServer::addOption.
+ */
+static int parseDhcpOptionText(const char *pszText,
+                               int *pOptCode, char **ppszOptText, int *pOptEncoding)
+{
+    uint8_t u8Code;
+    uint32_t u32Enc;
+    char *pszNext;
+    int rc;
+
+    rc = RTStrToUInt8Ex(pszText, &pszNext, 10, &u8Code);
+    if (!RT_SUCCESS(rc))
+        return VERR_PARSE_ERROR;
+
+    switch (*pszNext)
+    {
+        case ':':           /* support legacy format too */
+        {
+            u32Enc = 0;
+            break;
+        }
+
+        case '=':
+        {
+            u32Enc = 1;
+            break;
+        }
+
+        case '@':
+        {
+            rc = RTStrToUInt32Ex(pszNext + 1, &pszNext, 10, &u32Enc);
+            if (!RT_SUCCESS(rc))
+                return VERR_PARSE_ERROR;
+            if (*pszNext != '=')
+                return VERR_PARSE_ERROR;
+            break;
+        }
+
+        default:
+            return VERR_PARSE_ERROR;
+    }
+
+    *pOptCode = u8Code;
+    *ppszOptText = pszNext + 1;
+    *pOptEncoding = (int)u32Enc;
+
+    return VINF_SUCCESS;
+}
+
+
+static int fillDhcpOption(RawOption &opt, const std::string &OptText, int OptEncoding)
+{
+    int rc;
+
+    if (OptEncoding == DhcpOptEncoding_Hex)
+    {
+        if (OptText.empty())
+            return VERR_INVALID_PARAMETER;
+
+        size_t cbRawOpt = 0;
+        char *pszNext = const_cast<char *>(OptText.c_str());
+        while (*pszNext != '\0')
+        {
+            if (cbRawOpt >= RT_ELEMENTS(opt.au8RawOpt))
+                return VERR_INVALID_PARAMETER;
+
+            uint8_t u8Byte;
+            rc = RTStrToUInt8Ex(pszNext, &pszNext, 16, &u8Byte);
+            if (!RT_SUCCESS(rc))
+                return rc;
+
+            if (*pszNext == ':')
+                ++pszNext;
+            else if (*pszNext != '\0')
+                return VERR_PARSE_ERROR;
+
+            opt.au8RawOpt[cbRawOpt] = u8Byte;
+            ++cbRawOpt;
+        }
+        opt.cbRawOpt = (uint8_t)cbRawOpt;
+    }
+    else if (OptEncoding == DhcpOptEncoding_Legacy)
+    {
+        /*
+         * XXX: TODO: encode "known" option opt.u8OptId
+         */
+        return VERR_INVALID_PARAMETER;
+    }
+
+    return VINF_SUCCESS;
+}
+
+
+int NetworkManager::processParameterReqList(const Client& client, const uint8_t *pu8ReqList,
                                             int cReqList, std::vector<RawOption>& extra)
 {
+    int rc;
+
     const Lease l = client.lease();
 
     const NetworkConfigEntity *pNetCfg = l.getConfig();
+
+    /*
+     * XXX: Brute-force.  Unfortunately, there's no notification event
+     * for changes.  Should at least cache the options for a short
+     * time, enough to last discover/offer/request/ack cycle.
+     */
+    typedef std::map< int, std::pair<std::string, int> > DhcpOptionMap;
+    DhcpOptionMap OptMap;
+
+    if (!m->m_DhcpServer.isNull())
+    {
+        com::SafeArray<BSTR> strings;
+        com::Bstr str;
+        HRESULT hrc;
+        int OptCode, OptEncoding;
+        char *pszOptText;
+
+        strings.setNull();
+        hrc = m->m_DhcpServer->COMGETTER(GlobalOptions)(ComSafeArrayAsOutParam(strings));
+        AssertComRC(hrc);
+        for (size_t i = 0; i < strings.size(); ++i)
+        {
+            com::Utf8Str encoded(strings[i]);
+            rc = parseDhcpOptionText(encoded.c_str(),
+                                     &OptCode, &pszOptText, &OptEncoding);
+            if (!RT_SUCCESS(rc))
+                continue;
+
+            OptMap[OptCode] = std::make_pair(pszOptText, OptEncoding);
+        }
+
+        const RTMAC &mac = client.getMacAddress();
+        char strMac[6*2+1] = "";
+        RTStrPrintf(strMac, sizeof(strMac), "%02x%02x%02x%02x%02x%02x",
+                    mac.au8[0], mac.au8[1], mac.au8[2],
+                    mac.au8[3], mac.au8[4], mac.au8[5]);
+
+        strings.setNull();
+        hrc = m->m_DhcpServer->GetMacOptions(com::Bstr(strMac).raw(),
+                                             ComSafeArrayAsOutParam(strings));
+        AssertComRC(hrc);
+        for (size_t i = 0; i < strings.size(); ++i)
+        {
+            com::Utf8Str text(strings[i]);
+            rc = parseDhcpOptionText(text.c_str(),
+                                     &OptCode, &pszOptText, &OptEncoding);
+            if (!RT_SUCCESS(rc))
+                continue;
+
+            OptMap[OptCode] = std::make_pair(pszOptText, OptEncoding);
+        }
+    }
 
     /* request parameter list */
     RawOption opt;
@@ -1048,15 +1206,35 @@ int NetworkManager::processParameterReqList(const Client& client, const uint8_t 
                         break;
                     }
 
-                    char *pszDomainName = (char *)&opt.au8RawOpt[0];
-
-                    strcpy(pszDomainName, domainName.c_str());
-                    opt.cbRawOpt = domainName.length();
+                    size_t cchLength = domainName.length();
+                    if (cchLength >= sizeof(opt.au8RawOpt))
+                        cchLength = sizeof(opt.au8RawOpt) - 1;
+                    memcpy(&opt.au8RawOpt[0], domainName.c_str(), cchLength);
+                    opt.au8RawOpt[cchLength] = '\0';
+                    opt.cbRawOpt = (uint8_t)cchLength;
                 }
                 break;
             default:
-                Log(("opt: %d is ignored\n", u8Req));
-                fIgnore = true;
+                {
+                    DhcpOptionMap::const_iterator it = OptMap.find((int)u8Req);
+                    if (it == OptMap.end())
+                    {
+                        Log(("opt: %d is ignored\n", u8Req));
+                        fIgnore = true;
+                    }
+                    else
+                    {
+                        std::string OptText((*it).second.first);
+                        int OptEncoding((*it).second.second);
+
+                        rc = fillDhcpOption(opt, OptText, OptEncoding);
+                        if (!RT_SUCCESS(rc))
+                        {
+                            fIgnore = true;
+                            break;
+                        }
+                    }
+                }
                 break;
         }
 
@@ -1233,28 +1411,38 @@ Lease::Lease(ClientData *pd):m(SharedPtr<ClientData>(pd)){}
 
 bool Lease::toXML(xml::ElementNode *node) const
 {
-    bool valueAddition = node->setAttribute(tagXMLLeaseAttributeMac.c_str(), com::Utf8StrFmt("%RTmac", &m->m_mac));
-    if (!valueAddition) return false;
+    xml::AttributeNode *pAttribNode = node->setAttribute(tagXMLLeaseAttributeMac.c_str(),
+                                                         com::Utf8StrFmt("%RTmac", &m->m_mac));
+    if (!pAttribNode)
+        return false;
 
-    valueAddition = node->setAttribute(tagXMLLeaseAttributeNetwork.c_str(), com::Utf8StrFmt("%RTnaipv4", m->m_network));
-    if (!valueAddition) return false;
+    pAttribNode = node->setAttribute(tagXMLLeaseAttributeNetwork.c_str(),
+                                     com::Utf8StrFmt("%RTnaipv4", m->m_network));
+    if (!pAttribNode)
+        return false;
 
-    xml::ElementNode *address = node->createChild(tagXMLLeaseAddress.c_str());
-    if (!address) return false;
+    xml::ElementNode *pLeaseAddress = node->createChild(tagXMLLeaseAddress.c_str());
+    if (!pLeaseAddress)
+        return false;
 
-    valueAddition = address->setAttribute(tagXMLAddressAttributeValue.c_str(), com::Utf8StrFmt("%RTnaipv4", m->m_address));
-    if (!valueAddition) return false;
+    pAttribNode = pLeaseAddress->setAttribute(tagXMLAddressAttributeValue.c_str(),
+                                              com::Utf8StrFmt("%RTnaipv4", m->m_address));
+    if (!pAttribNode)
+        return false;
 
-    xml::ElementNode *time = node->createChild(tagXMLLeaseTime.c_str());
-    if (!time) return false;
+    xml::ElementNode *pLeaseTime = node->createChild(tagXMLLeaseTime.c_str());
+    if (!pLeaseTime)
+        return false;
 
-    valueAddition = time->setAttribute(tagXMLTimeAttributeIssued.c_str(),
-                                       m->u64TimestampLeasingStarted);
-    if (!valueAddition) return false;
+    pAttribNode = pLeaseTime->setAttribute(tagXMLTimeAttributeIssued.c_str(),
+                                           m->u64TimestampLeasingStarted);
+    if (!pAttribNode)
+        return false;
 
-    valueAddition = time->setAttribute(tagXMLTimeAttributeExpiration.c_str(),
-                                       m->u32LeaseExpirationPeriod);
-    if (!valueAddition) return false;
+    pAttribNode = pLeaseTime->setAttribute(tagXMLTimeAttributeExpiration.c_str(),
+                                           m->u32LeaseExpirationPeriod);
+    if (!pAttribNode)
+        return false;
 
     return true;
 }

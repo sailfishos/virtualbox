@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 #include <iprt/cdefs.h>
 #include <iprt/getopt.h>
@@ -54,7 +55,8 @@
 bool NetworkManager::handleDhcpReqDiscover(PCRTNETBOOTP pDhcpMsg, size_t cb)
 {
     RawOption opt;
-    memset(&opt, 0, sizeof(RawOption));
+    RT_ZERO(opt);
+
     /* 1. Find client */
     ConfigurationManager *confManager = ConfigurationManager::getConfigurationManager();
     Client client = confManager->getClientByDhcpPacket(pDhcpMsg, cb);
@@ -64,6 +66,7 @@ bool NetworkManager::handleDhcpReqDiscover(PCRTNETBOOTP pDhcpMsg, size_t cb)
     AssertReturn(lease != Lease::NullLease, VINF_SUCCESS);
 
     int rc = ConfigurationManager::extractRequestList(pDhcpMsg, cb, opt);
+    NOREF(rc); /** @todo check */
 
     /* 3. Send of offer */
 
@@ -72,7 +75,7 @@ bool NetworkManager::handleDhcpReqDiscover(PCRTNETBOOTP pDhcpMsg, size_t cb)
     lease.setExpiration(300); /* 3 min. */
     offer4Client(client, pDhcpMsg->bp_xid, opt.au8RawOpt, opt.cbRawOpt);
 
-    return VINF_SUCCESS;
+    return true;
 }
 
 
@@ -104,20 +107,18 @@ bool NetworkManager::handleDhcpReqRequest(PCRTNETBOOTP pDhcpMsg, size_t cb)
             confManager->expireLease4Client(c);
             return true;
         }
-        else {
-            /* XXX: Validate request */
-            RawOption opt;
-            RT_ZERO(opt);
+        /* XXX: Validate request */
+        RawOption opt;
+        RT_ZERO(opt);
 
-            Client c(client);
-            int rc = confManager->commitLease4Client(c);
-            AssertRCReturn(rc, false);
+        Client c(client);
+        int rc = confManager->commitLease4Client(c);
+        AssertRCReturn(rc, false);
 
-            rc = ConfigurationManager::extractRequestList(pDhcpMsg, cb, opt);
-            AssertRCReturn(rc, false);
+        rc = ConfigurationManager::extractRequestList(pDhcpMsg, cb, opt);
+        AssertRCReturn(rc, false);
 
-            ack(client, pDhcpMsg->bp_xid, opt.au8RawOpt, opt.cbRawOpt);
-        }
+        ack(client, pDhcpMsg->bp_xid, opt.au8RawOpt, opt.cbRawOpt);
     }
     else
     {

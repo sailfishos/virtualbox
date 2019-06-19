@@ -1,8 +1,9 @@
+/* $Id: VBoxWineEx.h $ */
 /** @file
- *
  * VBox extension to Wine D3D
- *
- * Copyright (C) 2010 Oracle Corporation
+ */
+/*
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -42,7 +43,7 @@ typedef VBOXWINEEX_DECL(HRESULT) FNVBOXWINEEXD3DDEV9_CREATETEXTURE(IDirect3DDevi
 typedef FNVBOXWINEEXD3DDEV9_CREATETEXTURE *PFNVBOXWINEEXD3DDEV9_CREATETEXTURE;
 
 typedef VBOXWINEEX_DECL(HRESULT) FNVBOXWINEEXD3DDEV9_CREATECUBETEXTURE(IDirect3DDevice9Ex *iface,
-            UINT edge_length, UINT levels, DWORD usage, D3DFORMAT format, 
+            UINT edge_length, UINT levels, DWORD usage, D3DFORMAT format,
             D3DPOOL pool, IDirect3DCubeTexture9 **texture, HANDLE *shared_handle,
             void **pavClientMem);
 typedef FNVBOXWINEEXD3DDEV9_CREATECUBETEXTURE *PFNVBOXWINEEXD3DDEV9_CREATECUBETEXTURE;
@@ -53,6 +54,8 @@ typedef VBOXWINEEX_DECL(HRESULT) FNVBOXWINEEXD3DDEV9_CREATEVOLUMETEXTURE(IDirect
             void **pavClientMem);
 typedef FNVBOXWINEEXD3DDEV9_CREATEVOLUMETEXTURE *PFNVBOXWINEEXD3DDEV9_CREATEVOLUMETEXTURE;
 
+struct VBOXBOX3D;
+struct VBOXPOINT3D;
 typedef VBOXWINEEX_DECL(HRESULT) FNVBOXWINEEXD3DDEV9_VOLBLT(IDirect3DDevice9Ex *iface,
                                                     IDirect3DVolume9 *pSourceVolume, IDirect3DVolume9 *pDestinationVolume,
                                                     const struct VBOXBOX3D *pSrcBoxArg,

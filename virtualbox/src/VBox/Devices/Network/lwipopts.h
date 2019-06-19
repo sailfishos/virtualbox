@@ -1,6 +1,7 @@
 #ifndef VBOX_LWIP_OPTS_H_
 #define VBOX_LWIP_OPTS_H_
 
+#include <VBox/cdefs.h>     /* For VBOX_STRICT. */
 #include <iprt/mem.h>
 #include <iprt/alloca.h>    /* This may include malloc.h (msc), which is something that has
                              * to be done before redefining any of the functions therein. */
@@ -100,7 +101,7 @@
 
 /* PBUF_POOL_BUFSIZE: the size of each pbuf in the pbuf pool.
    Use default that is based on TCP_MSS and PBUF_LINK_HLEN.  */
-#undef PBUF_POOL_BUFSIZE  
+#undef PBUF_POOL_BUFSIZE
 
 /** Turn on support for lightweight critical region protection. Leaving this
  * off uses synchronization code in pbuf.c which is totally polluted with
@@ -128,17 +129,17 @@
 
 #define LWIP_ND6_ALLOW_RA_UPDATES       (!LWIP_IPV6_FORWARD)
 #define LWIP_IPV6_SEND_ROUTER_SOLICIT   (!LWIP_IPV6_FORWARD)
-/* IPv6 autoconfig we don't need in proxy, but it required for very seldom cases 
+/* IPv6 autoconfig we don't need in proxy, but it required for very seldom cases
  * iSCSI over intnet with IPv6
  */
-#define LWIP_IPV6_AUTOCONFIG            1 
+#define LWIP_IPV6_AUTOCONFIG            1
 #if LWIP_IPV6_FORWARD /* otherwise use the default from lwip/opt.h */
 #define LWIP_IPV6_DUP_DETECT_ATTEMPTS   0
 #endif
 
 #define LWIP_IPV6_FRAG                  1
 
-/** 
+/**
  * aka Slirp mode.
  */
 #define LWIP_CONNECTION_PROXY 0
@@ -162,15 +163,19 @@
 #define U16_F "hu"
 #define S16_F "hd"
 #define X16_F "hx"
-#define U32_F "lu"
-#define S32_F "ld"
-#define X32_F "lx"
+#define U32_F "u"
+#define S32_F "d"
+#define X32_F "x"
 
 /* Redirect libc memory alloc functions to IPRT. */
 #define malloc(x) RTMemAlloc(x)
 #define realloc(x,y) RTMemRealloc((x), (y))
 #define free(x) RTMemFree(x)
 
+/* Align VBOX_STRICT and LWIP_NOASSERT. */
+#ifndef VBOX_STRICT
+# define LWIP_NOASSERT 1
+#endif
 
 #include "lwip-namespace.h"
 

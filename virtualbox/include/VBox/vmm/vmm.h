@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,7 +35,11 @@
 
 RT_C_DECLS_BEGIN
 
-/** @defgroup grp_vmm       The Virtual Machine Monitor API
+/** @defgroup grp_vmm       The Virtual Machine Monitor
+ * @{
+ */
+
+/** @defgroup grp_vmm_api   The Virtual Machine Monitor API
  * @{
  */
 
@@ -125,7 +129,7 @@ typedef enum VMMCALLRING3
  * VMMRZCallRing3 notification callback.
  *
  * @returns VBox status code.
- * @param   pVCpu           Pointer to the VMCPU.
+ * @param   pVCpu           The cross context virtual CPU structure.
  * @param   enmOperation    The operation causing the ring-3 jump.
  * @param   pvUser          The user argument.
  */
@@ -140,9 +144,9 @@ typedef FNVMMR0CALLRING3NOTIFICATION *PFNVMMR0CALLRING3NOTIFICATION;
  *          informational status code other than the ones used by EM for
  *          scheduling.
  *
- * @param   pVM         The VM handle.
- * @param   pVCpu       The handle of the calling virtual CPU.
- * @param   pvUser      The user argument.
+ * @param   pVM     The cross context VM structure.
+ * @param   pVCpu   The cross context virtual CPU structure of the calling EMT.
+ * @param   pvUser  The user argument.
  */
 typedef DECLCALLBACK(VBOXSTRICTRC) FNVMMEMTRENDEZVOUS(PVM pVM, PVMCPU pVCpu, void *pvUser);
 /** Pointer to a rendezvous callback function. */
@@ -232,6 +236,20 @@ typedef struct VMM2USERMETHODS
      */
     DECLR3CALLBACKMEMBER(void, pfnNotifyResetTurnedIntoPowerOff,(PCVMM2USERMETHODS pThis, PUVM pUVM));
 
+    /**
+     * Generic object query by UUID.
+     *
+     * @returns pointer to queried the object on success, NULL if not found.
+     *
+     * @param   pThis       Pointer to the callback method table.
+     * @param   pUVM        The user mode VM handle.
+     * @param   pUuid       The UUID of what's being queried.  The UUIDs and the
+     *                      usage conventions are defined by the user.
+     *
+     * @remarks This is optional and shall be set to NULL if not wanted.
+     */
+    DECLR3CALLBACKMEMBER(void *, pfnQueryGenericObject,(PCVMM2USERMETHODS pThis, PUVM pUVM, PCRTUUID pUuid));
+
     /** Magic value (VMM2USERMETHODS_MAGIC) marking the end of the structure. */
     uint32_t    u32EndMagic;
 } VMM2USERMETHODS;
@@ -239,14 +257,14 @@ typedef struct VMM2USERMETHODS
 /** Magic value of the VMM2USERMETHODS (Franz Kafka). */
 #define VMM2USERMETHODS_MAGIC         UINT32_C(0x18830703)
 /** The VMM2USERMETHODS structure version. */
-#define VMM2USERMETHODS_VERSION       UINT32_C(0x00020001)
+#define VMM2USERMETHODS_VERSION       UINT32_C(0x00030000)
 
 
 /**
  * Checks whether we've armed the ring-0 long jump machinery.
  *
  * @returns @c true / @c false
- * @param   pVCpu           The caller's cross context virtual CPU structure.
+ * @param   a_pVCpu     The caller's cross context virtual CPU structure.
  * @thread  EMT
  * @sa      VMMR0IsLongJumpArmed
  */
@@ -267,11 +285,13 @@ VMM_INT_DECL(uint32_t)      VMMGetSvnRev(void);
 VMM_INT_DECL(VMMSWITCHER)   VMMGetSwitcher(PVM pVM);
 VMM_INT_DECL(bool)          VMMIsInRing3Call(PVMCPU pVCpu);
 VMM_INT_DECL(void)          VMMTrashVolatileXMMRegs(void);
+VMM_INT_DECL(int)           VMMPatchHypercall(PVM pVM, void *pvBuf, size_t cbBuf, size_t *pcbWritten);
+VMM_INT_DECL(void)          VMMHypercallsEnable(PVMCPU pVCpu);
+VMM_INT_DECL(void)          VMMHypercallsDisable(PVMCPU pVCpu);
 
 
-#ifdef IN_RING3
-/** @defgroup grp_vmm_r3    The VMM Host Context Ring 3 API
- * @ingroup grp_vmm
+#if defined(IN_RING3) || defined(DOXYGEN_RUNNING)
+/** @defgroup grp_vmm_api_r3    The VMM Host Context Ring 3 API
  * @{
  */
 VMMR3_INT_DECL(int)     VMMR3Init(PVM pVM);
@@ -300,34 +320,40 @@ VMMR3DECL(void)         VMMR3FatalDump(PVM pVM, PVMCPU pVCpu, int rcErr);
 VMMR3_INT_DECL(void)    VMMR3YieldSuspend(PVM pVM);
 VMMR3_INT_DECL(void)    VMMR3YieldStop(PVM pVM);
 VMMR3_INT_DECL(void)    VMMR3YieldResume(PVM pVM);
-VMMR3_INT_DECL(void)    VMMR3SendSipi(PVM pVM, VMCPUID idCpu, uint32_t uVector);
+VMMR3_INT_DECL(void)    VMMR3SendStartupIpi(PVM pVM, VMCPUID idCpu, uint32_t uVector);
 VMMR3_INT_DECL(void)    VMMR3SendInitIpi(PVM pVM, VMCPUID idCpu);
 VMMR3DECL(int)          VMMR3RegisterPatchMemory(PVM pVM, RTGCPTR pPatchMem, unsigned cbPatchMem);
 VMMR3DECL(int)          VMMR3DeregisterPatchMemory(PVM pVM, RTGCPTR pPatchMem, unsigned cbPatchMem);
 VMMR3DECL(int)          VMMR3EmtRendezvous(PVM pVM, uint32_t fFlags, PFNVMMEMTRENDEZVOUS pfnRendezvous, void *pvUser);
-VMMR3_INT_DECL(bool)    VMMR3EmtRendezvousSetDisabled(PVMCPU pVCpu, bool fDisabled);
 /** @defgroup grp_VMMR3EmtRendezvous_fFlags     VMMR3EmtRendezvous flags
  *  @{ */
 /** Execution type mask. */
 #define VMMEMTRENDEZVOUS_FLAGS_TYPE_MASK            UINT32_C(0x00000007)
 /** Invalid execution type. */
 #define VMMEMTRENDEZVOUS_FLAGS_TYPE_INVALID         UINT32_C(0)
-/** Let the EMTs execute the callback one by one (in no particular order). */
+/** Let the EMTs execute the callback one by one (in no particular order).
+ * Recursion from within the callback possible.  */
 #define VMMEMTRENDEZVOUS_FLAGS_TYPE_ONE_BY_ONE      UINT32_C(1)
-/** Let all the EMTs execute the callback at the same time. */
+/** Let all the EMTs execute the callback at the same time.
+ * Cannot recurse from the callback.  */
 #define VMMEMTRENDEZVOUS_FLAGS_TYPE_ALL_AT_ONCE     UINT32_C(2)
-/** Only execute the callback on one EMT (no particular one). */
+/** Only execute the callback on one EMT (no particular one).
+ * Recursion from within the callback possible.  */
 #define VMMEMTRENDEZVOUS_FLAGS_TYPE_ONCE            UINT32_C(3)
-/** Let the EMTs execute the callback one by one in ascending order. */
+/** Let the EMTs execute the callback one by one in ascending order.
+ * Recursion from within the callback possible. */
 #define VMMEMTRENDEZVOUS_FLAGS_TYPE_ASCENDING       UINT32_C(4)
-/** Let the EMTs execute the callback one by one in descending order. */
+/** Let the EMTs execute the callback one by one in descending order.
+ * Recursion from within the callback possible. */
 #define VMMEMTRENDEZVOUS_FLAGS_TYPE_DESCENDING      UINT32_C(5)
 /** Stop after the first error.
  * This is not valid for any execution type where more than one EMT is active
  * at a time. */
 #define VMMEMTRENDEZVOUS_FLAGS_STOP_ON_ERROR        UINT32_C(0x00000008)
+/** Use VMREQFLAGS_PRIORITY when contacting the EMTs. */
+#define VMMEMTRENDEZVOUS_FLAGS_PRIORITY             UINT32_C(0x00000010)
 /** The valid flags. */
-#define VMMEMTRENDEZVOUS_FLAGS_VALID_MASK           UINT32_C(0x0000000f)
+#define VMMEMTRENDEZVOUS_FLAGS_VALID_MASK           UINT32_C(0x0000001f)
 /** @} */
 VMMR3_INT_DECL(int)     VMMR3EmtRendezvousFF(PVM pVM, PVMCPU pVCpu);
 VMMR3_INT_DECL(int)     VMMR3ReadR0Stack(PVM pVM, VMCPUID idCpu, RTHCUINTPTR R0Addr, void *pvBuf, size_t cbRead);
@@ -335,8 +361,7 @@ VMMR3_INT_DECL(int)     VMMR3ReadR0Stack(PVM pVM, VMCPUID idCpu, RTHCUINTPTR R0A
 #endif /* IN_RING3 */
 
 
-/** @defgroup grp_vmm_r0    The VMM Host Context Ring 0 API
- * @ingroup grp_vmm
+/** @defgroup grp_vmm_api_r0    The VMM Host Context Ring 0 API
  * @{
  */
 
@@ -355,9 +380,13 @@ typedef enum VMMR0OPERATION
     VMMR0_DO_SLOW_NOP,
 
     /** Ask the GVMM to create a new VM. */
-    VMMR0_DO_GVMM_CREATE_VM,
+    VMMR0_DO_GVMM_CREATE_VM = 32,
     /** Ask the GVMM to destroy the VM. */
     VMMR0_DO_GVMM_DESTROY_VM,
+    /** Call GVMMR0RegisterVCpu(). */
+    VMMR0_DO_GVMM_REGISTER_VMCPU,
+    /** Call GVMMR0DeregisterVCpu(). */
+    VMMR0_DO_GVMM_DEREGISTER_VMCPU,
     /** Call GVMMR0SchedHalt(). */
     VMMR0_DO_GVMM_SCHED_HALT,
     /** Call GVMMR0SchedWakeUp(). */
@@ -372,26 +401,19 @@ typedef enum VMMR0OPERATION
     VMMR0_DO_GVMM_QUERY_STATISTICS,
     /** Call GVMMR0ResetStatistics(). */
     VMMR0_DO_GVMM_RESET_STATISTICS,
-    /** Call GVMMR0RegisterVCpu(). */
-    VMMR0_DO_GVMM_REGISTER_VMCPU,
 
     /** Call VMMR0 Per VM Init. */
-    VMMR0_DO_VMMR0_INIT,
+    VMMR0_DO_VMMR0_INIT = 64,
     /** Call VMMR0 Per VM Termination. */
     VMMR0_DO_VMMR0_TERM,
+
     /** Setup the hardware accelerated raw-mode session. */
-    VMMR0_DO_HM_SETUP_VM,
+    VMMR0_DO_HM_SETUP_VM = 128,
     /** Attempt to enable or disable hardware accelerated raw-mode. */
     VMMR0_DO_HM_ENABLE,
-    /** Calls function in the hypervisor.
-     * The caller must setup the hypervisor context so the call will be performed.
-     * The difference between VMMR0_DO_RUN_GC and this one is the handling of
-     * the return GC code. The return code will not be interpreted by this operation.
-     */
-    VMMR0_DO_CALL_HYPERVISOR,
 
     /** Call PGMR0PhysAllocateHandyPages(). */
-    VMMR0_DO_PGM_ALLOCATE_HANDY_PAGES,
+    VMMR0_DO_PGM_ALLOCATE_HANDY_PAGES = 192,
     /** Call PGMR0PhysFlushHandyPages(). */
     VMMR0_DO_PGM_FLUSH_HANDY_PAGES,
     /** Call PGMR0AllocateLargePage(). */
@@ -400,7 +422,7 @@ typedef enum VMMR0OPERATION
     VMMR0_DO_PGM_PHYS_SETUP_IOMMU,
 
     /** Call GMMR0InitialReservation(). */
-    VMMR0_DO_GMM_INITIAL_RESERVATION,
+    VMMR0_DO_GMM_INITIAL_RESERVATION = 256,
     /** Call GMMR0UpdateReservation(). */
     VMMR0_DO_GMM_UPDATE_RESERVATION,
     /** Call GMMR0AllocatePages(). */
@@ -434,18 +456,25 @@ typedef enum VMMR0OPERATION
     /** Call GMMR0ResetStatistics(). */
     VMMR0_DO_GMM_RESET_STATISTICS,
 
-    /** Set a GVMM or GMM configuration value. */
-    VMMR0_DO_GCFGM_SET_VALUE,
-    /** Query a GVMM or GMM configuration value. */
-    VMMR0_DO_GCFGM_QUERY_VALUE,
-
     /** Call PDMR0DriverCallReqHandler. */
-    VMMR0_DO_PDM_DRIVER_CALL_REQ_HANDLER,
+    VMMR0_DO_PDM_DRIVER_CALL_REQ_HANDLER = 320,
     /** Call PDMR0DeviceCallReqHandler. */
     VMMR0_DO_PDM_DEVICE_CALL_REQ_HANDLER,
 
+    /** Calls function in the hypervisor.
+     * The caller must setup the hypervisor context so the call will be performed.
+     * The difference between VMMR0_DO_RUN_GC and this one is the handling of
+     * the return GC code. The return code will not be interpreted by this operation.
+     */
+    VMMR0_DO_CALL_HYPERVISOR = 384,
+
+    /** Set a GVMM or GMM configuration value. */
+    VMMR0_DO_GCFGM_SET_VALUE = 400,
+    /** Query a GVMM or GMM configuration value. */
+    VMMR0_DO_GCFGM_QUERY_VALUE,
+
     /** The start of the R0 service operations. */
-    VMMR0_DO_SRV_START,
+    VMMR0_DO_SRV_START = 448,
     /** Call IntNetR0Open(). */
     VMMR0_DO_INTNET_OPEN,
     /** Call IntNetR0IfClose(). */
@@ -466,7 +495,7 @@ typedef enum VMMR0OPERATION
     VMMR0_DO_INTNET_IF_ABORT_WAIT,
 
     /** Forward call to the PCI driver */
-    VMMR0_DO_PCIRAW_REQ,
+    VMMR0_DO_PCIRAW_REQ = 512,
 
     /** The end of the R0 service operations. */
     VMMR0_DO_SRV_END,
@@ -503,24 +532,22 @@ typedef struct GCFGMVALUEREQ
  */
 typedef GCFGMVALUEREQ *PGCFGMVALUEREQ;
 
-#ifdef IN_RING0
-VMMR0DECL(int)       VMMR0EntryInt(PVM pVM, VMMR0OPERATION enmOperation, void *pvArg);
-VMMR0DECL(void)      VMMR0EntryFast(PVM pVM, VMCPUID idCpu, VMMR0OPERATION enmOperation);
-VMMR0DECL(int)       VMMR0EntryEx(PVM pVM, VMCPUID idCpu, VMMR0OPERATION enmOperation, PSUPVMMR0REQHDR pReq, uint64_t u64Arg, PSUPDRVSESSION);
-VMMR0DECL(int)       VMMR0TermVM(PVM pVM, PGVM pGVM);
+#if defined(IN_RING0) || defined(DOXYGEN_RUNNING)
+VMMR0DECL(void)      VMMR0EntryFast(PGVM pGVM, PVM pVM, VMCPUID idCpu, VMMR0OPERATION enmOperation);
+VMMR0DECL(int)       VMMR0EntryEx(PGVM pGVM, PVM pVM, VMCPUID idCpu, VMMR0OPERATION enmOperation,
+                                  PSUPVMMR0REQHDR pReq, uint64_t u64Arg, PSUPDRVSESSION);
+VMMR0_INT_DECL(int)  VMMR0TermVM(PGVM pGVM, PVM pVM, VMCPUID idCpu);
 VMMR0_INT_DECL(bool) VMMR0IsLongJumpArmed(PVMCPU pVCpu);
 VMMR0_INT_DECL(bool) VMMR0IsInRing3LongJump(PVMCPU pVCpu);
-VMMR0DECL(int)       VMMR0ThreadCtxHooksCreate(PVMCPU pVCpu);
-VMMR0DECL(void)      VMMR0ThreadCtxHooksRelease(PVMCPU pVCpu);
-VMMR0DECL(bool)      VMMR0ThreadCtxHooksAreCreated(PVMCPU pVCpu);
-VMMR0DECL(int)       VMMR0ThreadCtxHooksRegister(PVMCPU pVCpu, PFNRTTHREADCTXHOOK pfnHook);
-VMMR0DECL(int)       VMMR0ThreadCtxHooksDeregister(PVMCPU pVCpu);
-VMMR0DECL(bool)      VMMR0ThreadCtxHooksAreRegistered(PVMCPU pVCpu);
+VMMR0_INT_DECL(int)  VMMR0ThreadCtxHookCreateForEmt(PVMCPU pVCpu);
+VMMR0_INT_DECL(void) VMMR0ThreadCtxHookDestroyForEmt(PVMCPU pVCpu);
+VMMR0_INT_DECL(void) VMMR0ThreadCtxHookDisable(PVMCPU pVCpu);
+VMMR0_INT_DECL(bool) VMMR0ThreadCtxHookIsEnabled(PVMCPU pVCpu);
 
 # ifdef LOG_ENABLED
-VMMR0DECL(void)      VMMR0LogFlushDisable(PVMCPU pVCpu);
-VMMR0DECL(void)      VMMR0LogFlushEnable(PVMCPU pVCpu);
-VMMR0DECL(bool)      VMMR0IsLogFlushDisabled(PVMCPU pVCpu);
+VMMR0_INT_DECL(void) VMMR0LogFlushDisable(PVMCPU pVCpu);
+VMMR0_INT_DECL(void) VMMR0LogFlushEnable(PVMCPU pVCpu);
+VMMR0_INT_DECL(bool) VMMR0IsLogFlushDisabled(PVMCPU pVCpu);
 # else
 #  define            VMMR0LogFlushDisable(pVCpu)     do { } while(0)
 #  define            VMMR0LogFlushEnable(pVCpu)      do { } while(0)
@@ -531,20 +558,18 @@ VMMR0DECL(bool)      VMMR0IsLogFlushDisabled(PVMCPU pVCpu);
 /** @} */
 
 
-#ifdef IN_RC
-/** @defgroup grp_vmm_rc    The VMM Raw-Mode Context API
- * @ingroup grp_vmm
+#if defined(IN_RC) || defined(DOXYGEN_RUNNING)
+/** @defgroup grp_vmm_api_rc    The VMM Raw-Mode Context API
  * @{
  */
-VMMRCDECL(int)      VMMGCEntry(PVM pVM, unsigned uOperation, unsigned uArg, ...);
-VMMRCDECL(void)     VMMGCGuestToHost(PVM pVM, int rc);
-VMMRCDECL(void)     VMMGCLogFlushIfFull(PVM pVM);
+VMMRCDECL(int)      VMMRCEntry(PVM pVM, unsigned uOperation, unsigned uArg, ...);
+VMMRCDECL(void)     VMMRCGuestToHost(PVM pVM, int rc);
+VMMRCDECL(void)     VMMRCLogFlushIfFull(PVM pVM);
 /** @} */
 #endif /* IN_RC */
 
-#if defined(IN_RC) || defined(IN_RING0)
-/** @defgroup grp_vmm_rz    The VMM Raw-Mode and Ring-0 Context API
- * @ingroup grp_vmm
+#if defined(IN_RC) || defined(IN_RING0) || defined(DOXYGEN_RUNNING)
+/** @defgroup grp_vmm_api_rz    The VMM Raw-Mode and Ring-0 Context API
  * @{
  */
 VMMRZDECL(int)      VMMRZCallRing3(PVM pVM, PVMCPU pVCpu, VMMCALLRING3 enmOperation, uint64_t uArg);
@@ -558,6 +583,8 @@ VMMRZDECL(bool)     VMMRZCallRing3IsNotificationSet(PVMCPU pVCpu);
 /** @} */
 #endif
 
+
+/** @} */
 
 /** @} */
 RT_C_DECLS_END

@@ -1,11 +1,10 @@
+/* $Id: UIPortForwardingTable.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIPortForwardingTable class declaration
+ * VBox Qt GUI - UIPortForwardingTable class declaration.
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -62,7 +61,7 @@ public:
     PortData() : m_uValue(0) {}
     PortData(ushort uValue) : m_uValue(uValue) {}
     PortData(const PortData &other) : m_uValue(other.value()) {}
-    bool operator==(const PortData &other) { return m_uValue == other.m_uValue; }
+    bool operator==(const PortData &other) const { return m_uValue == other.m_uValue; }
     ushort value() const { return m_uValue; }
 
 private:
@@ -71,34 +70,96 @@ private:
 };
 Q_DECLARE_METATYPE(PortData);
 
-/* Port forwarding data: */
-struct UIPortForwardingData
+/** Port Forwarding Rule data structure. */
+struct UIDataPortForwardingRule
 {
-    UIPortForwardingData(const NameData &strName, KNATProtocol protocol,
-                         const IpData &strHostIP, PortData uHostPort,
-                         const IpData &strGuestIP, PortData uGuestPort)
-        : name(strName), protocol(protocol)
-        , hostIp(strHostIP), hostPort(uHostPort)
-        , guestIp(strGuestIP), guestPort(uGuestPort) {}
-    bool operator==(const UIPortForwardingData &other)
+    /** Constructs data. */
+    UIDataPortForwardingRule()
+        : name(QString())
+        , protocol(KNATProtocol_UDP)
+        , hostIp(IpData())
+        , hostPort(PortData())
+        , guestIp(IpData())
+        , guestPort(PortData())
+    {}
+
+    /** Constructs data on the basis of passed arguments.
+      * @param  strName      Brings the rule name.
+      * @param  enmProtocol  Brings the rule protocol.
+      * @param  strHostIP    Brings the rule host IP.
+      * @param  uHostPort    Brings the rule host port.
+      * @param  strGuestIP   Brings the rule guest IP.
+      * @param  uGuestPort   Brings the rule guest port. */
+    UIDataPortForwardingRule(const NameData &strName,
+                             KNATProtocol enmProtocol,
+                             const IpData &strHostIP,
+                             PortData uHostPort,
+                             const IpData &strGuestIP,
+                             PortData uGuestPort)
+        : name(strName)
+        , protocol(enmProtocol)
+        , hostIp(strHostIP)
+        , hostPort(uHostPort)
+        , guestIp(strGuestIP)
+        , guestPort(uGuestPort)
+    {}
+
+    /** Returns whether the @a other passed data is equal to this one. */
+    bool equal(const UIDataPortForwardingRule &other) const
     {
-        return name == other.name &&
-               protocol == other.protocol &&
-               hostIp == other.hostIp &&
-               hostPort == other.hostPort &&
-               guestIp == other.guestIp &&
-               guestPort == other.guestPort;
+        return true
+               && (name == other.name)
+               && (protocol == other.protocol)
+               && (hostIp == other.hostIp)
+               && (hostPort == other.hostPort)
+               && (guestIp == other.guestIp)
+               && (guestPort == other.guestPort)
+               ;
     }
+
+    /** Returns whether the @a other passed data is equal to this one. */
+    bool operator==(const UIDataPortForwardingRule &other) const { return equal(other); }
+    /** Returns whether the @a other passed data is different from this one. */
+    bool operator!=(const UIDataPortForwardingRule &other) const { return !equal(other); }
+
+    /** Holds the rule name. */
     NameData name;
+    /** Holds the rule protocol. */
     KNATProtocol protocol;
+    /** Holds the rule host IP. */
     IpData hostIp;
+    /** Holds the rule host port. */
     PortData hostPort;
+    /** Holds the rule guest IP. */
     IpData guestIp;
+    /** Holds the rule guest port. */
     PortData guestPort;
 };
 
+/* Port forwarding data, unique part: */
+struct UIPortForwardingDataUnique
+{
+    UIPortForwardingDataUnique(KNATProtocol enmProtocol,
+                               PortData uHostPort,
+                               const IpData &strHostIp)
+        : protocol(enmProtocol)
+        , hostPort(uHostPort)
+        , hostIp(strHostIp) {}
+    bool operator==(const UIPortForwardingDataUnique &other)
+    {
+        return    protocol == other.protocol
+               && hostPort == other.hostPort
+               && (   hostIp.isEmpty()    || other.hostIp.isEmpty()
+                   || hostIp == "0.0.0.0" || other.hostIp == "0.0.0.0"
+                   || hostIp              == other.hostIp);
+    }
+    KNATProtocol protocol;
+    PortData hostPort;
+    IpData hostIp;
+};
+
 /* Port forwarding data list: */
-typedef QList<UIPortForwardingData> UIPortForwardingDataList;
+typedef QList<UIDataPortForwardingRule> UIPortForwardingDataList;
 
 /* Port forwarding dialog: */
 class UIPortForwardingTable : public QIWithRetranslateUI<QWidget>
@@ -108,12 +169,17 @@ class UIPortForwardingTable : public QIWithRetranslateUI<QWidget>
 public:
 
     /* Constructor: */
-    UIPortForwardingTable(const UIPortForwardingDataList &rules, bool fIPv6);
+    UIPortForwardingTable(const UIPortForwardingDataList &rules, bool fIPv6, bool fAllowEmptyGuestIPs);
 
     /* API: Rules stuff: */
-    const UIPortForwardingDataList& rules() const;
+    const UIPortForwardingDataList rules() const;
     bool validate() const;
-    bool discard() const;
+
+    /** Returns whether the table data was changed. */
+    bool isChanged() const { return m_fIsTableDataChanged; }
+
+    /** Makes sure current editor data committed. */
+    void makeSureEditorDataCommitted();
 
 private slots:
 
@@ -122,8 +188,10 @@ private slots:
     void sltCopyRule();
     void sltDelRule();
 
+    /** Marks table data as changed. */
+    void sltTableDataChanged() { m_fIsTableDataChanged = true; }
+
     /* Handlers: Table stuff: */
-    void sltTableDataChanged();
     void sltCurrentChanged();
     void sltShowTableContexMenu(const QPoint &position);
     void sltAdjustTable();
@@ -137,6 +205,9 @@ private:
     bool eventFilter(QObject *pObject, QEvent *pEvent);
 
     /* Flags: */
+    bool m_fAllowEmptyGuestIPs;
+
+    /** Holds whether the table data was changed. */
     bool m_fIsTableDataChanged;
 
     /* Widgets: */

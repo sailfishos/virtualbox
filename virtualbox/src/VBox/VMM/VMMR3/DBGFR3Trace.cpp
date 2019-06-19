@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGF
 #include <VBox/vmm/dbgftrace.h>
 #include <VBox/vmm/cfgm.h>
@@ -37,15 +37,15 @@
 #include <iprt/trace.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(void) dbgfR3TraceInfo(PVM pVM, PCDBGFINFOHLP pHlp, const char *pszArgs);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * VMM trace point group translation table.
  */
@@ -69,7 +69,9 @@ static const struct
  * Initializes the tracing.
  *
  * @returns VBox status code
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
+ * @param   cbEntry     The trace entry size.
+ * @param   cEntries    The number of entries.
  */
 static int dbgfR3TraceEnable(PVM pVM, uint32_t cbEntry, uint32_t cEntries)
 {
@@ -120,7 +122,8 @@ static int dbgfR3TraceEnable(PVM pVM, uint32_t cbEntry, uint32_t cEntries)
 
     rc = RTTraceBufCarve(&hTraceBuf, cEntries, cbEntry, 0 /*fFlags*/, pvBlock, &cbBlock);
     AssertRCReturn(rc, rc);
-    AssertRelease(hTraceBuf == (RTTRACEBUF)pvBlock && (void *)hTraceBuf == pvBlock);
+    AssertRelease(hTraceBuf == (RTTRACEBUF)pvBlock);
+    AssertRelease((void *)hTraceBuf == pvBlock);
 
     pVM->hTraceBufR3 = hTraceBuf;
     pVM->hTraceBufR0 = MMHyperCCToR0(pVM, hTraceBuf);
@@ -133,7 +136,7 @@ static int dbgfR3TraceEnable(PVM pVM, uint32_t cbEntry, uint32_t cEntries)
  * Initializes the tracing.
  *
  * @returns VBox status code
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 int dbgfR3TraceInit(PVM pVM)
 {
@@ -198,7 +201,7 @@ int dbgfR3TraceInit(PVM pVM)
 /**
  * Terminates the tracing.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 void dbgfR3TraceTerm(PVM pVM)
 {
@@ -210,7 +213,7 @@ void dbgfR3TraceTerm(PVM pVM)
 /**
  * Relocates the trace buffer handle in RC.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 void dbgfR3TraceRelocate(PVM pVM)
 {
@@ -230,7 +233,7 @@ void dbgfR3TraceRelocate(PVM pVM)
  * @retval  VERR_INVALID_VM_HANDLE
  * @retval  VERR_INVALID_POINTER
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pszConfig   The configuration change specification.
  *
  *                      Trace point group names, optionally prefixed by a '-' to
@@ -357,7 +360,7 @@ VMMDECL(int) DBGFR3TraceConfig(PVM pVM, const char *pszConfig)
  * @retval  VERR_BUFFER_OVERFLOW if the buffer is too small. Buffer will be
  *          empty.
 
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszConfig           Pointer to the output buffer.
  * @param   cbConfig            The size of the output buffer.
  */
@@ -435,7 +438,7 @@ static DECLCALLBACK(void) dbgfR3TraceInfo(PVM pVM, PCDBGFINFOHLP pHlp, const cha
 {
     RTTRACEBUF hTraceBuf = pVM->hTraceBufR3;
     if (hTraceBuf == NIL_RTTRACEBUF)
-        pHlp->pfnPrintf(pHlp, "Tracing is disable\n");
+        pHlp->pfnPrintf(pHlp, "Tracing is disabled\n");
     else
     {
         pHlp->pfnPrintf(pHlp, "Trace buffer %p - %u entries of %u bytes\n",

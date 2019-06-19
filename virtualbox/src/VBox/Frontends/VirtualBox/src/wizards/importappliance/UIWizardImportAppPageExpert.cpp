@@ -1,12 +1,10 @@
 /* $Id: UIWizardImportAppPageExpert.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardImportAppPageExpert class implementation
+ * VBox Qt GUI - UIWizardImportAppPageExpert class implementation.
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,34 +15,39 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QFileInfo>
-#include <QVBoxLayout>
-#include <QGroupBox>
+# include <QFileInfo>
+# include <QVBoxLayout>
+# include <QGroupBox>
 
 /* Local includes: */
-#include "UIWizardImportAppPageExpert.h"
-#include "UIWizardImportApp.h"
-#include "VBoxGlobal.h"
-#include "VBoxFilePathSelectorWidget.h"
-#include "UIApplianceImportEditorWidget.h"
+# include "UIWizardImportAppPageExpert.h"
+# include "UIWizardImportApp.h"
+# include "VBoxGlobal.h"
+# include "UIEmptyFilePathSelector.h"
+# include "UIApplianceImportEditorWidget.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardImportAppPageExpert::UIWizardImportAppPageExpert(const QString &strFileName)
 {
     /* Create widgets: */
     QVBoxLayout *pMainLayout = new QVBoxLayout(this);
     {
-        pMainLayout->setContentsMargins(8, 6, 8, 6);
-        pMainLayout->setSpacing(10);
         m_pApplianceCnt = new QGroupBox(this);
         {
             QVBoxLayout *pApplianceCntLayout = new QVBoxLayout(m_pApplianceCnt);
             {
-                m_pFileSelector = new VBoxEmptyFileSelector(m_pApplianceCnt);
+                m_pFileSelector = new UIEmptyFilePathSelector(m_pApplianceCnt);
                 {
                     m_pFileSelector->setHomeDir(vboxGlobal().documentsPath());
-                    m_pFileSelector->setMode(VBoxFilePathSelectorWidget::Mode_File_Open);
-                    m_pFileSelector->setButtonPosition(VBoxEmptyFileSelector::RightPosition);
+                    m_pFileSelector->setMode(UIEmptyFilePathSelector::Mode_File_Open);
+                    m_pFileSelector->setButtonPosition(UIEmptyFilePathSelector::RightPosition);
                     m_pFileSelector->setEditable(true);
                 }
                 pApplianceCntLayout->addWidget(m_pFileSelector);

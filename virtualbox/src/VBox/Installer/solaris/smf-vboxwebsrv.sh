@@ -1,7 +1,8 @@
 #!/sbin/sh
 # $Id: smf-vboxwebsrv.sh $
 
-# Copyright (C) 2008-2012 Oracle Corporation
+#
+# Copyright (C) 2008-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -24,13 +25,13 @@ VW_EXIT=0
 
 case $VW_OPT in
     start)
-        if [ ! -x /opt/VirtualBox/vboxwebsrv ]; then
+        if [ ! -f /opt/VirtualBox/vboxwebsrv ]; then
             echo "ERROR: /opt/VirtualBox/vboxwebsrv does not exist."
             return $SMF_EXIT_ERR_CONFIG
         fi
 
-        if [ ! -f /opt/VirtualBox/vboxwebsrv ]; then
-            echo "ERROR: /opt/VirtualBox/vboxwebsrv does not exist."
+        if [ ! -x /opt/VirtualBox/vboxwebsrv ]; then
+            echo "ERROR: /opt/VirtualBox/vboxwebsrv is not executable."
             return $SMF_EXIT_ERR_CONFIG
         fi
 
@@ -123,6 +124,8 @@ case $VW_OPT in
     ;;
     stop)
         # Kill service contract
+        smf_kill_contract $2 TERM 1
+        # Be careful: wait 1 second, making sure that everything is cleaned up.
         smf_kill_contract $2 TERM 1
     ;;
     *)

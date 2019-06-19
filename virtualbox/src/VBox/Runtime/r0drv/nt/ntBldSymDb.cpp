@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,10 +25,10 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <Windows.h>
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 #include <Dbghelp.h>
 
 #include <iprt/alloca.h>
@@ -47,9 +47,9 @@
 #include "r0drv/nt/symdb.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** A structure member we're interested in. */
 typedef struct MYMEMBER
 {
@@ -108,9 +108,9 @@ typedef struct MYSET
 typedef MYSET *PMYSET;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Verbosity level (-v, --verbose). */
 static uint32_t g_iOptVerbose = 1;
 /** Set if we should force ahead despite errors. */
@@ -173,7 +173,7 @@ static const char *figureCStructName(MYSTRUCT const *pStruct)
 /**
  * Returns the name we wish to use in the C code.
  * @returns Member name.
- * @param   pStruct             The member descriptor.
+ * @param   pMember             The member descriptor.
  */
 static const char *figureCMemberName(MYMEMBER const *pMember)
 {
@@ -196,7 +196,7 @@ static void generateHeader(PRTSTREAM pOut)
                  " */\n"
                  "\n"
                  "/*\n"
-                 " * Copyright (C) 2013 Oracle Corporation\n"
+                 " * Copyright (C) 2013-2017 Oracle Corporation \n"
                  " *\n"
                  " * This file is part of VirtualBox Open Source Edition (OSE), as\n"
                  " * available from http://www.virtualbox.org. This file is free software;\n"
@@ -338,6 +338,8 @@ static void generateHeader(PRTSTREAM pOut)
  *
  * @returns Fully complained exit code.
  * @param   pOsVerInfo      The OS version info.
+ * @param   enmArch         The NT architecture of the incoming PDB.
+ * @param   pszPdb          The PDB file name.
  */
 static RTEXITCODE saveStructures(PRTNTSDBOSVER pOsVerInfo, MYARCH enmArch, const char *pszPdb)
 {
@@ -347,7 +349,7 @@ static RTEXITCODE saveStructures(PRTNTSDBOSVER pOsVerInfo, MYARCH enmArch, const
     static size_t s_cbNeeded = 0;
     if (s_cbNeeded == 0)
     {
-        s_cbNeeded = RT_OFFSETOF(MYSET, aStructs[RT_ELEMENTS(g_aStructs)]);
+        s_cbNeeded = RT_UOFFSETOF(MYSET, aStructs[RT_ELEMENTS(g_aStructs)]);
         for (uint32_t i = 0; i < RT_ELEMENTS(g_aStructs); i++)
             s_cbNeeded += sizeof(MYMEMBER) * g_aStructs[i].cMembers;
     }
@@ -468,6 +470,7 @@ static uint32_t matchUpStructMembers(unsigned cWantedMembers, PMYMEMBER paWanted
 }
 
 
+#if 0
 /**
  * Resets the writable structure members prior to processing a PDB.
  *
@@ -488,6 +491,7 @@ static void resetMyStructs(void)
         }
     }
 }
+#endif
 
 
 /**
@@ -517,7 +521,7 @@ static RTEXITCODE findMembers(HANDLE hFake, uint64_t uModAddr, uint32_t idxType,
 
     MyDbgPrintf(" %s: cChildren=%u (%#x)\n", pszStructNm, cChildren);
     TI_FINDCHILDREN_PARAMS *pChildren;
-    pChildren = (TI_FINDCHILDREN_PARAMS *)alloca(RT_OFFSETOF(TI_FINDCHILDREN_PARAMS, ChildId[cChildren]));
+    pChildren = (TI_FINDCHILDREN_PARAMS *)alloca(RT_UOFFSETOF_DYN(TI_FINDCHILDREN_PARAMS, ChildId[cChildren]));
     pChildren->Start = 0;
     pChildren->Count = cChildren;
     if (!SymGetTypeInfo(hFake, uModAddr, idxType, TI_FINDCHILDREN, pChildren))
@@ -687,6 +691,7 @@ static RTEXITCODE findStructures(HANDLE hFake, uint64_t uModAddr, const char *ps
 }
 
 
+#if 0 /* unused */
 static bool strIEndsWith(const char *pszString, const char *pszSuffix)
 {
     size_t cchString = strlen(pszString);
@@ -695,6 +700,7 @@ static bool strIEndsWith(const char *pszString, const char *pszSuffix)
         return false;
     return RTStrICmp(pszString + cchString - cchSuffix, pszSuffix) == 0;
 }
+#endif
 
 
 /**
@@ -751,7 +757,6 @@ static RTEXITCODE FigurePdbVersionInfo(const char *pszPdb, PRTNTSDBOSVER pVerInf
      *  - Windows_Win8.9200.16384.120725-1247.X86CHK
      *  - en_windows_8_1_symbols_debug_checked_x64_2712568
      */
-    bool fFound = false;
     uint32_t i = u.Split.cComps - 1;
     while (i-- > 0)
     {
@@ -790,6 +795,9 @@ static RTEXITCODE FigurePdbVersionInfo(const char *pszPdb, PRTNTSDBOSVER pVerInf
             { RT_STR_TUPLE("Windows_Winmain.8400"),             6, 2, 0, 8400 }, /* RC */
             { RT_STR_TUPLE("Windows_Win8.9200"),                6, 2, 0, 9200 }, /* RTM */
             { RT_STR_TUPLE("en_windows_8_1"),                   6, 3, 0, 9600 }, /* RTM */
+            { RT_STR_TUPLE("en_windows_10_symbols_"),          10, 0, 0,10240 }, /* RTM */
+            { RT_STR_TUPLE("en_windows_10_symbols_"),          10, 0, 0,10240 }, /* RTM */
+            { RT_STR_TUPLE("en_windows_10_17134_"),            10, 0, 0,17134 }, /* 1803 */
         };
 
         const char *pszComp  = u.Split.apszComps[i];
@@ -985,6 +993,7 @@ static bool isInterestingName(const char *pszName, size_t cchName)
  * @param   pszDir              Pointer to the directory buffer.
  * @param   cchDir              The length of pszDir in pszDir.
  * @param   pDirEntry           Pointer to the directory buffer.
+ * @param   iLogDepth           The logging depth.
  */
 static RTEXITCODE processDirSub(char *pszDir, size_t cchDir, PRTDIRENTRYEX pDirEntry, int iLogDepth)
 {
@@ -995,8 +1004,8 @@ static RTEXITCODE processDirSub(char *pszDir, size_t cchDir, PRTDIRENTRYEX pDirE
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "Path too long: '%s'\n", pszDir);
 
     /* Open directory. */
-    PRTDIR pDir;
-    int rc = RTDirOpen(&pDir, pszDir);
+    RTDIR hDir;
+    int rc = RTDirOpen(&hDir, pszDir);
     if (RT_FAILURE(rc))
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "RTDirOpen failed on '%s': %Rrc\n", pszDir, rc);
 
@@ -1015,13 +1024,12 @@ static RTEXITCODE processDirSub(char *pszDir, size_t cchDir, PRTDIRENTRYEX pDirE
     {
         /* Get the next directory. */
         size_t cbDirEntry = MY_DIRENTRY_BUF_SIZE;
-        rc = RTDirReadEx(pDir, pDirEntry, &cbDirEntry, RTFSOBJATTRADD_UNIX, RTPATH_F_ON_LINK);
+        rc = RTDirReadEx(hDir, pDirEntry, &cbDirEntry, RTFSOBJATTRADD_UNIX, RTPATH_F_ON_LINK);
         if (RT_FAILURE(rc))
             break;
 
         /* Skip the dot and dot-dot links. */
-        if (   (pDirEntry->cbName == 1 && pDirEntry->szName[0] == '.')
-            || (pDirEntry->cbName == 2 && pDirEntry->szName[0] == '.' && pDirEntry->szName[1] == '.'))
+        if (RTDirEntryExIsStdDotLink(pDirEntry))
             continue;
 
         /* Check length. */
@@ -1069,7 +1077,7 @@ static RTEXITCODE processDirSub(char *pszDir, size_t cchDir, PRTDIRENTRYEX pDirE
     if (rc != VERR_NO_MORE_FILES)
         rcExit = RTMsgErrorExit(RTEXITCODE_FAILURE, "RTDirReadEx failed: %Rrc\npszDir=%.*s", rc, cchDir, pszDir);
 
-    rc = RTDirClose(pDir);
+    rc = RTDirClose(hDir);
     if (RT_FAILURE(rc))
         rcExit = RTMsgErrorExit(RTEXITCODE_FAILURE, "RTDirClose failed: %Rrc\npszDir=%.*s", rc, cchDir, pszDir);
     return rcExit;
@@ -1146,7 +1154,7 @@ int main(int argc, char **argv)
                 break;
 
             case 'V':
-                RTPrintf("$Revision: 92629 $");
+                RTPrintf("$Revision: 125570 $");
                 break;
 
             case 'h':

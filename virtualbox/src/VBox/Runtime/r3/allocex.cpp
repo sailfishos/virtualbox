@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define RTMEM_NO_WRAP_TO_EF_APIS
 #include <iprt/mem.h>
 #include "internal/iprt.h"
@@ -38,8 +38,10 @@
 #include "allocex.h"
 
 
-RTDECL(int) RTMemAllocExTag(size_t cb, size_t cbAlignment, uint32_t fFlags, const char *pszTag, void **ppv) RT_NO_THROW
+RTDECL(int) RTMemAllocExTag(size_t cb, size_t cbAlignment, uint32_t fFlags, const char *pszTag, void **ppv) RT_NO_THROW_DEF
 {
+    RT_NOREF_PV(pszTag);
+
     /*
      * Validate and adjust input.
      */
@@ -104,7 +106,7 @@ RTDECL(int) RTMemAllocExTag(size_t cb, size_t cbAlignment, uint32_t fFlags, cons
 RT_EXPORT_SYMBOL(RTMemAllocExTag);
 
 
-RTDECL(void) RTMemFreeEx(void *pv, size_t cb) RT_NO_THROW
+RTDECL(void) RTMemFreeEx(void *pv, size_t cb) RT_NO_THROW_DEF
 {
     if (!pv)
         return;
@@ -113,7 +115,7 @@ RTDECL(void) RTMemFreeEx(void *pv, size_t cb) RT_NO_THROW
     PRTMEMHDRR3 pHdr = (PRTMEMHDRR3)pv - 1;
     AssertMsg(pHdr->u32Magic == RTMEMHDR_MAGIC, ("pHdr->u32Magic=%RX32 pv=%p cb=%#x\n", pHdr->u32Magic, pv, cb));
     pHdr->u32Magic = RTMEMHDR_MAGIC_DEAD;
-    Assert(pHdr->cbReq == cb);
+    Assert(pHdr->cbReq == cb); RT_NOREF_PV(cb);
 
     if (pHdr->fFlags & (RTMEMALLOCEX_FLAGS_16BIT_REACH | RTMEMALLOCEX_FLAGS_32BIT_REACH))
         rtMemFreeExYyBitReach(pHdr, pHdr->cb + sizeof(*pHdr), pHdr->fFlags);

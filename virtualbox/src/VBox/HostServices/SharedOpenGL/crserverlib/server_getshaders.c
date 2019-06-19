@@ -1,11 +1,10 @@
 /* $Id: server_getshaders.c $ */
-
 /** @file
  * VBox OpenGL GLSL related get functions
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -37,17 +36,19 @@ typedef struct _crGetActive_t
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetActiveAttrib(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, char *name)
 {
-    crGetActive_t *pLocal;
+    crGetActive_t *pLocal = NULL;
 
-    pLocal = (crGetActive_t*) crAlloc(bufSize+sizeof(crGetActive_t));
+    if (bufSize > 0 && bufSize < INT32_MAX / 2)
+        pLocal = (crGetActive_t*)crCalloc(bufSize + sizeof(crGetActive_t));
+
     if (!pLocal)
     {
         crGetActive_t zero;
         zero.length = 0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
-    /* zero out just the header to ensure it initially contains zero size values */
-    memset(pLocal, 0, sizeof (*pLocal));
+
     cr_server.head_spu->dispatch_table.GetActiveAttrib(crStateGetProgramHWID(program), index, bufSize, &pLocal->length, &pLocal->size, &pLocal->type, (char*)&pLocal[1]);
     crServerReturnValue(pLocal, pLocal->length+1+sizeof(crGetActive_t));
     crFree(pLocal);
@@ -55,17 +56,19 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetActiveAttrib(GLuint program, GL
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetActiveUniform(GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, GLenum *type, char *name)
 {
-    crGetActive_t *pLocal;
+    crGetActive_t *pLocal = NULL;
 
-    pLocal = (crGetActive_t*) crAlloc(bufSize+sizeof(crGetActive_t));
+    if (bufSize > 0 && bufSize < INT32_MAX / 2)
+        pLocal = (crGetActive_t*) crCalloc(bufSize + sizeof(crGetActive_t));
+
     if (!pLocal)
     {
         crGetActive_t zero;
         zero.length = 0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
-    /* zero out just the header to ensure it initially contains zero size values */
-    memset(pLocal, 0, sizeof (*pLocal));
+
     cr_server.head_spu->dispatch_table.GetActiveUniform(crStateGetProgramHWID(program), index, bufSize, &pLocal->length, &pLocal->size, &pLocal->type, (char*)&pLocal[1]);
     crServerReturnValue(pLocal, pLocal->length+1+sizeof(crGetActive_t));
     crFree(pLocal);
@@ -73,13 +76,16 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetActiveUniform(GLuint program, G
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetAttachedShaders(GLuint program, GLsizei maxCount, GLsizei *count, GLuint *shaders)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
 
-    pLocal = (GLsizei*) crAlloc(maxCount*sizeof(GLuint)+sizeof(GLsizei));
+    if (maxCount > 0 && maxCount < INT32_MAX / sizeof(GLuint) / 2)
+        pLocal = (GLsizei*) crCalloc(maxCount * sizeof(GLuint) + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
     /* initial (fallback )value */
     *pLocal = 0;
@@ -99,13 +105,16 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetAttachedShaders(GLuint program,
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetAttachedObjectsARB(VBoxGLhandleARB containerObj, GLsizei maxCount, GLsizei * count, VBoxGLhandleARB * obj)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
 
-    pLocal = (GLsizei*) crAlloc(maxCount*sizeof(VBoxGLhandleARB)+sizeof(GLsizei));
+    if (maxCount > 0 && maxCount < INT32_MAX / sizeof(VBoxGLhandleARB) / 2)
+        pLocal = (GLsizei*) crCalloc(maxCount * sizeof(VBoxGLhandleARB) + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
     /* initial (fallback )value */
     *pLocal = 0;
@@ -127,18 +136,21 @@ AssertCompile(sizeof(GLsizei) == 4);
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetInfoLogARB(VBoxGLhandleARB obj, GLsizei maxLength, GLsizei * length, GLcharARB * infoLog)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
     GLuint hwid;
 
-    pLocal = (GLsizei*) crAlloc(maxLength+sizeof(GLsizei));
+    if (maxLength > 0 && maxLength < INT32_MAX / 2)
+        pLocal = (GLsizei*) crCalloc(maxLength + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
     /* initial (fallback )value */
     *pLocal = 0;
-    /*@todo: recheck*/
+    /** @todo recheck*/
     hwid = crStateGetProgramHWID(obj);
     if (!hwid) hwid = crStateGetShaderHWID(obj);
     cr_server.head_spu->dispatch_table.GetInfoLogARB(hwid, maxLength, pLocal, (char*)&pLocal[1]);
@@ -149,13 +161,16 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetInfoLogARB(VBoxGLhandleARB obj,
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetShaderInfoLog(GLuint shader, GLsizei bufSize, GLsizei *length, char *infoLog)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
 
-    pLocal = (GLsizei*) crAlloc(bufSize+sizeof(GLsizei));
+    if (bufSize > 0 && bufSize < INT32_MAX / 2)
+        pLocal = (GLsizei*) crCalloc(bufSize + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
     /* initial (fallback )value */
     *pLocal = 0;
@@ -166,13 +181,16 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetShaderInfoLog(GLuint shader, GL
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetProgramInfoLog(GLuint program, GLsizei bufSize, GLsizei *length, char *infoLog)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
 
-    pLocal = (GLsizei*) crAlloc(bufSize+sizeof(GLsizei));
+    if (bufSize > 0 && bufSize < INT32_MAX / 2)
+        pLocal = (GLsizei*) crCalloc(bufSize + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
     /* initial (fallback )value */
     *pLocal = 0;
@@ -184,13 +202,16 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetProgramInfoLog(GLuint program, 
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetShaderSource(GLuint shader, GLsizei bufSize, GLsizei *length, char *source)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
 
-    pLocal = (GLsizei*) crAlloc(bufSize+sizeof(GLsizei));
+    if (bufSize > 0 && bufSize < INT32_MAX / 2)
+        pLocal = (GLsizei*) crCalloc(bufSize + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
     /* initial (fallback )value */
     *pLocal = 0;
@@ -200,21 +221,24 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetShaderSource(GLuint shader, GLs
     crFree(pLocal);
 }
 
-void SERVER_DISPATCH_APIENTRY 
+void SERVER_DISPATCH_APIENTRY
 crServerDispatchGetUniformsLocations(GLuint program, GLsizei maxcbData, GLsizei * cbData, GLvoid * pData)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
 
     (void) cbData;
     (void) pData;
 
-    pLocal = (GLsizei*) crAlloc(maxcbData+sizeof(GLsizei));
+    if (maxcbData > 0 && maxcbData < INT32_MAX / 2)
+        pLocal = (GLsizei*) crCalloc(maxcbData + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
-    
+
     /* initial (fallback )value */
     *pLocal = 0;
     crStateGLSLProgramCacheUniforms(program, maxcbData, pLocal, (char*)&pLocal[1]);
@@ -226,16 +250,19 @@ crServerDispatchGetUniformsLocations(GLuint program, GLsizei maxcbData, GLsizei 
 void SERVER_DISPATCH_APIENTRY
 crServerDispatchGetAttribsLocations(GLuint program, GLsizei maxcbData, GLsizei * cbData, GLvoid * pData)
 {
-    GLsizei *pLocal;
+    GLsizei *pLocal = NULL;
 
     (void) cbData;
     (void) pData;
 
-    pLocal = (GLsizei*) crAlloc(maxcbData+sizeof(GLsizei));
+    if (maxcbData > 0 && maxcbData < INT32_MAX / 2)
+        pLocal = (GLsizei*) crCalloc(maxcbData + sizeof(GLsizei));
+
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
 
     /* initial (fallback )value */
@@ -251,7 +278,7 @@ static GLint __GetUniformSize(GLuint program, GLint location)
     GLint  size = 0;
     GLenum type = 0;
 
-    /*@todo: check if index and location is the same*/
+    /** @todo check if index and location is the same*/
     cr_server.head_spu->dispatch_table.GetActiveUniform(crStateGetProgramHWID(program), location, 0, NULL, &size, &type, NULL);
 
     return crStateGetUniformSize(type);
@@ -262,11 +289,12 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetUniformfv(GLuint program, GLint
     int size = __GetUniformSize(program, location) * sizeof(GLfloat);
     GLfloat *pLocal;
 
-    pLocal = (GLfloat*) crAlloc(size);
+    pLocal = (GLfloat*) crCalloc(size);
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
 
     cr_server.head_spu->dispatch_table.GetUniformfv(crStateGetProgramHWID(program), location, pLocal);
@@ -280,11 +308,12 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetUniformiv(GLuint program, GLint
     int size = __GetUniformSize(program, location) * sizeof(GLint);
     GLint *pLocal;
 
-    pLocal = (GLint*) crAlloc(size);
+    pLocal = (GLint*) crCalloc(size);
     if (!pLocal)
     {
         GLsizei zero=0;
         crServerReturnValue(&zero, sizeof(zero));
+        return;
     }
 
     cr_server.head_spu->dispatch_table.GetUniformiv(crStateGetProgramHWID(program), location, pLocal);
@@ -329,7 +358,7 @@ GLboolean SERVER_DISPATCH_APIENTRY crServerDispatchIsProgram(GLuint program)
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetObjectParameterfvARB( VBoxGLhandleARB obj, GLenum pname, GLfloat * params )
 {
-    GLfloat local_params[1];
+    GLfloat local_params[1] = {0};
     GLuint hwid = crStateGetProgramHWID(obj);
     (void) params;
 
@@ -348,7 +377,7 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetObjectParameterfvARB( VBoxGLhan
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetObjectParameterivARB( VBoxGLhandleARB obj, GLenum pname, GLint * params )
 {
-    GLint local_params[1];
+    GLint local_params[1] = {0};
     GLuint hwid = crStateGetProgramHWID(obj);
     if (!hwid)
     {

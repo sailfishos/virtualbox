@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,96 +23,91 @@
 
 #include "Logging.h"
 #include "VirtualBoxImpl.h"
+#include <iprt/time.h>
 #include <iprt/thread.h>
 #include <iprt/semaphore.h>
 #include <iprt/critsect.h>
 
 #include <algorithm>
+#include <set>
 #include <string>
 #include "HostDnsService.h"
 
 
-static HostDnsMonitor *g_monitor;
-
 static void dumpHostDnsInformation(const HostDnsInformation&);
 static void dumpHostDnsStrVector(const std::string&, const std::vector<std::string>&);
 
-/* Lockee */
-Lockee::Lockee()
-{
-    RTCritSectInit(&mLock);
-}
 
-Lockee::~Lockee()
+bool HostDnsInformation::equals(const HostDnsInformation &info, uint32_t fLaxComparison) const
 {
-    RTCritSectDelete(&mLock);
-}
+    bool fSameServers;
+    if ((fLaxComparison & IGNORE_SERVER_ORDER) == 0)
+    {
+        fSameServers = (servers == info.servers);
+    }
+    else
+    {
+        std::set<std::string> l(servers.begin(), servers.end());
+        std::set<std::string> r(info.servers.begin(), info.servers.end());
 
-const RTCRITSECT* Lockee::lock() const
-{
-    return &mLock;
-}
+        fSameServers = (l == r);
+    }
 
-/* ALock */
-ALock::ALock(const Lockee *aLockee)
-  : lockee(aLockee)
-{
-    RTCritSectEnter(const_cast<PRTCRITSECT>(lockee->lock()));
-}
+    bool fSameDomain, fSameSearchList;
+    if ((fLaxComparison & IGNORE_SUFFIXES) == 0)
+    {
+        fSameDomain = (domain == info.domain);
+        fSameSearchList = (searchList == info.searchList);
+    }
+    else
+    {
+        fSameDomain = fSameSearchList = true;
+    }
 
-ALock::~ALock()
-{
-    RTCritSectLeave(const_cast<PRTCRITSECT>(lockee->lock()));
+    return fSameServers && fSameDomain && fSameSearchList;
 }
 
 inline static void detachVectorOfString(const std::vector<std::string>& v,
-                                        ComSafeArrayOut(BSTR, aBstrArray))
+                                        std::vector<com::Utf8Str> &aArray)
 {
-    com::SafeArray<BSTR> aBstr(v.size());
-
-    std::vector<std::string>::const_iterator it;
-
-    int i = 0;
-    it = v.begin();
-    for (; it != v.end(); ++it, ++i)
-        Utf8Str(it->c_str()).cloneTo(&aBstr[i]);
-
-    aBstr.detachTo(ComSafeArrayOutArg(aBstrArray));
+    aArray.resize(v.size());
+    size_t i = 0;
+    for (std::vector<std::string>::const_iterator it = v.begin(); it != v.end(); ++it, ++i)
+        aArray[i] = Utf8Str(it->c_str());
 }
 
 struct HostDnsMonitor::Data
 {
-    Data(bool aThreaded):fThreaded(aThreaded){}
+    Data(bool aThreaded)
+      : proxy(NULL),
+        fThreaded(aThreaded)
+    {}
 
-    std::vector<PCHostDnsMonitorProxy> proxies;
-    HostDnsInformation info;
+    HostDnsMonitorProxy *proxy;
+
     const bool fThreaded;
-    RTTHREAD hMonitoringThread;
     RTSEMEVENT hDnsInitEvent;
+    RTTHREAD hMonitoringThread;
+
+    HostDnsInformation info;
 };
 
 struct HostDnsMonitorProxy::Data
 {
-    Data(const HostDnsMonitor *aMonitor, const VirtualBox *aParent)
-      : info(NULL)
-      , virtualbox(aParent)
-      , monitor(aMonitor)
-      , fModified(true)
+    Data(HostDnsMonitor *aMonitor, VirtualBox *aParent)
+      : virtualbox(aParent),
+        monitor(aMonitor),
+        uLastExtraDataPoll(0),
+        fLaxComparison(0),
+        info()
     {}
 
-    virtual ~Data()
-    {
-        if (info)
-        {
-            delete info;
-            info = NULL;
-        }
-    }
+    VirtualBox *virtualbox;
+    HostDnsMonitor *monitor;
 
-    HostDnsInformation *info;
-    const VirtualBox *virtualbox;
-    const HostDnsMonitor *monitor;
-    bool fModified;
+    uint64_t uLastExtraDataPoll;
+    uint32_t fLaxComparison;
+    HostDnsInformation info;
 };
 
 
@@ -131,81 +126,48 @@ HostDnsMonitor::~HostDnsMonitor()
     }
 }
 
-const HostDnsMonitor *HostDnsMonitor::getHostDnsMonitor()
+HostDnsMonitor *HostDnsMonitor::createHostDnsMonitor()
 {
-    /* XXX: Moved initialization from HostImpl.cpp */
-    if (!g_monitor)
-    {
-# if defined (RT_OS_DARWIN)
-        g_monitor = new HostDnsServiceDarwin();
-# elif defined(RT_OS_WINDOWS)
-        g_monitor = new HostDnsServiceWin();
-# elif defined(RT_OS_LINUX)
-        g_monitor = new HostDnsServiceLinux();
-# elif defined(RT_OS_SOLARIS)
-        g_monitor =  new HostDnsServiceSolaris();
-# elif defined(RT_OS_FREEBSD)
-        g_monitor = new HostDnsServiceFreebsd();
-# elif defined(RT_OS_OS2)
-        g_monitor = new HostDnsServiceOs2();
-# else
-        g_monitor = new HostDnsService();
-# endif
-        g_monitor->init();
-    }
+    HostDnsMonitor *monitor = NULL;
 
-    return g_monitor;
+#if defined (RT_OS_DARWIN)
+    monitor = new HostDnsServiceDarwin();
+#elif defined(RT_OS_WINDOWS)
+    monitor = new HostDnsServiceWin();
+#elif defined(RT_OS_LINUX)
+    monitor = new HostDnsServiceLinux();
+#elif defined(RT_OS_SOLARIS)
+    monitor =  new HostDnsServiceSolaris();
+#elif defined(RT_OS_FREEBSD)
+    monitor = new HostDnsServiceFreebsd();
+#elif defined(RT_OS_OS2)
+    monitor = new HostDnsServiceOs2();
+#else
+    monitor = new HostDnsService();
+#endif
+
+    return monitor;
 }
 
-void HostDnsMonitor::addMonitorProxy(PCHostDnsMonitorProxy proxy) const
-{
-    ALock l(this);
-    m->proxies.push_back(proxy);
-    proxy->notify();
-}
-
-void HostDnsMonitor::releaseMonitorProxy(PCHostDnsMonitorProxy proxy) const
-{
-    ALock l(this);
-    std::vector<PCHostDnsMonitorProxy>::iterator it;
-    it = std::find(m->proxies.begin(), m->proxies.end(), proxy);
-
-    if (it == m->proxies.end())
-        return;
-
-    m->proxies.erase(it);
-}
 
 void HostDnsMonitor::shutdown()
 {
-    if (g_monitor)
-    {
-        delete g_monitor;
-        g_monitor = NULL;
-    }
+    monitorThreadShutdown();
+    int rc = RTThreadWait(m->hMonitoringThread, 5000, NULL);
+    AssertRCSuccess(rc);
 }
 
-const HostDnsInformation &HostDnsMonitor::getInfo() const
-{
-    return m->info;
-}
-
-void HostDnsMonitor::notifyAll() const
-{
-    ALock l(this);
-    std::vector<PCHostDnsMonitorProxy>::const_iterator it;
-    for (it = m->proxies.begin(); it != m->proxies.end(); ++it)
-        (*it)->notify();
-}
 
 void HostDnsMonitor::setInfo(const HostDnsInformation &info)
 {
-    ALock l(this);
-    m->info = info;
+    if (m->proxy != NULL)
+        m->proxy->notify(info);
 }
 
-HRESULT HostDnsMonitor::init()
+HRESULT HostDnsMonitor::init(HostDnsMonitorProxy *proxy)
 {
+    m->proxy = proxy;
+
     if (m->fThreaded)
     {
         int rc = RTSemEventCreate(&m->hDnsInitEvent);
@@ -213,7 +175,8 @@ HRESULT HostDnsMonitor::init()
 
         rc = RTThreadCreate(&m->hMonitoringThread,
                             HostDnsMonitor::threadMonitoringRoutine,
-                            this, 128 * _1K, RTTHREADTYPE_IO, 0, "dns-monitor");
+                            this, 128 * _1K, RTTHREADTYPE_IO,
+                            RTTHREADFLAGS_WAITABLE, "dns-monitor");
         AssertRCReturn(rc, E_FAIL);
 
         RTSemEventWait(m->hDnsInitEvent, RT_INDEFINITE_WAIT);
@@ -222,13 +185,72 @@ HRESULT HostDnsMonitor::init()
 }
 
 
+void HostDnsMonitorProxy::pollGlobalExtraData()
+{
+    VirtualBox *virtualbox = m->virtualbox;
+    if (RT_UNLIKELY(virtualbox == NULL))
+        return;
+
+    uint64_t uNow = RTTimeNanoTS();
+    if (uNow - m->uLastExtraDataPoll >= RT_NS_30SEC || m->uLastExtraDataPoll == 0)
+    {
+        m->uLastExtraDataPoll = uNow;
+
+        /*
+         * Should we ignore the order of DNS servers?
+         */
+        const com::Bstr bstrHostDNSOrderIgnoreKey("VBoxInternal2/HostDNSOrderIgnore");
+        com::Bstr bstrHostDNSOrderIgnore;
+        virtualbox->GetExtraData(bstrHostDNSOrderIgnoreKey.raw(),
+                                 bstrHostDNSOrderIgnore.asOutParam());
+        uint32_t fDNSOrderIgnore = 0;
+        if (bstrHostDNSOrderIgnore.isNotEmpty())
+        {
+            if (bstrHostDNSOrderIgnore != "0")
+                fDNSOrderIgnore = HostDnsInformation::IGNORE_SERVER_ORDER;
+        }
+
+        if (fDNSOrderIgnore != (m->fLaxComparison & HostDnsInformation::IGNORE_SERVER_ORDER))
+        {
+
+            m->fLaxComparison ^= HostDnsInformation::IGNORE_SERVER_ORDER;
+            LogRel(("HostDnsMonitor: %ls=%ls\n",
+                    bstrHostDNSOrderIgnoreKey.raw(),
+                    bstrHostDNSOrderIgnore.raw()));
+        }
+
+        /*
+         * Should we ignore changes to the domain name or the search list?
+         */
+        const com::Bstr bstrHostDNSSuffixesIgnoreKey("VBoxInternal2/HostDNSSuffixesIgnore");
+        com::Bstr bstrHostDNSSuffixesIgnore;
+        virtualbox->GetExtraData(bstrHostDNSSuffixesIgnoreKey.raw(),
+                                 bstrHostDNSSuffixesIgnore.asOutParam());
+        uint32_t fDNSSuffixesIgnore = 0;
+        if (bstrHostDNSSuffixesIgnore.isNotEmpty())
+        {
+            if (bstrHostDNSSuffixesIgnore != "0")
+                fDNSSuffixesIgnore = HostDnsInformation::IGNORE_SUFFIXES;
+        }
+
+        if (fDNSSuffixesIgnore != (m->fLaxComparison & HostDnsInformation::IGNORE_SUFFIXES))
+        {
+
+            m->fLaxComparison ^= HostDnsInformation::IGNORE_SUFFIXES;
+            LogRel(("HostDnsMonitor: %ls=%ls\n",
+                    bstrHostDNSSuffixesIgnoreKey.raw(),
+                    bstrHostDNSSuffixesIgnore.raw()));
+        }
+    }
+}
+
 void HostDnsMonitor::monitorThreadInitializationDone()
 {
     RTSemEventSignal(m->hDnsInitEvent);
 }
 
 
-int HostDnsMonitor::threadMonitoringRoutine(RTTHREAD, void *pvUser)
+DECLCALLBACK(int) HostDnsMonitor::threadMonitoringRoutine(RTTHREAD, void *pvUser)
 {
     HostDnsMonitor *pThis = static_cast<HostDnsMonitor *>(pvUser);
     return pThis->monitorWorker();
@@ -242,114 +264,114 @@ HostDnsMonitorProxy::HostDnsMonitorProxy()
 
 HostDnsMonitorProxy::~HostDnsMonitorProxy()
 {
+    Assert(!m);
+}
+
+void HostDnsMonitorProxy::init(VirtualBox* aParent)
+{
+    HostDnsMonitor *monitor = HostDnsMonitor::createHostDnsMonitor();
+    m = new HostDnsMonitorProxy::Data(monitor, aParent);
+    m->monitor->init(this);
+}
+
+
+void HostDnsMonitorProxy::uninit()
+{
     if (m)
     {
-        if (m->monitor)
-            m->monitor->releaseMonitorProxy(this);
+        m->monitor->shutdown();
         delete m;
         m = NULL;
     }
 }
 
-void HostDnsMonitorProxy::init(const HostDnsMonitor *mon, const VirtualBox* aParent)
+void HostDnsMonitorProxy::notify(const HostDnsInformation &info)
 {
-    m = new HostDnsMonitorProxy::Data(mon, aParent);
-    m->monitor->addMonitorProxy(this);
-    updateInfo();
+    bool fNotify = updateInfo(info);
+    if (fNotify)
+        m->virtualbox->i_onHostNameResolutionConfigurationChange();
 }
 
-void HostDnsMonitorProxy::notify() const
+HRESULT HostDnsMonitorProxy::GetNameServers(std::vector<com::Utf8Str> &aNameServers)
 {
-    m->fModified = true;
-    const_cast<VirtualBox *>(m->virtualbox)->onHostNameResolutionConfigurationChange();
-}
-
-HRESULT HostDnsMonitorProxy::GetNameServers(ComSafeArrayOut(BSTR, aNameServers))
-{
-    AssertReturn(m && m->info, E_FAIL);
-    ALock l(this);
-
-    if (m->fModified)
-        updateInfo();
+    AssertReturn(m != NULL, E_FAIL);
+    RTCLock grab(m_LockMtx);
 
     LogRel(("HostDnsMonitorProxy::GetNameServers:\n"));
-    dumpHostDnsStrVector("Name Server", m->info->servers);
+    dumpHostDnsStrVector("name server", m->info.servers);
 
-    detachVectorOfString(m->info->servers, ComSafeArrayOutArg(aNameServers));
-
-    return S_OK;
-}
-
-HRESULT HostDnsMonitorProxy::GetDomainName(BSTR *aDomainName)
-{
-    AssertReturn(m && m->info, E_FAIL);
-    ALock l(this);
-
-    if (m->fModified)
-        updateInfo();
-
-    LogRel(("HostDnsMonitorProxy::GetDomainName: %s\n", m->info->domain.c_str()));
-
-    Utf8Str(m->info->domain.c_str()).cloneTo(aDomainName);
+    detachVectorOfString(m->info.servers, aNameServers);
 
     return S_OK;
 }
 
-HRESULT HostDnsMonitorProxy::GetSearchStrings(ComSafeArrayOut(BSTR, aSearchStrings))
+HRESULT HostDnsMonitorProxy::GetDomainName(com::Utf8Str *pDomainName)
 {
-    AssertReturn(m && m->info, E_FAIL);
-    ALock l(this);
+    AssertReturn(m != NULL, E_FAIL);
+    RTCLock grab(m_LockMtx);
 
-    if (m->fModified)
-        updateInfo();
+    LogRel(("HostDnsMonitorProxy::GetDomainName: %s\n",
+            m->info.domain.empty() ? "no domain set" : m->info.domain.c_str()));
+
+    *pDomainName = m->info.domain.c_str();
+
+    return S_OK;
+}
+
+HRESULT HostDnsMonitorProxy::GetSearchStrings(std::vector<com::Utf8Str> &aSearchStrings)
+{
+    AssertReturn(m != NULL, E_FAIL);
+    RTCLock grab(m_LockMtx);
 
     LogRel(("HostDnsMonitorProxy::GetSearchStrings:\n"));
-    dumpHostDnsStrVector("Search String", m->info->searchList);
+    dumpHostDnsStrVector("search string", m->info.searchList);
 
-    detachVectorOfString(m->info->searchList, ComSafeArrayOutArg(aSearchStrings));
+    detachVectorOfString(m->info.searchList, aSearchStrings);
 
     return S_OK;
 }
 
-bool HostDnsMonitorProxy::operator==(PCHostDnsMonitorProxy& rhs)
+bool HostDnsMonitorProxy::updateInfo(const HostDnsInformation &info)
 {
-    if (!m || !rhs->m)
-        return false;
+    LogRel(("HostDnsMonitor::updateInfo\n"));
+    RTCLock grab(m_LockMtx);
 
-    /**
-     * we've assigned to the same instance of VirtualBox.
-     */
-    return m->virtualbox == rhs->m->virtualbox;
-}
-
-void HostDnsMonitorProxy::updateInfo()
-{
-    HostDnsInformation *info = new HostDnsInformation(m->monitor->getInfo());
-    HostDnsInformation *old = m->info;
-
-    LogRel(("HostDnsMonitorProxy: Host's DNS information updated:\n"));
-    dumpHostDnsInformation(*info);
-
-    m->info = info;
-    if (old)
+    if (info.equals(m->info))
     {
-        LogRel(("HostDnsMonitorProxy: Old host information:\n"));
-        dumpHostDnsInformation(*old);
-
-        delete old;
+        LogRel(("HostDnsMonitor: unchanged\n"));
+        return false;
     }
 
-    m->fModified = false;
+    pollGlobalExtraData();
+
+    LogRel(("HostDnsMonitor: old information\n"));
+    dumpHostDnsInformation(m->info);
+    LogRel(("HostDnsMonitor: new information\n"));
+    dumpHostDnsInformation(info);
+
+    bool fIgnore = m->fLaxComparison != 0 && info.equals(m->info, m->fLaxComparison);
+    m->info = info;
+
+    if (fIgnore)
+    {
+        LogRel(("HostDnsMonitor: lax comparison %#x, not notifying\n", m->fLaxComparison));
+        return false;
+    }
+
+    return true;
 }
 
 
 static void dumpHostDnsInformation(const HostDnsInformation& info)
 {
-    dumpHostDnsStrVector("DNS server", info.servers);
-    dumpHostDnsStrVector("SearchString", info.searchList);
+    dumpHostDnsStrVector("server", info.servers);
 
     if (!info.domain.empty())
-        LogRel(("DNS domain: %s\n", info.domain.c_str()));
+        LogRel(("  domain: %s\n", info.domain.c_str()));
+    else
+        LogRel(("  no domain set\n"));
+
+    dumpHostDnsStrVector("search string", info.searchList);
 }
 
 
@@ -359,5 +381,7 @@ static void dumpHostDnsStrVector(const std::string& prefix, const std::vector<st
     for (std::vector<std::string>::const_iterator it = v.begin();
          it != v.end();
          ++it, ++i)
-        LogRel(("%s %d: %s\n", prefix.c_str(), i, it->c_str()));
+        LogRel(("  %s %d: %s\n", prefix.c_str(), i, it->c_str()));
+    if (v.empty())
+        LogRel(("  no %s entries\n", prefix.c_str()));
 }

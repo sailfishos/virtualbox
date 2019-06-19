@@ -1,11 +1,10 @@
 /* $Id: VBoxDispDbg.cpp $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,31 +14,6 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-
-/* @todo: move this to VBoxDispD3DCmn.h ? */
-#   if (_MSC_VER >= 1400) && !defined(VBOX_WITH_PATCHED_DDK)
-#       define _InterlockedExchange           _InterlockedExchange_StupidDDKVsCompilerCrap
-#       define _InterlockedExchangeAdd        _InterlockedExchangeAdd_StupidDDKVsCompilerCrap
-#       define _InterlockedCompareExchange    _InterlockedCompareExchange_StupidDDKVsCompilerCrap
-#       define _InterlockedAddLargeStatistic  _InterlockedAddLargeStatistic_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandset      _interlockedbittestandset_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandreset    _interlockedbittestandreset_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandset64    _interlockedbittestandset64_StupidDDKVsCompilerCrap
-#       define _interlockedbittestandreset64  _interlockedbittestandreset64_StupidDDKVsCompilerCrap
-#       pragma warning(disable : 4163)
-#       include <windows.h>
-#       pragma warning(default : 4163)
-#       undef  _InterlockedExchange
-#       undef  _InterlockedExchangeAdd
-#       undef  _InterlockedCompareExchange
-#       undef  _InterlockedAddLargeStatistic
-#       undef  _interlockedbittestandset
-#       undef  _interlockedbittestandreset
-#       undef  _interlockedbittestandset64
-#       undef  _interlockedbittestandreset64
-#   else
-#       include <windows.h>
-#   endif
 
 #include "VBoxDispD3DCmn.h"
 
@@ -59,7 +33,9 @@ char *vboxVDbgDoGetModuleName()
         DWORD cName = GetModuleFileNameA(NULL, g_VBoxVDbgModuleName, RT_ELEMENTS(g_VBoxVDbgModuleName));
         if (!cName)
         {
+#ifdef LOG_ENABLED
             DWORD winEr = GetLastError();
+#endif
             WARN(("GetModuleFileNameA failed, winEr %d", winEr));
             return NULL;
         }
@@ -224,6 +200,7 @@ VOID vboxVDbgDoDumpPerform(const char * pPrefix, PVBOXVDBG_DUMP_INFO pInfo, cons
 
 static DECLCALLBACK(void) vboxVDbgAllocRectContentsDumperCb(PVBOXVDBG_DUMP_INFO pInfo, BOOLEAN fBreak, void *pvDumper)
 {
+    RT_NOREF(fBreak, pvDumper);
     const VBOXWDDMDISP_ALLOCATION *pAlloc = pInfo->pAlloc;
     const RECT *pRect = pInfo->pRect;
 
@@ -279,8 +256,8 @@ VOID vboxVDbgDoDumpAllocRect(const char * pPrefix, PVBOXWDDMDISP_ALLOCATION pAll
 
 static DECLCALLBACK(void) vboxVDbgRcRectContentsDumperCb(PVBOXVDBG_DUMP_INFO pInfo, BOOLEAN fBreak, void *pvDumper)
 {
+    RT_NOREF(pvDumper);
     const VBOXWDDMDISP_ALLOCATION *pAlloc = pInfo->pAlloc;
-    IDirect3DResource9 *pD3DRc = pInfo->pD3DRc;
     const RECT *pRect = pInfo->pRect;
     IDirect3DSurface9 *pSurf;
     HRESULT hr = VBoxD3DIfSurfGet(pAlloc->pRc, pAlloc->iAlloc, &pSurf);
@@ -352,7 +329,7 @@ VOID vboxVDbgDoDumpBb(const char * pPrefix, IDirect3DSwapChain9 *pSwapchainIf, c
 VOID vboxVDbgDoDumpFb(const char * pPrefix, IDirect3DSwapChain9 *pSwapchainIf, const char * pSuffix, DWORD fFlags)
 {
     IDirect3DSurface9 *pBb = NULL;
-    HRESULT hr = pSwapchainIf->GetBackBuffer(-1, D3DBACKBUFFER_TYPE_MONO, &pBb);
+    HRESULT hr = pSwapchainIf->GetBackBuffer(~(UINT)0, D3DBACKBUFFER_TYPE_MONO, &pBb);
     Assert(hr == S_OK);
     if (FAILED(hr))
     {
@@ -390,6 +367,7 @@ VOID vboxVDbgDoDumpRt(const char * pPrefix, PVBOXWDDMDISP_DEVICE pDevice, const 
     {
         IDirect3DSurface9 *pRt;
         PVBOXWDDMDISP_ALLOCATION pAlloc = pDevice->apRTs[i];
+        if (!pAlloc) continue;
         IDirect3DDevice9 *pDeviceIf = pDevice->pDevice9If;
         HRESULT hr = pDeviceIf->GetRenderTarget(i, &pRt);
         Assert(hr == S_OK);
@@ -424,10 +402,11 @@ VOID vboxVDbgDoDumpSamplers(const char * pPrefix, PVBOXWDDMDISP_DEVICE pDevice, 
 
 static DECLCALLBACK(void) vboxVDbgLockUnlockSurfTexContentsDumperCb(PVBOXVDBG_DUMP_INFO pInfo, BOOLEAN fBreak, void *pvDumper)
 {
+    RT_NOREF(pvDumper);
     const VBOXWDDMDISP_ALLOCATION *pAlloc = pInfo->pAlloc;
     const RECT *pRect = pInfo->pRect;
     UINT bpp = vboxWddmCalcBitsPerPixel(pAlloc->SurfDesc.format);
-    uint32_t width, height, pitch;
+    uint32_t width, height, pitch = 0;
     void *pvData;
     if (pAlloc->LockInfo.fFlags.AreaValid)
     {
@@ -658,6 +637,7 @@ void vboxVDbgDoPrintRect(const char * pPrefix, const RECT *pRect, const char * p
 
 static VOID CALLBACK vboxVDbgTimerCb(__in PVOID lpParameter, __in BOOLEAN TimerOrWaitFired)
 {
+    RT_NOREF(lpParameter, TimerOrWaitFired);
     Assert(0);
 }
 
@@ -694,7 +674,7 @@ BOOL vboxVDbgDoCheckExe(const char * pszName)
     char *pszModule = vboxVDbgDoGetModuleName();
     if (!pszModule)
         return FALSE;
-    DWORD cbModule, cbName;
+    size_t cbModule, cbName;
     cbModule = strlen(pszModule);
     cbName = strlen(pszName);
     if (cbName > cbModule)

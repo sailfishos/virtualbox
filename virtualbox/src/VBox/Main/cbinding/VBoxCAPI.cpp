@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2015 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,7 +38,10 @@
 #include "VBox/com/com.h"
 #include "VBox/com/NativeEventQueue.h"
 
+
+#ifndef RT_OS_DARWIN /* Probably not used for xpcom, so clang gets upset: error: using directive refers to implicitly-defined namespace 'std' [-Werror]*/
 using namespace std;
+#endif
 
 /* The following 2 object references should be eliminated once the legacy
  * way to initialize the COM/XPCOM C bindings is removed. */
@@ -68,18 +71,21 @@ VBoxUtf16ToUtf8(CBSTR pwszString, char **ppszString)
 static int
 VBoxUtf8ToUtf16(const char *pszString, BSTR *ppwszString)
 {
+    *ppwszString = NULL;
     if (!pszString)
-    {
-        *ppwszString = NULL;
         return VINF_SUCCESS;
-    }
 #ifdef VBOX_WITH_XPCOM
     return RTStrToUtf16(pszString, ppwszString);
 #else /* !VBOX_WITH_XPCOM */
     PRTUTF16 pwsz;
     int vrc = RTStrToUtf16(pszString, &pwsz);
-    *ppwszString = ::SysAllocString(pwsz);
-    RTUtf16Free(pwsz);
+    if (RT_SUCCESS(vrc))
+    {
+        *ppwszString = ::SysAllocString(pwsz);
+        if (!*ppwszString)
+            vrc = VERR_NO_STR_MEMORY;
+        RTUtf16Free(pwsz);
+    }
     return vrc;
 #endif /* !VBOX_WITH_XPCOM */
 }
@@ -101,9 +107,9 @@ VBoxUtf16Free(BSTR pwszString)
 {
 #ifdef VBOX_WITH_XPCOM
     RTUtf16Free(pwszString);
-#else /* !VBOX_WITH_XPCOM */
+#else
     ::SysFreeString(pwszString);
-#endif /* !VBOX_WITH_XPCOM */
+#endif
 }
 
 static void
@@ -119,9 +125,9 @@ VBoxComUnallocString(BSTR pwsz)
     {
 #ifdef VBOX_WITH_XPCOM
         nsMemory::Free(pwsz);
-#else /* !VBOX_WITH_XPCOM */
+#else
         ::SysFreeString(pwsz);
-#endif /* !VBOX_WITH_XPCOM */
+#endif
     }
 }
 
@@ -209,6 +215,27 @@ VBoxSafeArrayDestroy(SAFEARRAY *psa)
     }
     return S_OK;
 #else /* !VBOX_WITH_XPCOM */
+    VARTYPE vt = VT_UNKNOWN;
+    HRESULT rc = SafeArrayGetVartype(psa, &vt);
+    if (FAILED(rc))
+        return rc;
+    if (vt == VT_BSTR)
+    {
+        /* Special treatment: strings are to be freed explicitly, see sample
+         * C binding code, so zap it here. No way to reach compatible code
+         * behavior between COM and XPCOM without this kind of trickery. */
+        void *pData;
+        rc = SafeArrayAccessData(psa, &pData);
+        if (FAILED(rc))
+            return rc;
+        ULONG cbElement = VBoxVTElemSize(vt);
+        if (!cbElement)
+            return E_INVALIDARG;
+        Assert(cbElement = psa->cbElements);
+        ULONG cElements = psa->rgsabound[0].cElements;
+        memset(pData, '\0', cbElement * cElements);
+        SafeArrayUnaccessData(psa);
+    }
     return SafeArrayDestroy(psa);
 #endif /* !VBOX_WITH_XPCOM */
 }
@@ -232,7 +259,7 @@ VBoxSafeArrayCopyInParamHelper(SAFEARRAY *psa, const void *pv, ULONG cb)
     memcpy(pData, pv, cb);
 #ifndef VBOX_WITH_XPCOM
     SafeArrayUnaccessData(psa);
-#endif /* !VBOX_WITH_XPCOM */
+#endif
     return S_OK;
 }
 
@@ -295,7 +322,7 @@ VBoxSafeArrayCopyOutParamHelper(void **ppv, ULONG *pcb, VARTYPE vt, SAFEARRAY *p
         *pcb = (ULONG)cbTotal;
 #ifndef VBOX_WITH_XPCOM
     SafeArrayUnaccessData(psa);
-#endif /* !VBOX_WITH_XPCOM */
+#endif
     return S_OK;
 }
 
@@ -364,7 +391,7 @@ VBoxComInitialize(const char *pszVirtualBoxIID, IVirtualBox **ppVirtualBox,
     else
         sessionIID = IID_ISession;
 
-    HRESULT rc = com::Initialize();
+    HRESULT rc = com::Initialize(VBOX_COM_INIT_F_DEFAULT | VBOX_COM_INIT_F_NO_COM_PATCHING);
     if (FAILED(rc))
     {
         Log(("Cbinding: COM/XPCOM could not be initialized! rc=%Rhrc\n", rc));
@@ -397,7 +424,19 @@ VBoxComInitialize(const char *pszVirtualBoxIID, IVirtualBox **ppVirtualBox,
                                               virtualBoxIID,
                                               (void **)&g_VirtualBox);
 #else /* !VBOX_WITH_XPCOM */
-    rc = CoCreateInstance(CLSID_VirtualBox, NULL, CLSCTX_LOCAL_SERVER, virtualBoxIID, (void **)&g_VirtualBox);
+    IVirtualBoxClient *pVirtualBoxClient;
+    rc = CoCreateInstance(CLSID_VirtualBoxClient, NULL, CLSCTX_INPROC_SERVER, IID_IVirtualBoxClient, (void **)&pVirtualBoxClient);
+    if (SUCCEEDED(rc))
+    {
+        IVirtualBox *pVirtualBox;
+        rc = pVirtualBoxClient->get_VirtualBox(&pVirtualBox);
+        if (SUCCEEDED(rc))
+        {
+            rc = pVirtualBox->QueryInterface(virtualBoxIID, (void **)&g_VirtualBox);
+            pVirtualBox->Release();
+        }
+        pVirtualBoxClient->Release();
+    }
 #endif /* !VBOX_WITH_XPCOM */
     if (FAILED(rc))
     {
@@ -627,7 +666,7 @@ VBoxClientInitialize(const char *pszVirtualBoxClientIID, IVirtualBoxClient **ppV
     else
         virtualBoxClientIID = IID_IVirtualBoxClient;
 
-    HRESULT rc = com::Initialize();
+    HRESULT rc = com::Initialize(VBOX_COM_INIT_F_DEFAULT | VBOX_COM_INIT_F_NO_COM_PATCHING);
     if (FAILED(rc))
     {
         Log(("Cbinding: COM/XPCOM could not be initialized! rc=%Rhrc\n", rc));
@@ -686,7 +725,7 @@ VBoxClientInitialize(const char *pszVirtualBoxClientIID, IVirtualBoxClient **ppV
 static HRESULT
 VBoxClientThreadInitialize(void)
 {
-    return com::Initialize();
+    return com::Initialize(VBOX_COM_INIT_F_DEFAULT | VBOX_COM_INIT_F_NO_COM_PATCHING);
 }
 
 static HRESULT

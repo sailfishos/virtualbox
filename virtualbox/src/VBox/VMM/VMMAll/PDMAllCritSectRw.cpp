@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM//_CRITSECT
 #include "PDMInternal.h"
 #include <VBox/vmm/pdmcritsectrw.h>
@@ -41,9 +41,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The number loops to spin for shared access in ring-3. */
 #define PDMCRITSECTRW_SHRD_SPIN_COUNT_R3       20
 /** The number loops to spin for shared access in ring-0. */
@@ -155,6 +155,14 @@ static int pdmCritSectRwEnterShared(PPDMCRITSECTRW pThis, int rcBusy, bool fTryO
      */
     AssertPtr(pThis);
     AssertReturn(pThis->s.Core.u32Magic == RTCRITSECTRW_MAGIC, VERR_SEM_DESTROYED);
+
+#if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
+    NOREF(pSrcPos);
+    NOREF(fNoVal);
+#endif
+#ifdef IN_RING3
+    NOREF(rcBusy);
+#endif
 
 #if defined(PDMCRITSECTRW_STRICT) && defined(IN_RING3)
     RTTHREAD hThreadSelf = RTThreadSelfAutoAdopt();
@@ -402,7 +410,7 @@ static int pdmCritSectRwEnterShared(PPDMCRITSECTRW pThis, int rcBusy, bool fTryO
  *
  * @returns VBox status code.
  * @retval  VINF_SUCCESS on success.
- * @retval  @a rcBusy if in ring-0 or raw-mode context and it is busy.
+ * @retval  rcBusy if in ring-0 or raw-mode context and it is busy.
  * @retval  VERR_SEM_NESTED if nested enter on a no nesting section. (Asserted.)
  * @retval  VERR_SEM_DESTROYED if the critical section is delete before or
  *          during the operation.
@@ -411,10 +419,6 @@ static int pdmCritSectRwEnterShared(PPDMCRITSECTRW pThis, int rcBusy, bool fTryO
  * @param   rcBusy      The status code to return when we're in RC or R0 and the
  *                      section is busy.   Pass VINF_SUCCESS to acquired the
  *                      critical section thru a ring-3 call if necessary.
- * @param   uId         Where we're entering the section.
- * @param   pszFile     The source position - file.
- * @param   iLine       The source position - line.
- * @param   pszFunction The source position - function.
  * @sa      PDMCritSectRwEnterSharedDebug, PDMCritSectRwTryEnterShared,
  *          PDMCritSectRwTryEnterSharedDebug, PDMCritSectRwLeaveShared,
  *          RTCritSectRwEnterShared.
@@ -435,7 +439,7 @@ VMMDECL(int) PDMCritSectRwEnterShared(PPDMCRITSECTRW pThis, int rcBusy)
  *
  * @returns VBox status code.
  * @retval  VINF_SUCCESS on success.
- * @retval  @a rcBusy if in ring-0 or raw-mode context and it is busy.
+ * @retval  rcBusy if in ring-0 or raw-mode context and it is busy.
  * @retval  VERR_SEM_NESTED if nested enter on a no nesting section. (Asserted.)
  * @retval  VERR_SEM_DESTROYED if the critical section is delete before or
  *          during the operation.
@@ -445,15 +449,14 @@ VMMDECL(int) PDMCritSectRwEnterShared(PPDMCRITSECTRW pThis, int rcBusy)
  *                      section is busy.   Pass VINF_SUCCESS to acquired the
  *                      critical section thru a ring-3 call if necessary.
  * @param   uId         Where we're entering the section.
- * @param   pszFile     The source position - file.
- * @param   iLine       The source position - line.
- * @param   pszFunction The source position - function.
+ * @param   SRC_POS     The source position.
  * @sa      PDMCritSectRwEnterShared, PDMCritSectRwTryEnterShared,
  *          PDMCritSectRwTryEnterSharedDebug, PDMCritSectRwLeaveShared,
  *          RTCritSectRwEnterSharedDebug.
  */
 VMMDECL(int) PDMCritSectRwEnterSharedDebug(PPDMCRITSECTRW pThis, int rcBusy, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
+    NOREF(uId); NOREF(pszFile); NOREF(iLine); NOREF(pszFunction);
 #if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
     return pdmCritSectRwEnterShared(pThis, rcBusy, false /*fTryOnly*/, NULL,    false /*fNoVal*/);
 #else
@@ -474,10 +477,6 @@ VMMDECL(int) PDMCritSectRwEnterSharedDebug(PPDMCRITSECTRW pThis, int rcBusy, RTH
  *          during the operation.
  *
  * @param   pThis       Pointer to the read/write critical section.
- * @param   uId         Where we're entering the section.
- * @param   pszFile     The source position - file.
- * @param   iLine       The source position - line.
- * @param   pszFunction The source position - function.
  * @sa      PDMCritSectRwTryEnterSharedDebug, PDMCritSectRwEnterShared,
  *          PDMCritSectRwEnterSharedDebug, PDMCritSectRwLeaveShared,
  *          RTCritSectRwTryEnterShared.
@@ -505,15 +504,14 @@ VMMDECL(int) PDMCritSectRwTryEnterShared(PPDMCRITSECTRW pThis)
  *
  * @param   pThis       Pointer to the read/write critical section.
  * @param   uId         Where we're entering the section.
- * @param   pszFile     The source position - file.
- * @param   iLine       The source position - line.
- * @param   pszFunction The source position - function.
+ * @param   SRC_POS     The source position.
  * @sa      PDMCritSectRwTryEnterShared, PDMCritSectRwEnterShared,
  *          PDMCritSectRwEnterSharedDebug, PDMCritSectRwLeaveShared,
  *          RTCritSectRwTryEnterSharedDebug.
  */
 VMMDECL(int) PDMCritSectRwTryEnterSharedDebug(PPDMCRITSECTRW pThis, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
+    NOREF(uId); NOREF(pszFile); NOREF(iLine); NOREF(pszFunction);
 #if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
     return pdmCritSectRwEnterShared(pThis, VERR_SEM_BUSY, true /*fTryOnly*/, NULL,    false /*fNoVal*/);
 #else
@@ -560,6 +558,10 @@ static int pdmCritSectRwLeaveSharedWorker(PPDMCRITSECTRW pThis, bool fNoVal)
      */
     AssertPtr(pThis);
     AssertReturn(pThis->s.Core.u32Magic == RTCRITSECTRW_MAGIC, VERR_SEM_DESTROYED);
+
+#if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
+    NOREF(fNoVal);
+#endif
 
     /*
      * Check the direction and take action accordingly.
@@ -706,6 +708,14 @@ static int pdmCritSectRwEnterExcl(PPDMCRITSECTRW pThis, int rcBusy, bool fTryOnl
      */
     AssertPtr(pThis);
     AssertReturn(pThis->s.Core.u32Magic == RTCRITSECTRW_MAGIC, VERR_SEM_DESTROYED);
+
+#if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
+    NOREF(pSrcPos);
+    NOREF(fNoVal);
+#endif
+#ifdef IN_RING3
+    NOREF(rcBusy);
+#endif
 
 #if defined(PDMCRITSECTRW_STRICT) && defined(IN_RING3)
     RTTHREAD hThreadSelf = NIL_RTTHREAD;
@@ -944,7 +954,7 @@ static int pdmCritSectRwEnterExcl(PPDMCRITSECTRW pThis, int rcBusy, bool fTryOnl
  *
  * @returns VBox status code.
  * @retval  VINF_SUCCESS on success.
- * @retval  @a rcBusy if in ring-0 or raw-mode context and it is busy.
+ * @retval  rcBusy if in ring-0 or raw-mode context and it is busy.
  * @retval  VERR_SEM_NESTED if nested enter on a no nesting section. (Asserted.)
  * @retval  VERR_SEM_DESTROYED if the critical section is delete before or
  *          during the operation.
@@ -974,7 +984,7 @@ VMMDECL(int) PDMCritSectRwEnterExcl(PPDMCRITSECTRW pThis, int rcBusy)
  *
  * @returns VBox status code.
  * @retval  VINF_SUCCESS on success.
- * @retval  @a rcBusy if in ring-0 or raw-mode context and it is busy.
+ * @retval  rcBusy if in ring-0 or raw-mode context and it is busy.
  * @retval  VERR_SEM_NESTED if nested enter on a no nesting section. (Asserted.)
  * @retval  VERR_SEM_DESTROYED if the critical section is delete before or
  *          during the operation.
@@ -984,9 +994,7 @@ VMMDECL(int) PDMCritSectRwEnterExcl(PPDMCRITSECTRW pThis, int rcBusy)
  *                      section is busy.   Pass VINF_SUCCESS to acquired the
  *                      critical section thru a ring-3 call if necessary.
  * @param   uId         Where we're entering the section.
- * @param   pszFile     The source position - file.
- * @param   iLine       The source position - line.
- * @param   pszFunction The source position - function.
+ * @param   SRC_POS     The source position.
  * @sa      PDMCritSectRwEnterExcl, PDMCritSectRwTryEnterExcl,
  *          PDMCritSectRwTryEnterExclDebug,
  *          PDMCritSectEnterDebug, PDMCritSectEnter,
@@ -994,6 +1002,7 @@ VMMDECL(int) PDMCritSectRwEnterExcl(PPDMCRITSECTRW pThis, int rcBusy)
  */
 VMMDECL(int) PDMCritSectRwEnterExclDebug(PPDMCRITSECTRW pThis, int rcBusy, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
+    NOREF(uId); NOREF(pszFile); NOREF(iLine); NOREF(pszFunction);
 #if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
     return pdmCritSectRwEnterExcl(pThis, rcBusy, false /*fTryAgain*/, NULL,    false /*fNoVal*/);
 #else
@@ -1040,9 +1049,7 @@ VMMDECL(int) PDMCritSectRwTryEnterExcl(PPDMCRITSECTRW pThis)
  *
  * @param   pThis       Pointer to the read/write critical section.
  * @param   uId         Where we're entering the section.
- * @param   pszFile     The source position - file.
- * @param   iLine       The source position - line.
- * @param   pszFunction The source position - function.
+ * @param   SRC_POS     The source position.
  * @sa      PDMCritSectRwTryEnterExcl, PDMCritSectRwEnterExcl,
  *          PDMCritSectRwEnterExclDebug,
  *          PDMCritSectTryEnterDebug, PDMCritSectTryEnter,
@@ -1050,6 +1057,7 @@ VMMDECL(int) PDMCritSectRwTryEnterExcl(PPDMCRITSECTRW pThis)
  */
 VMMDECL(int) PDMCritSectRwTryEnterExclDebug(PPDMCRITSECTRW pThis, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
+    NOREF(uId); NOREF(pszFile); NOREF(iLine); NOREF(pszFunction);
 #if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
     return pdmCritSectRwEnterExcl(pThis, VERR_SEM_BUSY, true /*fTryAgain*/, NULL,    false /*fNoVal*/);
 #else
@@ -1094,6 +1102,10 @@ static int pdmCritSectRwLeaveExclWorker(PPDMCRITSECTRW pThis, bool fNoVal)
      */
     AssertPtr(pThis);
     AssertReturn(pThis->s.Core.u32Magic == RTCRITSECTRW_MAGIC, VERR_SEM_DESTROYED);
+
+#if !defined(PDMCRITSECTRW_STRICT) || !defined(IN_RING3)
+    NOREF(fNoVal);
+#endif
 
     RTNATIVETHREAD hNativeSelf = pdmCritSectRwGetNativeSelf(pThis);
     RTNATIVETHREAD hNativeWriter;
@@ -1251,8 +1263,8 @@ void pdmCritSectRwLeaveExclQueued(PPDMCRITSECTRW pThis)
 /**
  * Checks the caller is the exclusive (write) owner of the critical section.
  *
- * @retval  @c true if owner.
- * @retval  @c false if not owner.
+ * @retval  true if owner.
+ * @retval  false if not owner.
  * @param   pThis       Pointer to the read/write critical section.
  * @sa      PDMCritSectRwIsReadOwner, PDMCritSectIsOwner,
  *          RTCritSectRwIsWriteOwner.
@@ -1331,6 +1343,7 @@ VMMDECL(bool) PDMCritSectRwIsReadOwner(PPDMCRITSECTRW pThis, bool fWannaHear)
      * Ask the lock validator.
      * Note! It doesn't know everything, let's deal with that if it becomes an issue...
      */
+    NOREF(fWannaHear);
     return RTLockValidatorRecSharedIsOwner(pThis->s.Core.pValidatorRead, NIL_RTTHREAD);
 #else
     /*
@@ -1419,8 +1432,8 @@ VMMDECL(uint32_t) PDMCritSectRwGetReadCount(PPDMCRITSECTRW pThis)
 /**
  * Checks if the read/write critical section is initialized or not.
  *
- * @retval  @c true if initialized.
- * @retval  @c false if not initialized.
+ * @retval  true if initialized.
+ * @retval  false if not initialized.
  * @param   pThis       Pointer to the read/write critical section.
  * @sa      PDMCritSectIsInitialized, RTCritSectRwIsInitialized.
  */

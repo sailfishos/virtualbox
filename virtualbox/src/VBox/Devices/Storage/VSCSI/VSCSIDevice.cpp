@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -14,9 +14,11 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VSCSI
 #include <VBox/log.h>
 #include <VBox/err.h>
@@ -64,6 +66,7 @@ static bool vscsiDeviceReqProcess(PVSCSIDEVICEINT pVScsiDevice, PVSCSIREQINT pVS
                 size_t cbData;
                 SCSIINQUIRYDATA ScsiInquiryReply;
 
+                vscsiReqSetXferSize(pVScsiReq, scsiBE2H_U16(&pVScsiReq->pbCDB[3]));
                 memset(&ScsiInquiryReply, 0, sizeof(ScsiInquiryReply));
                 ScsiInquiryReply.cbAdditional = 31;
                 ScsiInquiryReply.u5PeripheralDeviceType = SCSI_INQUIRY_DATA_PERIPHERAL_DEVICE_TYPE_UNKNOWN;
@@ -82,7 +85,8 @@ static bool vscsiDeviceReqProcess(PVSCSIDEVICEINT pVScsiDevice, PVSCSIREQINT pVS
              * If allocation length is less than 16 bytes SPC compliant devices have
              * to return an error.
              */
-            if (vscsiBE2HU32(&pVScsiReq->pbCDB[6]) < 16)
+            vscsiReqSetXferSize(pVScsiReq, scsiBE2H_U32(&pVScsiReq->pbCDB[6]));
+            if (pVScsiReq->cbXfer < 16)
                 *prcReq = vscsiReqSenseErrorSet(&pVScsiDevice->VScsiSense, pVScsiReq, SCSI_SENSE_ILLEGAL_REQUEST, SCSI_ASC_INV_FIELD_IN_CMD_PACKET, 0x00);
             else
             {
@@ -90,7 +94,7 @@ static bool vscsiDeviceReqProcess(PVSCSIDEVICEINT pVScsiDevice, PVSCSIREQINT pVS
                 uint8_t aReply[16]; /* We report only one LUN. */
 
                 memset(aReply, 0, sizeof(aReply));
-                vscsiH2BEU32(&aReply[0], 8); /* List length starts at position 0. */
+                scsiH2BE_U32(&aReply[0], 8); /* List length starts at position 0. */
                 cbData = RTSgBufCopyFromBuf(&pVScsiReq->SgBuf, aReply, sizeof(aReply));
                 if (cbData < 16)
                     *prcReq = vscsiReqSenseErrorSet(&pVScsiDevice->VScsiSense, pVScsiReq, SCSI_SENSE_ILLEGAL_REQUEST, SCSI_ASC_INV_FIELD_IN_CMD_PACKET, 0x00);
@@ -110,6 +114,8 @@ static bool vscsiDeviceReqProcess(PVSCSIDEVICEINT pVScsiDevice, PVSCSIREQINT pVS
         }
         case SCSI_REQUEST_SENSE:
         {
+            vscsiReqSetXferSize(pVScsiReq, pVScsiReq->pbCDB[4]);
+
             /* Descriptor format sense data is not supported and results in an error. */
             if ((pVScsiReq->pbCDB[1] & 0x1) != 0)
                 *prcReq = vscsiReqSenseErrorSet(&pVScsiDevice->VScsiSense, pVScsiReq, SCSI_SENSE_ILLEGAL_REQUEST, SCSI_ASC_INV_FIELD_IN_CMD_PACKET, 0x00);
@@ -117,6 +123,52 @@ static bool vscsiDeviceReqProcess(PVSCSIDEVICEINT pVScsiDevice, PVSCSIREQINT pVS
                 *prcReq = vscsiReqSenseCmd(&pVScsiDevice->VScsiSense, pVScsiReq);
             break;
         }
+#if 0
+        case SCSI_MAINTENANCE_IN:
+        {
+            if (pVScsiReq->pbCDB[1] == SCSI_MAINTENANCE_IN_REPORT_SUPP_OPC)
+            {
+                /*
+                 * If the LUN is present and has the CDB info set we will execute the command, otherwise
+                 * just fail with an illegal request error.
+                 */
+                if (vscsiDeviceLunIsPresent(pVScsiDevice, pVScsiReq->iLun))
+                {
+                    PVSCSILUNINT pVScsiLun = pVScsiDevice->papVScsiLun[pVScsiReq->iLun];
+                    if (pVScsiLun->pVScsiLunDesc->paSupOpcInfo)
+                    {
+                        bool fTimeoutDesc = RT_BOOL(pVScsiReq->pbCDB[2] & 0x80);
+                        uint8_t u8ReportMode = pVScsiReq->pbCDB[2] & 0x7;
+                        uint8_t u8Opc = pVScsiReq->pbCDB[3];
+                        uint16_t u16SvcAction = scsiBE2H_U16(&pVScsiReq->pbCDB[4]);
+                        uint16_t cbData = scsiBE2H_U16(&pVScsiReq->pbCDB[6]);
+
+                        switch (u8ReportMode)
+                        {
+                            case 0:
+                                *prcReq = vscsiDeviceReportAllSupportedOpc(pVScsiLun, pVScsiReq, fTimeoutDesc, cbData);
+                                break;
+                            case 1:
+                                *prcReq = vscsiDeviceReportOpc(pVScsiLun, pVScsiReq, u8Opc, fTimeoutDesc, cbData);
+                                break;
+                            case 2:
+                                *prcReq = vscsiDeviceReportOpc(pVScsiLun, pVScsiReq, u8Opc, fTimeoutDesc, cbData);
+                                break;
+                            default:
+                                *prcReq = vscsiReqSenseErrorSet(&pVScsiDevice->VScsiSense, pVScsiReq,
+                                                                SCSI_SENSE_ILLEGAL_REQUEST, SCSI_ASC_INV_FIELD_IN_CMD_PACKET, 0x00);
+                        }
+                    }
+                    else
+                        *prcReq = vscsiLunReqSenseErrorSet(pVScsiLun, pVScsiReq, SCSI_SENSE_ILLEGAL_REQUEST, SCSI_ASC_ILLEGAL_OPCODE, 0x00);
+                }
+                else
+                    *prcReq = vscsiLunReqSenseErrorSet(pVScsiLun, pVScsiReq, SCSI_SENSE_ILLEGAL_REQUEST, SCSI_ASC_ILLEGAL_OPCODE, 0x00);
+            }
+            else
+                fProcessed = false; /* Might also be the SEND KEY MMC command. */
+        }
+#endif
         default:
             fProcessed = false;
     }
@@ -130,7 +182,21 @@ void vscsiDeviceReqComplete(PVSCSIDEVICEINT pVScsiDevice, PVSCSIREQINT pVScsiReq
 {
     pVScsiDevice->pfnVScsiReqCompleted(pVScsiDevice, pVScsiDevice->pvVScsiDeviceUser,
                                        pVScsiReq->pvVScsiReqUser, rcScsiCode, fRedoPossible,
-                                       rcReq);
+                                       rcReq, pVScsiReq->cbXfer);
+
+    if (pVScsiReq->pvLun)
+    {
+        if (vscsiDeviceLunIsPresent(pVScsiDevice, pVScsiReq->iLun))
+        {
+            PVSCSILUNINT pVScsiLun = pVScsiDevice->papVScsiLun[pVScsiReq->iLun];
+            pVScsiLun->pVScsiLunDesc->pfnVScsiLunReqFree(pVScsiLun, pVScsiReq, pVScsiReq->pvLun);
+        }
+        else
+            AssertLogRelMsgFailed(("vscsiDeviceReqComplete: LUN %u for VSCSI request %#p is not present but there is LUN specific data allocated\n",
+                                   pVScsiReq->iLun, pVScsiReq));
+
+        pVScsiReq->pvLun = NULL;
+    }
 
     RTMemCacheFree(pVScsiDevice->hCacheReq, pVScsiReq);
 }
@@ -256,19 +322,20 @@ VBOXDDU_DECL(int) VSCSIDeviceLunDetach(VSCSIDEVICE hVScsiDevice, uint32_t iLun,
 }
 
 
-VBOXDDU_DECL(int) VSCSIDeviceLunGet(VSCSIDEVICE hVScsiDevice, uint32_t iLun,
-                                    PVSCSILUN phVScsiLun)
+VBOXDDU_DECL(int) VSCSIDeviceLunQueryType(VSCSIDEVICE hVScsiDevice, uint32_t iLun,
+                                          PVSCSILUNTYPE pEnmLunType)
 {
     PVSCSIDEVICEINT pVScsiDevice = (PVSCSIDEVICEINT)hVScsiDevice;
 
     /* Parameter checks */
     AssertPtrReturn(pVScsiDevice, VERR_INVALID_HANDLE);
-    AssertPtrReturn(phVScsiLun, VERR_INVALID_POINTER);
+    AssertPtrReturn(pEnmLunType, VERR_INVALID_POINTER);
     AssertReturn(iLun < VSCSI_DEVICE_LUN_MAX, VERR_VSCSI_LUN_INVALID);
     AssertReturn(iLun < pVScsiDevice->cLunsMax, VERR_VSCSI_LUN_NOT_ATTACHED);
     AssertPtrReturn(pVScsiDevice->papVScsiLun[iLun], VERR_VSCSI_LUN_NOT_ATTACHED);
 
-    *phVScsiLun = pVScsiDevice->papVScsiLun[iLun];
+    PVSCSILUNINT hVScsiLun = pVScsiDevice->papVScsiLun[iLun];
+    *pEnmLunType = hVScsiLun->pVScsiLunDesc->enmLunType;
 
     return VINF_SUCCESS;
 }
@@ -321,6 +388,7 @@ VBOXDDU_DECL(int) VSCSIDeviceReqCreate(VSCSIDEVICE hVScsiDevice, PVSCSIREQ phVSc
                                        PCRTSGSEG paSGList, uint8_t *pbSense,
                                        size_t cbSense, void *pvVScsiReqUser)
 {
+    RT_NOREF1(cbSGList);
     PVSCSIDEVICEINT pVScsiDevice = (PVSCSIDEVICEINT)hVScsiDevice;
     PVSCSIREQINT    pVScsiReq    = NULL;
 
@@ -340,9 +408,9 @@ VBOXDDU_DECL(int) VSCSIDeviceReqCreate(VSCSIDEVICE hVScsiDevice, PVSCSIREQ phVSc
     pVScsiReq->pbSense        = pbSense;
     pVScsiReq->cbSense        = cbSense;
     pVScsiReq->pvVScsiReqUser = pvVScsiReqUser;
-
-    if (cSGListEntries)
-        RTSgBufInit(&pVScsiReq->SgBuf, paSGList, cSGListEntries);
+    pVScsiReq->cbXfer         = 0;
+    pVScsiReq->pvLun          = NULL;
+    RTSgBufInit(&pVScsiReq->SgBuf, paSGList, cSGListEntries);
 
     *phVScsiReq = pVScsiReq;
 

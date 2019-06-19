@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 #include <VBox/VBoxNetCfg-win.h>
@@ -41,7 +50,7 @@ static DWORD MyGetfullPathNameW(LPCWSTR pwszName, size_t cchFull, LPWSTR pwszFul
 {
     LPWSTR pwszFilePart;
     DWORD dwSize = GetFullPathNameW(pwszName, (DWORD)cchFull, pwszFull, &pwszFilePart);
-    if(dwSize <= 0)
+    if (dwSize <= 0)
         return dwSize;
 
     /* if it doesn't exist, see if the file exists in the same directory as the executable. */
@@ -49,18 +58,18 @@ static DWORD MyGetfullPathNameW(LPCWSTR pwszName, size_t cchFull, LPWSTR pwszFul
     {
         WCHAR wsz[512];
         DWORD cch = GetModuleFileNameW(GetModuleHandle(NULL), &wsz[0], sizeof(wsz) / sizeof(wsz[0]));
-        if(cch > 0)
+        if (cch > 0)
         {
-            while(cch > 0 && wsz[cch - 1] != '/' && wsz[cch - 1] != '\\' && wsz[cch - 1] != ':')
+            while (cch > 0 && wsz[cch - 1] != '/' && wsz[cch - 1] != '\\' && wsz[cch - 1] != ':')
                 cch--;
             unsigned i = 0;
-            while(cch < sizeof(wsz) / sizeof(wsz[0]))
+            while (cch < sizeof(wsz) / sizeof(wsz[0]))
             {
                 wsz[cch] = pwszFilePart[i++];
-                if(!wsz[cch])
+                if (!wsz[cch])
                 {
                     dwSize = GetFullPathNameW(wsz, (DWORD)cchFull, pwszFull, NULL);
-                    if(dwSize > 0 && GetFileAttributesW(pwszFull) != INVALID_FILE_ATTRIBUTES)
+                    if (dwSize > 0 && GetFileAttributesW(pwszFull) != INVALID_FILE_ATTRIBUTES)
                         return dwSize;
                     break;
                 }
@@ -84,28 +93,28 @@ static int VBoxNetFltInstall()
     VBoxNetCfgWinSetLogging(winNetCfgLogger);
 
     HRESULT hr = CoInitialize(NULL);
-    if(hr == S_OK)
+    if (hr == S_OK)
     {
         int i = 0;
         do
         {
             hr = VBoxNetCfgWinQueryINetCfg(&pnc, TRUE, VBOX_NETCFG_APP_NAME, 10000, &lpszLockedBy);
-            if(hr == S_OK)
+            if (hr == S_OK)
             {
                 DWORD dwSize;
                 dwSize = MyGetfullPathNameW(VBOX_NETFLT_PT_INF, sizeof(PtInf)/sizeof(PtInf[0]), PtInf);
-                if(dwSize > 0)
+                if (dwSize > 0)
                 {
                     /** @todo add size check for (sizeof(PtInf)/sizeof(PtInf[0])) == dwSize (string length in sizeof(PtInf[0])) */
 
                     dwSize = MyGetfullPathNameW(VBOX_NETFLT_MP_INF, sizeof(MpInf)/sizeof(MpInf[0]), MpInf);
-                    if(dwSize > 0)
+                    if (dwSize > 0)
                     {
                         /** @todo add size check for (sizeof(MpInf)/sizeof(MpInf[0])) == dwSize (string length in sizeof(MpInf[0])) */
 
                         LPCWSTR aInfs[] = {PtInf, MpInf};
                         hr = VBoxNetCfgWinNetFltInstall(pnc, aInfs, 2);
-                        if(hr == S_OK)
+                        if (hr == S_OK)
                         {
                             wprintf(L"installed successfully\n");
                             r = 0;
@@ -131,9 +140,9 @@ static int VBoxNetFltInstall()
                 VBoxNetCfgWinReleaseINetCfg(pnc, TRUE);
                 break;
             }
-            else if(hr == NETCFG_E_NO_WRITE_LOCK && lpszLockedBy)
+            else if (hr == NETCFG_E_NO_WRITE_LOCK && lpszLockedBy)
             {
-                if(i < VBOX_NETFLT_RETRIES && !wcscmp(lpszLockedBy, L"6to4svc.dll"))
+                if (i < VBOX_NETFLT_RETRIES && !wcscmp(lpszLockedBy, L"6to4svc.dll"))
                 {
                     wprintf(L"6to4svc.dll is holding the lock, retrying %d out of %d\n", ++i, VBOX_NETFLT_RETRIES);
                     CoTaskMemFree(lpszLockedBy);
@@ -152,7 +161,7 @@ static int VBoxNetFltInstall()
                 r = 1;
                 break;
             }
-        } while(true);
+        } while (true);
 
         CoUninitialize();
     }
@@ -169,5 +178,6 @@ static int VBoxNetFltInstall()
 
 int __cdecl main(int argc, char **argv)
 {
+    RT_NOREF2(argc, argv);
     return VBoxNetFltInstall();
 }

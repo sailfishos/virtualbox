@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,6 +18,8 @@
 
 /** @page   pg_pdm      PDM - The Pluggable Device & Driver Manager
  *
+ * The PDM handles devices and their drivers in a flexible and dynamic manner.
+ *
  * VirtualBox is designed to be very configurable, i.e. the ability to select
  * virtual devices and configure them uniquely for a VM.  For this reason
  * virtual devices are not statically linked with the VMM but loaded, linked and
@@ -29,7 +31,8 @@
  * context synchronization (like critsect), VM centric thread management,
  * asynchronous I/O framework, and so on.
  *
- * @see grp_pdm
+ * @sa  @ref grp_pdm
+ *      @subpage pg_pdm_block_cache
  *
  *
  * @section sec_pdm_dev     The Pluggable Devices
@@ -37,22 +40,22 @@
  * Devices register themselves when the module containing them is loaded.  PDM
  * will call the entry point 'VBoxDevicesRegister' when loading a device module.
  * The device module will then use the supplied callback table to check the VMM
- * version and to register its devices.  Each device have an unique (for the
- * configured VM) name.  The name is not only used in PDM but also in CFGM (to
- * organize device and device instance settings) and by anyone who wants to talk
- * to a specific device instance.
+ * version and to register its devices.  Each device has an unique name (within
+ * the VM configuration anyway).  The name is not only used in PDM, but also in
+ * CFGM to organize device and device instance settings, and by anyone who wants
+ * to talk to a specific device instance.
  *
  * When all device modules have been successfully loaded PDM will instantiate
  * those devices which are configured for the VM.  Note that a device may have
- * more than one instance, see network adaptors for instance.  When
+ * more than one instance, take network adaptors as an example.  When
  * instantiating a device PDM provides device instance memory and a callback
  * table (aka Device Helpers / DevHlp) with the VM APIs which the device
  * instance is trusted with.
  *
  * Some devices are trusted devices, most are not.  The trusted devices are an
- * integrated part of the VM and can obtain the VM handle from their device
- * instance handles, thus enabling them to call any VM api.  Untrusted devices
- * can only use the callbacks provided during device instantiation.
+ * integrated part of the VM and can obtain the VM handle, thus enabling them to
+ * call any VM API.  Untrusted devices can only use the callbacks provided
+ * during device instantiation.
  *
  * The main purpose in having DevHlps rather than just giving all the devices
  * the VM handle and let them call the internal VM APIs directly, is both to
@@ -63,11 +66,34 @@
  *
  * A device can provide a ring-0 and/or a raw-mode context extension to improve
  * the VM performance by handling exits and traps (respectively) without
- * requiring context switches (to ring-3).  Callbacks for MMIO and I/O ports can
- * needs to be registered specifically for the additional contexts for this to
+ * requiring context switches (to ring-3).  Callbacks for MMIO and I/O ports
+ * need to be registered specifically for the additional contexts for this to
  * make sense.  Also, the device has to be trusted to be loaded into R0/RC
  * because of the extra privilege it entails.  Note that raw-mode code and data
  * will be subject to relocation.
+ *
+ *
+ * @subsection sec_pdm_dev_pci          PCI Devices
+ *
+ * A PDM device usually registers one a PCI device during it's instantiation,
+ * legacy devices may register zero, while a few (currently none) more
+ * complicated devices may register multiple PCI functions or devices.
+ *
+ * The bus, device and function assignments can either be done explictly via the
+ * configuration or the registration call, or it can be left up to the PCI bus.
+ * The typical VBox configuration construct (ConsoleImpl2.cpp) will do explict
+ * assignments for all devices it's BusAssignmentManager class knows about.
+ *
+ * For explict CFGM style configuration, the "PCIBusNo", "PCIDeviceNo", and
+ * "PCIFunctionNo" values in the PDM device instance configuration (not the
+ * "config" subkey, but the top level one) will be picked up for the primary PCI
+ * device.  The primary PCI configuration is by default the first one, but this
+ * can be controlled using the @a idxDevCfg parameter of the
+ * PDMDEVHLPR3::pfnPCIRegister method.  For subsequent configuration (@a
+ * idxDevCfg > 0) the values are taken from the "PciDevNN" subkey, where "NN" is
+ * replaced by the @a idxDevCfg value.
+ *
+ * There's currently a limit of 256 PCI devices per PDM device.
  *
  *
  * @section sec_pdm_special_devs    Special Devices
@@ -103,7 +129,7 @@
  *
  * The way USB devices work differs greatly from other devices though since they
  * aren't attaches directly to the PCI/ISA/whatever system buses but via a
- * USB host control (OHCI, UHCI or EHCI).  USB devices handles USB requests
+ * USB host control (OHCI, UHCI or EHCI).  USB devices handle USB requests
  * (URBs) and does not register I/O ports, MMIO ranges or PCI bus
  * devices/functions.
  *
@@ -119,7 +145,7 @@
  * For instance take a DVD/CD drive.  This can be connected to a SCSI
  * controller, an ATA controller or a SATA controller.  The basics of the DVD/CD
  * drive implementation remains the same - eject, insert, read, seek, and such.
- * (For the scsi case, you might wanna speak SCSI directly to, but that can of
+ * (For the scsi SCSCI, you might want to speak SCSI directly to, but that can of
  * course be fixed - see SCSI passthru.)  So, it
  * makes much sense to have a generic CD/DVD driver which implements this.
  *
@@ -135,10 +161,10 @@
  * the DVD/CD Driver will have a ISO, HostDVD or RAW (media) Driver attached.
  *
  * It is possible to configure many levels of drivers inserting filters, loggers,
- * or whatever you desire into the chain.  We're using this for network sniffing
+ * or whatever you desire into the chain.  We're using this for network sniffing,
  * for instance.
  *
- * The drivers are loaded in a similar manner to that of the device, namely by
+ * The drivers are loaded in a similar manner to that of a device, namely by
  * iterating a keyspace in CFGM, load the modules listed there and call
  * 'VBoxDriversRegister' with a callback table.
  *
@@ -147,14 +173,14 @@
  *
  * @section sec_pdm_ifs     Interfaces
  *
- * The pluggable drivers and devices exposes one standard interface (callback
+ * The pluggable drivers and devices expose one standard interface (callback
  * table) which is used to construct, destruct, attach, detach,( ++,) and query
  * other interfaces. A device will query the interfaces required for it's
  * operation during init and hot-plug.  PDM may query some interfaces during
  * runtime mounting too.
  *
  * An interface here means a function table contained within the device or
- * driver instance data. Its method are invoked with the function table pointer
+ * driver instance data. Its methods are invoked with the function table pointer
  * as the first argument and they will calculate the address of the device or
  * driver instance data from it. (This is one of the aspects which *might* have
  * been better done in C++.)
@@ -246,12 +272,14 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM
+#define PDMPCIDEV_INCLUDE_PRIVATE  /* Hack to get pdmpcidevint.h included at the right point. */
 #include "PDMInternal.h"
 #include <VBox/vmm/pdm.h>
+#include <VBox/vmm/em.h>
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/pgm.h>
 #include <VBox/vmm/ssm.h>
@@ -273,12 +301,16 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The PDM saved state version. */
-#define PDM_SAVED_STATE_VERSION             4
-#define PDM_SAVED_STATE_VERSION_PRE_NMI_FF  3
+#define PDM_SAVED_STATE_VERSION               5
+/** Before the PDM audio architecture was introduced there was an "AudioSniffer"
+ *  device which took care of multiplexing input/output audio data from/to various places.
+ *  Thus this device is not needed/used anymore. */
+#define PDM_SAVED_STATE_VERSION_PRE_PDM_AUDIO 4
+#define PDM_SAVED_STATE_VERSION_PRE_NMI_FF    3
 
 /** The number of nanoseconds a suspend callback needs to take before
  * PDMR3Suspend warns about it taking too long. */
@@ -289,9 +321,9 @@
 #define PDMPOWEROFF_WARN_AT_NS              UINT64_C( 900000000)
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Statistics of asynchronous notification tasks - used by reset, suspend and
  * power off.
@@ -317,9 +349,9 @@ typedef struct PDMNOTIFYASYNCSTATS
 typedef PDMNOTIFYASYNCSTATS *PPDMNOTIFYASYNCSTATS;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int) pdmR3LiveExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass);
 static DECLCALLBACK(int) pdmR3SaveExec(PVM pVM, PSSMHANDLE pSSM);
 static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass);
@@ -352,7 +384,7 @@ VMMR3_INT_DECL(int) PDMR3InitUVM(PUVM pUVM)
  * Initializes the PDM.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PDMR3Init(PVM pVM)
 {
@@ -361,7 +393,7 @@ VMMR3_INT_DECL(int) PDMR3Init(PVM pVM)
     /*
      * Assert alignment and sizes.
      */
-    AssertRelease(!(RT_OFFSETOF(VM, pdm.s) & 31));
+    AssertRelease(!(RT_UOFFSETOF(VM, pdm.s) & 31));
     AssertRelease(sizeof(pVM->pdm.s) <= sizeof(pVM->pdm.padding));
     AssertCompileMemberAlignment(PDM, CritSect, sizeof(uintptr_t));
 
@@ -437,11 +469,33 @@ VMMR3_INT_DECL(int) PDMR3Init(PVM pVM)
 
 
 /**
+ * Init phase completed callback.
+ *
+ * We use this for calling PDMDEVREG::pfnInitComplete callback after everything
+ * else has been initialized.
+ *
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
+ * @param   enmWhat     The phase that was completed.
+ */
+VMMR3_INT_DECL(int) PDMR3InitCompleted(PVM pVM, VMINITCOMPLETED enmWhat)
+{
+#ifdef VBOX_WITH_RAW_MODE
+    if (enmWhat == VMINITCOMPLETED_RC)
+#else
+    if (enmWhat == VMINITCOMPLETED_RING0)
+#endif
+        return pdmR3DevInitComplete(pVM);
+    return VINF_SUCCESS;
+}
+
+
+/**
  * Applies relocations to data and code managed by this
  * component. This function will be called at init and
  * whenever the VMM need to relocate it self inside the GC.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   offDelta    Relocation delta relative to old location.
  * @remark  The loader subcomponent is relocated by PDMR3LdrRelocate() very
  *          early in the relocation phase.
@@ -475,19 +529,7 @@ VMMR3_INT_DECL(void) PDMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
      * The registered APIC.
      */
     if (pVM->pdm.s.Apic.pDevInsRC)
-    {
         pVM->pdm.s.Apic.pDevInsRC           += offDelta;
-        pVM->pdm.s.Apic.pfnGetInterruptRC   += offDelta;
-        pVM->pdm.s.Apic.pfnSetBaseRC        += offDelta;
-        pVM->pdm.s.Apic.pfnGetBaseRC        += offDelta;
-        pVM->pdm.s.Apic.pfnSetTPRRC         += offDelta;
-        pVM->pdm.s.Apic.pfnGetTPRRC         += offDelta;
-        pVM->pdm.s.Apic.pfnBusDeliverRC     += offDelta;
-        if (pVM->pdm.s.Apic.pfnLocalInterruptRC)
-            pVM->pdm.s.Apic.pfnLocalInterruptRC += offDelta;
-        pVM->pdm.s.Apic.pfnWriteMSRRC       += offDelta;
-        pVM->pdm.s.Apic.pfnReadMSRRC        += offDelta;
-    }
 
     /*
      * The registered I/O APIC.
@@ -498,6 +540,8 @@ VMMR3_INT_DECL(void) PDMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
         pVM->pdm.s.IoApic.pfnSetIrqRC       += offDelta;
         if (pVM->pdm.s.IoApic.pfnSendMsiRC)
             pVM->pdm.s.IoApic.pfnSendMsiRC      += offDelta;
+        if (pVM->pdm.s.IoApic.pfnSetEoiRC)
+            pVM->pdm.s.IoApic.pfnSetEoiRC       += offDelta;
     }
 
     /*
@@ -539,10 +583,21 @@ VMMR3_INT_DECL(void) PDMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
             if (pDevIns->pCritSectRoR3)
                 pDevIns->pCritSectRoRC  = MMHyperR3ToRC(pVM, pDevIns->pCritSectRoR3);
             pDevIns->Internal.s.pVMRC   = pVM->pVMRC;
-            if (pDevIns->Internal.s.pPciBusR3)
-                pDevIns->Internal.s.pPciBusRC    = MMHyperR3ToRC(pVM, pDevIns->Internal.s.pPciBusR3);
-            if (pDevIns->Internal.s.pPciDeviceR3)
-                pDevIns->Internal.s.pPciDeviceRC = MMHyperR3ToRC(pVM, pDevIns->Internal.s.pPciDeviceR3);
+
+            PPDMPCIDEV pPciDev = pDevIns->Internal.s.pHeadPciDevR3;
+            if (pPciDev)
+            {
+                pDevIns->Internal.s.pHeadPciDevRC = MMHyperR3ToRC(pVM, pPciDev);
+                do
+                {
+                    pPciDev->Int.s.pDevInsRC = MMHyperR3ToRC(pVM, pPciDev->Int.s.pDevInsR3);
+                    pPciDev->Int.s.pPdmBusRC = MMHyperR3ToRC(pVM, pPciDev->Int.s.pPdmBusR3);
+                    if (pPciDev->Int.s.pNextR3)
+                        pPciDev->Int.s.pNextRC = MMHyperR3ToRC(pVM, pPciDev->Int.s.pNextR3);
+                    pPciDev = pPciDev->Int.s.pNextR3;
+                } while (pPciDev);
+            }
+
             if (pDevIns->pReg->pfnRelocate)
             {
                 LogFlow(("PDMR3Relocate: Relocating device '%s'/%d\n",
@@ -578,13 +633,15 @@ VMMR3_INT_DECL(void) PDMR3Relocate(PVM pVM, RTGCINTPTR offDelta)
 /**
  * Worker for pdmR3Term that terminates a LUN chain.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pLun        The head of the chain.
  * @param   pszDevice   The name of the device (for logging).
  * @param   iInstance   The device instance number (for logging).
  */
 static void pdmR3TermLuns(PVM pVM, PPDMLUN pLun, const char *pszDevice, unsigned iInstance)
 {
+    RT_NOREF2(pszDevice, iInstance);
+
     for (; pLun; pLun = pLun->pNext)
     {
         /*
@@ -605,10 +662,21 @@ static void pdmR3TermLuns(PVM pVM, PPDMLUN pLun, const char *pszDevice, unsigned
             }
             pDrvIns->Internal.s.pDrv->cInstances--;
 
-            TMR3TimerDestroyDriver(pVM, pDrvIns);
+            /* Order of resource freeing like in pdmR3DrvDestroyChain, but
+             * not all need to be done as they are done globally later. */
             //PDMR3QueueDestroyDriver(pVM, pDrvIns);
-            //pdmR3ThreadDestroyDriver(pVM, pDrvIns);
+            TMR3TimerDestroyDriver(pVM, pDrvIns);
             SSMR3DeregisterDriver(pVM, pDrvIns, NULL, 0);
+            //pdmR3ThreadDestroyDriver(pVM, pDrvIns);
+            //DBGFR3InfoDeregisterDriver(pVM, pDrvIns, NULL);
+            //pdmR3CritSectBothDeleteDriver(pVM, pDrvIns);
+            //PDMR3BlkCacheReleaseDriver(pVM, pDrvIns);
+#ifdef VBOX_WITH_PDM_ASYNC_COMPLETION
+            //pdmR3AsyncCompletionTemplateDestroyDriver(pVM, pDrvIns);
+#endif
+
+            /* Clear the driver struture to catch sloppy code. */
+            ASMMemFill32(pDrvIns, RT_UOFFSETOF_DYN(PDMDRVINS, achInstanceData[pDrvIns->pReg->cbInstance]), 0xdeadd0d0);
 
             pDrvIns = pDrvNext;
         }
@@ -623,7 +691,7 @@ static void pdmR3TermLuns(PVM pVM, PPDMLUN pLun, const char *pszDevice, unsigned
  * the VM it self is at this point powered off or suspended.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PDMR3Term(PVM pVM)
 {
@@ -692,7 +760,7 @@ VMMR3_INT_DECL(int) PDMR3Term(PVM pVM)
         pdmR3CritSectBothDeleteDevice(pVM, pDevIns);
         pdmR3ThreadDestroyDevice(pVM, pDevIns);
         PDMR3QueueDestroyDevice(pVM, pDevIns);
-        PGMR3PhysMMIO2Deregister(pVM, pDevIns, UINT32_MAX);
+        PGMR3PhysMMIOExDeregister(pVM, pDevIns, UINT32_MAX, UINT32_MAX);
 #ifdef VBOX_WITH_PDM_ASYNC_COMPLETION
         pdmR3AsyncCompletionTemplateDestroyDevice(pVM, pDevIns);
 #endif
@@ -761,9 +829,21 @@ VMMR3_INT_DECL(void) PDMR3TermUVM(PUVM pUVM)
 
 
 /**
+ * For APIC assertions.
+ *
+ * @returns true if we've loaded state.
+ * @param   pVM             The cross context VM structure.
+ */
+VMMR3_INT_DECL(bool)    PDMR3HasLoadedState(PVM pVM)
+{
+    return pVM->pdm.s.fStateLoaded;
+}
+
+
+/**
  * Bits that are saved in pass 0 and in the final pass.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The saved state handle.
  */
 static void pdmR3SaveBoth(PVM pVM, PSSMHANDLE pSSM)
@@ -787,7 +867,7 @@ static void pdmR3SaveBoth(PVM pVM, PSSMHANDLE pSSM)
  * Live save.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The saved state handle.
  * @param   uPass           The pass.
  */
@@ -804,7 +884,7 @@ static DECLCALLBACK(int) pdmR3LiveExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uPass)
  * Execute state save operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            The saved state handle.
  */
 static DECLCALLBACK(int) pdmR3SaveExec(PVM pVM, PSSMHANDLE pSSM)
@@ -835,7 +915,7 @@ static DECLCALLBACK(int) pdmR3SaveExec(PVM pVM, PSSMHANDLE pSSM)
  * This will dispatch pending operations and clear the FFs governed by PDM and its devices.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pSSM        The SSM handle.
  */
 static DECLCALLBACK(int) pdmR3LoadPrep(PVM pVM, PSSMHANDLE pSSM)
@@ -880,7 +960,7 @@ static DECLCALLBACK(int) pdmR3LoadPrep(PVM pVM, PSSMHANDLE pSSM)
  * Execute state load operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  * @param   uVersion        Data layout version.
  * @param   uPass           The data pass.
@@ -895,7 +975,8 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
      * Validate version.
      */
     if (    uVersion != PDM_SAVED_STATE_VERSION
-        &&  uVersion != PDM_SAVED_STATE_VERSION_PRE_NMI_FF)
+        &&  uVersion != PDM_SAVED_STATE_VERSION_PRE_NMI_FF
+        &&  uVersion != PDM_SAVED_STATE_VERSION_PRE_PDM_AUDIO)
     {
         AssertMsgFailed(("Invalid version uVersion=%d!\n", uVersion));
         return VERR_SSM_UNSUPPORTED_DATA_UNIT_VERSION;
@@ -905,6 +986,12 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
     {
         /*
          * Load the interrupt and DMA states.
+         *
+         * The APIC, PIC and DMA devices does not restore these, we do.  In the
+         * APIC and PIC cases, it is possible that some devices is incorrectly
+         * setting IRQs during restore.  We'll warn when this happens.  (There
+         * are debug assertions in PDMDevMiscHlp.cpp and APICAll.cpp for
+         * catching the buggy device.)
          */
         for (VMCPUID idCpu = 0; idCpu < pVM->cCpus; idCpu++)
         {
@@ -920,7 +1007,8 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
                 AssertMsgFailed(("fInterruptPending=%#x (APIC)\n", fInterruptPending));
                 return VERR_SSM_DATA_UNIT_FORMAT_CHANGED;
             }
-            AssertRelease(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_APIC));
+            AssertLogRelMsg(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_APIC),
+                            ("VCPU%03u: VMCPU_FF_INTERRUPT_APIC set! Devices shouldn't set interrupts during state restore...\n", idCpu));
             if (fInterruptPending)
                 VMCPU_FF_SET(pVCpu, VMCPU_FF_INTERRUPT_APIC);
 
@@ -934,7 +1022,8 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
                 AssertMsgFailed(("fInterruptPending=%#x (PIC)\n", fInterruptPending));
                 return VERR_SSM_DATA_UNIT_FORMAT_CHANGED;
             }
-            AssertRelease(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_PIC));
+            AssertLogRelMsg(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_PIC),
+                            ("VCPU%03u: VMCPU_FF_INTERRUPT_PIC set!  Devices shouldn't set interrupts during state restore...\n", idCpu));
             if (fInterruptPending)
                 VMCPU_FF_SET(pVCpu, VMCPU_FF_INTERRUPT_PIC);
 
@@ -950,7 +1039,7 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
                     AssertMsgFailed(("fInterruptPending=%#x (NMI)\n", fInterruptPending));
                     return VERR_SSM_DATA_UNIT_FORMAT_CHANGED;
                 }
-                AssertRelease(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_NMI));
+                AssertLogRelMsg(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_NMI), ("VCPU%3u: VMCPU_FF_INTERRUPT_NMI set!\n", idCpu));
                 if (fInterruptPending)
                     VMCPU_FF_SET(pVCpu, VMCPU_FF_INTERRUPT_NMI);
 
@@ -964,7 +1053,7 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
                     AssertMsgFailed(("fInterruptPending=%#x (SMI)\n", fInterruptPending));
                     return VERR_SSM_DATA_UNIT_FORMAT_CHANGED;
                 }
-                AssertRelease(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_SMI));
+                AssertLogRelMsg(!VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_INTERRUPT_SMI), ("VCPU%3u: VMCPU_FF_INTERRUPT_SMI set!\n", idCpu));
                 if (fInterruptPending)
                     VMCPU_FF_SET(pVCpu, VMCPU_FF_INTERRUPT_SMI);
             }
@@ -1016,7 +1105,7 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
         /* Try locate it. */
         PPDMDEVINS pDevIns;
         for (pDevIns = pVM->pdm.s.pDevInstances; pDevIns; pDevIns = pDevIns->Internal.s.pNextR3)
-            if (   !strcmp(szName, pDevIns->pReg->szName)
+            if (   !RTStrCmp(szName, pDevIns->pReg->szName)
                 && pDevIns->iInstance == iInstance)
             {
                 AssertLogRelMsgReturn(!(pDevIns->Internal.s.fIntFlags & PDMDEVINSINT_FLAGS_FOUND),
@@ -1025,11 +1114,22 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
                 pDevIns->Internal.s.fIntFlags |= PDMDEVINSINT_FLAGS_FOUND;
                 break;
             }
+
         if (!pDevIns)
         {
-            LogRel(("Device '%s'/%d not found in current config\n", szName, iInstance));
-            if (SSMR3HandleGetAfter(pSSM) != SSMAFTER_DEBUG_IT)
-                return SSMR3SetCfgError(pSSM, RT_SRC_POS, N_("Device '%s'/%d not found in current config"), szName, iInstance);
+            bool fSkip = false;
+
+            /* Skip the non-existing (deprecated) "AudioSniffer" device stored in the saved state. */
+            if (   uVersion <= PDM_SAVED_STATE_VERSION_PRE_PDM_AUDIO
+                && !RTStrCmp(szName, "AudioSniffer"))
+                fSkip = true;
+
+            if (!fSkip)
+            {
+                LogRel(("Device '%s'/%d not found in current config\n", szName, iInstance));
+                if (SSMR3HandleGetAfter(pSSM) != SSMAFTER_DEBUG_IT)
+                    return SSMR3SetCfgError(pSSM, RT_SRC_POS, N_("Device '%s'/%d not found in current config"), szName, iInstance);
+            }
         }
     }
 
@@ -1044,6 +1144,12 @@ static DECLCALLBACK(int) pdmR3LoadExec(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersi
                 return SSMR3SetCfgError(pSSM, RT_SRC_POS, N_("Device '%s'/%d not found in the saved state"),
                                         pDevIns->pReg->szName, pDevIns->iInstance);
         }
+
+
+    /*
+     * Indicate that we've been called (for assertions).
+     */
+    pVM->pdm.s.fStateLoaded = true;
 
     return VINF_SUCCESS;
 }
@@ -1067,7 +1173,7 @@ DECLINLINE(int) pdmR3PowerOnDrv(PPDMDRVINS pDrvIns, const char *pszDevName, uint
         int rc = VINF_SUCCESS; pDrvIns->pReg->pfnPowerOn(pDrvIns);
         if (RT_FAILURE(rc))
         {
-            LogRel(("PDMR3PowerOn: driver '%s'/%d on LUN#%d of device '%s'/%d -> %Rrc\n",
+            LogRel(("PDMR3PowerOn: Driver '%s'/%d on LUN#%d of device '%s'/%d -> %Rrc\n",
                     pDrvIns->pReg->szName, pDrvIns->iInstance, iLun, pszDevName, iDevInstance, rc));
             return rc;
         }
@@ -1092,7 +1198,7 @@ DECLINLINE(int) pdmR3PowerOnUsb(PPDMUSBINS pUsbIns)
         int rc = VINF_SUCCESS; pUsbIns->pReg->pfnVMPowerOn(pUsbIns);
         if (RT_FAILURE(rc))
         {
-            LogRel(("PDMR3PowerOn: device '%s'/%d -> %Rrc\n", pUsbIns->pReg->szName, pUsbIns->iInstance, rc));
+            LogRel(("PDMR3PowerOn: Device '%s'/%d -> %Rrc\n", pUsbIns->pReg->szName, pUsbIns->iInstance, rc));
             return rc;
         }
     }
@@ -1118,7 +1224,7 @@ DECLINLINE(int) pdmR3PowerOnDev(PPDMDEVINS pDevIns)
         PDMCritSectLeave(pDevIns->pCritSectRoR3);
         if (RT_FAILURE(rc))
         {
-            LogRel(("PDMR3PowerOn: device '%s'/%d -> %Rrc\n", pDevIns->pReg->szName, pDevIns->iInstance, rc));
+            LogRel(("PDMR3PowerOn: Device '%s'/%d -> %Rrc\n", pDevIns->pReg->szName, pDevIns->iInstance, rc));
             return rc;
         }
     }
@@ -1131,7 +1237,7 @@ DECLINLINE(int) pdmR3PowerOnDev(PPDMDEVINS pDevIns)
  * This function will notify all the devices and their
  * attached drivers about the VM now being powered on.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) PDMR3PowerOn(PVM pVM)
 {
@@ -1290,7 +1396,7 @@ static void pdmR3NotifyAsyncLog(PPDMNOTIFYASYNCSTATS pThis)
  * Wait for events and process pending requests.
  *
  * @param   pThis               The asynchronous notifification stats.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 static void pdmR3NotifyAsyncWaitAndProcessRequests(PPDMNOTIFYASYNCSTATS pThis, PVM pVM)
 {
@@ -1425,7 +1531,7 @@ DECLINLINE(void) pdmR3ResetDev(PPDMDEVINS pDevIns, PPDMNOTIFYASYNCSTATS pAsync)
             PDMCritSectLeave(pDevIns->pCritSectRoR3);
             cNsElapsed = RTTimeNanoTS() - cNsElapsed;
             if (cNsElapsed >= PDMSUSPEND_WARN_AT_NS)
-                LogRel(("PDMR3Reset: device '%s'/%d took %'llu ns to reset\n",
+                LogRel(("PDMR3Reset: Device '%s'/%d took %'llu ns to reset\n",
                         pDevIns->pReg->szName, pDevIns->iInstance, cNsElapsed));
         }
     }
@@ -1437,7 +1543,7 @@ DECLINLINE(void) pdmR3ResetDev(PPDMDEVINS pDevIns, PPDMNOTIFYASYNCSTATS pAsync)
  *
  * Used by PDMR3Reset and CPU hot plugging.
  *
- * @param   pVCpu               Pointer to the VMCPU.
+ * @param   pVCpu               The cross context virtual CPU structure.
  */
 VMMR3_INT_DECL(void) PDMR3ResetCpu(PVMCPU pVCpu)
 {
@@ -1452,7 +1558,7 @@ VMMR3_INT_DECL(void) PDMR3ResetCpu(PVMCPU pVCpu)
  * This function will notify all the devices and their attached drivers about
  * the VM now being reset.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3_INT_DECL(void) PDMR3Reset(PVM pVM)
 {
@@ -1544,7 +1650,7 @@ VMMR3_INT_DECL(void) PDMR3Reset(PVM pVM)
  * This function will tell all the devices to setup up their memory structures
  * after VM construction and after VM reset.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   fAtReset    Indicates the context, after reset if @c true or after
  *                      construction if @c false.
  */
@@ -1565,6 +1671,84 @@ VMMR3_INT_DECL(void) PDMR3MemSetup(PVM pVM, bool fAtReset)
         }
 
     LogFlow(("PDMR3MemSetup: returns void\n"));
+}
+
+
+/**
+ * Retrieves and resets the info left behind by PDMDevHlpVMReset.
+ *
+ * @returns True if hard reset, false if soft reset.
+ * @param   pVM             The cross context VM structure.
+ * @param   fOverride       If non-zero, the override flags will be used instead
+ *                          of the reset flags kept by PDM. (For triple faults.)
+ * @param   pfResetFlags    Where to return the reset flags (PDMVMRESET_F_XXX).
+ * @thread  EMT
+ */
+VMMR3_INT_DECL(bool) PDMR3GetResetInfo(PVM pVM, uint32_t fOverride, uint32_t *pfResetFlags)
+{
+    VM_ASSERT_EMT(pVM);
+
+    /*
+     * Get the reset flags.
+     */
+    uint32_t fResetFlags;
+    fResetFlags = ASMAtomicXchgU32(&pVM->pdm.s.fResetFlags, 0);
+    if (fOverride)
+        fResetFlags = fOverride;
+    *pfResetFlags = fResetFlags;
+
+    /*
+     * To try avoid trouble, we never ever do soft/warm resets on SMP systems
+     * with more than CPU #0 active.  However, if only one CPU is active we
+     * will ask the firmware what it wants us to do (because the firmware may
+     * depend on the VMM doing a lot of what is normally its responsibility,
+     * like clearing memory).
+     */
+    bool     fOtherCpusActive = false;
+    VMCPUID  iCpu             = pVM->cCpus;
+    while (iCpu-- > 1)
+    {
+        EMSTATE enmState = EMGetState(&pVM->aCpus[iCpu]);
+        if (   enmState != EMSTATE_WAIT_SIPI
+            && enmState != EMSTATE_NONE)
+        {
+            fOtherCpusActive = true;
+            break;
+        }
+    }
+
+    bool fHardReset = fOtherCpusActive
+                   || (fResetFlags & PDMVMRESET_F_SRC_MASK) < PDMVMRESET_F_LAST_ALWAYS_HARD
+                   || !pVM->pdm.s.pFirmware
+                   || pVM->pdm.s.pFirmware->Reg.pfnIsHardReset(pVM->pdm.s.pFirmware->pDevIns, fResetFlags);
+
+    Log(("PDMR3GetResetInfo: returns fHardReset=%RTbool fResetFlags=%#x\n", fHardReset, fResetFlags));
+    return fHardReset;
+}
+
+
+/**
+ * Performs a soft reset of devices.
+ *
+ * @param   pVM             The cross context VM structure.
+ * @param   fResetFlags     PDMVMRESET_F_XXX.
+ */
+VMMR3_INT_DECL(void) PDMR3SoftReset(PVM pVM, uint32_t fResetFlags)
+{
+    LogFlow(("PDMR3SoftReset: fResetFlags=%#x\n", fResetFlags));
+
+    /*
+     * Iterate thru the device instances and work the callback.
+     */
+    for (PPDMDEVINS pDevIns = pVM->pdm.s.pDevInstances; pDevIns; pDevIns = pDevIns->Internal.s.pNextR3)
+        if (pDevIns->pReg->pfnSoftReset)
+        {
+            PDMCritSectEnter(pDevIns->pCritSectRoR3, VERR_IGNORED);
+            pDevIns->pReg->pfnSoftReset(pDevIns, fResetFlags);
+            PDMCritSectLeave(pDevIns->pCritSectRoR3);
+        }
+
+    LogFlow(("PDMR3SoftReset: returns void\n"));
 }
 
 
@@ -1702,7 +1886,7 @@ DECLINLINE(void) pdmR3SuspendDev(PPDMDEVINS pDevIns, PPDMNOTIFYASYNCSTATS pAsync
             PDMCritSectLeave(pDevIns->pCritSectRoR3);
             cNsElapsed = RTTimeNanoTS() - cNsElapsed;
             if (cNsElapsed >= PDMSUSPEND_WARN_AT_NS)
-                LogRel(("PDMR3Suspend: device '%s'/%d took %'llu ns to suspend\n",
+                LogRel(("PDMR3Suspend: Device '%s'/%d took %'llu ns to suspend\n",
                         pDevIns->pReg->szName, pDevIns->iInstance, cNsElapsed));
         }
     }
@@ -1713,7 +1897,7 @@ DECLINLINE(void) pdmR3SuspendDev(PPDMDEVINS pDevIns, PPDMNOTIFYASYNCSTATS pAsync
  * This function will notify all the devices and their attached drivers about
  * the VM now being suspended.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @thread  EMT(0)
  */
 VMMR3_INT_DECL(void) PDMR3Suspend(PVM pVM)
@@ -1811,7 +1995,7 @@ DECLINLINE(int) pdmR3ResumeDrv(PPDMDRVINS pDrvIns, const char *pszDevName, uint3
         int rc = VINF_SUCCESS; pDrvIns->pReg->pfnResume(pDrvIns);
         if (RT_FAILURE(rc))
         {
-            LogRel(("PDMR3Resume: driver '%s'/%d on LUN#%d of device '%s'/%d -> %Rrc\n",
+            LogRel(("PDMR3Resume: Driver '%s'/%d on LUN#%d of device '%s'/%d -> %Rrc\n",
                     pDrvIns->pReg->szName, pDrvIns->iInstance, iLun, pszDevName, iDevInstance, rc));
             return rc;
         }
@@ -1836,7 +2020,7 @@ DECLINLINE(int) pdmR3ResumeUsb(PPDMUSBINS pUsbIns)
         int rc = VINF_SUCCESS; pUsbIns->pReg->pfnVMResume(pUsbIns);
         if (RT_FAILURE(rc))
         {
-            LogRel(("PDMR3Resume: device '%s'/%d -> %Rrc\n", pUsbIns->pReg->szName, pUsbIns->iInstance, rc));
+            LogRel(("PDMR3Resume: Device '%s'/%d -> %Rrc\n", pUsbIns->pReg->szName, pUsbIns->iInstance, rc));
             return rc;
         }
     }
@@ -1862,7 +2046,7 @@ DECLINLINE(int) pdmR3ResumeDev(PPDMDEVINS pDevIns)
         PDMCritSectLeave(pDevIns->pCritSectRoR3);
         if (RT_FAILURE(rc))
         {
-            LogRel(("PDMR3Resume: device '%s'/%d -> %Rrc\n", pDevIns->pReg->szName, pDevIns->iInstance, rc));
+            LogRel(("PDMR3Resume: Device '%s'/%d -> %Rrc\n", pDevIns->pReg->szName, pDevIns->iInstance, rc));
             return rc;
         }
     }
@@ -1875,7 +2059,7 @@ DECLINLINE(int) pdmR3ResumeDev(PPDMDEVINS pDevIns)
  * This function will notify all the devices and their
  * attached drivers about the VM now being resumed.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3_INT_DECL(void) PDMR3Resume(PVM pVM)
 {
@@ -2076,12 +2260,37 @@ DECLINLINE(void) pdmR3PowerOffDev(PPDMDEVINS pDevIns, PPDMNOTIFYASYNCSTATS pAsyn
  * This function will notify all the devices and their
  * attached drivers about the VM being powered off.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3DECL(void) PDMR3PowerOff(PVM pVM)
 {
     LogFlow(("PDMR3PowerOff:\n"));
     uint64_t cNsElapsed = RTTimeNanoTS();
+
+    /*
+     * Clear the suspended flags on all devices and drivers first because they
+     * might have been set during a suspend but the power off callbacks should
+     * be called in any case.
+     */
+    for (PPDMDEVINS pDevIns = pVM->pdm.s.pDevInstances; pDevIns; pDevIns = pDevIns->Internal.s.pNextR3)
+    {
+        pDevIns->Internal.s.fIntFlags &= ~PDMDEVINSINT_FLAGS_SUSPENDED;
+
+        for (PPDMLUN pLun = pDevIns->Internal.s.pLunsR3; pLun; pLun = pLun->pNext)
+            for (PPDMDRVINS pDrvIns = pLun->pTop; pDrvIns; pDrvIns = pDrvIns->Internal.s.pDown)
+                pDrvIns->Internal.s.fVMSuspended = false;
+    }
+
+#ifdef VBOX_WITH_USB
+    for (PPDMUSBINS pUsbIns = pVM->pdm.s.pUsbInstances; pUsbIns; pUsbIns = pUsbIns->Internal.s.pNext)
+    {
+        pUsbIns->Internal.s.fVMSuspended = false;
+
+        for (PPDMLUN pLun = pUsbIns->Internal.s.pLuns; pLun; pLun = pLun->pNext)
+            for (PPDMDRVINS pDrvIns = pLun->pTop; pDrvIns; pDrvIns = pDrvIns->Internal.s.pDown)
+                pDrvIns->Internal.s.fVMSuspended = false;
+    }
+#endif
 
     /*
      * The outer loop repeats until there are no more async requests.
@@ -2224,7 +2433,7 @@ VMMR3DECL(int) PDMR3QueryDevice(PUVM pUVM, const char *pszDevice, unsigned iInst
  */
 VMMR3DECL(int) PDMR3QueryDeviceLun(PUVM pUVM, const char *pszDevice, unsigned iInstance, unsigned iLun, PPDMIBASE *ppBase)
 {
-    LogFlow(("PDMR3QueryLun: pszDevice=%p:{%s} iInstance=%u iLun=%u ppBase=%p\n",
+    LogFlow(("PDMR3QueryDeviceLun: pszDevice=%p:{%s} iInstance=%u iLun=%u ppBase=%p\n",
              pszDevice, pszDevice, iInstance, iLun, ppBase));
     UVM_ASSERT_VALID_EXT_RETURN(pUVM, VERR_INVALID_VM_HANDLE);
     VM_ASSERT_VALID_EXT_RETURN(pUVM->pVM, VERR_INVALID_VM_HANDLE);
@@ -2339,7 +2548,7 @@ VMMR3DECL(int) PDMR3QueryDriverOnLun(PUVM pUVM, const char *pszDevice, unsigned 
  * Executes pending DMA transfers.
  * Forced Action handler.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  */
 VMMR3DECL(void) PDMR3DmaRun(PVM pVM)
 {
@@ -2363,7 +2572,7 @@ VMMR3DECL(void) PDMR3DmaRun(PVM pVM)
  * Service a VMMCALLRING3_PDM_LOCK call.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 VMMR3_INT_DECL(int) PDMR3LockCall(PVM pVM)
 {
@@ -2372,56 +2581,15 @@ VMMR3_INT_DECL(int) PDMR3LockCall(PVM pVM)
 
 
 /**
- * Registers the VMM device heap
+ * Allocates memory from the VMM device heap.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
- * @param   GCPhys          The physical address.
- * @param   pvHeap          Ring-3 pointer.
- * @param   cbSize          Size of the heap.
- */
-VMMR3_INT_DECL(int) PDMR3VmmDevHeapRegister(PVM pVM, RTGCPHYS GCPhys, RTR3PTR pvHeap, unsigned cbSize)
-{
-    Assert(pVM->pdm.s.pvVMMDevHeap == NULL);
-
-    Log(("PDMR3VmmDevHeapRegister %RGp %RHv %x\n", GCPhys, pvHeap, cbSize));
-    pVM->pdm.s.pvVMMDevHeap     = pvHeap;
-    pVM->pdm.s.GCPhysVMMDevHeap = GCPhys;
-    pVM->pdm.s.cbVMMDevHeap     = cbSize;
-    pVM->pdm.s.cbVMMDevHeapLeft = cbSize;
-    return VINF_SUCCESS;
-}
-
-
-/**
- * Unregisters the VMM device heap
- *
- * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
- * @param   GCPhys          The physical address.
- */
-VMMR3_INT_DECL(int) PDMR3VmmDevHeapUnregister(PVM pVM, RTGCPHYS GCPhys)
-{
-    Assert(pVM->pdm.s.GCPhysVMMDevHeap == GCPhys);
-
-    Log(("PDMR3VmmDevHeapUnregister %RGp\n", GCPhys));
-    pVM->pdm.s.pvVMMDevHeap     = NULL;
-    pVM->pdm.s.GCPhysVMMDevHeap = NIL_RTGCPHYS;
-    pVM->pdm.s.cbVMMDevHeap     = 0;
-    pVM->pdm.s.cbVMMDevHeapLeft = 0;
-    return VINF_SUCCESS;
-}
-
-
-/**
- * Allocates memory from the VMM device heap
- *
- * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   cbSize          Allocation size.
- * @param   pv              Ring-3 pointer. (out)
+ * @param   pfnNotify       Mapping/unmapping notification callback.
+ * @param   ppv             Ring-3 pointer. (out)
  */
-VMMR3_INT_DECL(int) PDMR3VmmDevHeapAlloc(PVM pVM, size_t cbSize, RTR3PTR *ppv)
+VMMR3_INT_DECL(int) PDMR3VmmDevHeapAlloc(PVM pVM, size_t cbSize, PFNPDMVMMDEVHEAPNOTIFY pfnNotify, RTR3PTR *ppv)
 {
 #ifdef DEBUG_bird
     if (!cbSize || cbSize > pVM->pdm.s.cbVMMDevHeapLeft)
@@ -2435,6 +2603,7 @@ VMMR3_INT_DECL(int) PDMR3VmmDevHeapAlloc(PVM pVM, size_t cbSize, RTR3PTR *ppv)
     /** @todo Not a real heap as there's currently only one user. */
     *ppv = pVM->pdm.s.pvVMMDevHeap;
     pVM->pdm.s.cbVMMDevHeapLeft = 0;
+    pVM->pdm.s.pfnVMMDevHeapNotify = pfnNotify;
     return VINF_SUCCESS;
 }
 
@@ -2443,15 +2612,16 @@ VMMR3_INT_DECL(int) PDMR3VmmDevHeapAlloc(PVM pVM, size_t cbSize, RTR3PTR *ppv)
  * Frees memory from the VMM device heap
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pv              Ring-3 pointer.
  */
 VMMR3_INT_DECL(int) PDMR3VmmDevHeapFree(PVM pVM, RTR3PTR pv)
 {
-    Log(("PDMR3VmmDevHeapFree: %RHv\n", pv));
+    Log(("PDMR3VmmDevHeapFree: %RHv\n", pv)); RT_NOREF_PV(pv);
 
     /** @todo not a real heap as there's currently only one user. */
     pVM->pdm.s.cbVMMDevHeapLeft = pVM->pdm.s.cbVMMDevHeap;
+    pVM->pdm.s.pfnVMMDevHeapNotify = NULL;
     return VINF_SUCCESS;
 }
 
@@ -2461,7 +2631,7 @@ VMMR3_INT_DECL(int) PDMR3VmmDevHeapFree(PVM pVM, RTR3PTR pv)
  * matches a device or driver name and applies the tracing config change.
  *
  * @returns VINF_SUCCESS or VERR_NOT_FOUND.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszName             The tracing config group name.  This is NULL if
  *                              the operation applies to every device and
  *                              driver.
@@ -2597,7 +2767,7 @@ VMMR3_INT_DECL(int) PDMR3TracingConfig(PVM pVM, const char *pszName, size_t cchN
  * and USB device have the same tracing settings.
  *
  * @returns true / false.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   fEnabled            The tracing setting to check for.
  */
 VMMR3_INT_DECL(bool) PDMR3TracingAreAll(PVM pVM, bool fEnabled)
@@ -2673,7 +2843,7 @@ static int pdmR3TracingAdd(char **ppszDst, size_t *pcbDst, bool fSpace, const ch
  * or disabled.
  *
  * @returns VINF_SUCCESS or VERR_BUFFER_OVERFLOW
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszConfig           Where to store the config spec.
  * @param   cbConfig            The size of the output buffer.
  */
@@ -2750,7 +2920,7 @@ bool pdmR3IsValidName(const char *pszName)
 /**
  * Info handler for 'pdmtracingids'.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pHlp        The output helpers.
  * @param   pszArgs     The optional user arguments.
  *

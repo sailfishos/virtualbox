@@ -1,9 +1,10 @@
+/* $Id: vboxmouse.c $ */
 /** @file
  * VirtualBox X11 Guest Additions, mouse driver for X.Org server 1.5
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -43,7 +44,7 @@
  *      Adam Jackson (ajax@redhat.com)
  */
 
-#include <VBox/VMMDev.h>
+#include <VBox/VMMDev.h> /* for VMMDEV_MOUSE_XXX */
 #include <VBox/VBoxGuestLib.h>
 #include <iprt/err.h>
 #include <xf86.h>
@@ -69,7 +70,8 @@ VBoxReadInput(InputInfoPtr pInfo)
 
     /* Read a byte from the device to acknowledge the event */
     char c;
-    (void) read(pInfo->fd, &c, 1);
+    int res = read(pInfo->fd, &c, 1);
+    NOREF(res);
     /* The first test here is a workaround for an apparent bug in Xorg Server 1.5 */
     if (
 #if GET_ABI_MAJOR(ABI_XINPUT_VERSION) < 2
@@ -95,14 +97,17 @@ static void
 VBoxPtrCtrlProc(DeviceIntPtr device, PtrCtrl *ctrl)
 {
     /* Nothing to do, dix handles all settings */
+    RT_NOREF(device, ctrl);
 }
 
 static int
 VBoxInit(DeviceIntPtr device)
 {
     CARD8 map[2] = { 0, 1 };
+#if GET_ABI_MAJOR(ABI_XINPUT_VERSION) >= 7
     Atom axis_labels[2] = { 0, 0 };
     Atom button_labels[2] = { 0, 0 };
+#endif
     if (!InitPointerDeviceStruct((DevicePtr)device, map, 2,
 #if GET_ABI_MAJOR(ABI_XINPUT_VERSION) >= 7
                                  button_labels,
@@ -184,8 +189,12 @@ VBoxProc(DeviceIntPtr device, int what)
         if (device->public.on)
             break;
         /* Tell the host that we want absolute co-ordinates */
-        rc = VbglR3SetMouseStatus(  VMMDEV_MOUSE_GUEST_CAN_ABSOLUTE
-                                  | VMMDEV_MOUSE_NEW_PROTOCOL);
+        rc = VbglR3GetMouseStatus(&fFeatures, NULL, NULL);
+        fFeatures &= VMMDEV_MOUSE_GUEST_NEEDS_HOST_CURSOR;
+        if (RT_SUCCESS(rc))
+            rc = VbglR3SetMouseStatus(  fFeatures
+                                      | VMMDEV_MOUSE_GUEST_CAN_ABSOLUTE
+                                      | VMMDEV_MOUSE_NEW_PROTOCOL);
         if (!RT_SUCCESS(rc)) {
             xf86Msg(X_ERROR, "%s: Failed to switch guest mouse into absolute mode\n",
                     pInfo->name);
@@ -199,6 +208,7 @@ VBoxProc(DeviceIntPtr device, int what)
     case DEVICE_OFF:
         xf86Msg(X_INFO, "%s: Off.\n", pInfo->name);
         rc = VbglR3GetMouseStatus(&fFeatures, NULL, NULL);
+        fFeatures &= VMMDEV_MOUSE_GUEST_NEEDS_HOST_CURSOR;
         if (RT_SUCCESS(rc))
             rc = VbglR3SetMouseStatus(  fFeatures
                                       & ~VMMDEV_MOUSE_GUEST_CAN_ABSOLUTE
@@ -236,12 +246,14 @@ static Bool
 VBoxConvert(InputInfoPtr pInfo, int first, int num, int v0, int v1, int v2,
             int v3, int v4, int v5, int *x, int *y)
 {
+    RT_NOREF(pInfo, num, v2, v3, v4, v5);
+
     if (first == 0) {
         *x = xf86ScaleAxis(v0, 0, screenInfo.screens[0]->width, 0, 65536);
         *y = xf86ScaleAxis(v1, 0, screenInfo.screens[0]->height, 0, 65536);
         return TRUE;
-    } else
-        return FALSE;
+    }
+    return FALSE;
 }
 
 static int
@@ -249,6 +261,7 @@ VBoxPreInitInfo(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
 {
     const char *device;
     int rc;
+    RT_NOREF(drv, flags);
 
     /* Initialise the InputInfoRec. */
     pInfo->device_control = VBoxProc;
@@ -282,10 +295,8 @@ VBoxPreInitInfo(InputDriverPtr drv, InputInfoPtr pInfo, int flags)
 static InputInfoPtr
 VBoxPreInit(InputDriverPtr drv, IDevPtr dev, int flags)
 {
-    InputInfoPtr pInfo;
-    const char *device;
-
-    if (!(pInfo = xf86AllocateInput(drv, 0)))
+    InputInfoPtr pInfo = xf86AllocateInput(drv, 0);
+    if (!pInfo)
         return NULL;
 
     /* Initialise the InputInfoRec. */
@@ -322,11 +333,9 @@ _X_EXPORT InputDriverRec VBOXMOUSE = {
 };
 
 static pointer
-VBoxPlug(pointer module,
-          pointer options,
-          int *errmaj,
-          int *errmin)
+VBoxPlug(pointer module, pointer options, int *errmaj, int *errmin)
 {
+    RT_NOREF(options, errmaj, errmin);
     xf86AddInputDriver(&VBOXMOUSE, module, 0);
     xf86Msg(X_CONFIG, "Load address of symbol \"VBOXMOUSE\" is %p\n",
             (void *)&VBOXMOUSE);

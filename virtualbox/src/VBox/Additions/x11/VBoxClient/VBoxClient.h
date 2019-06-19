@@ -1,10 +1,11 @@
+/* $Id: VBoxClient.h $ */
 /** @file
  *
  * VirtualBox additions user session daemon.
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,10 +32,10 @@ do { \
 } while(0)
 
 /** Exit with a fatal error. */
-extern void vbclFatalError(char *pszMessage);
+extern DECLNORETURN(void) vbclFatalError(char *pszMessage);
 
 /** Call clean-up for the current service and exit. */
-extern void VBClCleanUp();
+extern void VBClCleanUp(bool fExit = true);
 
 /** A simple interface describing a service.  VBoxClient will run exactly one
  * service per invocation. */
@@ -49,12 +50,6 @@ struct VBCLSERVICE
     int (*init)(struct VBCLSERVICE **ppInterface);
     /** Run the service main loop */
     int (*run)(struct VBCLSERVICE **ppInterface, bool fDaemonised);
-    /** Pause the service loop.  This is used to allow the service to disable
-     * itself when the X server is switched out.  It must be safe to call on a
-     * different thread if the VT monitoring thread is used. */
-    int (*pause)(struct VBCLSERVICE **ppInterface);
-    /** Resume after pausing.  The same applies here as for @a pause. */
-    int (*resume)(struct VBCLSERVICE **ppInterface);
     /** Clean up any global resources before we shut down hard.  The last calls
      * to @a pause and @a resume are guaranteed to finish before this is called.
      */
@@ -62,22 +57,19 @@ struct VBCLSERVICE
 };
 
 /** Default handler for various struct VBCLSERVICE member functions. */
-static int VBClServiceDefaultHandler(struct VBCLSERVICE **pSelf)
+DECLINLINE(int) VBClServiceDefaultHandler(struct VBCLSERVICE **pSelf)
 {
+    RT_NOREF1(pSelf);
     return VINF_SUCCESS;
 }
 
 /** Default handler for the struct VBCLSERVICE clean-up member function.
  * Usually used because the service is cleaned up automatically when the user
  * process/X11 exits. */
-static void VBClServiceDefaultCleanup(struct VBCLSERVICE **ppInterface)
+DECLINLINE(void) VBClServiceDefaultCleanup(struct VBCLSERVICE **ppInterface)
 {
     NOREF(ppInterface);
 }
-
-union _XEvent;  /* We do not want to pull in the X11 header files here. */
-extern void VBClCheckXOrgVT(union _XEvent *pEvent);
-extern int VBClStartVTMonitor();
 
 extern struct VBCLSERVICE **VBClGetClipboardService();
 extern struct VBCLSERVICE **VBClGetSeamlessService();
@@ -86,5 +78,8 @@ extern struct VBCLSERVICE **VBClGetHostVersionService();
 #ifdef VBOX_WITH_DRAG_AND_DROP
 extern struct VBCLSERVICE **VBClGetDragAndDropService();
 #endif /* VBOX_WITH_DRAG_AND_DROP */
+extern struct VBCLSERVICE **VBClCheck3DService();
+extern struct VBCLSERVICE **VBClDisplaySVGAService();
+extern struct VBCLSERVICE **VBClDisplaySVGAX11Service();
 
 #endif /* !___vboxclient_vboxclient_h */

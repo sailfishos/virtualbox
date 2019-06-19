@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -69,7 +69,7 @@ typedef struct SCMSTREAM
     size_t          iLine;
     /** The current stream size given in lines.   */
     size_t          cLines;
-    /** The sizeof the the memory backing paLines.   */
+    /** The sizeof the memory backing paLines.   */
     size_t          cLinesAllocated;
 
     /** Set if write-only, clear if read-only. */
@@ -122,6 +122,7 @@ SCMEOL      ScmStreamGetEolByLine(PSCMSTREAM pStream, size_t iLine);
 int         ScmStreamPutLine(PSCMSTREAM pStream, const char *pchLine, size_t cchLine, SCMEOL enmEol);
 int         ScmStreamWrite(PSCMSTREAM pStream, const char *pchBuf, size_t cchBuf);
 int         ScmStreamPutCh(PSCMSTREAM pStream, char ch);
+int         ScmStreamPutEol(PSCMSTREAM pStream, SCMEOL enmEol);
 ssize_t     ScmStreamPrintf(PSCMSTREAM pStream, const char *pszFormat, ...);
 ssize_t     ScmStreamPrintfV(PSCMSTREAM pStream, const char *pszFormat, va_list va);
 int         ScmStreamCopyLines(PSCMSTREAM pDst, PSCMSTREAM pSrc, size_t cLines);

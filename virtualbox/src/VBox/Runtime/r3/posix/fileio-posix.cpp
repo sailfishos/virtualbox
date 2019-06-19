@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_FILE
 
 #include <errno.h>
@@ -69,9 +69,9 @@
 
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Default file permissions for newly created files. */
 #if defined(S_IRUSR) && defined(S_IWUSR)
 # define RT_FILE_PERMISSION  (S_IRUSR | S_IWUSR)
@@ -154,7 +154,7 @@ RTR3DECL(int) RTFileOpen(PRTFILE pFile, const char *pszFilename, uint64_t fOpen)
     if (fOpen & RTFILE_O_ASYNC_IO)
         fOpenMode |= O_DIRECT;
 #endif
-#if defined(O_DIRECT) && (defined(RT_OS_LINUX) || defined(RT_OS_FREEBSD))
+#if defined(O_DIRECT) && (defined(RT_OS_LINUX) || defined(RT_OS_FREEBSD) || defined(RT_OS_NETBSD))
     /* Disable the kernel cache. */
     if (fOpen & RTFILE_O_NO_CACHE)
         fOpenMode |= O_DIRECT;
@@ -390,7 +390,6 @@ RTFILE rtFileGetStandard(RTHANDLESTD enmStdHandle)
         case RTHANDLESTD_INPUT:  fd = 0; break;
         case RTHANDLESTD_OUTPUT: fd = 1; break;
         case RTHANDLESTD_ERROR:  fd = 2; break;
-            break;
         default:
             AssertFailedReturn(NIL_RTFILE);
     }
@@ -560,7 +559,7 @@ RTR3DECL(int) RTFileGetSize(RTFILE hFile, uint64_t *pcbSize)
         if (   st.st_size != 0
 #if defined(RT_OS_SOLARIS)
             || (!S_ISBLK(st.st_mode) && !S_ISCHR(st.st_mode))
-#elif defined(RT_OS_FREEBSD)
+#elif defined(RT_OS_FREEBSD) || defined(RT_OS_NETBSD)
             || !S_ISCHR(st.st_mode)
 #else
             || !S_ISBLK(st.st_mode)

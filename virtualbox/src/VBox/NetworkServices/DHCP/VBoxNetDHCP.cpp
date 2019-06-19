@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -21,9 +21,10 @@
  *
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/com/com.h>
 #include <VBox/com/listeners.h>
 #include <VBox/com/string.h>
@@ -46,13 +47,15 @@
 #include <iprt/stream.h>
 #include <iprt/time.h>
 #include <iprt/string.h>
+#ifdef RT_OS_WINDOWS
+# include <iprt/thread.h>
+#endif
 
 #include <VBox/sup.h>
 #include <VBox/intnet.h>
 #include <VBox/intnetinline.h>
 #include <VBox/vmm/vmm.h>
 #include <VBox/version.h>
-
 
 #include "../NetLib/VBoxNetLib.h"
 #include "../NetLib/shared_ptr.h"
@@ -66,7 +69,7 @@
 #include "../NetLib/utils.h"
 
 #ifdef RT_OS_WINDOWS /* WinMain */
-# include <Windows.h>
+# include <iprt/win/windows.h>
 # include <stdlib.h>
 # ifdef INET_ADDRSTRLEN
 /* On Windows INET_ADDRSTRLEN defined as 22 Ws2ipdef.h, because it include port number */
@@ -79,19 +82,22 @@
 
 
 #include "Config.h"
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * DHCP server instance.
  */
-class VBoxNetDhcp: public VBoxNetBaseService, public NATNetworkEventAdapter
+class VBoxNetDhcp : public VBoxNetBaseService, public NATNetworkEventAdapter
 {
 public:
     VBoxNetDhcp();
     virtual ~VBoxNetDhcp();
 
     int                 init();
+    void                done();
     void                usage(void) { /* XXX: document options */ };
     int                 parseOpt(int rc, const RTGETOPTUNION& getOptVal);
     int                 processFrame(void *, size_t) {return VERR_IGNORED; };
@@ -100,10 +106,6 @@ public:
 
 protected:
     bool                handleDhcpMsg(uint8_t uMsgType, PCRTNETBOOTP pDhcpMsg, size_t cb);
-    bool                handleDhcpReqDiscover(PCRTNETBOOTP pDhcpMsg, size_t cb);
-    bool                handleDhcpReqRequest(PCRTNETBOOTP pDhcpMsg, size_t cb);
-    bool                handleDhcpReqDecline(PCRTNETBOOTP pDhcpMsg, size_t cb);
-    bool                handleDhcpReqRelease(PCRTNETBOOTP pDhcpMsg, size_t cb);
 
     void                debugPrintV(int32_t iMinLevel, bool fMsg,  const char *pszFmt, va_list va) const;
     static const char  *debugDhcpName(uint8_t uMsgType);
@@ -112,6 +114,11 @@ private:
     int initNoMain();
     int initWithMain();
     HRESULT HandleEvent(VBoxEventType_T aEventType, IEvent *pEvent);
+
+    static int hostDnsServers(const ComHostPtr& host,
+                              const RTNETADDRIPV4& networkid,
+                              const AddressToOffsetMapping& mapping,
+                              AddressList& servers);
     int fetchAndUpdateDnsInfo();
 
 protected:
@@ -132,7 +139,11 @@ protected:
     ComPtr<INATNetwork> m_NATNetwork;
 
     /** Listener for Host DNS changes */
-    ComPtr<NATNetworkListenerImpl> m_vboxListener;
+    ComNatListenerPtr m_VBoxListener;
+    ComNatListenerPtr m_VBoxClientListener;
+
+    NetworkManager *m_NetworkManager;
+
     /*
      * We will ignore cmd line parameters IFF there will be some DHCP specific arguments
      * otherwise all paramters will come from Main.
@@ -176,9 +187,10 @@ static inline int configGetBoundryAddress(const ComDhcpServerPtr& dhcp, bool fUp
     return RTNetStrToIPv4Addr(com::Utf8Str(strAddress).c_str(), &boundryAddress);
 }
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Pointer to the DHCP server. */
 static VBoxNetDhcp *g_pDhcp;
 
@@ -195,7 +207,9 @@ static RTGETOPTDEF g_aOptionDefs[] =
 /**
  * Construct a DHCP server with a default configuration.
  */
-VBoxNetDhcp::VBoxNetDhcp():VBoxNetBaseService("VBoxNetDhcp", "VBoxNetDhcp")
+VBoxNetDhcp::VBoxNetDhcp()
+  : VBoxNetBaseService("VBoxNetDhcp", "VBoxNetDhcp"),
+    m_NetworkManager(NULL)
 {
     /*   m_enmTrunkType          = kIntNetTrunkType_WhateverNone; */
     RTMAC mac;
@@ -217,7 +231,7 @@ VBoxNetDhcp::VBoxNetDhcp():VBoxNetBaseService("VBoxNetDhcp", "VBoxNetDhcp")
     m_uCurMsgType           = UINT8_MAX;
     m_cbCurMsg              = 0;
     m_pCurMsg               = NULL;
-    memset(&m_CurHdrs, '\0', sizeof(m_CurHdrs));
+    RT_ZERO(m_CurHdrs);
 
     m_fIgnoreCmdLineParameters = true;
 
@@ -284,23 +298,28 @@ int VBoxNetDhcp::init()
     int rc = this->VBoxNetBaseService::init();
     AssertRCReturn(rc, rc);
 
-    NetworkManager *netManager = NetworkManager::getNetworkManager();
-
-    netManager->setOurAddress(getIpv4Address());
-    netManager->setOurNetmask(getIpv4Netmask());
-    netManager->setOurMac(getMacAddress());
-    netManager->setService(this);
-
     if (isMainNeeded())
         rc = initWithMain();
     else
         rc = initNoMain();
-
     AssertRCReturn(rc, rc);
+
+    m_NetworkManager = NetworkManager::getNetworkManager(m_DhcpServer);
+    AssertPtrReturn(m_NetworkManager, VERR_INTERNAL_ERROR);
+
+    m_NetworkManager->setOurAddress(getIpv4Address());
+    m_NetworkManager->setOurNetmask(getIpv4Netmask());
+    m_NetworkManager->setOurMac(getMacAddress());
+    m_NetworkManager->setService(this);
 
     return VINF_SUCCESS;
 }
 
+void VBoxNetDhcp::done()
+{
+    destroyNatListener(m_VBoxListener, virtualbox);
+    destroyClientListener(m_VBoxClientListener, virtualboxClient);
+}
 
 int  VBoxNetDhcp::processUDP(void *pv, size_t cbPv)
 {
@@ -332,7 +351,7 @@ int  VBoxNetDhcp::processUDP(void *pv, size_t cbPv)
 /**
  * Handles a DHCP message.
  *
- * @returns true if handled, false if not.
+ * @returns true if handled, false if not.  (IGNORED BY CALLER)
  * @param   uMsgType        The message type.
  * @param   pDhcpMsg        The DHCP message.
  * @param   cb              The size of the DHCP message.
@@ -341,21 +360,21 @@ bool VBoxNetDhcp::handleDhcpMsg(uint8_t uMsgType, PCRTNETBOOTP pDhcpMsg, size_t 
 {
     if (pDhcpMsg->bp_op == RTNETBOOTP_OP_REQUEST)
     {
-        NetworkManager *networkManager = NetworkManager::getNetworkManager();
+        AssertPtrReturn(m_NetworkManager, false);
 
         switch (uMsgType)
         {
             case RTNET_DHCP_MT_DISCOVER:
-                return networkManager->handleDhcpReqDiscover(pDhcpMsg, cb);
+                return m_NetworkManager->handleDhcpReqDiscover(pDhcpMsg, cb);
 
             case RTNET_DHCP_MT_REQUEST:
-                return networkManager->handleDhcpReqRequest(pDhcpMsg, cb);
+                return m_NetworkManager->handleDhcpReqRequest(pDhcpMsg, cb);
 
             case RTNET_DHCP_MT_DECLINE:
-                return networkManager->handleDhcpReqDecline(pDhcpMsg, cb);
+                return m_NetworkManager->handleDhcpReqDecline(pDhcpMsg, cb);
 
             case RTNET_DHCP_MT_RELEASE:
-                return networkManager->handleDhcpReqRelease(pDhcpMsg, cb);
+                return m_NetworkManager->handleDhcpReqRelease(pDhcpMsg, cb);
 
             case RTNET_DHCP_MT_INFORM:
                 debugPrint(0, true, "Should we handle this?");
@@ -490,7 +509,7 @@ int VBoxNetDhcp::initWithMain()
      * and listener for Dhcp configuration events
      */
     AssertRCReturn(virtualbox.isNull(), VERR_INTERNAL_ERROR);
-    std::string networkName = getNetwork();
+    std::string networkName = getNetworkName();
 
     int rc = findDhcpServer(virtualbox, networkName, m_DhcpServer);
     AssertRCReturn(rc, rc);
@@ -515,10 +534,20 @@ int VBoxNetDhcp::initWithMain()
     rc = fetchAndUpdateDnsInfo();
     AssertMsgRCReturn(rc, ("Wasn't able to fetch Dns info"), rc);
 
-    ComEventTypeArray aVBoxEvents;
-    aVBoxEvents.push_back(VBoxEventType_OnHostNameResolutionConfigurationChange);
-    rc = createNatListener(m_vboxListener, virtualbox, this, aVBoxEvents);
-    AssertRCReturn(rc, rc);
+    {
+        ComEventTypeArray eventTypes;
+        eventTypes.push_back(VBoxEventType_OnHostNameResolutionConfigurationChange);
+        eventTypes.push_back(VBoxEventType_OnNATNetworkStartStop);
+        rc = createNatListener(m_VBoxListener, virtualbox, this, eventTypes);
+        AssertRCReturn(rc, rc);
+    }
+
+    {
+        ComEventTypeArray eventTypes;
+        eventTypes.push_back(VBoxEventType_OnVBoxSVCAvailabilityChanged);
+        rc = createClientListener(m_VBoxClientListener, virtualboxClient, this, eventTypes);
+        AssertRCReturn(rc, rc);
+    }
 
     RTNETADDRIPV4 LowerAddress;
     rc = configGetBoundryAddress(m_DhcpServer, false, LowerAddress);
@@ -587,17 +616,186 @@ int VBoxNetDhcp::fetchAndUpdateDnsInfo()
 }
 
 
+int VBoxNetDhcp::hostDnsServers(const ComHostPtr& host,
+                                const RTNETADDRIPV4& networkid,
+                                const AddressToOffsetMapping& mapping,
+                                AddressList& servers)
+{
+    ComBstrArray strs;
+
+    HRESULT hrc = host->COMGETTER(NameServers)(ComSafeArrayAsOutParam(strs));
+    if (FAILED(hrc))
+        return VERR_NOT_FOUND;
+
+    /*
+     * Recent fashion is to run dnsmasq on 127.0.1.1 which we
+     * currently can't map.  If that's the only nameserver we've got,
+     * we need to use DNS proxy for VMs to reach it.
+     */
+    bool fUnmappedLoopback = false;
+
+    for (size_t i = 0; i < strs.size(); ++i)
+    {
+        RTNETADDRIPV4 addr;
+        int rc;
+
+        rc = RTNetStrToIPv4Addr(com::Utf8Str(strs[i]).c_str(), &addr);
+        if (RT_FAILURE(rc))
+            continue;
+
+        if (addr.u == INADDR_ANY)
+        {
+            /*
+             * This doesn't seem to be very well documented except for
+             * RTFS of res_init.c, but INADDR_ANY is a valid value for
+             * for "nameserver".
+             */
+            addr.u = RT_H2N_U32_C(INADDR_LOOPBACK);
+        }
+
+        if (addr.au8[0] == 127)
+        {
+            AddressToOffsetMapping::const_iterator remap(mapping.find(addr));
+
+            if (remap != mapping.end())
+            {
+                int offset = remap->second;
+                addr.u = RT_H2N_U32(RT_N2H_U32(networkid.u) + offset);
+            }
+            else
+            {
+                fUnmappedLoopback = true;
+                continue;
+            }
+        }
+
+        servers.push_back(addr);
+    }
+
+    if (servers.empty() && fUnmappedLoopback)
+    {
+        RTNETADDRIPV4 proxy;
+
+        proxy.u = networkid.u | RT_H2N_U32_C(1U);
+        servers.push_back(proxy);
+    }
+
+    return VINF_SUCCESS;
+}
+
+
 HRESULT VBoxNetDhcp::HandleEvent(VBoxEventType_T aEventType, IEvent *pEvent)
 {
-    switch(aEventType)
+    switch (aEventType)
     {
         case VBoxEventType_OnHostNameResolutionConfigurationChange:
             fetchAndUpdateDnsInfo();
             break;
+
+        case VBoxEventType_OnNATNetworkStartStop:
+        {
+            ComPtr <INATNetworkStartStopEvent> pStartStopEvent = pEvent;
+
+            com::Bstr networkName;
+            HRESULT hrc = pStartStopEvent->COMGETTER(NetworkName)(networkName.asOutParam());
+            AssertComRCReturn(hrc, hrc);
+            if (networkName.compare(getNetworkName().c_str()))
+                break; /* change not for our network */
+
+            BOOL fStart = TRUE;
+            hrc = pStartStopEvent->COMGETTER(StartEvent)(&fStart);
+            AssertComRCReturn(hrc, hrc);
+            if (!fStart)
+                shutdown();
+            break;
+        }
+
+        case VBoxEventType_OnVBoxSVCAvailabilityChanged:
+        {
+            shutdown();
+            break;
+        }
+
+        default: break; /* Shut up MSC. */
     }
 
     return S_OK;
 }
+
+#ifdef RT_OS_WINDOWS
+
+/** The class name for the DIFx-killable window.    */
+static WCHAR g_wszWndClassName[] = L"VBoxNetDHCPClass";
+/** Whether to exit the process on quit.   */
+static bool g_fExitProcessOnQuit = true;
+
+/**
+ * Window procedure for making us DIFx-killable.
+ */
+static LRESULT CALLBACK DIFxKillableWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    if (uMsg == WM_DESTROY)
+    {
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProc(hwnd, uMsg, wParam, lParam);
+}
+
+/** @callback_method_impl{FNRTTHREAD,
+ *      Thread that creates service a window the DIFx can destroy, thereby
+ *      triggering process termination. }
+ */
+static DECLCALLBACK(int) DIFxKillableProcessThreadProc(RTTHREAD hThreadSelf, void *pvUser)
+{
+    RT_NOREF(hThreadSelf, pvUser);
+    HINSTANCE hInstance = (HINSTANCE)GetModuleHandle(NULL);
+
+    /* Register the Window Class. */
+    WNDCLASSW WndCls;
+    WndCls.style         = 0;
+    WndCls.lpfnWndProc   = DIFxKillableWindowProc;
+    WndCls.cbClsExtra    = 0;
+    WndCls.cbWndExtra    = sizeof(void *);
+    WndCls.hInstance     = hInstance;
+    WndCls.hIcon         = NULL;
+    WndCls.hCursor       = NULL;
+    WndCls.hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1);
+    WndCls.lpszMenuName  = NULL;
+    WndCls.lpszClassName = g_wszWndClassName;
+
+    ATOM atomWindowClass = RegisterClassW(&WndCls);
+    if (atomWindowClass != 0)
+    {
+        /* Create the window. */
+        HWND hwnd = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_TOPMOST,
+                                    g_wszWndClassName, g_wszWndClassName,
+                                    WS_POPUPWINDOW,
+                                    -200, -200, 100, 100, NULL, NULL, hInstance, NULL);
+        if (hwnd)
+        {
+            SetWindowPos(hwnd, HWND_TOPMOST, -200, -200, 0, 0,
+                         SWP_NOACTIVATE | SWP_HIDEWINDOW | SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_NOSIZE);
+
+            MSG msg;
+            while (GetMessage(&msg, NULL, 0, 0))
+            {
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
+            }
+
+            DestroyWindow(hwnd);
+        }
+
+        UnregisterClassW(g_wszWndClassName, hInstance);
+
+        if (hwnd && g_fExitProcessOnQuit)
+            exit(0);
+    }
+    return 0;
+}
+
+#endif /* RT_OS_WINDOWS */
 
 /**
  *  Entry point.
@@ -607,38 +805,56 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv)
     /*
      * Instantiate the DHCP server and hand it the options.
      */
-
     VBoxNetDhcp *pDhcp = new VBoxNetDhcp();
     if (!pDhcp)
     {
         RTStrmPrintf(g_pStdErr, "VBoxNetDHCP: new VBoxNetDhcp failed!\n");
         return 1;
     }
-    int rc = pDhcp->parseArgs(argc - 1, argv + 1);
-    if (rc)
-        return rc;
+
+    RTEXITCODE rcExit = (RTEXITCODE)pDhcp->parseArgs(argc - 1, argv + 1);
+    if (rcExit != RTEXITCODE_SUCCESS)
+        return rcExit;
+
+#ifdef RT_OS_WINDOWS
+    /* DIFx hack. */
+    RTTHREAD hMakeUseKillableThread = NIL_RTTHREAD;
+    int rc2 = RTThreadCreate(&hMakeUseKillableThread, DIFxKillableProcessThreadProc, NULL, 0,
+                             RTTHREADTYPE_DEFAULT, RTTHREADFLAGS_WAITABLE, "DIFxKill");
+    if (RT_FAILURE(rc2))
+        hMakeUseKillableThread = NIL_RTTHREAD;
+#endif
 
     pDhcp->init();
 
     /*
      * Try connect the server to the network.
      */
-    rc = pDhcp->tryGoOnline();
-    if (RT_FAILURE(rc))
+    int rc = pDhcp->tryGoOnline();
+    if (RT_SUCCESS(rc))
     {
-        delete pDhcp;
-        return 1;
-    }
+        /*
+         * Process requests.
+         */
+        g_pDhcp = pDhcp;
+        rc = pDhcp->run();
+        pDhcp->done();
 
-    /*
-     * Process requests.
-     */
-    g_pDhcp = pDhcp;
-    rc = pDhcp->run();
-    g_pDhcp = NULL;
+        g_pDhcp = NULL;
+    }
     delete pDhcp;
 
-    return 0;
+#ifdef RT_OS_WINDOWS
+    /* Kill DIFx hack. */
+    if (hMakeUseKillableThread != NIL_RTTHREAD)
+    {
+        g_fExitProcessOnQuit = false;
+        PostThreadMessage((DWORD)RTThreadGetNative(hMakeUseKillableThread), WM_QUIT, 0, 0);
+        RTThreadWait(hMakeUseKillableThread, RT_MS_1SEC * 5U, NULL);
+    }
+#endif
+
+    return RT_SUCCESS(rc) ? RTEXITCODE_SUCCESS : RTEXITCODE_FAILURE;
 }
 
 
@@ -655,98 +871,12 @@ int main(int argc, char **argv)
 
 # ifdef RT_OS_WINDOWS
 
-static LRESULT CALLBACK WindowProc(HWND hwnd,
-    UINT uMsg,
-    WPARAM wParam,
-    LPARAM lParam
-)
-{
-    if(uMsg == WM_DESTROY)
-    {
-        PostQuitMessage(0);
-        return 0;
-    }
-    return DefWindowProc (hwnd, uMsg, wParam, lParam);
-}
-
-static LPCWSTR g_WndClassName = L"VBoxNetDHCPClass";
-
-static DWORD WINAPI MsgThreadProc(__in  LPVOID lpParameter)
-{
-     HWND                 hwnd = 0;
-     HINSTANCE hInstance = (HINSTANCE)GetModuleHandle (NULL);
-     bool bExit = false;
-
-     /* Register the Window Class. */
-     WNDCLASS wc;
-     wc.style         = 0;
-     wc.lpfnWndProc   = WindowProc;
-     wc.cbClsExtra    = 0;
-     wc.cbWndExtra    = sizeof(void *);
-     wc.hInstance     = hInstance;
-     wc.hIcon         = NULL;
-     wc.hCursor       = NULL;
-     wc.hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1);
-     wc.lpszMenuName  = NULL;
-     wc.lpszClassName = g_WndClassName;
-
-     ATOM atomWindowClass = RegisterClass(&wc);
-
-     if (atomWindowClass != 0)
-     {
-         /* Create the window. */
-         hwnd = CreateWindowEx (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_TOPMOST,
-                 g_WndClassName, g_WndClassName,
-                                                   WS_POPUPWINDOW,
-                                                  -200, -200, 100, 100, NULL, NULL, hInstance, NULL);
-
-         if (hwnd)
-         {
-             SetWindowPos(hwnd, HWND_TOPMOST, -200, -200, 0, 0,
-                          SWP_NOACTIVATE | SWP_HIDEWINDOW | SWP_NOCOPYBITS | SWP_NOREDRAW | SWP_NOSIZE);
-
-             MSG msg;
-             while (GetMessage(&msg, NULL, 0, 0))
-             {
-                 TranslateMessage(&msg);
-                 DispatchMessage(&msg);
-             }
-
-             DestroyWindow (hwnd);
-
-             bExit = true;
-         }
-
-         UnregisterClass (g_WndClassName, hInstance);
-     }
-
-     if(bExit)
-     {
-         /* no need any accuracy here, in anyway the DHCP server usually gets terminated with TerminateProcess */
-         exit(0);
-     }
-
-     return 0;
-}
 
 
 /** (We don't want a console usually.) */
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow)
 {
     NOREF(hInstance); NOREF(hPrevInstance); NOREF(lpCmdLine); NOREF(nCmdShow);
-
-    HANDLE hThread = CreateThread(
-      NULL, /*__in_opt   LPSECURITY_ATTRIBUTES lpThreadAttributes, */
-      0, /*__in       SIZE_T dwStackSize, */
-      MsgThreadProc, /*__in       LPTHREAD_START_ROUTINE lpStartAddress,*/
-      NULL, /*__in_opt   LPVOID lpParameter,*/
-      0, /*__in       DWORD dwCreationFlags,*/
-      NULL /*__out_opt  LPDWORD lpThreadId*/
-    );
-
-    if(hThread != NULL)
-        CloseHandle(hThread);
-
     return main(__argc, __argv);
 }
 # endif /* RT_OS_WINDOWS */

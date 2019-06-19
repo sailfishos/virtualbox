@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -53,6 +53,7 @@ void testUnmapFolderBadParameters(RTTEST hTest);
 void testCreate(RTTEST hTest);
 /* Sub-tests for testCreate(). */
 void testCreateFileSimple(RTTEST hTest);
+void testCreateFileSimpleCaseInsensitive(RTTEST hTest);
 void testCreateDirSimple(RTTEST hTest);
 void testCreateBadParameters(RTTEST hTest);
 

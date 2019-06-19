@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,14 +13,26 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-linux-kernel.h"
 #include "version-generated.h"
+#include "revision-generated.h"
 #include "product-generated.h"
+#include <linux/ethtool.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/miscdevice.h>
@@ -31,6 +43,7 @@
 #include <iprt/process.h>
 #include <iprt/initterm.h>
 #include <iprt/mem.h>
+#include <iprt/string.h>
 
 /*
 #include <iprt/assert.h>
@@ -44,19 +57,21 @@
 #define VBOXNETADP_OS_SPECFIC 1
 #include "../VBoxNetAdpInternal.h"
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define VBOXNETADP_LINUX_NAME      "vboxnet%d"
 #define VBOXNETADP_CTL_DEV_NAME    "vboxnetctl"
 
 #define VBOXNETADP_FROM_IFACE(iface) ((PVBOXNETADP) ifnet_softc(iface))
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-static int  VBoxNetAdpLinuxInit(void);
-static void VBoxNetAdpLinuxUnload(void);
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+static int  __init VBoxNetAdpLinuxInit(void);
+static void __exit VBoxNetAdpLinuxUnload(void);
 
 static int VBoxNetAdpLinuxOpen(struct inode *pInode, struct file *pFilp);
 static int VBoxNetAdpLinuxClose(struct inode *pInode, struct file *pFilp);
@@ -68,9 +83,17 @@ static long VBoxNetAdpLinuxIOCtlUnlocked(struct file *pFilp,
                                          unsigned int uCmd, unsigned long ulArg);
 #endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 36) */
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+static void vboxNetAdpEthGetDrvinfo(struct net_device *dev, struct ethtool_drvinfo *info);
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
+static int vboxNetAdpEthGetLinkSettings(struct net_device *pNetDev, struct ethtool_link_ksettings *pLinkSettings);
+#else /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0) */
+static int vboxNetAdpEthGetSettings(struct net_device *dev, struct ethtool_cmd *cmd);
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0) */
+
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 module_init(VBoxNetAdpLinuxInit);
 module_exit(VBoxNetAdpLinuxUnload);
 
@@ -78,7 +101,7 @@ MODULE_AUTHOR(VBOX_VENDOR);
 MODULE_DESCRIPTION(VBOX_PRODUCT " Network Adapter Driver");
 MODULE_LICENSE("GPL");
 #ifdef MODULE_VERSION
-MODULE_VERSION(VBOX_VERSION_STRING " (" RT_XSTR(INTNETTRUNKIFPORT_VERSION) ")");
+MODULE_VERSION(VBOX_VERSION_STRING " r" RT_XSTR(VBOX_SVN_REV) " (" RT_XSTR(INTNETTRUNKIFPORT_VERSION) ")");
 #endif
 
 /**
@@ -107,6 +130,22 @@ static struct miscdevice g_CtlDev =
 # endif
 };
 
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
+static const struct ethtool_ops gEthToolOpsVBoxNetAdp =
+# else
+static struct ethtool_ops gEthToolOpsVBoxNetAdp =
+# endif
+{
+    .get_drvinfo        = vboxNetAdpEthGetDrvinfo,
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
+    .get_link_ksettings = vboxNetAdpEthGetLinkSettings,
+# else /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0) */
+    .get_settings       = vboxNetAdpEthGetSettings,
+# endif /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0) */
+    .get_link           = ethtool_op_get_link,
+};
+
+
 struct VBoxNetAdpPriv
 {
     struct net_device_stats Stats;
@@ -134,8 +173,10 @@ static int vboxNetAdpLinuxXmit(struct sk_buff *pSkb, struct net_device *pNetDev)
     /* Update the stats. */
     pPriv->Stats.tx_packets++;
     pPriv->Stats.tx_bytes += pSkb->len;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 31)
     /* Update transmission time stamp. */
     pNetDev->trans_start = jiffies;
+#endif
     /* Nothing else to do, just free the sk_buff. */
     dev_kfree_skb(pSkb);
     return 0;
@@ -146,6 +187,70 @@ struct net_device_stats *vboxNetAdpLinuxGetStats(struct net_device *pNetDev)
     PVBOXNETADPPRIV pPriv = netdev_priv(pNetDev);
     return &pPriv->Stats;
 }
+
+
+/* ethtool_ops::get_drvinfo */
+static void vboxNetAdpEthGetDrvinfo(struct net_device *pNetDev, struct ethtool_drvinfo *info)
+{
+    PVBOXNETADPPRIV pPriv = netdev_priv(pNetDev);
+    NOREF(pPriv);
+
+    RTStrPrintf(info->driver, sizeof(info->driver),
+                "%s", VBOXNETADP_NAME);
+
+    /*
+     * Would be nice to include VBOX_SVN_REV, but it's not available
+     * here.  Use file's svn revision via svn keyword?
+     */
+    RTStrPrintf(info->version, sizeof(info->version),
+                "%s", VBOX_VERSION_STRING);
+
+    RTStrPrintf(info->fw_version, sizeof(info->fw_version),
+                "0x%08X", INTNETTRUNKIFPORT_VERSION);
+
+    RTStrPrintf(info->bus_info, sizeof(info->driver),
+                "N/A");
+}
+
+
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0)
+/* ethtool_ops::get_link_ksettings */
+static int vboxNetAdpEthGetLinkSettings(struct net_device *pNetDev, struct ethtool_link_ksettings *pLinkSettings)
+{
+    /* We just need to set field we care for, the rest is done by ethtool_get_link_ksettings() helper in ethtool. */
+    ethtool_link_ksettings_zero_link_mode(pLinkSettings, supported);
+    ethtool_link_ksettings_zero_link_mode(pLinkSettings, advertising);
+    ethtool_link_ksettings_zero_link_mode(pLinkSettings, lp_advertising);
+    pLinkSettings->base.speed       = SPEED_10;
+    pLinkSettings->base.duplex      = DUPLEX_FULL;
+    pLinkSettings->base.port        = PORT_TP;
+    pLinkSettings->base.phy_address = 0;
+    pLinkSettings->base.transceiver = XCVR_INTERNAL;
+    pLinkSettings->base.autoneg     = AUTONEG_DISABLE;
+    return 0;
+}
+#else /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0) */
+/* ethtool_ops::get_settings */
+static int vboxNetAdpEthGetSettings(struct net_device *pNetDev, struct ethtool_cmd *cmd)
+{
+    cmd->supported      = 0;
+    cmd->advertising    = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27)
+    ethtool_cmd_speed_set(cmd, SPEED_10);
+#else
+    cmd->speed          = SPEED_10;
+#endif
+    cmd->duplex         = DUPLEX_FULL;
+    cmd->port           = PORT_TP;
+    cmd->phy_address    = 0;
+    cmd->transceiver    = XCVR_INTERNAL;
+    cmd->autoneg        = AUTONEG_DISABLE;
+    cmd->maxtxpkt       = 0;
+    cmd->maxrxpkt       = 0;
+    return 0;
+}
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0) */
+
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 29)
 static const struct net_device_ops vboxNetAdpNetdevOps = {
@@ -169,6 +274,8 @@ static void vboxNetAdpNetDevInit(struct net_device *pNetDev)
     pNetDev->hard_start_xmit = vboxNetAdpLinuxXmit;
     pNetDev->get_stats = vboxNetAdpLinuxGetStats;
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 29) */
+
+    pNetDev->ethtool_ops = &gEthToolOpsVBoxNetAdp;
 
     pPriv = netdev_priv(pNetDev);
     memset(pPriv, 0, sizeof(*pPriv));
@@ -195,6 +302,17 @@ int vboxNetAdpOsCreate(PVBOXNETADP pThis, PCRTMAC pMACAddress)
         {
             memcpy(pNetDev->dev_addr, pMACAddress, ETH_ALEN);
             Log2(("vboxNetAdpOsCreate: pNetDev->dev_addr = %.6Rhxd\n", pNetDev->dev_addr));
+
+            /*
+             * We treat presence of VBoxNetFlt filter as our "carrier",
+             * see vboxNetFltSetLinkState().
+             *
+             * operstates.txt: "On device allocation, networking core
+             * sets the flags equivalent to netif_carrier_ok() and
+             * !netif_dormant()" - so turn carrier off here.
+             */
+            netif_carrier_off(pNetDev);
+
             err = register_netdev(pNetDev);
             if (!err)
             {
@@ -423,7 +541,6 @@ static int __init VBoxNetAdpLinuxInit(void)
  */
 static void __exit VBoxNetAdpLinuxUnload(void)
 {
-    int rc;
     Log(("VBoxNetAdpLinuxUnload\n"));
 
     /*
@@ -432,11 +549,7 @@ static void __exit VBoxNetAdpLinuxUnload(void)
 
     vboxNetAdpShutdown();
     /* Remove control device */
-    rc = misc_deregister(&g_CtlDev);
-    if (rc < 0)
-    {
-        printk(KERN_ERR "misc_deregister failed with rc=%x\n", rc);
-    }
+    misc_deregister(&g_CtlDev);
 
     RTR0Term();
 

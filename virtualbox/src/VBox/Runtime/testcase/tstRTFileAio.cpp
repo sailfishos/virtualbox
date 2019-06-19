@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/file.h>
 
 #include <iprt/err.h>
@@ -37,17 +37,17 @@
 #include <iprt/test.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @todo make configurable through cmd line. */
 #define TSTFILEAIO_MAX_REQS_IN_FLIGHT   64
 #define TSTFILEAIO_BUFFER_SIZE          (64*_1K)
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST g_hTest = NIL_RTTEST;
 
 
@@ -58,7 +58,7 @@ void tstFileAioTestReadWriteBasic(RTFILE File, bool fWrite, void *pvTestBuf,
     RTFILEAIOREQ *paReqs;
     paReqs = (PRTFILEAIOREQ)RTTestGuardedAllocHead(g_hTest, cMaxReqsInFlight * sizeof(RTFILEAIOREQ));
     RTTESTI_CHECK_RETV(paReqs);
-    RT_BZERO(paReqs, sizeof(cMaxReqsInFlight * sizeof(RTFILEAIOREQ)));
+    RT_BZERO(paReqs, cMaxReqsInFlight * sizeof(RTFILEAIOREQ));
 
     /* Allocate array holding pointer to data buffers. */
     void **papvBuf = (void **)RTTestGuardedAllocHead(g_hTest, cMaxReqsInFlight * sizeof(void *));
@@ -184,9 +184,16 @@ int main()
     {
         RTTestSub(g_hTest, "Write");
         RTFILE hFile;
-        RTTESTI_CHECK_RC(rc = RTFileOpen(&hFile, "tstFileAio#1.tst",
-                                         RTFILE_O_READWRITE | RTFILE_O_CREATE_REPLACE | RTFILE_O_DENY_NONE | RTFILE_O_ASYNC_IO),
-                         VINF_SUCCESS);
+        RTFSTYPE enmType;
+        bool fAsyncMayFail = false;
+        rc = RTFsQueryType("tstFileAio#1.tst", &enmType);
+        if (   RT_SUCCESS(rc)
+            && enmType == RTFSTYPE_TMPFS)
+            fAsyncMayFail = true;
+        rc = RTFileOpen(&hFile, "tstFileAio#1.tst",
+                                RTFILE_O_READWRITE | RTFILE_O_CREATE_REPLACE | RTFILE_O_DENY_NONE | RTFILE_O_ASYNC_IO);
+        RTTESTI_CHECK(   rc == VINF_SUCCESS
+                      || ((rc == VERR_ACCESS_DENIED || rc == VERR_INVALID_PARAMETER) && fAsyncMayFail));
         if (RT_SUCCESS(rc))
         {
             uint8_t *pbTestBuf = (uint8_t *)RTTestGuardedAllocTail(g_hTest, TSTFILEAIO_BUFFER_SIZE);
@@ -219,6 +226,8 @@ int main()
             /* Cleanup */
             RTFileDelete("tstFileAio#1.tst");
         }
+        else
+            RTTestSkipped(g_hTest, "rc=%Rrc", rc);
     }
 
     /*

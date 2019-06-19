@@ -1,11 +1,10 @@
+/* $Id: QISplitter.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VirtualBox Qt extensions: QISplitter class declaration
+ * VBox Qt GUI - Qt extensions: QISplitter class declaration.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -51,9 +50,9 @@ private:
 
     bool m_fPolished;
     Type m_type;
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     bool m_fHandleGrabbed;
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
     QColor m_color1;
     QColor m_color2;

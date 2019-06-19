@@ -5,9 +5,9 @@
 
 /*
  * Contributed by Ivo Smits <Ivo@UFO-Net.nl>, Howard Su and
- * Christophe Devriese <christophe.devriese@gmail.com>
+ * Christophe Devriese <christophe.devriese@gmail.com>.
  *
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,9 +18,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VRDE
 #include <VBox/log.h>
 
@@ -48,9 +49,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define VNC_SIZEOFRGBA          4
 #define VNC_PASSWORDSIZE        20
 #define VNC_ADDRESSSIZE         60
@@ -58,14 +59,15 @@
 #define VNC_ADDRESS_OPTION_MAX  500
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 class VNCServerImpl
 {
 public:
     VNCServerImpl()
     {
+        mVNCServer = NULL;
         mFrameBuffer = NULL;
         mScreenBuffer = NULL;
         mCursor = NULL;
@@ -78,7 +80,9 @@ public:
             RTMemFree(mFrameBuffer);
         if (mCursor)
             rfbFreeCursor(mCursor);
-        memset(szVNCPassword, '\0', sizeof(szVNCPassword));
+        RT_ZERO(szVNCPassword);
+        if (mVNCServer)
+            rfbScreenCleanup(mVNCServer);
     }
 
     int Init(const VRDEINTERFACEHDR *pCallbacks, void *pvCallback);
@@ -99,8 +103,8 @@ private:
     unsigned char *mScreenBuffer;
     unsigned char *mFrameBuffer;
     uint32_t uClients;
-    static DECLCALLBACK(enum rfbNewClientAction) rfbNewClientEvent(rfbClientPtr cl);
-    static DECLCALLBACK(void) vncMouseEvent(int buttonMask, int x, int y, rfbClientPtr cl);
+    static enum rfbNewClientAction rfbNewClientEvent(rfbClientPtr cl);
+    static void vncMouseEvent(int buttonMask, int x, int y, rfbClientPtr cl);
     static void vncKeyboardEvent(rfbBool down, rfbKeySym keySym, rfbClientPtr cl);
     static void clientGoneHook(rfbClientPtr cl);
 
@@ -249,6 +253,7 @@ int VNCServerImpl::queryVrdeFeature(const char *pszName, char *pszValue, size_t 
  */
 DECLCALLBACK(int) VNCServerImpl::VRDEEnableConnections(HVRDESERVER hServer, bool fEnable)
 {
+    RT_NOREF(fEnable);
     VNCServerImpl *instance = (VNCServerImpl *)hServer;
 
 #ifdef LOG_ENABLED
@@ -257,12 +262,24 @@ DECLCALLBACK(int) VNCServerImpl::VRDEEnableConnections(HVRDESERVER hServer, bool
 #endif
     LogFlowFunc(("enter\n"));
 
-    // query server for the framebuffer
-    VRDEFRAMEBUFFERINFO info;
-    int rc = instance->mCallbacks->VRDECallbackFramebufferQuery(instance->mCallback, 0, &info);
+    // At this point, VRDECallbackFramebufferQuery will not succeed.
+    // Initialize VNC with 640x480 and wait for VRDEResize to get actual size.
+    int dummyWidth = 640, dummyHeight = 480;
 
-    rfbScreenInfoPtr vncServer = rfbGetScreen(0, NULL, info.cWidth, info.cHeight, 8, 3, VNC_SIZEOFRGBA);
+    rfbScreenInfoPtr vncServer = rfbGetScreen(0, NULL, dummyWidth, dummyHeight, 8, 3, VNC_SIZEOFRGBA);
     instance->mVNCServer = vncServer;
+
+    VRDEFRAMEBUFFERINFO info;
+    RT_ZERO(info);
+    info.cWidth = dummyWidth, info.cHeight = dummyHeight;
+    info.cBitsPerPixel = 24;
+    info.pu8Bits = NULL;
+    unsigned char *FrameBuffer = (unsigned char *)RTMemAlloc(info.cWidth * info.cHeight * VNC_SIZEOFRGBA); // RGBA
+    rfbNewFramebuffer(instance->mVNCServer, (char *)FrameBuffer, info.cWidth, info.cHeight, 8, 3, VNC_SIZEOFRGBA);
+    instance->mFrameBuffer = FrameBuffer;
+    instance->mScreenBuffer = (unsigned char *)info.pu8Bits;
+    instance->FrameInfo = info;
+
     vncServer->serverFormat.redShift = 16;
     vncServer->serverFormat.greenShift = 8;
     vncServer->serverFormat.blueShift = 0;
@@ -274,7 +291,7 @@ DECLCALLBACK(int) VNCServerImpl::VRDEEnableConnections(HVRDESERVER hServer, bool
     // get listen address
     char szAddress[VNC_ADDRESSSIZE + 1] = {0};
     uint32_t cbOut = 0;
-    rc = instance->mCallbacks->VRDECallbackProperty(instance->mCallback,
+    int rc = instance->mCallbacks->VRDECallbackProperty(instance->mCallback,
                                                     VRDE_QP_NETWORK_ADDRESS,
                                                     &szAddress, sizeof(szAddress), &cbOut);
     Assert(cbOut <= sizeof(szAddress));
@@ -678,9 +695,9 @@ DECLCALLBACK(int) VNCServerImpl::VRDEEnableConnections(HVRDESERVER hServer, bool
  *
  * @return IPRT status code.
  */
-DECLCALLBACK(void) VNCServerImpl::VRDEDisconnect(HVRDESERVER hServer, uint32_t u32ClientId,
-                                                 bool fReconnect)
+DECLCALLBACK(void) VNCServerImpl::VRDEDisconnect(HVRDESERVER hServer, uint32_t u32ClientId, bool fReconnect)
 {
+    RT_NOREF(hServer, u32ClientId, fReconnect);
 }
 
 static inline void convert15To32bpp(uint8_t msb, uint8_t lsb, uint8_t &r, uint8_t &g, uint8_t &b)
@@ -712,11 +729,9 @@ DECLCALLBACK(void) VNCServerImpl::VRDEResize(HVRDESERVER hServer)
 {
     VNCServerImpl *instance = (VNCServerImpl *)hServer;
     VRDEFRAMEBUFFERINFO info;
-    int rc = instance->mCallbacks->VRDECallbackFramebufferQuery(instance->mCallback, 0, &info);
-    if (!RT_SUCCESS(rc))
-    {
+    bool fAvail = instance->mCallbacks->VRDECallbackFramebufferQuery(instance->mCallback, 0, &info);
+    if (!fAvail)
         return;
-    }
 
     LogRel(("VNCServerImpl::VRDEResize to %dx%dx%dbpp\n", info.cWidth, info.cHeight, info.cBitsPerPixel));
 
@@ -768,9 +783,9 @@ DECLCALLBACK(void) VNCServerImpl::VRDEResize(HVRDESERVER hServer)
  * @param pvUpdate  Pointer to VBoxGuest.h::VRDEORDERHDR structure with extra data.
  * @param cbUpdate  Size of the update data.
  */
-DECLCALLBACK(void) VNCServerImpl::VRDEUpdate(HVRDESERVER hServer, unsigned uScreenId,
-                                             void *pvUpdate,uint32_t cbUpdate)
+DECLCALLBACK(void) VNCServerImpl::VRDEUpdate(HVRDESERVER hServer, unsigned uScreenId, void *pvUpdate,uint32_t cbUpdate)
 {
+    RT_NOREF(uScreenId);
     char *ptr = (char *)pvUpdate;
     VNCServerImpl *instance = (VNCServerImpl *)hServer;
     VRDEORDERHDR *order = (VRDEORDERHDR *)ptr;
@@ -801,7 +816,17 @@ DECLCALLBACK(void) VNCServerImpl::VRDEUpdate(HVRDESERVER hServer, unsigned uScre
                         solidrect->x + solidrect->w, solidrect->y + solidrect->h, RGB2BGR(solidrect->rgb));
                     return;
                 }
-            ///@todo: more orders
+            /// @todo more orders
+            }
+        }
+
+        if (!instance->mScreenBuffer)
+        {
+            VRDEResize(hServer);
+            if (!instance->mScreenBuffer)
+            {
+                LogRel(("VNCServerImpl::VRDEUpdate: Cannot get frame buffer"));
+                return;
             }
         }
 
@@ -911,10 +936,11 @@ DECLCALLBACK(void) VNCServerImpl::VRDEColorPointer(HVRDESERVER hServer,
  */
 DECLCALLBACK(void) VNCServerImpl::VRDEHidePointer(HVRDESERVER hServer)
 {
-    VNCServerImpl *instance = (VNCServerImpl *)hServer;
+    VNCServerImpl *pInstance = (VNCServerImpl *)hServer;
+    RT_NOREF(pInstance);
 
-    ///@todo: what's behavior for this. hide doesn't seems right
-    //rfbSetCursor(instance->mVNCServer, NULL);
+    /// @todo what's behavior for this. hide doesn't seems right
+    //rfbSetCursor(pInstance->mVNCServer, NULL);
 }
 
 /**
@@ -932,6 +958,7 @@ DECLCALLBACK(void) VNCServerImpl::VRDEAudioSamples(HVRDESERVER hServer,
                                                    uint32_t cSamples,
                                                    VRDEAUDIOFORMAT format)
 {
+    RT_NOREF(hServer, pvSamples, cSamples, format);
 }
 
 /**
@@ -947,6 +974,7 @@ DECLCALLBACK(void) VNCServerImpl::VRDEAudioVolume(HVRDESERVER hServer,
                                                   uint16_t u16Left,
                                                   uint16_t u16Right)
 {
+    RT_NOREF(hServer, u16Left, u16Right);
 }
 
 /**
@@ -967,6 +995,7 @@ DECLCALLBACK(void) VNCServerImpl::VRDEUSBRequest(HVRDESERVER hServer,
                                                  void *pvParm,
                                                  uint32_t cbParm)
 {
+    RT_NOREF(hServer, u32ClientId, pvParm, cbParm);
 }
 
 /**
@@ -992,6 +1021,7 @@ DECLCALLBACK(void) VNCServerImpl::VRDEClipboard(HVRDESERVER hServer,
                                                 uint32_t cbData,
                                                 uint32_t *pcbActualRead)
 {
+    RT_NOREF(hServer, u32Function, u32Format, pvData, cbData, pcbActualRead);
 }
 
 /**
@@ -1029,7 +1059,7 @@ DECLCALLBACK(void) VNCServerImpl::VRDEQueryInfo(HVRDESERVER hServer,
             }
             break;
         }
-        ///@todo lots more queries to implement
+        /// @todo lots more queries to implement
         default:
             break;
     }
@@ -1059,6 +1089,7 @@ DECLCALLBACK(void) VNCServerImpl::VRDERedirect(HVRDESERVER hServer,
                                                uint32_t u32SessionId,
                                                const char *pszCookie)
 {
+    RT_NOREF(hServer, u32ClientId, pszServer, pszUser, pszDomain, pszPassword, u32SessionId, pszCookie);
 }
 
 /**
@@ -1078,6 +1109,7 @@ DECLCALLBACK(void) VNCServerImpl::VRDEAudioInOpen(HVRDESERVER hServer,
                                                   VRDEAUDIOFORMAT audioFormat,
                                                   uint32_t u32SamplesPerBlock)
 {
+    RT_NOREF(hServer, pvCtx, u32ClientId, audioFormat, u32SamplesPerBlock);
 }
 
 /**
@@ -1088,9 +1120,9 @@ DECLCALLBACK(void) VNCServerImpl::VRDEAudioInOpen(HVRDESERVER hServer,
  *
  * @note Initialized to NULL when the VRDECallbackAudioIn callback is NULL.
  */
-DECLCALLBACK(void) VNCServerImpl::VRDEAudioInClose(HVRDESERVER hServer,
-                                                   uint32_t u32ClientId)
+DECLCALLBACK(void) VNCServerImpl::VRDEAudioInClose(HVRDESERVER hServer, uint32_t u32ClientId)
 {
+    RT_NOREF(hServer, u32ClientId);
 }
 
 
@@ -1105,7 +1137,7 @@ int VNCServerImpl::Init(const VRDEINTERFACEHDR *pCallbacks,
     }
     else if (pCallbacks->u64Version == VRDE_INTERFACE_VERSION_1)
     {
-        ///@todo: this is incorrect and it will cause crash if client call unsupport func.
+        /// @todo this is incorrect and it will cause crash if client call unsupport func.
         mCallbacks = (VRDECALLBACKS_4 *)pCallbacks;
         mCallback = pvCallback;
 
@@ -1276,7 +1308,7 @@ enum rfbNewClientAction VNCServerImpl::rfbNewClientEvent(rfbClientPtr cl)
 {
     VNCServerImpl *instance = static_cast<VNCServerImpl *>(cl->screen->screenData);
 
-    ///@todo: we need auth user here
+    /// @todo we need auth user here
 
     instance->mCallbacks->VRDECallbackClientConnect(instance->mCallback, (int)cl->sock);
     instance->uClients++;

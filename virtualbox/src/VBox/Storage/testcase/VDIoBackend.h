@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -70,6 +70,8 @@ void VDIoBackendStorageDestroy(PVDIOSTORAGE pIoStorage);
 int VDIoBackendStorageSetSize(PVDIOSTORAGE pIoStorage, uint64_t cbSize);
 
 int VDIoBackendStorageGetSize(PVDIOSTORAGE pIoStorage, uint64_t *pcbSize);
+
+DECLHIDDEN(int) VDIoBackendDumpToFile(PVDIOSTORAGE pIoStorage, const char *pszPath);
 
 /**
  * Enqueues a new I/O request.

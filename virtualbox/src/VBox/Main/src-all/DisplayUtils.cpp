@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,13 +20,14 @@
 #include <iprt/log.h>
 #include <VBox/err.h>
 #include <VBox/vmm/ssm.h>
-#include <VBox/VBoxVideo.h>
+#include <VBoxVideo.h>
 
-int readSavedDisplayScreenshot(const Utf8Str &strStateFilePath, uint32_t u32Type, uint8_t **ppu8Data, uint32_t *pcbData, uint32_t *pu32Width, uint32_t *pu32Height)
+int readSavedDisplayScreenshot(const Utf8Str &strStateFilePath, uint32_t u32Type, uint8_t **ppu8Data, uint32_t *pcbData,
+                               uint32_t *pu32Width, uint32_t *pu32Height)
 {
     LogFlowFunc(("u32Type = %d [%s]\n", u32Type, strStateFilePath.c_str()));
 
-    /* @todo cache read data */
+    /** @todo cache read data */
     if (strStateFilePath.isEmpty())
     {
         /* No saved state data. */
@@ -68,7 +69,7 @@ int readSavedDisplayScreenshot(const Utf8Str &strStateFilePath, uint32_t u32Type
                     {
                         if (cbBlock > 2 * sizeof(uint32_t))
                         {
-                            cbData = cbBlock - 2 * sizeof(uint32_t);
+                            cbData = (uint32_t)(cbBlock - 2 * sizeof(uint32_t));
                             pu8Data = (uint8_t *)RTMemAlloc(cbData);
                             if (pu8Data == NULL)
                             {
@@ -137,7 +138,7 @@ int readSavedDisplayScreenshot(const Utf8Str &strStateFilePath, uint32_t u32Type
 
 void freeSavedDisplayScreenshot(uint8_t *pu8Data)
 {
-    /* @todo not necessary when caching is implemented. */
+    /** @todo not necessary when caching is implemented. */
     RTMemFree(pu8Data);
 }
 
@@ -147,7 +148,7 @@ int readSavedGuestScreenInfo(const Utf8Str &strStateFilePath, uint32_t u32Screen
 {
     LogFlowFunc(("u32ScreenId = %d [%s]\n", u32ScreenId, strStateFilePath.c_str()));
 
-    /* @todo cache read data */
+    /** @todo cache read data */
     if (strStateFilePath.isEmpty())
     {
         /* No saved state data. */
@@ -162,8 +163,9 @@ int readSavedGuestScreenInfo(const Utf8Str &strStateFilePath, uint32_t u32Screen
         vrc = SSMR3Seek(pSSM, "DisplayData", 0 /*iInstance*/, &uVersion);
         if (RT_SUCCESS(vrc))
         {
-            if (   uVersion == sSSMDisplayVer2
-                || uVersion == sSSMDisplayVer3)
+            /* Starting from sSSMDisplayVer2 we have pu32Width and pu32Height.
+             * Starting from sSSMDisplayVer3 we have all the rest of parameters we need. */
+            if (uVersion >= sSSMDisplayVer2)
             {
                 uint32_t cMonitors;
                 SSMR3GetU32(pSSM, &cMonitors);
@@ -185,7 +187,6 @@ int readSavedGuestScreenInfo(const Utf8Str &strStateFilePath, uint32_t u32Screen
                     }
                     else
                     {
-                        Assert(uVersion == sSSMDisplayVer3);
                         /* Skip all previous monitors, each 8 uint32_t, and the first 3 uint32_t entries. */
                         SSMR3Skip(pSSM, u32ScreenId * 8 * sizeof(uint32_t) + 3 * sizeof(uint32_t));
                         SSMR3GetU32(pSSM, pu32Width);

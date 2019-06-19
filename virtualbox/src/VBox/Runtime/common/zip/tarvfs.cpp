@@ -1,10 +1,10 @@
 /* $Id: tarvfs.cpp $ */
 /** @file
- * IPRT - TAR Virtual Filesystem.
+ * IPRT - TAR Virtual Filesystem, Reader.
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/******************************************************************************
- *   Header Files                                                             *
- ******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/zip.h>
 
@@ -44,9 +44,9 @@
 #include "tar.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * TAR reader state machine states.
  */
@@ -77,7 +77,8 @@ typedef struct RTZIPTARREADER
     uint32_t                cZeroHdrs;
     /** The state machine state. */
     RTZIPTARREADERSTATE     enmState;
-    /** The type of the previous TAR header. */
+    /** The type of the previous TAR header.
+     * @remarks Same a enmType for the first header in the TAR stream. */
     RTZIPTARTYPE            enmPrevType;
     /** The type of the current TAR header. */
     RTZIPTARTYPE            enmType;
@@ -125,6 +126,8 @@ typedef struct RTZIPTARIOSTREAM
     RTFOFF                  cbFile;
     /** The current file position. */
     RTFOFF                  offFile;
+    /** The start position in the hVfsIos (for seekable hVfsIos). */
+    RTFOFF                  offStart;
     /** The number of padding bytes following the file. */
     uint32_t                cbPadding;
     /** Set if we've reached the end of the file. */
@@ -227,80 +230,41 @@ static int rtZipTarHdrFieldToNum(const char *pszField, size_t cchField, bool fOc
          * The first byte has the bit 7 set to indicate base-256, while bit 6
          * is the signed bit. Bits 5:0 are the most significant value bits.
          */
-        int64_t i64 = !(0x40 & *puchField) ? 0 : -1;
-        i64 = (i64 << 6) | (*puchField & 0x3f);
-        cchField--;
-        puchField++;
-
-        /*
-         * The remaining bytes are used in full.
-         */
-        while (cchField-- > 0)
+        uint64_t u64;
+        if (!(0x40 & *puchField))
         {
-            if (RT_UNLIKELY(i64 > INT64_MAX / 256))
-                return VERR_TAR_NUM_VALUE_TOO_LARGE;
-            if (RT_UNLIKELY(i64 < INT64_MIN / 256))
-                return VERR_TAR_NUM_VALUE_TOO_LARGE;
-            i64 = (i64 << 8) | *puchField++;
+            /* Positive or zero value. */
+            u64 = *puchField & 0x3f;
+            cchField--;
+            puchField++;
+
+            while (cchField-- > 0)
+            {
+                if (RT_LIKELY(u64 <= (uint64_t)INT64_MAX / 256))
+                    u64 = (u64 << 8) | *puchField++;
+                else
+                    return VERR_TAR_NUM_VALUE_TOO_LARGE;
+            }
         }
-        *pi64 = i64;
+        else
+        {
+            /* Negative value (could be used in timestamp). We do manual sign extending here. */
+            u64 = (UINT64_MAX << 6) | (*puchField & 0x3f);
+            cchField--;
+            puchField++;
+
+            while (cchField-- > 0)
+            {
+                if (RT_LIKELY(u64 >= (uint64_t)(INT64_MIN / 256)))
+                    u64 = (u64 << 8) | *puchField++;
+                else
+                    return VERR_TAR_NUM_VALUE_TOO_LARGE;
+            }
+        }
+        *pi64 = (int64_t)u64;
     }
 
     return VINF_SUCCESS;
-}
-
-
-/**
- * Calculates the TAR header checksums and detects if it's all zeros.
- *
- * @returns true if all zeros, false if not.
- * @param   pHdr                The header to checksum.
- * @param   pi32Unsigned        Where to store the checksum calculated using
- *                              unsigned chars.   This is the one POSIX
- *                              specifies.
- * @param   pi32Signed          Where to store the checksum calculated using
- *                              signed chars.
- *
- * @remarks The reason why we calculate the checksum as both signed and unsigned
- *          has to do with various the char C type being signed on some hosts
- *          and unsigned on others.
- */
-static bool rtZipTarCalcChkSum(PCRTZIPTARHDR pHdr, int32_t *pi32Unsigned, int32_t *pi32Signed)
-{
-    int32_t i32Unsigned = 0;
-    int32_t i32Signed   = 0;
-
-    /*
-     * Sum up the entire header.
-     */
-    const char *pch    = (const char *)pHdr;
-    const char *pchEnd = pch + sizeof(*pHdr);
-    do
-    {
-        i32Unsigned += *(unsigned char *)pch;
-        i32Signed   += *(signed   char *)pch;
-    } while (++pch != pchEnd);
-
-    /*
-     * Check if it's all zeros and replace the chksum field with spaces.
-     */
-    bool const fZeroHdr = i32Unsigned == 0;
-
-    pch    = pHdr->Common.chksum;
-    pchEnd = pch + sizeof(pHdr->Common.chksum);
-    do
-    {
-        i32Unsigned -= *(unsigned char *)pch;
-        i32Signed   -= *(signed   char *)pch;
-    } while (++pch != pchEnd);
-
-    i32Unsigned += (unsigned char)' ' * sizeof(pHdr->Common.chksum);
-    i32Signed   += (signed   char)' ' * sizeof(pHdr->Common.chksum);
-
-    *pi32Unsigned = i32Unsigned;
-    if (pi32Signed)
-        *pi32Signed = i32Signed;
-    return fZeroHdr;
 }
 
 
@@ -349,9 +313,13 @@ static int rtZipTarHdrValidate(PCRTZIPTARHDR pTar, PRTZIPTARTYPE penmType)
             && pTar->Common.version[1] == '0')
             enmType = RTZIPTARTYPE_POSIX;
         else if (   pTar->Common.magic[5]   == ' '
-                && pTar->Common.version[0] == ' '
-                && pTar->Common.version[1] == '\0')
+                 && pTar->Common.version[0] == ' '
+                 && pTar->Common.version[1] == '\0')
             enmType = RTZIPTARTYPE_GNU;
+        else if (   pTar->Common.magic[5]   == '\0' /* VMWare ambiguity - they probably mean posix but */
+                 && pTar->Common.version[0] == ' '  /*                    got the version wrong. */
+                 && pTar->Common.version[1] == '\0')
+            enmType = RTZIPTARTYPE_POSIX;
         else
             return VERR_TAR_NOT_USTAR_V00;
     }
@@ -366,7 +334,7 @@ static int rtZipTarHdrValidate(PCRTZIPTARHDR pTar, PRTZIPTARTYPE penmType)
     {
         case RTZIPTARTYPE_POSIX:
             if (   !RT_C_IS_ALNUM(pTar->Common.typeflag)
-                && !pTar->Common.typeflag == '\0')
+                && pTar->Common.typeflag != '\0')
                 return VERR_TAR_UNKNOWN_TYPE_FLAG;
             break;
 
@@ -452,7 +420,11 @@ static int rtZipTarReaderParseNextHeader(PRTZIPTARREADER pThis, PCRTZIPTARHDR pH
         return rc;
     }
     if (fFirst)
+    {
         pThis->enmType = enmType;
+        if (pThis->enmPrevType == RTZIPTARTYPE_INVALID)
+            pThis->enmPrevType = enmType;
+    }
 
     /*
      * Handle the header by type.
@@ -610,7 +582,7 @@ static int rtZipTarReaderParseHeader(PRTZIPTARREADER pThis, PCRTZIPTARHDR pHdr)
          * reading them forever in case someone points us to /dev/zero.
          */
         case RTZIPTARREADERSTATE_ZERO:
-            if (ASMMemIsAllU32(pHdr, sizeof(*pHdr), 0) != NULL)
+            if (!ASMMemIsZero(pHdr, sizeof(*pHdr)))
                 return VERR_TAR_ZERO_HEADER;
             pThis->cZeroHdrs++;
             if (pThis->cZeroHdrs <= _64K / 512 + 2)
@@ -799,6 +771,7 @@ static int rtZipTarReaderGetFsObjInfo(PRTZIPTARREADER pThis, PRTFSOBJINFO pObjIn
                 case 0:
                     return VERR_TAR_UNKNOWN_TYPE_FLAG; /** @todo new status code */
             }
+            break;
 
         default:
             return VERR_TAR_UNKNOWN_TYPE_FLAG; /* Should've been caught in validate. */
@@ -844,13 +817,18 @@ static bool rtZipTarReaderExpectingMoreHeaders(PRTZIPTARREADER pThis)
  */
 static bool rtZipTarReaderIsAtEnd(PRTZIPTARREADER pThis)
 {
-    if (!pThis->cZeroHdrs)
-        return false;
-
-    /* Here is a kludge to try deal with archivers not putting at least two
-       zero headers at the end.  Afraid it may require further relaxing
-       later on, but let's try be strict about things for now. */
-    return pThis->cZeroHdrs >= (pThis->enmPrevType == RTZIPTARTYPE_POSIX ? 2U : 1U);
+    /*
+     * In theory there shall always be two zero headers at the end of the
+     * archive, but life isn't that simple.   We've been creating archives
+     * without any zero headers at the end ourselves for a long long time
+     * (old tar.cpp).
+     *
+     * So, we're fine if the state is 'FIRST' or 'ZERO' here, but we'll barf
+     * if we're in the middle of a multi-header stream (long GNU names, sparse
+     * files, PAX, etc).
+     */
+    return pThis->enmState == RTZIPTARREADERSTATE_FIRST
+        || pThis->enmState == RTZIPTARREADERSTATE_ZERO;
 }
 
 
@@ -1006,25 +984,27 @@ static DECLCALLBACK(int) rtZipTarFssIos_QueryInfo(void *pvThis, PRTFSOBJINFO pOb
 
 
 /**
- * Reads one segment.
- *
- * @returns IPRT status code.
- * @param   pThis           The instance data.
- * @param   pvBuf           Where to put the read bytes.
- * @param   cbToRead        The number of bytes to read.
- * @param   fBlocking       Whether to block or not.
- * @param   pcbRead         Where to store the number of bytes actually read.
+ * @interface_method_impl{RTVFSIOSTREAMOPS,pfnRead}
  */
-static int rtZipTarFssIos_ReadOneSeg(PRTZIPTARIOSTREAM pThis, void *pvBuf, size_t cbToRead, bool fBlocking, size_t *pcbRead)
+static DECLCALLBACK(int) rtZipTarFssIos_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgBuf, bool fBlocking, size_t *pcbRead)
 {
+    PRTZIPTARIOSTREAM pThis = (PRTZIPTARIOSTREAM)pvThis;
+    Assert(pSgBuf->cSegs == 1);
+
     /*
-     * Fend of reads beyond the end of the stream here.
+     * Make offset into a real offset so it's possible to do random access
+     * on TAR files that are seekable.  Fend of reads beyond the end of the
+     * stream.
      */
-    if (pThis->fEndOfStream)
+    if (off < 0)
+        off = pThis->offFile;
+    if (off >= pThis->cbFile)
         return pcbRead ? VINF_EOF : VERR_EOF;
 
+
     Assert(pThis->cbFile >= pThis->offFile);
-    uint64_t cbLeft = (uint64_t)(pThis->cbFile - pThis->offFile);
+    uint64_t cbLeft   = (uint64_t)(pThis->cbFile - pThis->offFile);
+    size_t   cbToRead = pSgBuf->paSegs[0].cbSeg;
     if (cbToRead > cbLeft)
     {
         if (!pcbRead)
@@ -1038,51 +1018,13 @@ static int rtZipTarFssIos_ReadOneSeg(PRTZIPTARIOSTREAM pThis, void *pvBuf, size_
     size_t cbReadStack = 0;
     if (!pcbRead)
         pcbRead = &cbReadStack;
-    int rc = RTVfsIoStrmRead(pThis->hVfsIos, pvBuf, cbToRead, fBlocking, pcbRead);
-    pThis->offFile += *pcbRead;
+    int rc = RTVfsIoStrmReadAt(pThis->hVfsIos, pThis->offStart + off, pSgBuf->paSegs[0].pvSeg, cbToRead, fBlocking, pcbRead);
+    pThis->offFile = off + *pcbRead;
     if (pThis->offFile >= pThis->cbFile)
     {
         Assert(pThis->offFile == pThis->cbFile);
         pThis->fEndOfStream = true;
         RTVfsIoStrmSkip(pThis->hVfsIos, pThis->cbPadding);
-    }
-
-    return rc;
-}
-
-
-/**
- * @interface_method_impl{RTVFSIOSTREAMOPS,pfnRead}
- */
-static DECLCALLBACK(int) rtZipTarFssIos_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgBuf, bool fBlocking, size_t *pcbRead)
-{
-    PRTZIPTARIOSTREAM pThis = (PRTZIPTARIOSTREAM)pvThis;
-    int               rc;
-    AssertReturn(off == -1, VERR_INVALID_PARAMETER);
-
-    if (pSgBuf->cSegs == 1)
-        rc = rtZipTarFssIos_ReadOneSeg(pThis, pSgBuf->paSegs[0].pvSeg, pSgBuf->paSegs[0].cbSeg, fBlocking, pcbRead);
-    else
-    {
-        rc = VINF_SUCCESS;
-        size_t  cbRead = 0;
-        size_t  cbReadSeg;
-        size_t *pcbReadSeg = pcbRead ? &cbReadSeg : NULL;
-        for (uint32_t iSeg = 0; iSeg < pSgBuf->cSegs; iSeg++)
-        {
-            cbReadSeg = 0;
-            rc = rtZipTarFssIos_ReadOneSeg(pThis, pSgBuf->paSegs[iSeg].pvSeg, pSgBuf->paSegs[iSeg].cbSeg, fBlocking, pcbReadSeg);
-            if (RT_FAILURE(rc))
-                break;
-            if (pcbRead)
-            {
-                cbRead += cbReadSeg;
-                if (cbReadSeg != pSgBuf->paSegs[iSeg].cbSeg)
-                    break;
-            }
-        }
-        if (pcbRead)
-            *pcbRead = cbRead;
     }
 
     return rc;
@@ -1160,7 +1102,7 @@ static const RTVFSIOSTREAMOPS g_rtZipTarFssIosOps =
         RTVFSOBJOPS_VERSION
     },
     RTVFSIOSTREAMOPS_VERSION,
-    0,
+    RTVFSIOSTREAMOPS_FEAT_NO_SG,
     rtZipTarFssIos_Read,
     rtZipTarFssIos_Write,
     rtZipTarFssIos_Flush,
@@ -1249,7 +1191,7 @@ static const RTVFSSYMLINKOPS g_rtZipTarFssSymOps =
     0,
     { /* ObjSet */
         RTVFSOBJSETOPS_VERSION,
-        RT_OFFSETOF(RTVFSSYMLINKOPS, Obj) - RT_OFFSETOF(RTVFSSYMLINKOPS, ObjSet),
+        RT_UOFFSETOF(RTVFSSYMLINKOPS, ObjSet) - RT_UOFFSETOF(RTVFSSYMLINKOPS, Obj),
         rtZipTarFssSym_SetMode,
         rtZipTarFssSym_SetTimes,
         rtZipTarFssSym_SetOwner,
@@ -1418,6 +1360,7 @@ static DECLCALLBACK(int) rtZipTarFss_Next(void *pvThis, char **ppszName, RTVFSOB
             pIosData->BaseObj.ObjInfo   = Info;
             pIosData->cbFile            = Info.cbObject;
             pIosData->offFile           = 0;
+            pIosData->offStart          = RTVfsIoStrmTell(pThis->hVfsIos);
             pIosData->cbPadding         = (uint32_t)(Info.cbAllocated - Info.cbObject);
             pIosData->fEndOfStream      = false;
             pIosData->hVfsIos           = pThis->hVfsIos;
@@ -1534,6 +1477,9 @@ static const RTVFSFSSTREAMOPS rtZipTarFssOps =
     RTVFSFSSTREAMOPS_VERSION,
     0,
     rtZipTarFss_Next,
+    NULL,
+    NULL,
+    NULL,
     RTVFSFSSTREAMOPS_VERSION
 };
 
@@ -1559,7 +1505,8 @@ RTDECL(int) RTZipTarFsStreamFromIoStream(RTVFSIOSTREAM hVfsIosIn, uint32_t fFlag
      */
     PRTZIPTARFSSTREAM pThis;
     RTVFSFSSTREAM     hVfsFss;
-    int rc = RTVfsNewFsStream(&rtZipTarFssOps, sizeof(*pThis), NIL_RTVFS, NIL_RTVFSLOCK, &hVfsFss, (void **)&pThis);
+    int rc = RTVfsNewFsStream(&rtZipTarFssOps, sizeof(*pThis), NIL_RTVFS, NIL_RTVFSLOCK, true /*fReadOnly*/,
+                              &hVfsFss, (void **)&pThis);
     if (RT_SUCCESS(rc))
     {
         pThis->hVfsIos              = hVfsIosIn;

@@ -1,9 +1,9 @@
 /** @file
- * Automatic locks, implementation
+ * MS COM / XPCOM Abstraction Layer - Automatic locks, implementation.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,6 +27,12 @@
 #define ___VBox_com_AutoLock_h
 
 #include <iprt/types.h>
+
+
+/** @defgroup grp_com_autolock  Automatic Locks
+ * @ingroup grp_com
+ * @{
+ */
 
 // macros for automatic lock validation; these will amount to nothing
 // unless lock validation is enabled for the runtime
@@ -118,9 +124,16 @@ public:
     virtual bool isWriteLockOnCurrentThread() const = 0;
 
     /**
+     * Returns @c true if the current thread holds a read lock on this
+     * read/write semaphore. Intended for debugging only as it isn't always
+     * accurate given @a fWannaHear.
+     */
+    virtual bool isReadLockedOnCurrentThread(bool fWannaHear = true) const = 0;
+
+    /**
      * Returns the current write lock level of this semaphore. The lock level
-     * determines the number of nested #lock() calls on the given semaphore
-     * handle.
+     * determines the number of nested #lockWrite() calls on the given
+     * semaphore handle.
      *
      * Note that this call is valid only when the current thread owns a write
      * lock on the given semaphore handle and will assert otherwise.
@@ -157,6 +170,7 @@ public:
     virtual ~RWLockHandle();
 
     virtual bool isWriteLockOnCurrentThread() const;
+    virtual bool isReadLockedOnCurrentThread(bool fWannaHear = true) const;
 
     virtual void lockWrite(LOCKVAL_SRC_POS_DECL);
     virtual void unlockWrite();
@@ -172,6 +186,8 @@ public:
 private:
     struct Data;
     Data *m;
+
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(RWLockHandle); /* Shuts up MSC warning C4625. */
 };
 
 /**
@@ -193,6 +209,7 @@ public:
     WriteLockHandle(VBoxLockingClass lockClass);
     virtual ~WriteLockHandle();
     virtual bool isWriteLockOnCurrentThread() const;
+    virtual bool isReadLockedOnCurrentThread(bool fWannaHear = true) const;
 
     virtual void lockWrite(LOCKVAL_SRC_POS_DECL);
     virtual void unlockWrite();
@@ -207,6 +224,8 @@ public:
 private:
     struct Data;
     Data *m;
+
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(WriteLockHandle); /* Shuts up MSC warning C4625. */
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -243,6 +262,17 @@ public:
     {
         LockHandle *h = lockHandle();
         return h ? h->isWriteLockOnCurrentThread() : false;
+    }
+
+    /**
+     * Equivalent to <tt>#lockHandle()->isReadLockedOnCurrentThread()</tt>.
+     * Returns @c false if lockHandle() returns @c NULL.
+     * @note Use with care, simple debug assertions and similar only.
+     */
+    bool isReadLockedOnCurrentThread(bool fWannaHear = true) const
+    {
+        LockHandle *h = lockHandle();
+        return h ? h->isReadLockedOnCurrentThread(fWannaHear) : false;
     }
 };
 
@@ -383,6 +413,9 @@ public:
 
     virtual void callLockImpl(LockHandle &l);
     virtual void callUnlockImpl(LockHandle &l);
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(AutoReadLock); /* Shuts up MSC warning C4625. */
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -421,6 +454,9 @@ protected:
 
     virtual void callLockImpl(LockHandle &l);
     virtual void callUnlockImpl(LockHandle &l);
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(AutoWriteLockBase); /* Shuts up MSC warning C4625. */
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -521,11 +557,11 @@ public:
                   COMMA_LOCKVAL_SRC_POS_DECL);
 
     /**
-     * Release all write locks acquired by this instance through the #lock()
+     * Release all write locks acquired by this instance through the #acquire()
      * call and destroys the instance.
      *
-     * Note that if there there are nested #lock() calls without the
-     * corresponding number of #unlock() calls when the destructor is called, it
+     * Note that if there there are nested #acquire() calls without the
+     * corresponding number of #release() calls when the destructor is called, it
      * will assert. This is because having an unbalanced number of nested locks
      * is a program logic error which must be fixed.
      */
@@ -556,6 +592,11 @@ public:
 
     bool isWriteLockOnCurrentThread() const;
     uint32_t writeLockLevel() const;
+
+    bool isReadLockedOnCurrentThread(bool fWannaHear = true) const;
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(AutoWriteLock); /* Shuts up MSC warning C4625. */
 };
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -582,6 +623,9 @@ public:
     {
         cleanup();
     }
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(AutoMultiWriteLock2); /* Shuts up MSC warning C4625. */
 };
 
 /**
@@ -604,6 +648,9 @@ public:
     {
         cleanup();
     }
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(AutoMultiWriteLock3); /* Shuts up MSC warning C4625. */
 };
 
 /**
@@ -628,9 +675,14 @@ public:
     {
         cleanup();
     }
+
+private:
+    DECLARE_CLS_COPY_CTOR_ASSIGN_NOOP(AutoMultiWriteLock4); /* Shuts up MSC warning C4625. */
 };
 
 } /* namespace util */
+
+/** @} */
 
 #endif
 

@@ -1,11 +1,10 @@
 /* $Id: VBoxMPVidModes.cpp $ */
-
 /** @file
  * VBox Miniport video modes related functions
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,7 +22,7 @@
 extern "C" int __cdecl swprintf(wchar_t *, const wchar_t *, ...);
 #endif
 #include <wchar.h>
-#include <VBox/Hardware/VBoxVideoVBE.h>
+#include <VBoxVideoVBE.h>
 
 #ifdef VBOX_WITH_WDDM
 # define VBOX_WITHOUT_24BPP_MODES
@@ -35,6 +34,8 @@ static VIDEO_MODE_INFORMATION g_CustomVideoModes[VBOX_VIDEO_MAX_SCREENS] = { 0 }
 static BOOLEAN
 VBoxMPValidateVideoModeParamsGuest(PVBOXMP_DEVEXT pExt, uint32_t iDisplay, uint32_t xres, uint32_t yres, uint32_t bpp)
 {
+    RT_NOREF(iDisplay, xres, yres);
+
     switch (bpp)
     {
         case 32:
@@ -51,6 +52,10 @@ VBoxMPValidateVideoModeParamsGuest(PVBOXMP_DEVEXT pExt, uint32_t iDisplay, uint3
 #ifndef VBOX_WITH_8BPP_MODES
             return FALSE;
 #else
+#ifdef VBOX_XPDM_MINIPORT
+            if (pExt->iDevice != 0) /* Secondary monitors do not support 8 bit */
+                return FALSE;
+#endif
             break;
 #endif
         default:
@@ -352,7 +357,7 @@ VBoxMPFillModesTable(PVBOXMP_DEVEXT pExt, int iDisplay, PVIDEO_MODE_INFORMATION 
                      * For small host display resolutions, host will dislike the mode 1024x768 and above
                      * if the framebuffer window requires scrolling to fit the guest resolution.
                      * So add 1024x768 resolution for win8 guest to allow user switch to it */
-                       (   (VBoxQueryWinVersion() != WIN8 && VBoxQueryWinVersion() != WIN81)
+                       (   (VBoxQueryWinVersion(NULL) != WIN8 && VBoxQueryWinVersion(NULL) != WIN81)
                         || resolutionMatrix[resIndex].xRes != 1024
                         || resolutionMatrix[resIndex].yRes != 768)
                     &&
@@ -495,6 +500,7 @@ VBoxMPFillModesTable(PVBOXMP_DEVEXT pExt, int iDisplay, PVIDEO_MODE_INFORMATION 
 static BOOLEAN VBoxMPIsStartingUp(PVBOXMP_DEVEXT pExt, uint32_t iDisplay)
 {
 #ifdef VBOX_XPDM_MINIPORT
+    RT_NOREF(iDisplay);
     return (pExt->CurrentMode == 0);
 #else
     VBOXWDDM_SOURCE *pSource = &pExt->aSources[iDisplay];

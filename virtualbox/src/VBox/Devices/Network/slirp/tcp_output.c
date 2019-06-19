@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -421,12 +421,8 @@ send:
         if (len <= MHLEN - hdrlen - max_linkhdr)
         {
 #endif
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
             sbcopy(&so->so_snd, off, (int) len, mtod(m, caddr_t) + hdrlen);
             m->m_len += len;
-#else
-            m_copyback(pData, m, hdrlen, len, sbuf_data(&so->so_snd) + off);
-#endif
 #if 0
         }
         else
@@ -442,12 +438,12 @@ send:
          * give data to the user when a buffer fills or
          * a PUSH comes in.)
          */
-        if (off + len == SBUF_LEN(&so->so_snd))
+        if (off + len == (ssize_t)SBUF_LEN(&so->so_snd))
             flags |= TH_PUSH;
     }
     else
     {
-        bool fUninitiolizedTemplate = false;
+        bool fUninitializedTemplate = false;
         if (tp->t_flags & TF_ACKNOW)
             tcpstat.tcps_sndacks++;
         else if (flags & (TH_SYN|TH_FIN|TH_RST))
@@ -491,21 +487,21 @@ send:
          * Uninitialized TCP template looks very suspicious at this processing state, thus why we have
          * to workaround the problem till right fix. Warning appears once at release log.
          */
-        fUninitiolizedTemplate = RT_BOOL((   tp->t_template.ti_src.s_addr == INADDR_ANY
+        fUninitializedTemplate = RT_BOOL((   tp->t_template.ti_src.s_addr == INADDR_ANY
                                           || tp->t_template.ti_dst.s_addr == INADDR_ANY));
 #ifndef DEBUG_vvl
-        if (fUninitiolizedTemplate)
+        if (fUninitializedTemplate)
         {
             static bool fWarn;
             tcp_template(tp);
             if(!fWarn)
             {
-                LogRel(("NAT:TCP: TCP template was created forcely from socket information\n"));
+                LogRel(("NAT: TCP: TCP template was created forcely from socket information\n"));
                 fWarn = true;
             }
         }
 #else
-        Assert((!fUninitiolizedTemplate));
+        Assert((!fUninitializedTemplate));
 #endif
     }
 
@@ -543,7 +539,7 @@ send:
     if (optlen)
     {
         memcpy((caddr_t)(ti + 1), (caddr_t)opt, optlen);
-        ti->ti_off = (sizeof (struct tcphdr) + optlen) >> 2;
+        ti->ti_off = (uint8_t)((sizeof (struct tcphdr) + optlen) >> 2);
     }
     ti->ti_flags = flags;
     /*

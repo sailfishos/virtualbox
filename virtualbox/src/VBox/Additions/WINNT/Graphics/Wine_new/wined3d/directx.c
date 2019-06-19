@@ -38,7 +38,7 @@
 #include "wined3d_private.h"
 #include "winternl.h"
 #ifdef VBOX_WITH_WDDM
-#include <VBox/VBoxCrHgsmi.h>
+#include <VBoxCrHgsmi.h>
 #endif
 
 WINE_DEFAULT_DEBUG_CHANNEL(d3d);
@@ -320,7 +320,7 @@ static void wined3d_create_fake_gl_context_attribs(struct wined3d_fake_gl_ctx *f
 {
     HGLRC new_ctx;
 
-    if (!(gl_info->p_wglCreateContextAttribsARB = (void *)wglGetProcAddress("wglCreateContextAttribsARB")))
+    if (!(*(PROC *)&gl_info->p_wglCreateContextAttribsARB = wglGetProcAddress("wglCreateContextAttribsARB")))
         return;
 
     if (!(new_ctx = gl_info->p_wglCreateContextAttribsARB(fake_gl_ctx->dc, NULL, ctx_attribs)))
@@ -1774,7 +1774,9 @@ static UINT d3d_level_from_gl_info(const struct wined3d_gl_info *gl_info)
 static enum wined3d_pci_device select_card_nvidia_binary(const struct wined3d_gl_info *gl_info,
         const char *gl_renderer)
 {
+#ifndef VBOX_WITH_WDDM
     UINT d3d_level = d3d_level_from_gl_info(gl_info);
+#endif
     unsigned int i;
 
 #ifndef VBOX_WITH_WDDM
@@ -1876,6 +1878,7 @@ static enum wined3d_pci_device select_card_nvidia_binary(const struct wined3d_gl
         return PCI_DEVICE_NONE;
     }
 
+#ifndef VBOX_WITH_WDDM
     /* Both the GeforceFX, 6xxx and 7xxx series support D3D9. The last two types have more
      * shader capabilities, so we use the shader capabilities to distinguish between FX and 6xxx/7xxx.
      */
@@ -1972,12 +1975,15 @@ static enum wined3d_pci_device select_card_nvidia_binary(const struct wined3d_gl
     }
 
     return CARD_NVIDIA_RIVA_TNT; /* Riva TNT, Vanta */
+#endif /* !VBOX_WITH_WDDM */
 }
 
 static enum wined3d_pci_device select_card_amd_binary(const struct wined3d_gl_info *gl_info,
         const char *gl_renderer)
 {
+#ifndef VBOX_WITH_WDDM
     UINT d3d_level = d3d_level_from_gl_info(gl_info);
+#endif
 
     /* See http://developer.amd.com/drivers/pc_vendor_id/Pages/default.aspx
      *
@@ -2072,6 +2078,7 @@ static enum wined3d_pci_device select_card_amd_binary(const struct wined3d_gl_in
         return PCI_DEVICE_NONE;
     }
 
+#ifndef VBOX_WITH_WDDM
     if (d3d_level >= 9)
     {
         /* Radeon R5xx */
@@ -2109,6 +2116,7 @@ static enum wined3d_pci_device select_card_amd_binary(const struct wined3d_gl_in
     }
 
     return PCI_DEVICE_NONE;
+#endif /*!VBOX_WITH_WDDM*/
 }
 
 static enum wined3d_pci_device select_card_intel(const struct wined3d_gl_info *gl_info,
@@ -2650,7 +2658,7 @@ static void parse_extension_string(struct wined3d_gl_info *gl_info, const char *
 
 static void load_gl_funcs(struct wined3d_gl_info *gl_info)
 {
-#define USE_GL_FUNC(pfn) gl_info->gl_ops.ext.p_##pfn = (void *)wglGetProcAddress(#pfn);
+#define USE_GL_FUNC(pfn) (*(PROC *)&gl_info->gl_ops.ext.p_##pfn) = wglGetProcAddress(#pfn);
     GL_EXT_FUNCS_GEN;
 #undef USE_GL_FUNC
 
@@ -2989,7 +2997,7 @@ static BOOL wined3d_adapter_init_gl_caps(struct wined3d_adapter *adapter)
     if (!gl_info->supported[EXT_TEXTURE3D] && gl_version >= MAKEDWORD_VERSION(1, 2))
     {
         TRACE("GL CORE: GL_EXT_texture3D support.\n");
-        gl_info->gl_ops.ext.p_glTexImage3DEXT = (void *)gl_info->gl_ops.ext.p_glTexImage3D;
+        *(FARPROC *)&gl_info->gl_ops.ext.p_glTexImage3DEXT = (FARPROC)gl_info->gl_ops.ext.p_glTexImage3D;
         gl_info->gl_ops.ext.p_glTexSubImage3DEXT = gl_info->gl_ops.ext.p_glTexSubImage3D;
         gl_info->supported[EXT_TEXTURE3D] = TRUE;
     }
@@ -5277,6 +5285,7 @@ static void wined3d_adapter_init_fb_cfgs(struct wined3d_adapter *adapter, HDC dc
  */
 static HMODULE loadSystemDll(const char *pszName)
 {
+#ifndef DEBUG
     char   szPath[MAX_PATH];
     UINT   cchPath = GetSystemDirectoryA(szPath, sizeof(szPath));
     size_t cbName  = strlen(pszName) + 1;
@@ -5285,6 +5294,9 @@ static HMODULE loadSystemDll(const char *pszName)
     szPath[cchPath] = '\\';
     memcpy(&szPath[cchPath + 1], pszName, cbName);
     return LoadLibraryA(szPath);
+#else
+    return LoadLibraryA(pszName);
+#endif
 }
 
 /* Do not call while under the GL lock. */
@@ -5323,7 +5335,7 @@ static BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, UINT ordinal)
             return FALSE;
         }
 
-        pDrvValidateVersion = (void*)GetProcAddress(mod_gl, "DrvValidateVersion");
+        *(FARPROC *)&pDrvValidateVersion = GetProcAddress(mod_gl, "DrvValidateVersion");
         if(!pDrvValidateVersion) {
             ERR("Can't get DrvValidateVersion\n");
             FreeLibrary(mod_gl);
@@ -5335,14 +5347,14 @@ static BOOL wined3d_adapter_init(struct wined3d_adapter *adapter, UINT ordinal)
             return FALSE;
         }
 
-#  define VBOX_USE_FUNC(f) p##f = (void *)GetProcAddress(mod_gl, #f);
+#  define VBOX_USE_FUNC(f) (*(FARPROC *)&(p##f)) = GetProcAddress(mod_gl, #f);
         VBOX_GL_FUNCS_GEN
 #  undef VBOX_USE_FUNC
 # endif
-# define USE_GL_FUNC(f) gl_info->gl_ops.gl.p_##f = (void *)GetProcAddress(mod_gl, #f);
+# define USE_GL_FUNC(f) (*(FARPROC *)&(gl_info->gl_ops.gl.p_##f)) = GetProcAddress(mod_gl, #f);
         ALL_WGL_FUNCS
 # undef USE_GL_FUNC
-        gl_info->gl_ops.wgl.p_wglSwapBuffers = (void *)GetProcAddress(mod_gl, "wglSwapBuffers");
+        *(FARPROC *)&gl_info->gl_ops.wgl.p_wglSwapBuffers = GetProcAddress(mod_gl, "wglSwapBuffers");
     }
 #else
     /* To bypass the opengl32 thunks retrieve functions from the WGL driver instead of opengl32 */

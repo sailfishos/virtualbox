@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,9 +26,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -42,9 +43,9 @@
 #include <iprt/formats/asn1.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct RTASN1OCTETSTRINGWRITERCTX
 {
     /** Pointer to the output buffer. */
@@ -76,8 +77,9 @@ static DECLCALLBACK(int) rtAsn1OctetStringEncodeWriter(const void *pvBuf, size_t
 static DECLCALLBACK(int) rtAsn1OctetStringEncodeCompare(const void *pvBuf, size_t cbToWrite, void *pvUser, PRTERRINFO pErrInfo)
 {
     RTASN1OCTETSTRINGWRITERCTX *pCtx = (RTASN1OCTETSTRINGWRITERCTX *)pvUser;
+    RT_NOREF_PV(pErrInfo);
     AssertReturn(cbToWrite <= pCtx->cbBuf - pCtx->offBuf, VERR_BUFFER_OVERFLOW);
-    if (!memcmp(&pCtx->pbBuf[pCtx->offBuf], pvBuf, cbToWrite) != 0)
+    if (memcmp(&pCtx->pbBuf[pCtx->offBuf], pvBuf, cbToWrite) != 0)
         return VERR_NOT_EQUAL;
     pCtx->offBuf += (uint32_t)cbToWrite;
     return VINF_SUCCESS;
@@ -208,7 +210,7 @@ static DECLCALLBACK(int) RTAsn1OctetString_EncodeWrite(PRTASN1CORE pThisCore, ui
     /*
      * First the header.
      */
-    int rc = RTAsnEncodeWriteHeader(&pThis->Asn1Core, fFlags, pfnWriter, pvUser, pErrInfo);
+    int rc = RTAsn1EncodeWriteHeader(&pThis->Asn1Core, fFlags, pfnWriter, pvUser, pErrInfo);
     if (RT_SUCCESS(rc) && rc != VINF_ASN1_NOT_ENCODED)
     {
         /*

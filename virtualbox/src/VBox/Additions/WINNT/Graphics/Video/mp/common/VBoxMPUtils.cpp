@@ -1,11 +1,10 @@
 /* $Id: VBoxMPUtils.cpp $ */
-
 /** @file
  * VBox Miniport utils
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,9 +18,7 @@
 #include "VBoxMPUtils.h"
 
 #ifdef VBOX_XPDM_MINIPORT
-RT_C_DECLS_BEGIN
-# include <ntddk.h>
-RT_C_DECLS_END
+# include <iprt/nt/ntddk.h>
 #endif
 #include <VBox/VMMDev.h>
 #include <VBox/VBoxGuestLib.h>
@@ -47,42 +44,49 @@ int g_bVBoxVDbgBreakFv = 0;
 #pragma alloc_text(PAGE, VBoxQueryPointerPos)
 
 /*Returns the windows version we're running on*/
-vboxWinVersion_t VBoxQueryWinVersion()
+/** @todo r=andy Use RTSystemQueryOSInfo() instead? This also does caching and stuff. */
+vboxWinVersion_t VBoxQueryWinVersion(uint32_t *pbuild)
 {
-    ULONG major, minor, build;
-    BOOLEAN checkedBuild;
+    static ULONG            s_pbuild     = 0;
     static vboxWinVersion_t s_WinVersion = WINVERSION_UNKNOWN;
 
-    if (s_WinVersion != WINVERSION_UNKNOWN)
-        return s_WinVersion;
+    ULONG major, minor;
+    BOOLEAN checkedBuild;
 
-    checkedBuild = PsGetVersion(&major, &minor, &build, NULL);
-    LOG(("running on version %d.%d, build %d(checked=%d)", major, minor, build, (int)checkedBuild));
+    if (s_WinVersion == WINVERSION_UNKNOWN)
+    {
+        checkedBuild = PsGetVersion(&major, &minor, &s_pbuild, NULL);
+        LOG(("running on version %d.%d, build %d(checked=%d)", major, minor, s_pbuild, (int)checkedBuild));
 
-    if (major > 6)
-    {
-        /* Everything newer than Windows 8.1, i.e. Windows 10 with major == 10. */
-        s_WinVersion = WINVERSION_10;
-    }
-    else if (major == 6)
-    {
-        if (minor >= 4)
+        if (major > 6)
+        {
+            /* Everything newer than Windows 8.1, i.e. Windows 10 with major == 10. */
             s_WinVersion = WINVERSION_10;
-        else if (minor == 3)
-            s_WinVersion = WINVERSION_81;
-        else if (minor == 2)
-            s_WinVersion = WINVERSION_8;
-        else if (minor == 1)
-            s_WinVersion = WINVERSION_7;
-        else if (minor == 0)
-            s_WinVersion = WINVERSION_VISTA; /* Or Windows Server 2008. */
+        }
+        else if (major == 6)
+        {
+            if (minor >= 4)
+                s_WinVersion = WINVERSION_10;
+            else if (minor == 3)
+                s_WinVersion = WINVERSION_81;
+            else if (minor == 2)
+                s_WinVersion = WINVERSION_8;
+            else if (minor == 1)
+                s_WinVersion = WINVERSION_7;
+            else if (minor == 0)
+                s_WinVersion = WINVERSION_VISTA; /* Or Windows Server 2008. */
+        }
+        else if (major == 5)
+            s_WinVersion = (minor>=1) ? WINVERSION_XP: WINVERSION_2K;
+        else if (major == 4)
+            s_WinVersion = WINVERSION_NT4;
+        else
+            WARN(("NT4 required!"));
     }
-    else if (major == 5)
-        s_WinVersion = (minor>=1) ? WINVERSION_XP: WINVERSION_2K;
-    else if (major == 4)
-        s_WinVersion = WINVERSION_NT4;
-    else
-        WARN(("NT4 required!"));
+
+    if (pbuild)
+        *pbuild = s_pbuild;
+
     return s_WinVersion;
 }
 
@@ -95,14 +99,14 @@ uint32_t VBoxGetHeightReduction()
 
     VMMDevGetHeightReductionRequest *req = NULL;
 
-    rc = VbglGRAlloc((VMMDevRequestHeader**)&req, sizeof(VMMDevGetHeightReductionRequest), VMMDevReq_GetHeightReduction);
+    rc = VbglR0GRAlloc((VMMDevRequestHeader**)&req, sizeof(VMMDevGetHeightReductionRequest), VMMDevReq_GetHeightReduction);
     if (RT_FAILURE(rc))
     {
         WARN(("ERROR allocating request, rc = %#xrc", rc));
     }
     else
     {
-        rc = VbglGRPerform(&req->header);
+        rc = VbglR0GRPerform(&req->header);
         if (RT_SUCCESS(rc))
         {
             retHeight = req->heightReduction;
@@ -111,7 +115,7 @@ uint32_t VBoxGetHeightReduction()
         {
             WARN(("ERROR querying height reduction value from VMMDev. rc = %#xrc", rc));
         }
-        VbglGRFree(&req->header);
+        VbglR0GRFree(&req->header);
     }
 
     LOGF_LEAVE();
@@ -124,7 +128,7 @@ bool VBoxLikesVideoMode(uint32_t display, uint32_t width, uint32_t height, uint3
 
     VMMDevVideoModeSupportedRequest2 *req2 = NULL;
 
-    int rc = VbglGRAlloc((VMMDevRequestHeader**)&req2, sizeof(VMMDevVideoModeSupportedRequest2), VMMDevReq_VideoModeSupported2);
+    int rc = VbglR0GRAlloc((VMMDevRequestHeader**)&req2, sizeof(VMMDevVideoModeSupportedRequest2), VMMDevReq_VideoModeSupported2);
     if (RT_FAILURE(rc))
     {
         LOG(("ERROR allocating request, rc = %#xrc", rc));
@@ -139,7 +143,7 @@ bool VBoxLikesVideoMode(uint32_t display, uint32_t width, uint32_t height, uint3
         req2->width  = width;
         req2->height = height;
         req2->bpp    = bpp;
-        rc = VbglGRPerform(&req2->header);
+        rc = VbglR0GRPerform(&req2->header);
         if (RT_SUCCESS(rc))
         {
             bRC = req2->fSupported;
@@ -159,7 +163,7 @@ bool VBoxLikesVideoMode(uint32_t display, uint32_t width, uint32_t height, uint3
             req->height = height;
             req->bpp    = bpp;
 
-            rc = VbglGRPerform(&req->header);
+            rc = VbglR0GRPerform(&req->header);
             if (RT_SUCCESS(rc))
             {
                 bRC = req->fSupported;
@@ -169,7 +173,7 @@ bool VBoxLikesVideoMode(uint32_t display, uint32_t width, uint32_t height, uint3
                 WARN(("ERROR querying video mode supported status from VMMDev. rc = %#xrc", rc));
             }
         }
-        VbglGRFree(&req2->header);
+        VbglR0GRFree(&req2->header);
     }
 
     LOG(("width: %d, height: %d, bpp: %d -> %s", width, height, bpp, (bRC == 1) ? "OK" : "FALSE"));
@@ -184,7 +188,7 @@ bool VBoxQueryDisplayRequest(uint32_t *xres, uint32_t *yres, uint32_t *bpp, uint
 
     LOGF_ENTER();
 
-    int rc = VbglGRAlloc ((VMMDevRequestHeader **)&req, sizeof (VMMDevDisplayChangeRequest2), VMMDevReq_GetDisplayChangeRequest2);
+    int rc = VbglR0GRAlloc ((VMMDevRequestHeader **)&req, sizeof (VMMDevDisplayChangeRequest2), VMMDevReq_GetDisplayChangeRequest2);
 
     if (RT_FAILURE(rc))
     {
@@ -194,7 +198,7 @@ bool VBoxQueryDisplayRequest(uint32_t *xres, uint32_t *yres, uint32_t *bpp, uint
     {
         req->eventAck = 0;
 
-        rc = VbglGRPerform (&req->header);
+        rc = VbglR0GRPerform (&req->header);
 
         if (RT_SUCCESS(rc))
         {
@@ -214,7 +218,7 @@ bool VBoxQueryDisplayRequest(uint32_t *xres, uint32_t *yres, uint32_t *bpp, uint
             WARN(("ERROR querying display request from VMMDev. rc = %#xrc", rc));
         }
 
-        VbglGRFree (&req->header);
+        VbglR0GRFree (&req->header);
     }
 
     LOGF_LEAVE();
@@ -227,7 +231,7 @@ static bool VBoxQueryPointerPosInternal(uint16_t *pPosX, uint16_t *pPosY)
 
     VMMDevReqMouseStatus *req = NULL;
 
-    int rc = VbglGRAlloc((VMMDevRequestHeader **)&req, sizeof(VMMDevReqMouseStatus), VMMDevReq_GetMouseStatus);
+    int rc = VbglR0GRAlloc((VMMDevRequestHeader **)&req, sizeof(VMMDevReqMouseStatus), VMMDevReq_GetMouseStatus);
 
     if (RT_FAILURE(rc))
     {
@@ -235,7 +239,7 @@ static bool VBoxQueryPointerPosInternal(uint16_t *pPosX, uint16_t *pPosY)
     }
     else
     {
-        rc = VbglGRPerform(&req->header);
+        rc = VbglR0GRPerform(&req->header);
 
         if (RT_SUCCESS(rc))
         {
@@ -259,7 +263,7 @@ static bool VBoxQueryPointerPosInternal(uint16_t *pPosX, uint16_t *pPosY)
             LOG(("ERROR querying mouse capabilities from VMMDev. rc = %#xrc", rc));
         }
 
-        VbglGRFree(&req->header);
+        VbglR0GRFree(&req->header);
     }
 
     return bRC;

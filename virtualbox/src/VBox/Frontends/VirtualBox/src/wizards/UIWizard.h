@@ -1,11 +1,10 @@
+/* $Id: UIWizard.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizard class declaration
+ * VBox Qt GUI - UIWizard class declaration.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,29 +24,10 @@
 
 /* Local includes: */
 #include "QIWithRetranslateUI.h"
+#include "UIExtraDataDefs.h"
 
 /* Forward declarations: */
 class UIWizardPage;
-
-/* Wizard type: */
-enum UIWizardType
-{
-    UIWizardType_NewVM,
-    UIWizardType_CloneVM,
-    UIWizardType_ExportAppliance,
-    UIWizardType_ImportAppliance,
-    UIWizardType_FirstRun,
-    UIWizardType_NewVD,
-    UIWizardType_CloneVD
-};
-
-/* Wizard mode: */
-enum UIWizardMode
-{
-    UIWizardMode_Auto,
-    UIWizardMode_Basic,
-    UIWizardMode_Expert
-};
 
 /* QWizard class reimplementation with extended funtionality. */
 class UIWizard : public QIWithRetranslateUI<QWizard>
@@ -57,7 +37,7 @@ class UIWizard : public QIWithRetranslateUI<QWizard>
 public:
 
     /* Mode related stuff: */
-    UIWizardMode mode() { return m_mode; }
+    WizardMode mode() { return m_mode; }
 
     /* Page related methods: */
     virtual void prepare();
@@ -72,7 +52,7 @@ protected slots:
 protected:
 
     /* Constructor: */
-    UIWizard(QWidget *pParent, UIWizardType type, UIWizardMode mode = UIWizardMode_Auto);
+    UIWizard(QWidget *pParent, WizardType type, WizardMode mode = WizardMode_Auto);
 
     /* Translation stuff: */
     void retranslateUi();
@@ -86,7 +66,7 @@ protected:
     void resizeToGoldenRatio();
 
     /* Design stuff: */
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
     void assignWatermark(const QString &strWaterMark);
 #else
     void assignBackground(const QString &strBackground);
@@ -101,19 +81,17 @@ private:
     void configurePage(UIWizardPage *pPage);
     void resizeAccordingLabelWidth(int iLabelWidth);
     double ratio();
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
     int proposedWatermarkHeight();
     void assignWatermarkHelper();
-#endif /* !Q_WS_MAC */
-    static QString nameForType(UIWizardType type);
-    static UIWizardMode loadModeForType(UIWizardType type);
+#endif /* !VBOX_WS_MAC */
 
     /* Variables: */
-    UIWizardType m_type;
-    UIWizardMode m_mode;
-#ifndef Q_WS_MAC
+    WizardType m_type;
+    WizardMode m_mode;
+#ifndef VBOX_WS_MAC
     QString m_strWatermarkName;
-#endif /* !Q_WS_MAC */
+#endif /* !VBOX_WS_MAC */
 };
 
 typedef QPointer<UIWizard> UISafePointerWizard;

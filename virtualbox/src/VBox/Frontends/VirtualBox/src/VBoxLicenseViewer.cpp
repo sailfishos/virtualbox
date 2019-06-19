@@ -1,12 +1,10 @@
 /* $Id: VBoxLicenseViewer.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * VBoxLicenseViewer class implementation
+ * VBox Qt GUI - VBoxLicenseViewer class implementation.
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,19 +16,22 @@
  */
 
 #ifdef VBOX_WITH_PRECOMPILED_HEADERS
-# include "precomp.h"
+# include <precomp.h>
 #else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
-#include "VBoxLicenseViewer.h"
-#include "QIDialogButtonBox.h"
-#include "UIMessageCenter.h"
+
+# include "VBoxLicenseViewer.h"
+# include "QIDialogButtonBox.h"
+# include "UIMessageCenter.h"
 
 /* Qt includes */
-#include <QTextBrowser>
-#include <QPushButton>
-#include <QVBoxLayout>
-#include <QScrollBar>
-#include <QFile>
+# include <QTextBrowser>
+# include <QPushButton>
+# include <QVBoxLayout>
+# include <QScrollBar>
+# include <QFile>
+
 #endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 VBoxLicenseViewer::VBoxLicenseViewer(QWidget *pParent /* = 0 */)
     : QIWithRetranslateUI2<QDialog>(pParent)
@@ -38,7 +39,7 @@ VBoxLicenseViewer::VBoxLicenseViewer(QWidget *pParent /* = 0 */)
     , mAgreeButton (0)
     , mDisagreeButton (0)
 {
-#ifndef Q_WS_WIN
+#ifndef VBOX_WS_WIN
     /* Application icon. On Win32, it's built-in to the executable. */
     setWindowIcon (QIcon (":/VirtualBox_48px.png"));
 #endif
@@ -56,8 +57,6 @@ VBoxLicenseViewer::VBoxLicenseViewer(QWidget *pParent /* = 0 */)
     connect (mDisagreeButton, SIGNAL (clicked()), SLOT (reject()));
 
     QVBoxLayout *mainLayout = new QVBoxLayout (this);
-    mainLayout->setSpacing (10);
-    mainLayout->setContentsMargins(10, 10, 10, 10);
     mainLayout->addWidget (mLicenseText);
     mainLayout->addWidget (dbb);
 

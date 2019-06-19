@@ -1,9 +1,10 @@
+/* $Id: VirtualBoxErrorInfoImpl.h $ */
 /** @file
  * VirtualBoxErrorInfo COM class definition.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,7 +23,7 @@
 using namespace com;
 
 class ATL_NO_VTABLE VirtualBoxErrorInfo
-    : public CComObjectRootEx<CComMultiThreadModel>
+    : public ATL::CComObjectRootEx<ATL::CComMultiThreadModel>
     , VBOX_SCRIPTABLE_IMPL(IVirtualBoxErrorInfo)
 #ifndef VBOX_WITH_XPCOM /* IErrorInfo doesn't inherit from IDispatch, ugly 3am hack: */
     , public IDispatch
@@ -38,14 +39,35 @@ public:
         COM_INTERFACE_ENTRY(IErrorInfo)
         COM_INTERFACE_ENTRY(IVirtualBoxErrorInfo)
         COM_INTERFACE_ENTRY(IDispatch)
+        COM_INTERFACE_ENTRY_AGGREGATE(IID_IMarshal, m_pUnkMarshaler)
     END_COM_MAP()
+
+    HRESULT FinalConstruct()
+    {
+#ifndef VBOX_WITH_XPCOM
+        return CoCreateFreeThreadedMarshaler((IUnknown *)(void *)this, &m_pUnkMarshaler);
+#else
+        return S_OK;
+#endif
+    }
+
+    void FinalRelease()
+    {
+#ifndef VBOX_WITH_XPCOM
+        if (m_pUnkMarshaler)
+        {
+            m_pUnkMarshaler->Release();
+            m_pUnkMarshaler = NULL;
+        }
+#endif
+    }
 
 #ifndef VBOX_WITH_XPCOM
 
     HRESULT init(IErrorInfo *aInfo);
 
     STDMETHOD(GetGUID)(GUID *guid);
-    STDMETHOD(GetSource)(BSTR *source);
+    STDMETHOD(GetSource)(BSTR *pBstrSource);
     STDMETHOD(GetDescription)(BSTR *description);
     STDMETHOD(GetHelpFile)(BSTR *pBstrHelpFile);
     STDMETHOD(GetHelpContext)(DWORD *pdwHelpContext);
@@ -86,6 +108,7 @@ public:
         : m_resultCode(S_OK),
           m_resultDetail(0)
     {}
+    virtual ~VirtualBoxErrorInfo() {}
 
     // public initializer/uninitializer for internal purposes only
     HRESULT init(HRESULT aResultCode,
@@ -127,6 +150,10 @@ private:
     Guid    m_IID;
     Utf8Str m_strComponent;
     ComPtr<IVirtualBoxErrorInfo> mNext;
+
+#ifndef VBOX_WITH_XPCOM
+    IUnknown *m_pUnkMarshaler;
+#endif
 };
 
 #endif // !____H_VIRTUALBOXERRORINFOIMPL

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -46,7 +46,11 @@
 typedef struct RTR0SEMLNXWAIT
 {
     /** The wait queue entry. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 14)  /* 4.13.0 and openSUSE */
+    wait_queue_entry_t WaitQE;
+#else
     wait_queue_t    WaitQE;
+#endif
     /** The absolute timeout given as nano seconds since the start of the
      *  monotonic clock. */
     uint64_t        uNsAbsTimeout;

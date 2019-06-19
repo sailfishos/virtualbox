@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -106,7 +106,7 @@ typedef FNPDMQUEUEDRV *PFNPDMQUEUEDRV;
  *
  * @returns Success indicator.
  *          If false the item will not be removed and the flushing will stop.
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pItem       The item to consume. Upon return this item will be freed.
  * @remarks No locks will be held, but for now it's safe to assume that only one
  *          EMT will do queue callbacks at any one time.
@@ -149,6 +149,7 @@ VMMDECL(void)                 PDMQueueInsert(PPDMQUEUE pQueue, PPDMQUEUEITEMCORE
 VMMDECL(void)                 PDMQueueInsertEx(PPDMQUEUE pQueue, PPDMQUEUEITEMCORE pItem, uint64_t NanoMaxDelay);
 VMMDECL(RCPTRTYPE(PPDMQUEUE)) PDMQueueRCPtr(PPDMQUEUE pQueue);
 VMMDECL(R0PTRTYPE(PPDMQUEUE)) PDMQueueR0Ptr(PPDMQUEUE pQueue);
+VMMDECL(bool)                 PDMQueueFlushIfNecessary(PPDMQUEUE pQueue);
 
 /** @} */
 

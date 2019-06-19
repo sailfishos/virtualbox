@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -43,6 +43,7 @@ typedef struct _SHFLHANDLEHDR
 typedef struct _SHFLFILEHANDLE
 {
     SHFLHANDLEHDR Header;
+    SHFLROOT root; /* Where the handle has been opened. */
     union
     {
         struct
@@ -51,8 +52,8 @@ typedef struct _SHFLFILEHANDLE
         } file;
         struct
         {
-            PRTDIR        Handle;
-            PRTDIR        SearchHandle;
+            RTDIR         Handle;
+            RTDIR         SearchHandle;
             PRTDIRENTRYEX pLastValidEntry; /* last found file in a directory search */
         } dir;
     };

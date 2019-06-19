@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,7 +30,8 @@
 
 RT_C_DECLS_BEGIN
 
-/** @defgroup grp_cdrom     IPRT CD/DVD/BD-ROM Drive API
+/** @defgroup grp_rt_cdrom  IPRT CD/DVD/BD-ROM Drive API
+ * @ingroup grp_rt
  *
  * The user of the API is currently resposible for serializing calls to it.
  *
@@ -62,7 +63,7 @@ typedef RTCDROM            *PRTCDROM;
  * @param   fFlags              Open flags, see RTCDROM_O_XXX.
  * @param   phCdrom             Where to return the CDROM handle.
  */
-RTDECL(int)         RTCdromOpen(const char *psz, uint32_t fFlags, PRTCDROM phCdrom);
+RTDECL(int)         RTCdromOpen(const char *pszName, uint32_t fFlags, PRTCDROM phCdrom);
 
 /**
  * Retains a reference to the CD-ROM handle.
@@ -164,7 +165,7 @@ RTDECL(int)         RTCdromOrdinalToName(unsigned iCdrom, char *pszName, size_t 
  * Combination of RTCdromOrdinalToName() and RTCdromOpen().
  *
  * @returns IPRT status code.
- * @param   pszName             The CD-ROM name (path).
+ * @param   iCdrom              The CD-ROM number.
  * @param   fFlags              Open flags, see RTCDROM_O_XXX.
  * @param   phCdrom             Where to return the CDROM handle .
  * @remarks See remarks on RTCdromOrdinalToName().

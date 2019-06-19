@@ -1,11 +1,10 @@
+/* $Id: UIMachineWindowNormal.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineWindowNormal class declaration
+ * VBox Qt GUI - UIMachineWindowNormal class declaration.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,101 +15,130 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef __UIMachineWindowNormal_h__
-#define __UIMachineWindowNormal_h__
+#ifndef ___UIMachineWindowNormal_h___
+#define ___UIMachineWindowNormal_h___
 
-/* Global includes: */
-#include <QLabel>
-
-/* Local includes: */
+/* GUI includes: */
 #include "UIMachineWindow.h"
 
 /* Forward declarations: */
 class CMediumAttachment;
 class UIIndicatorsPool;
-class QIStateIndicator;
+class UIAction;
 
-/* Normal machine-window implementation: */
+/** UIMachineWindow reimplementation,
+  * providing GUI with machine-window for the normal mode. */
 class UIMachineWindowNormal : public UIMachineWindow
 {
     Q_OBJECT;
 
+signals:
+
+    /** Notifies about geometry change. */
+    void sigGeometryChange(const QRect &rect);
+
 protected:
 
-    /* Constructor: */
+    /** Constructor, passes @a pMachineLogic and @a uScreenId to the UIMachineWindow constructor. */
     UIMachineWindowNormal(UIMachineLogic *pMachineLogic, ulong uScreenId);
 
 private slots:
 
-#ifdef Q_WS_X11
-    /** X11: Performs machine-window async geometry normalization. */
-    void sltNormalizeGeometry() { normalizeGeometry(true /* adjust position */); }
-#endif /* Q_WS_X11 */
-
-    /* Session event-handlers: */
+    /** Handles machine state change event. */
     void sltMachineStateChanged();
+    /** Handles medium change event. */
     void sltMediumChange(const CMediumAttachment &attachment);
+    /** Handles USB controller change event. */
     void sltUSBControllerChange();
+    /** Handles USB device state change event. */
     void sltUSBDeviceStateChange();
+    /** Handles audio adapter change event. */
+    void sltAudioAdapterChange();
+    /** Handles network adapter change event. */
     void sltNetworkAdapterChange();
+    /** Handles shared folder change event. */
     void sltSharedFolderChange();
+    /** Handles video capture change event. */
     void sltVideoCaptureChange();
+    /** Handles CPU execution cap change event. */
     void sltCPUExecutionCapChange();
+    /** Handles UISession initialized event. */
+    void sltHandleSessionInitialized();
 
-    /* LED connections: */
-    void sltUpdateIndicators();
-    void sltShowIndicatorsContextMenu(QIStateIndicator *pIndicator, QContextMenuEvent *pEvent);
-    void sltProcessGlobalSettingChange(const char *aPublicName, const char *aName);
+#ifndef RT_OS_DARWIN
+    /** Handles menu-bar configuration-change. */
+    void sltHandleMenuBarConfigurationChange(const QString &strMachineID);
+    /** Handles menu-bar context-menu-request. */
+    void sltHandleMenuBarContextMenuRequest(const QPoint &position);
+#endif /* !RT_OS_DARWIN */
+
+    /** Handles status-bar configuration-change. */
+    void sltHandleStatusBarConfigurationChange(const QString &strMachineID);
+    /** Handles status-bar context-menu-request. */
+    void sltHandleStatusBarContextMenuRequest(const QPoint &position);
+    /** Handles status-bar indicator context-menu-request. */
+    void sltHandleIndicatorContextMenuRequest(IndicatorType indicatorType, const QPoint &position);
+
+#ifdef VBOX_WS_MAC
+    /** Handles signal about some @a pAction hovered. */
+    void sltActionHovered(UIAction *pAction);
+#endif /* VBOX_WS_MAC */
 
 private:
 
-    /* Prepare helpers: */
+    /** Prepare session connections routine. */
     void prepareSessionConnections();
+#ifndef VBOX_WS_MAC
+    /** Prepare menu routine. */
     void prepareMenu();
+#endif /* !VBOX_WS_MAC */
+    /** Prepare status-bar routine. */
     void prepareStatusBar();
+    /** Prepare visual-state routine. */
     void prepareVisualState();
-    void prepareHandlers();
+    /** Load settings routine. */
     void loadSettings();
 
-    /* Cleanup helpers: */
+    /** Save settings routine. */
     void saveSettings();
-    //void cleanupHandlers() {}
-    //coid cleanupVisualState() {}
-    void cleanupStatusBar();
-    //void cleanupMenu() {}
-    //void cleanupConsoleConnections() {}
+    /** Cleanup visual-state routine. */
+    void cleanupVisualState();
+    /** Cleanup session connections routine. */
+    void cleanupSessionConnections();
 
-    /* Translate stuff: */
-    void retranslateUi();
-
-    /* Show stuff: */
+    /** Updates visibility according to visual-state. */
     void showInNecessaryMode();
 
-    /* Helper: Machine-window geometry stuff: */
-    void normalizeGeometry(bool fAdjustPosition);
+    /** Restores cached window geometry. */
+    virtual void restoreCachedGeometry() /* override */;
 
-    /* Update stuff: */
+    /** Performs window geometry normalization according to guest-size and host's available geometry.
+      * @param  fAdjustPosition  Determines whether is it necessary to adjust position as well. */
+    virtual void normalizeGeometry(bool fAdjustPosition) /* override */;
+
+    /** Common update routine. */
     void updateAppearanceOf(int aElement);
 
-    /* Event handler: */
+#ifndef VBOX_WS_MAC
+    /** Updates menu-bar content. */
+    void updateMenu();
+#endif /* !VBOX_WS_MAC */
+
+    /** Common @a pEvent handler. */
     bool event(QEvent *pEvent);
 
-    /* Helpers: */
-    UIIndicatorsPool* indicatorsPool() { return m_pIndicatorsPool; }
+    /** Returns whether this window is maximized. */
     bool isMaximizedChecked();
-    void updateIndicatorState(QIStateIndicator *pIndicator, KDeviceType deviceType);
 
-    /* Widgets: */
+    /** Holds the indicator-pool instance. */
     UIIndicatorsPool *m_pIndicatorsPool;
-    QLabel *m_pNameHostkey;
 
-    /* Variables: */
-    QTimer *m_pIdleTimer;
+    /** Holds the current window geometry. */
     QRect m_normalGeometry;
 
-    /* Factory support: */
+    /** Factory support. */
     friend class UIMachineWindow;
 };
 
-#endif // __UIMachineWindowNormal_h__
+#endif /* !___UIMachineWindowNormal_h___ */
 

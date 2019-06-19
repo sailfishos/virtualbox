@@ -1,3 +1,4 @@
+/* $Id: vector.h $ */
 /** @file
  * STL-inspired vector implementation in C
  * @note  functions in this file are inline to prevent warnings about
@@ -12,7 +13,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

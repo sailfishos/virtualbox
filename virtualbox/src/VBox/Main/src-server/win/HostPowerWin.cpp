@@ -1,10 +1,11 @@
+/* $Id: HostPowerWin.cpp $ */
 /** @file
  *
  * VirtualBox interface to host's power notification service
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,10 +16,11 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <windows.h>
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 /* Some SDK versions lack the extern "C" and thus cause linking failures.
  * This workaround isn't pretty, but there are not many options. */
 extern "C" {
@@ -51,10 +53,8 @@ HostPowerServiceWin::~HostPowerServiceWin()
     {
         Log(("HostPowerServiceWin::!HostPowerServiceWin: destroy window %x\n", mHwnd));
 
-        /* Is this allowed from another thread? */
-        SetWindowLongPtr(mHwnd, 0, 0);
         /* Poke the thread out of the event loop and wait for it to clean up. */
-        PostMessage(mHwnd, WM_QUIT, 0, 0);
+        PostMessage(mHwnd, WM_CLOSE, 0, 0);
         RTThreadWait(mThread, 5000, NULL);
         mThread = NIL_RTTHREAD;
     }
@@ -62,8 +62,9 @@ HostPowerServiceWin::~HostPowerServiceWin()
 
 
 
-DECLCALLBACK(int) HostPowerServiceWin::NotificationThread(RTTHREAD ThreadSelf, void *pInstance)
+DECLCALLBACK(int) HostPowerServiceWin::NotificationThread(RTTHREAD hThreadSelf, void *pInstance)
 {
+    RT_NOREF(hThreadSelf);
     HostPowerServiceWin *pPowerObj = (HostPowerServiceWin *)pInstance;
     HWND                 hwnd = 0;
 
@@ -114,25 +115,21 @@ DECLCALLBACK(int) HostPowerServiceWin::NotificationThread(RTTHREAD ThreadSelf, v
 
             MSG msg;
             BOOL fRet;
-            while ((fRet = GetMessage(&msg, NULL, 0, 0)) != 0)
+            while ((fRet = GetMessage(&msg, NULL, 0, 0)) > 0)
             {
-                if (fRet != -1)
-                {
-                    TranslateMessage(&msg);
-                    DispatchMessage(&msg);
-                }
-                else
-                {
-                    // handle the error and possibly exit
-                    break;
-                }
+                TranslateMessage(&msg);
+                DispatchMessage(&msg);
             }
+            /*
+            * Window procedure can return error,
+            * but this is exceptional situation
+            * that should be identified in testing
+            */
+            Assert(fRet >= 0);
         }
     }
 
     Log(("HostPowerServiceWin::NotificationThread: exit thread\n"));
-    if (hwnd)
-        DestroyWindow(hwnd);
 
     if (atomWindowClass != 0)
     {
@@ -171,7 +168,8 @@ LRESULT CALLBACK HostPowerServiceWin::WndProc(HWND hwnd, UINT msg, WPARAM wParam
                     Log(("PBT_APMPOWERSTATUSCHANGE\n"));
                     if (GetSystemPowerStatus(&SystemPowerStatus) == TRUE)
                     {
-                        Log(("PBT_APMPOWERSTATUSCHANGE ACLineStatus=%d BatteryFlag=%d\n", SystemPowerStatus.ACLineStatus, SystemPowerStatus.BatteryFlag));
+                        Log(("PBT_APMPOWERSTATUSCHANGE ACLineStatus=%d BatteryFlag=%d\n", SystemPowerStatus.ACLineStatus,
+                             SystemPowerStatus.BatteryFlag));
 
                         if (SystemPowerStatus.ACLineStatus == 0)      /* offline */
                         {
@@ -180,10 +178,12 @@ LRESULT CALLBACK HostPowerServiceWin::WndProc(HWND hwnd, UINT msg, WPARAM wParam
                                 LONG rc;
                                 SYSTEM_BATTERY_STATE BatteryState;
 
-                                rc = CallNtPowerInformation(SystemBatteryState, NULL, 0, (PVOID)&BatteryState, sizeof(BatteryState));
+                                rc = CallNtPowerInformation(SystemBatteryState, NULL, 0, (PVOID)&BatteryState,
+                                                            sizeof(BatteryState));
 #ifdef LOG_ENABLED
                                 if (rc == 0 /* STATUS_SUCCESS */)
-                                    Log(("CallNtPowerInformation claims %d seconds of power left\n", BatteryState.EstimatedTime));
+                                    Log(("CallNtPowerInformation claims %d seconds of power left\n",
+                                         BatteryState.EstimatedTime));
 #endif
                                 if (    rc == 0 /* STATUS_SUCCESS */
                                     &&  BatteryState.EstimatedTime < 60*5)
@@ -191,9 +191,9 @@ LRESULT CALLBACK HostPowerServiceWin::WndProc(HWND hwnd, UINT msg, WPARAM wParam
                                     pPowerObj->notify(Reason_HostBatteryLow);
                                 }
                             }
-                            else
-                            /* If the machine has less than 5% battery left (and is not connected to the AC), then we should save the state. */
-                            if (SystemPowerStatus.BatteryFlag == 4      /* critical battery status; less than 5% */)
+                            /* If the machine has less than 5% battery left (and is not connected
+                             * to the AC), then we should save the state. */
+                            else if (SystemPowerStatus.BatteryFlag == 4      /* critical battery status; less than 5% */)
                             {
                                 pPowerObj->notify(Reason_HostBatteryLow);
                             }
@@ -206,6 +206,14 @@ LRESULT CALLBACK HostPowerServiceWin::WndProc(HWND hwnd, UINT msg, WPARAM wParam
                 }
             }
             return TRUE;
+        }
+
+        case WM_DESTROY:
+        {
+            /* moved here. it can't work across theads */
+            SetWindowLongPtr(hwnd, 0, 0);
+            PostQuitMessage(0);
+            return 0;
         }
 
         default:

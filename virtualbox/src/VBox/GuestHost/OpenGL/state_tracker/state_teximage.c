@@ -217,6 +217,20 @@ crStateGetTextureObjectAndImage(CRContext *g, GLenum texTarget, GLint level,
 {
     CRTextureState *t = &(g->texture);
     CRTextureUnit *unit = t->unit + t->curTextureUnit;
+    
+    if (level < 0 || level > MaxTextureLevel(g, texTarget)) {
+        crWarning("Wrong texture level=%d", level);
+        *obj = NULL;
+        *img = NULL;
+        return;
+    }
+
+    if (level < 0 || level >= CR_MAX_MIPMAP_LEVELS)
+    {
+        crWarning("unexpected level 0x%x", level);
+        *obj = NULL;
+        *img = NULL;
+    }
 
     switch (texTarget) {
         case GL_TEXTURE_1D:
@@ -574,11 +588,16 @@ crStateTexImage1D(GLenum target, GLint level, GLint internalFormat,
 {
     CRContext *g = GetCurrentContext();
     CRTextureState *t = &(g->texture);
+#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
     CRClientState *c = &(g->client);
+#endif
     CRTextureObj *tobj;
     CRTextureLevel *tl;
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
+#ifdef CR_STATE_NO_TEXTURE_IMAGE_STORE
+    (void)pixels;
+#endif
 
     FLUSH();
 
@@ -684,10 +703,24 @@ crStateCopyTexImage2D(GLenum target, GLint level, GLenum internalFormat, GLint x
     CRContext *g = GetCurrentContext();
     CRTextureObj *tobj = NULL;
     CRTextureLevel *tl = NULL;
+    (void)x; (void)y;
+
+    if (level < 0 || level > MaxTextureLevel(g, target)) {
+        crStateError(__LINE__, __FILE__, GL_INVALID_VALUE,
+                     "crStateCopyTexImage2D: invalid level: %d", level);
+        return;
+    }
     
     crStateGetTextureObjectAndImage(g, target, level, &tobj, &tl);
     CRASSERT(tobj);
     CRASSERT(tl);
+
+    if (tobj == NULL || tl == NULL)
+    {
+        crStateError(__LINE__, __FILE__, GL_INVALID_ENUM,
+                     "crStateCopyTexImage2D: invalid target: 0x%x", target);
+        return;
+    }
 
     crStateNukeMipmaps(tobj);
 
@@ -726,12 +759,15 @@ crStateTexImage2D(GLenum target, GLint level, GLint internalFormat,
 {
     CRContext *g = GetCurrentContext();
     CRTextureState *t = &(g->texture);
+#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
     CRClientState *c = &(g->client);
+#endif
     CRTextureObj *tobj = NULL;
     CRTextureLevel *tl = NULL;
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
-    const int is_distrib = ((type == GL_TRUE) || (type == GL_FALSE));
+    // Distributed textures are not used by VBox
+    const int is_distrib = 0; // ((type == GL_TRUE) || (type == GL_FALSE));
 
     FLUSH();
 
@@ -863,11 +899,14 @@ crStateTexImage3D(GLenum target, GLint level,
 {
     CRContext *g = GetCurrentContext();
     CRTextureState *t = &(g->texture);
+#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
     CRClientState *c = &(g->client);
+#endif
     CRTextureObj *tobj = NULL;
     CRTextureLevel *tl = NULL;
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
+    (void)pixels;
 
     FLUSH();
 
@@ -958,12 +997,15 @@ crStateTexSubImage1D(GLenum target, GLint level, GLint xoffset,
 {
     CRContext *g = GetCurrentContext();
     CRTextureState *t = &(g->texture);
+#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
     CRClientState *c = &(g->client);
+#endif
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
     CRTextureUnit *unit = t->unit + t->curTextureUnit;
     CRTextureObj *tobj = unit->currentTexture1D;
     CRTextureLevel *tl = tobj->level[0] + level;
+    (void)format; (void)type; (void)pixels;
 
     FLUSH();
 
@@ -1009,17 +1051,18 @@ crStateTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
                      GLenum format, GLenum type, const GLvoid * pixels)
 {
     CRContext *g = GetCurrentContext();
-    CRClientState *c = &(g->client);
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
     CRTextureObj *tobj;
     CRTextureLevel *tl;
+#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
+    CRClientState *c = &(g->client);
     GLubyte *subimg = NULL;
     GLubyte *img = NULL;
-#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
     GLubyte *src;
     int i;
 #endif
+    (void)format; (void)type; (void)pixels;
 
     FLUSH();
 
@@ -1104,18 +1147,19 @@ crStateTexSubImage3D(GLenum target, GLint level, GLint xoffset, GLint yoffset,
 {
     CRContext *g = GetCurrentContext();
     CRTextureState *t = &(g->texture);
-    CRClientState *c = &(g->client);
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
     CRTextureUnit *unit = t->unit + t->curTextureUnit;
     CRTextureObj *tobj = unit->currentTexture3D;
     CRTextureLevel *tl = tobj->level[0] + level;
+#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
+    CRClientState *c = &(g->client);
     GLubyte *subimg = NULL;
     GLubyte *img = NULL;
-#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
     GLubyte *src;
     int i;
 #endif
+    (void)format; (void)type; (void)pixels;
 
     FLUSH();
 
@@ -1190,6 +1234,7 @@ crStateCompressedTexImage1DARB(GLenum target, GLint level,
     CRTextureLevel *tl;
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
+    (void)data;
 
     FLUSH();
 
@@ -1270,6 +1315,7 @@ crStateCompressedTexImage2DARB(GLenum target, GLint level,
     CRTextureLevel *tl = NULL;
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
+    (void)data;
 
     FLUSH();
 
@@ -1351,6 +1397,7 @@ crStateCompressedTexImage3DARB(GLenum target, GLint level,
     CRTextureLevel *tl = NULL;
     CRStateBits *sb = GetCurrentBits();
     CRTextureBits *tb = &(sb->texture);
+    (void)data;
 
     FLUSH();
 
@@ -1432,6 +1479,7 @@ crStateCompressedTexSubImage1DARB(GLenum target, GLint level, GLint xoffset,
     CRTextureUnit *unit = t->unit + t->curTextureUnit;
     CRTextureObj *tobj = unit->currentTexture1D;
     CRTextureLevel *tl = tobj->level[0] + level;
+    (void)format; (void)imageSize; (void)data;
 
     FLUSH();
 
@@ -1489,6 +1537,7 @@ crStateCompressedTexSubImage2DARB(GLenum target, GLint level, GLint xoffset,
     CRTextureUnit *unit = t->unit + t->curTextureUnit;
     CRTextureObj *tobj = unit->currentTexture2D;
     CRTextureLevel *tl = tobj->level[0] + level;
+    (void)format; (void)imageSize; (void)data;
 
     FLUSH();
 
@@ -1551,6 +1600,7 @@ crStateCompressedTexSubImage3DARB(GLenum target, GLint level, GLint xoffset,
     CRTextureUnit *unit = t->unit + t->curTextureUnit;
     CRTextureObj *tobj = unit->currentTexture3D;
     CRTextureLevel *tl = tobj->level[0] + level;
+    (void)format; (void)imageSize; (void)data;
 
     FLUSH();
 
@@ -1647,7 +1697,9 @@ crStateGetTexImage(GLenum target, GLint level, GLenum format,
                    GLenum type, GLvoid * pixels)
 {
     CRContext *g = GetCurrentContext();
+#ifndef CR_STATE_NO_TEXTURE_IMAGE_STORE
     CRClientState *c = &(g->client);
+#endif
     CRTextureObj *tobj;
     CRTextureLevel *tl;
 

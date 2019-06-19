@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vmm/vmapi.h>
 #include <VBox/vmm/vmm.h>
 #include <VBox/vmm/dbgf.h>
@@ -44,7 +44,7 @@ static PRTLOGGER dbgfR3LogResolvedLogger(const char **ppsz)
     if (!strncmp(psz, RT_STR_TUPLE("release:")))
     {
         *ppsz += sizeof("release:") - 1;
-        pLogger = RTLogRelDefaultInstance();
+        pLogger = RTLogRelGetDefaultInstance();
     }
     else
     {

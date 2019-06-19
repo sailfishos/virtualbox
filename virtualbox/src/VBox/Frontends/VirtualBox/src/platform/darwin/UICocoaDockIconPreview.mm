@@ -1,12 +1,10 @@
 /* $Id: UICocoaDockIconPreview.mm $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Cocoa helper for the dock icon preview
+ * VBox Qt GUI - Cocoa helper for the dock icon preview.
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -135,7 +133,7 @@ void UICocoaDockIconPreview::setOriginalSize(int width, int height)
 /*
  * Class for arranging/updating the layers for the glossy monitor preview.
  */
-@implementation UIDockTileMonitor;
+@implementation UIDockTileMonitor
 - (id)initWithFrame:(NSRect)frame parent:(UICocoaDockIconPreviewPrivate*)parent
 {
     self = [super initWithFrame:frame];
@@ -158,7 +156,7 @@ void UICocoaDockIconPreview::setOriginalSize(int width, int height)
     return self;
 }
 
-- (void)drawRect:(NSRect)aRect;
+- (void)drawRect:(NSRect)aRect
 {
     NSImage *dockMonitor = ::darwinToNSImageRef(p->m_dockMonitor);
     [dockMonitor drawInRect:NSRectFromCGRect(p->flipRect(p->m_monitorRect)) fromRect:aRect operation:NSCompositeSourceOver fraction:1.0];
@@ -170,7 +168,7 @@ void UICocoaDockIconPreview::setOriginalSize(int width, int height)
     return mScreenContent;
 }
 
-- (void)resize:(NSSize)size;
+- (void)resize:(NSSize)size
 {
     /* Calculate the new size based on the aspect ratio of the original screen
        size */
@@ -211,8 +209,9 @@ void UICocoaDockIconPreview::setOriginalSize(int width, int height)
     return self;
 }
 
-- (void)drawRect:(NSRect)aRect;
+- (void)drawRect:(NSRect)aRect
 {
+    RT_NOREF(aRect);
     NSGraphicsContext *nsContext = [NSGraphicsContext currentContext];
     CGContextRef pCGContext = (CGContextRef)[nsContext graphicsPort];
     p->drawOverlayIcons (pCGContext);
@@ -320,7 +319,7 @@ void UICocoaDockIconPreview::setOriginalSize(int width, int height)
     [[[NSApplication sharedApplication] dockTile] display];
 }
 
-- (void)resizeMonitor:(NSSize)size;
+- (void)resizeMonitor:(NSSize)size
 {
     [self restoreMonitor];
     [mMonitor resize:size];

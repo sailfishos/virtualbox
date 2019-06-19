@@ -1,11 +1,10 @@
+/* $Id: UIGChooserView.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooserView class declaration
+ * VBox Qt GUI - UIGChooserView class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,14 +18,16 @@
 #ifndef __UIGChooserView_h__
 #define __UIGChooserView_h__
 
-/* Qt includes: */
-#include <QGraphicsView>
+/* GUI includes: */
+#include "QIGraphicsView.h"
+#include "QIWithRetranslateUI.h"
 
 /* Forward declarations: */
+class UIGChooser;
 class UIGChooserItem;
 
 /* Graphics chooser-view: */
-class UIGChooserView : public QGraphicsView
+class UIGChooserView : public QIWithRetranslateUI<QIGraphicsView>
 {
     Q_OBJECT;
 
@@ -37,8 +38,12 @@ signals:
 
 public:
 
-    /* Constructor: */
-    UIGChooserView(QWidget *pParent);
+    /** Constructs a chooser-view passing @a pParent to the base-class.
+      * @param  pParent  Brings the chooser container to embed into. */
+    UIGChooserView(UIGChooser *pParent);
+
+    /** Returns the chooser reference. */
+    UIGChooser *chooser() const { return m_pChooser; }
 
 private slots:
 
@@ -51,11 +56,17 @@ private slots:
 
 private:
 
+    /** Handles translation event. */
+    virtual void retranslateUi() /* override */;
+
     /* Handler: Resize-event stuff: */
     void resizeEvent(QResizeEvent *pEvent);
 
     /* Helper: Update stuff: */
     void updateSceneRect();
+
+    /** Holds the chooser reference. */
+    UIGChooser *m_pChooser;
 
     /* Variables: */
     int m_iMinimumWidthHint;

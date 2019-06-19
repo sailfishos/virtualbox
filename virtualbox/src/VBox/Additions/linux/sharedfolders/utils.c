@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -49,8 +49,12 @@ static void sf_timespec_from_ftime(RTTIMESPEC *ts, time_t *time)
     int64_t t = 1000000000 * *time;
     RTTimeSpecSetNano(ts, t);
 }
-#else /* >= 2.6.0 */
+#else				/* >= 2.6.0 */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
 static void sf_ftime_from_timespec(struct timespec *tv, RTTIMESPEC *ts)
+#else
+static void sf_ftime_from_timespec(struct timespec64 *tv, RTTIMESPEC *ts)
+#endif
 {
     int64_t t = RTTimeSpecGetNano(ts);
     int64_t nsec;
@@ -60,7 +64,11 @@ static void sf_ftime_from_timespec(struct timespec *tv, RTTIMESPEC *ts)
     tv->tv_nsec = nsec;
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
 static void sf_timespec_from_ftime(RTTIMESPEC *ts, struct timespec *tv)
+#else
+static void sf_timespec_from_ftime(RTTIMESPEC *ts, struct timespec64 *tv)
+#endif
 {
     int64_t t = (int64_t)tv->tv_nsec + (int64_t)tv->tv_sec * 1000000000;
     RTTimeSpecSetNano(ts, t);
@@ -71,7 +79,6 @@ static void sf_timespec_from_ftime(RTTIMESPEC *ts, struct timespec *tv)
 void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
                    PSHFLFSOBJINFO info)
 {
-    struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
     PSHFLFSOBJATTR attr;
     int mode;
 
@@ -80,10 +87,7 @@ void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
     attr = &info->Attr;
 
 #define mode_set(r) attr->fMode & (RTFS_UNIX_##r) ? (S_##r) : 0;
-    mode  = mode_set(ISUID);
-    mode |= mode_set(ISGID);
-
-    mode |= mode_set(IRUSR);
+    mode  = mode_set(IRUSR);
     mode |= mode_set(IWUSR);
     mode |= mode_set(IXUSR);
 
@@ -99,13 +103,10 @@ void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
     inode->i_mapping->a_ops = &sf_reg_aops;
+# if LINUX_VERSION_CODE <= KERNEL_VERSION(3, 19, 0)
+    /* XXX Was this ever necessary? */
     inode->i_mapping->backing_dev_info = &sf_g->bdi;
-    /* Tell generic_read to not use GFP_HIGHUSER. This is needed as
-     * long as sf_reg_read_aux() calls vboxCallRead() which works on
-     * virtual addresses. On Linux cannot reliably determine the
-     * physical address for high memory, see
-     * rtR0MemObjNativeLockKernel(). */
-    mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
+# endif
 #endif
 
     if (RTFS_IS_DIRECTORY(attr->fMode))
@@ -172,49 +173,6 @@ void sf_init_inode(struct sf_glob_info *sf_g, struct inode *inode,
     sf_ftime_from_timespec(&inode->i_atime, &info->AccessTime);
     sf_ftime_from_timespec(&inode->i_ctime, &info->ChangeTime);
     sf_ftime_from_timespec(&inode->i_mtime, &info->ModificationTime);
-
-    if (attr->enmAdditional == SHFLFSOBJATTRADD_UNIX)
-    {
-        sf_i->host_dev = attr->u.Unix.INodeIdDevice;
-        sf_i->host_ino = attr->u.Unix.INodeId;
-    }
-}
-
-/* Check if the host-side inode is likely to have had content changes,
- * so that we should throw away the cached pages. */
-void sf_revalidate_mapping(struct inode *inode, PSHFLFSOBJINFO info)
-{
-    struct timespec mtime;
-    PSHFLFSOBJATTR attr = &info->Attr;
-
-    TRACE();
-
-    if (i_size_read(inode) != info->cbObject)
-    {
-        spin_lock(&inode->i_lock);
-        truncate_setsize(inode, info->cbObject);
-        spin_unlock(&inode->i_lock);
-        goto out_invalid;
-    }
-
-    sf_ftime_from_timespec(&mtime, &info->ModificationTime);
-    if (timespec_compare(&inode->i_mtime, &mtime))
-        goto out_invalid;
-
-    if (attr->enmAdditional == SHFLFSOBJATTRADD_UNIX)
-    {
-        struct sf_inode_info *sf_i = GET_INODE_INFO(inode);
-        if (   (sf_i->host_dev && sf_i->host_dev != attr->u.Unix.INodeIdDevice)
-            || (sf_i->host_ino && sf_i->host_ino != attr->u.Unix.INodeId))
-            goto out_invalid;
-    }
-
-    return;
-
-  out_invalid:
-    invalidate_inode_pages2(inode->i_mapping);
-    inode->i_generation++;
-    return;
 }
 
 int sf_stat(const char *caller, struct sf_glob_info *sf_g,
@@ -229,9 +187,9 @@ int sf_stat(const char *caller, struct sf_glob_info *sf_g,
     RT_ZERO(params);
     params.Handle = SHFL_HANDLE_NIL;
     params.CreateFlags = SHFL_CF_LOOKUP | SHFL_CF_ACT_FAIL_IF_NEW;
-    LogFunc(("sf_stat: calling vboxCallCreate, file %s, flags %#x\n",
+    LogFunc(("sf_stat: calling VbglR0SfCreate, file %s, flags %#x\n",
              path->String.utf8, params.CreateFlags));
-    rc = vboxCallCreate(&client_handle, &sf_g->map, path, &params);
+    rc = VbglR0SfCreate(&client_handle, &sf_g->map, path, &params);
     if (rc == VERR_INVALID_NAME)
     {
         /* this can happen for names like 'foo*' on a Windows host */
@@ -239,14 +197,14 @@ int sf_stat(const char *caller, struct sf_glob_info *sf_g,
     }
     if (RT_FAILURE(rc))
     {
-        LogFunc(("vboxCallCreate(%s) failed.  caller=%s, rc=%Rrc\n",
+        LogFunc(("VbglR0SfCreate(%s) failed.  caller=%s, rc=%Rrc\n",
                     path->String.utf8, rc, caller));
         return -EPROTO;
     }
     if (params.Result != SHFL_FILE_EXISTS)
     {
         if (!ok_to_fail)
-            LogFunc(("vboxCallCreate(%s) file does not exist.  caller=%s, result=%d\n",
+            LogFunc(("VbglR0SfCreate(%s) file does not exist.  caller=%s, result=%d\n",
                         path->String.utf8, params.Result, caller));
         return -ENOENT;
     }
@@ -294,13 +252,11 @@ int sf_inode_revalidate(struct dentry *dentry)
             return 0;
     }
 
-    sf_i->force_restat = 0;
     err = sf_stat(__func__, sf_g, sf_i->path, &info, 1);
     if (err)
         return err;
 
     dentry->d_time = jiffies;
-    sf_revalidate_mapping(dentry->d_inode, &info);
     sf_init_inode(sf_g, dentry->d_inode, &info);
     return 0;
 }
@@ -339,9 +295,16 @@ sf_dentry_revalidate(struct dentry *dentry, int flags)
    has inode at all) from these new attributes we derive [kstat] via
    [generic_fillattr] */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+int sf_getattr(const struct path *path, struct kstat *kstat, u32 request_mask, unsigned int flags)
+# else
 int sf_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *kstat)
+# endif
 {
     int err;
+# if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+    struct dentry *dentry = path->dentry;
+# endif
 
     TRACE();
     err = sf_inode_revalidate(dentry);
@@ -377,10 +340,10 @@ int sf_setattr(struct dentry *dentry, struct iattr *iattr)
     if (iattr->ia_valid & ATTR_SIZE)
         params.CreateFlags |= SHFL_CF_ACCESS_WRITE;
 
-    rc = vboxCallCreate(&client_handle, &sf_g->map, sf_i->path, &params);
+    rc = VbglR0SfCreate(&client_handle, &sf_g->map, sf_i->path, &params);
     if (RT_FAILURE(rc))
     {
-        LogFunc(("vboxCallCreate(%s) failed rc=%Rrc\n",
+        LogFunc(("VbglR0SfCreate(%s) failed rc=%Rrc\n",
                  sf_i->path->String.utf8, rc));
         err = -RTErrConvertToErrno(rc);
         goto fail2;
@@ -402,9 +365,7 @@ int sf_setattr(struct dentry *dentry, struct iattr *iattr)
         RT_ZERO(info);
         if (iattr->ia_valid & ATTR_MODE)
         {
-            info.Attr.fMode  = mode_set(ISUID);
-            info.Attr.fMode |= mode_set(ISGID);
-            info.Attr.fMode |= mode_set(IRUSR);
+            info.Attr.fMode  = mode_set(IRUSR);
             info.Attr.fMode |= mode_set(IWUSR);
             info.Attr.fMode |= mode_set(IXUSR);
             info.Attr.fMode |= mode_set(IRGRP);
@@ -427,12 +388,12 @@ int sf_setattr(struct dentry *dentry, struct iattr *iattr)
         /* ignore ctime (inode change time) as it can't be set from userland anyway */
 
         cbBuffer = sizeof(info);
-        rc = vboxCallFSInfo(&client_handle, &sf_g->map, params.Handle,
-                SHFL_INFO_SET | SHFL_INFO_FILE, &cbBuffer,
-                (PSHFLDIRINFO)&info);
+        rc = VbglR0SfFsInfo(&client_handle, &sf_g->map, params.Handle,
+                            SHFL_INFO_SET | SHFL_INFO_FILE, &cbBuffer,
+                            (PSHFLDIRINFO)&info);
         if (RT_FAILURE(rc))
         {
-            LogFunc(("vboxCallFSInfo(%s, FILE) failed rc=%Rrc\n",
+            LogFunc(("VbglR0SfFsInfo(%s, FILE) failed rc=%Rrc\n",
                         sf_i->path->String.utf8, rc));
             err = -RTErrConvertToErrno(rc);
             goto fail1;
@@ -444,29 +405,28 @@ int sf_setattr(struct dentry *dentry, struct iattr *iattr)
         RT_ZERO(info);
         info.cbObject = iattr->ia_size;
         cbBuffer = sizeof(info);
-        rc = vboxCallFSInfo(&client_handle, &sf_g->map, params.Handle,
+        rc = VbglR0SfFsInfo(&client_handle, &sf_g->map, params.Handle,
                             SHFL_INFO_SET | SHFL_INFO_SIZE, &cbBuffer,
                             (PSHFLDIRINFO)&info);
         if (RT_FAILURE(rc))
         {
-            LogFunc(("vboxCallFSInfo(%s, SIZE) failed rc=%Rrc\n",
+            LogFunc(("VbglR0SfFsInfo(%s, SIZE) failed rc=%Rrc\n",
                         sf_i->path->String.utf8, rc));
             err = -RTErrConvertToErrno(rc);
             goto fail1;
         }
     }
 
-    rc = vboxCallClose(&client_handle, &sf_g->map, params.Handle);
+    rc = VbglR0SfClose(&client_handle, &sf_g->map, params.Handle);
     if (RT_FAILURE(rc))
-        LogFunc(("vboxCallClose(%s) failed rc=%Rrc\n", sf_i->path->String.utf8, rc));
+        LogFunc(("VbglR0SfClose(%s) failed rc=%Rrc\n", sf_i->path->String.utf8, rc));
 
-    sf_i->force_restat = 1;
     return sf_inode_revalidate(dentry);
 
 fail1:
-    rc = vboxCallClose(&client_handle, &sf_g->map, params.Handle);
+    rc = VbglR0SfClose(&client_handle, &sf_g->map, params.Handle);
     if (RT_FAILURE(rc))
-        LogFunc(("vboxCallClose(%s) failed rc=%Rrc\n", sf_i->path->String.utf8, rc));
+        LogFunc(("VbglR0SfClose(%s) failed rc=%Rrc\n", sf_i->path->String.utf8, rc));
 
 fail2:
     return err;
@@ -843,12 +803,12 @@ int sf_dir_read_all(struct sf_glob_info *sf_g, struct sf_inode_info *sf_i,
         buf = b->buf;
         cbSize = b->cbFree;
 
-        rc = vboxCallDirInfo(&client_handle, &sf_g->map, handle, mask,
+        rc = VbglR0SfDirInfo(&client_handle, &sf_g->map, handle, mask,
                              0, 0, &cbSize, buf, &cEntries);
         switch (rc)
         {
             case VINF_SUCCESS:
-                /* fallthrough */
+                RT_FALL_THRU();
             case VERR_NO_MORE_FILES:
                 break;
             case VERR_NO_TRANSLATION:
@@ -857,7 +817,7 @@ int sf_dir_read_all(struct sf_glob_info *sf_g, struct sf_inode_info *sf_i,
                 break;
             default:
                 err = -RTErrConvertToErrno(rc);
-                LogFunc(("vboxCallDirInfo failed rc=%Rrc\n", rc));
+                LogFunc(("VbglR0SfDirInfo failed rc=%Rrc\n", rc));
                 goto fail1;
         }
 
@@ -886,7 +846,7 @@ int sf_get_volume_info(struct super_block *sb, STRUCT_STATFS *stat)
 
     sf_g = GET_GLOB_INFO(sb);
     cbBuffer = sizeof(SHFLVolumeInfo);
-    rc = vboxCallFSInfo(&client_handle, &sf_g->map, 0, SHFL_INFO_GET | SHFL_INFO_VOLUME,
+    rc = VbglR0SfFsInfo(&client_handle, &sf_g->map, 0, SHFL_INFO_GET | SHFL_INFO_VOLUME,
                         &cbBuffer, (PSHFLDIRINFO)&SHFLVolumeInfo);
     if (RT_FAILURE(rc))
         return -RTErrConvertToErrno(rc);
@@ -916,12 +876,12 @@ struct dentry_operations sf_dentry_ops =
 int sf_init_backing_dev(struct sf_glob_info *sf_g)
 {
     int rc = 0;
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0) && LINUX_VERSION_CODE <= KERNEL_VERSION(3, 19, 0)
     /* Each new shared folder map gets a new uint64_t identifier,
      * allocated in sequence.  We ASSUME the sequence will not wrap. */
     static uint64_t s_u64Sequence = 0;
     uint64_t u64CurrentSequence = ASMAtomicIncU64(&s_u64Sequence);
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
     sf_g->bdi.ra_pages = 0; /* No readahead */
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 12)
     sf_g->bdi.capabilities  = BDI_CAP_MAP_DIRECT    /* MAP_SHARED */
@@ -938,13 +898,13 @@ int sf_init_backing_dev(struct sf_glob_info *sf_g)
                           (unsigned long long)u64CurrentSequence);
 #  endif /* >= 2.6.26 */
 # endif /* >= 2.6.24 */
-#endif /* >= 2.6.0 */
+#endif /* >= 2.6.0 && <= 3.19.0 */
     return rc;
 }
 
 void sf_done_backing_dev(struct sf_glob_info *sf_g)
 {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 24) && LINUX_VERSION_CODE <= KERNEL_VERSION(3, 19, 0)
     bdi_destroy(&sf_g->bdi); /* includes bdi_unregister() */
 #endif
 }

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,7 +27,9 @@
 
 typedef boolean_t dlpi_walkfunc_t(const char*, void *);
 
-extern int (*g_pfnLibDlpiWalk)(dlpi_walkfunc_t *, void *, uint_t);
+extern int  (*g_pfnLibDlpiWalk)(dlpi_walkfunc_t *, void *, uint_t);
+extern int  (*g_pfnLibDlpiOpen)(const char *, dlpi_handle_t *, uint_t);
+extern void (*g_pfnLibDlpiClose)(dlpi_handle_t);
 
 extern bool VBoxSolarisLibDlpiFound(void);
 

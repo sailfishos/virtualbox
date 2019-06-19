@@ -1,86 +1,344 @@
-virtualbox-ose (4.3.22) unstable; urgency=low
+virtualbox-ose (5.2.30) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Thu, 12 Feb 2015 16:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 13 May 2019 12:00:00 +0200
 
-virtualbox-ose (4.3.20) unstable; urgency=low
+virtualbox-ose (5.2.28) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Fri, 21 Nov 2014 16:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 16 April 2019 12:00:00 +0200
 
-virtualbox-ose (4.3.18) unstable; urgency=low
+virtualbox-ose (5.2.26) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Fri, 10 Oct 2014 16:00:00 +0200
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 28 January 2019 12:00:00 +0200
 
-virtualbox-ose (4.3.16) unstable; urgency=low
+virtualbox-ose (5.2.24) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Tue, 09 Sept 2014 16:00:00 +0200
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 15 January 2019 12:00:00 +0200
 
-virtualbox-ose (4.3.14) unstable; urgency=low
+virtualbox-ose (5.2.22) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Tue, 15 Jul 2014 16:00:00 +0200
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 9 November 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.14~rc1) unstable; urgency=low
+virtualbox-ose (5.2.20) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Wed, 09 Jul 2014 18:00:00 +0200
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 16 October 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.12) unstable; urgency=low
+virtualbox-ose (5.2.18) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Fri, 16 May 2014 20:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 14 August 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.10) unstable; urgency=low
+virtualbox-ose (5.2.16) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Wed, 26 Mar 2014 20:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 17 July 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.8) unstable; urgency=low
+virtualbox-ose (5.2.14) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Tue, 25 Feb 2014 22:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 2 July 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.8~rc1) unstable; urgency=low
+virtualbox-ose (5.2.12) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Fri, 21 Feb 2014 14:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Wed, 9 May 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.6) unstable; urgency=low
+virtualbox-ose (5.2.10) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Wed, 18 Dec 2013 16:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 17 Apr 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.4) unstable; urgency=low
+virtualbox-ose (5.2.8) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Fri, 29 Nov 2013 16:00:00 +0100
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 26 Feb 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.2) unstable; urgency=low
+virtualbox-ose (5.2.6) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Fri, 1 Nov 2013 14:00:00 +0200
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 15 Jan 2018 12:00:00 +0200
 
-virtualbox-ose (4.3.0) unstable; urgency=low
+virtualbox-ose (5.2.4) unstable; urgency=low
 
-  * rebuild Debian package
+  * rebuild Debian package.
 
- -- Oracle Corporation <info@virtualbox.org>  Tue, 15 Oct 2013 14:00:00 +0200
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 19 Dec 2017 12:00:00 +0200
+
+virtualbox-ose (5.2.2) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Wed, 22 Nov 2017 12:00:00 +0200
+
+virtualbox-ose (5.2.0) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 17 Oct 2017 12:00:00 +0200
+
+virtualbox-ose (5.1.30) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 16 Oct 2017 12:00:00 +0200
+
+virtualbox-ose (5.2.0~rc1) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Fri, 29 Sep 2017 15:00:00 +0200
+
+virtualbox-ose (5.2.0~beta3) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Fri, 15 Sep 2017 15:00:00 +0200
+
+virtualbox-ose (5.2.0~beta2) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 15 Aug 2017 17:00:00 +0200
+
+virtualbox-ose (5.2.0~beta1) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 3 Aug 2017 18:00:00 +0200
+
+virtualbox-ose (5.1.28) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Wed, 13 Sep 2017 12:00:00 +0200
+
+virtualbox-ose (5.1.26) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 27 Jul 2017 17:00:00 +0200
+
+virtualbox-ose (5.1.24) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 17 Jul 2017 17:00:00 +0200
+
+virtualbox-ose (5.1.22) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Fri, 28 Apr 2017 16:00:00 +0200
+
+virtualbox-ose (5.1.20) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Wed, 18 Apr 2017 16:00:00 +0200
+
+virtualbox-ose (5.1.18) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Wed, 15 Mar 2017 16:00:00 +0100
+
+virtualbox-ose (5.1.16) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Wed, 08 Mar 2017 16:00:00 +0100
+
+virtualbox-ose (5.1.14) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 16 Jan 2017 16:00:00 +0100
+
+virtualbox-ose (5.1.12) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 20 Dec 2016 16:00:00 +0100
+
+virtualbox-ose (5.1.10) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 21 Nov 2016 16:00:00 +0100
+
+virtualbox-ose (5.1.8) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 18 Oct 2016 16:00:00 +0200
+
+virtualbox-ose (5.1.6) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 12 Sep 2016 18:00:00 +0200
+
+virtualbox-ose (5.1.4) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 18 Aug 2016 18:00:00 +0200
+
+virtualbox-ose (5.1.2) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 21 Jul 2016 18:00:00 +0200
+
+virtualbox-ose (5.1.0) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 12 Jul 2016 18:00:00 +0200
+
+virtualbox-ose (5.1.0~rc1) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 07 Jul 2016 18:00:00 +0200
+
+virtualbox-ose (5.1.0~beta3) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 16 Jun 2016 18:00:00 +0200
+
+virtualbox-ose (5.1.0~beta2) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 06 Jun 2016 18:00:00 +0200
+
+virtualbox-ose (5.1.0~beta1) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Fri, 03 Jun 2016 18:00:00 +0200
+
+virtualbox-ose (5.0.18) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 18 Apr 2016 18:00:00 +0100
+
+virtualbox-ose (5.0.16) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Fri, 04 Mar 2016 18:00:00 +0100
+
+virtualbox-ose (5.0.14) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 19 Jan 2016 18:00:00 +0100
+
+virtualbox-ose (5.0.12) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Fri, 18 Dec 2015 18:00:00 +0100
+
+virtualbox-ose (5.0.10) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 10 Nov 2015 18:00:00 +0100
+
+virtualbox-ose (5.0.8) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 20 Oct 2015 18:00:00 +0200
+
+virtualbox-ose (5.0.6) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 02 Oct 2015 14:00:00 +0200
+
+virtualbox-ose (5.0.4) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 07 Sep 2015 17:00:00 +0200
+
+virtualbox-ose (5.0.2) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 13 Aug 2015 17:00:00 +0200
+
+virtualbox-ose (5.0.0) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 09 Jul 2015 14:00:00 +0200
+
+virtualbox-ose (5.0.0~rc3) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Fri, 03 Jul 2015 18:00:00 +0200
+
+virtualbox-ose (5.0.0~rc2) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 25 Jun 2015 18:00:00 +0200
+
+virtualbox-ose (5.0.0~rc1) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 01 Jun 2015 18:00:00 +0200
+
+virtualbox-ose (5.0.0~beta4) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Mon, 18 May 2015 18:00:00 +0200
+
+virtualbox-ose (5.0.0~beta3) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Thu, 07 May 2015 18:00:00 +0200
+
+virtualbox-ose (5.0.0~beta1) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Wed, 01 Apr 2015 18:00:00 +0200
+
+virtualbox-ose (4.3.51~rc1) unstable; urgency=low
+
+  * rebuild Debian package.
+
+ -- Oracle Corporation <info@virtualbox.org>  Tue, 08 Oct 2013 18:00:00 +0200
 
 virtualbox-ose (4.3.0~rc1) unstable; urgency=low
 

@@ -34,9 +34,8 @@ static void crPackVertexAttrib(const CRVertexArrays *array, unsigned int attr, G
 #ifdef CR_ARB_vertex_buffer_object
     if (array->a[attr].buffer && array->a[attr].buffer->data)
     {
-        Assert(((GLuint)p) < array->a[attr].buffer->size);
-        Assert(((GLint)p) >= 0);
-        p = (unsigned char *)(array->a[attr].buffer->data) + (unsigned long)p;
+        Assert(((uintptr_t)p) < array->a[attr].buffer->size);
+        p = (unsigned char *)(array->a[attr].buffer->data) + (uintptr_t)p;
     }
 #endif
 
@@ -109,8 +108,8 @@ static void crPackVertexAttrib(const CRVertexArrays *array, unsigned int attr, G
                     case 4:
                         crPackVertexAttrib4usvARB(attr, usPtr);
                         break;
-                    case 3: usv[2] = usPtr[2];
-                    case 2: usv[1] = usPtr[1];
+                    case 3: usv[2] = usPtr[2]; RT_FALL_THRU();
+                    case 2: usv[1] = usPtr[1]; RT_FALL_THRU();
                     case 1:
                         usv[0] = usPtr[0];
                         crPackVertexAttrib4usvARB(attr, usv);
@@ -148,8 +147,8 @@ static void crPackVertexAttrib(const CRVertexArrays *array, unsigned int attr, G
                     case 4:
                         crPackVertexAttrib4ivARB(attr, iPtr);
                         break;
-                    case 3: iv[2] = iPtr[2];
-                    case 2: iv[1] = iPtr[1];
+                    case 3: iv[2] = iPtr[2]; RT_FALL_THRU();
+                    case 2: iv[1] = iPtr[1]; RT_FALL_THRU();
                     case 1:
                         iv[0] = iPtr[0];
                         crPackVertexAttrib4ivARB(attr, iv);
@@ -187,8 +186,8 @@ static void crPackVertexAttrib(const CRVertexArrays *array, unsigned int attr, G
                     case 4:
                         crPackVertexAttrib4uivARB(attr, uiPtr);
                         break;
-                    case 3: uiv[2] = uiPtr[2];
-                    case 2: uiv[1] = uiPtr[1];
+                    case 3: uiv[2] = uiPtr[2]; RT_FALL_THRU();
+                    case 2: uiv[1] = uiPtr[1]; RT_FALL_THRU();
                     case 1:
                         uiv[0] = uiPtr[0];
                         crPackVertexAttrib4uivARB(attr, uiv);
@@ -244,8 +243,8 @@ static void crPackVertexAttrib(const CRVertexArrays *array, unsigned int attr, G
                     case 4:
                         crPackVertexAttrib4bvARB(attr, bPtr);
                         break;
-                    case 3: bv[2] = bPtr[2];
-                    case 2: bv[1] = bPtr[1];
+                    case 3: bv[2] = bPtr[2]; RT_FALL_THRU();
+                    case 2: bv[1] = bPtr[1]; RT_FALL_THRU();
                     case 1:
                         bv[0] = bPtr[0];
                         crPackVertexAttrib4bvARB(attr, bv);
@@ -283,8 +282,8 @@ static void crPackVertexAttrib(const CRVertexArrays *array, unsigned int attr, G
                     case 4:
                         crPackVertexAttrib4ubvARB(attr, ubPtr);
                         break;
-                    case 3: ubv[2] = ubPtr[2];
-                    case 2: ubv[1] = ubPtr[1];
+                    case 3: ubv[2] = ubPtr[2]; RT_FALL_THRU();
+                    case 2: ubv[1] = ubPtr[1]; RT_FALL_THRU();
                     case 1:
                         ubv[0] = ubPtr[0];
                         crPackVertexAttrib4ubvARB(attr, ubv);
@@ -319,7 +318,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
         if (array->n.buffer && array->n.buffer->data)
         {
-            p = (unsigned char *)(array->n.buffer->data) + (unsigned long)p;
+            p = (unsigned char *)(array->n.buffer->data) + (uintptr_t)p;
         }
 #endif
 
@@ -342,7 +341,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
         if (array->c.buffer && array->c.buffer->data)
         {
-            p = (unsigned char *)(array->c.buffer->data) + (unsigned long)p;
+            p = (unsigned char *)(array->c.buffer->data) + (uintptr_t)p;
         }
 #endif
 
@@ -417,7 +416,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
         if (array->s.buffer && array->s.buffer->data)
         {
-            p = (unsigned char *)(array->s.buffer->data) + (unsigned long)p;
+            p = (unsigned char *)(array->s.buffer->data) + (uintptr_t)p;
         }
 #endif
 
@@ -443,7 +442,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
                 crWarning("Unhandled: crPackExpandArrayElement, array->s.type 0x%x", array->s.type);
         }
     }
-#endif // CR_EXT_secondary_color
+#endif /* CR_EXT_secondary_color */
 
 
 #ifdef CR_EXT_fog_coord
@@ -454,12 +453,12 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
         if (array->f.buffer && array->f.buffer->data)
         {
-            p = (unsigned char *)(array->f.buffer->data) + (unsigned long)p;
+            p = (unsigned char *)(array->f.buffer->data) + (uintptr_t)p;
         }
 #endif
         crPackFogCoordfEXT( *((GLfloat *) p) );
     }
-#endif // CR_EXT_fog_coord
+#endif /* CR_EXT_fog_coord */
 
     for (unit = 0 ; unit < CR_MAX_TEXTURE_UNITS ; unit++)
     {
@@ -470,7 +469,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
             if (array->t[unit].buffer && array->t[unit].buffer->data)
             {
-                p = (unsigned char *)(array->t[unit].buffer->data) + (unsigned long)p;
+                p = (unsigned char *)(array->t[unit].buffer->data) + (uintptr_t)p;
             }
 #endif
 
@@ -525,7 +524,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
         if (array->i.buffer && array->i.buffer->data)
         {
-            p = (unsigned char *)(array->i.buffer->data) + (unsigned long)p;
+            p = (unsigned char *)(array->i.buffer->data) + (uintptr_t)p;
         }
 #endif
 
@@ -547,7 +546,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
         if (array->e.buffer && array->e.buffer->data)
         {
-            p = (unsigned char *)(array->e.buffer->data) + (unsigned long)p;
+            p = (unsigned char *)(array->e.buffer->data) + (uintptr_t)p;
         }
 #endif
 
@@ -577,7 +576,7 @@ crPackExpandArrayElement(GLint index, CRClientState *c, const GLfloat *pZva)
 #ifdef CR_ARB_vertex_buffer_object
         if (array->v.buffer && array->v.buffer->data)
         {
-            p = (unsigned char *)(array->v.buffer->data) + (unsigned long)p;
+            p = (unsigned char *)(array->v.buffer->data) + (uintptr_t)p;
         }
 #endif
         switch (array->v.type)
@@ -673,7 +672,7 @@ crPackDrawElements(GLenum mode, GLsizei count, GLenum type, const GLvoid *indice
     packet_length += sizeof(GLint);
     if (elementsBuffer && elementsBuffer->id)
     {
-        /*@todo not sure it's possible, and not sure what to do*/
+        /** @todo not sure it's possible, and not sure what to do*/
         if (!elementsBuffer->data)
         {
             crWarning("crPackDrawElements: trying to use bound but empty elements buffer, ignoring.");
@@ -720,7 +719,7 @@ crPackDrawRangeElements(GLenum mode, GLuint start, GLuint end, GLsizei count,
     packet_length += sizeof(GLint);
     if (elementsBuffer && elementsBuffer->id)
     {
-        /*@todo not sure it's possible, and not sure what to do*/
+        /** @todo not sure it's possible, and not sure what to do*/
         if (!elementsBuffer->data)
         {
             crWarning("crPackDrawElements: trying to use bound but empty elements buffer, ignoring.");
@@ -796,14 +795,14 @@ crPackExpandDrawElements(GLenum mode, GLsizei count, GLenum type,
 #ifdef CR_ARB_vertex_buffer_object
     if (elementsBuffer && elementsBuffer->data)
     {
-        p = (unsigned char *)(elementsBuffer->data) + (unsigned long)p;
+        p = (unsigned char *)(elementsBuffer->data) + (uintptr_t)p;
     }
 #endif
 
     if (mode != 999)
         crPackBegin(mode);
 
-    //crDebug("crPackExpandDrawElements mode:0x%x, count:%d, type:0x%x", mode, count, type);
+    /*crDebug("crPackExpandDrawElements mode:0x%x, count:%d, type:0x%x", mode, count, type);*/
 
     switch (type)
     {

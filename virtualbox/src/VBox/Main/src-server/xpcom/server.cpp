@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2004-2013 Oracle Corporation
+ * Copyright (C) 2004-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,7 +20,6 @@
 
 #include <nsIComponentRegistrar.h>
 
-#include <nsEventQueueUtils.h>
 #include <nsGenericFactory.h>
 
 #include "prio.h"
@@ -58,6 +57,8 @@
 #include <nsIGenericFactory.h>
 #include <VirtualBox_XPCOM.h>
 
+#include "VBox/com/NativeEventQueue.h"
+
 #include "ApplianceImpl.h"
 #include "AudioAdapterImpl.h"
 #include "BandwidthControlImpl.h"
@@ -94,131 +95,10 @@
 #endif
 # include "NATNetworkImpl.h"
 
-
-/* implement nsISupports parts of our objects with support for nsIClassInfo */
-
-NS_DECL_CLASSINFO(VirtualBox)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(VirtualBox, IVirtualBox)
-
-NS_DECL_CLASSINFO(Machine)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Machine, IMachine)
-
-NS_DECL_CLASSINFO(VFSExplorer)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(VFSExplorer, IVFSExplorer)
-
-NS_DECL_CLASSINFO(Appliance)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Appliance, IAppliance)
-
-NS_DECL_CLASSINFO(VirtualSystemDescription)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(VirtualSystemDescription, IVirtualSystemDescription)
-
-NS_DECL_CLASSINFO(SessionMachine)
-NS_IMPL_THREADSAFE_ISUPPORTS2_CI(SessionMachine, IMachine, IInternalMachineControl)
-
-NS_DECL_CLASSINFO(SnapshotMachine)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(SnapshotMachine, IMachine)
-
-NS_DECL_CLASSINFO(Snapshot)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Snapshot, ISnapshot)
-
-NS_DECL_CLASSINFO(Medium)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Medium, IMedium)
-
-NS_DECL_CLASSINFO(MediumAttachment)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(MediumAttachment, IMediumAttachment)
-
-NS_DECL_CLASSINFO(Progress)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Progress, IProgress)
-
-NS_DECL_CLASSINFO(ProgressProxy)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(ProgressProxy, IProgress)
-
-NS_DECL_CLASSINFO(SharedFolder)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(SharedFolder, ISharedFolder)
-
-NS_DECL_CLASSINFO(VRDEServer)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(VRDEServer, IVRDEServer)
-
-NS_DECL_CLASSINFO(Host)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(Host, IHost)
-
-NS_DECL_CLASSINFO(HostNetworkInterface)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(HostNetworkInterface, IHostNetworkInterface)
-
-NS_DECL_CLASSINFO(DHCPServer)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(DHCPServer, IDHCPServer)
-
-NS_DECL_CLASSINFO(NATNetwork)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(NATNetwork, INATNetwork)
-
-NS_DECL_CLASSINFO(GuestOSType)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(GuestOSType, IGuestOSType)
-
-NS_DECL_CLASSINFO(NetworkAdapter)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(NetworkAdapter, INetworkAdapter)
-
-NS_DECL_CLASSINFO(NATEngine)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(NATEngine, INATEngine)
-
-
-NS_DECL_CLASSINFO(SerialPort)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(SerialPort, ISerialPort)
-
-NS_DECL_CLASSINFO(ParallelPort)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(ParallelPort, IParallelPort)
-
-NS_DECL_CLASSINFO(USBController)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(USBController, IUSBController)
-
-NS_DECL_CLASSINFO(USBDeviceFilters)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(USBDeviceFilters, IUSBDeviceFilters)
-
-NS_DECL_CLASSINFO(StorageController)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(StorageController, IStorageController)
-
-#ifdef VBOX_WITH_USB
-NS_DECL_CLASSINFO(USBDeviceFilter)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(USBDeviceFilter, IUSBDeviceFilter)
-
-NS_DECL_CLASSINFO(HostUSBDevice)
-NS_IMPL_THREADSAFE_ISUPPORTS2_CI(HostUSBDevice, IUSBDevice, IHostUSBDevice)
-
-NS_DECL_CLASSINFO(HostUSBDeviceFilter)
-NS_IMPL_THREADSAFE_ISUPPORTS2_CI(HostUSBDeviceFilter, IUSBDeviceFilter, IHostUSBDeviceFilter)
-#endif
-
-NS_DECL_CLASSINFO(AudioAdapter)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(AudioAdapter, IAudioAdapter)
-
-NS_DECL_CLASSINFO(SystemProperties)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(SystemProperties, ISystemProperties)
-
-#ifdef VBOX_WITH_RESOURCE_USAGE_API
-NS_DECL_CLASSINFO(PerformanceCollector)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(PerformanceCollector, IPerformanceCollector)
-NS_DECL_CLASSINFO(PerformanceMetric)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(PerformanceMetric, IPerformanceMetric)
-#endif /* VBOX_WITH_RESOURCE_USAGE_API */
-
-NS_DECL_CLASSINFO(BIOSSettings)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(BIOSSettings, IBIOSSettings)
-
-#ifdef VBOX_WITH_EXTPACK
-NS_DECL_CLASSINFO(ExtPackFile)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(ExtPackFile, IExtPackFile)
-
-NS_DECL_CLASSINFO(ExtPack)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(ExtPack, IExtPack)
-
-NS_DECL_CLASSINFO(ExtPackManager)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(ExtPackManager, IExtPackManager)
-#endif
-
-NS_DECL_CLASSINFO(BandwidthGroup)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(BandwidthGroup, IBandwidthGroup)
-
-NS_DECL_CLASSINFO(BandwidthControl)
-NS_IMPL_THREADSAFE_ISUPPORTS1_CI(BandwidthControl, IBandwidthControl)
+// This needs to stay - it is needed by the service registration below, and
+// is defined in the automatically generated VirtualBoxWrap.cpp
+extern nsIClassInfo *NS_CLASSINFO_NAME(VirtualBoxWrap);
+NS_DECL_CI_INTERFACE_GETTER(VirtualBoxWrap)
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -227,72 +107,11 @@ static bool gAutoShutdown = false;
  * VirtualBox instance is released, in ms */
 static uint32_t gShutdownDelayMs = 5000;
 
-static nsIEventQueue  *gEventQ          = nsnull;
+static com::NativeEventQueue *gEventQ   = NULL;
 static PRBool volatile gKeepRunning     = PR_TRUE;
 static PRBool volatile gAllowSigUsrQuit = PR_TRUE;
 
 /////////////////////////////////////////////////////////////////////////////
-
-/**
- * Simple but smart PLEvent wrapper.
- *
- * @note Instances must be always created with <tt>operator new</tt>!
- */
-class MyEvent
-{
-public:
-
-    MyEvent()
-    {
-        mEv.that = NULL;
-    };
-
-    /**
-     * Posts this event to the given message queue. This method may only be
-     * called once. @note On success, the event will be deleted automatically
-     * after it is delivered and handled. On failure, the event will delete
-     * itself before this method returns! The caller must not delete it in
-     * either case.
-     */
-    nsresult postTo(nsIEventQueue *aEventQ)
-    {
-        AssertReturn(mEv.that == NULL, NS_ERROR_FAILURE);
-        AssertReturn(aEventQ, NS_ERROR_FAILURE);
-        nsresult rv = aEventQ->InitEvent(&mEv.e, NULL,
-                                         eventHandler, eventDestructor);
-        if (NS_SUCCEEDED(rv))
-        {
-            mEv.that = this;
-            rv = aEventQ->PostEvent(&mEv.e);
-            if (NS_SUCCEEDED(rv))
-                return rv;
-        }
-        delete this;
-        return rv;
-    }
-
-    virtual void *handler() = 0;
-
-private:
-
-    struct Ev
-    {
-        PLEvent e;
-        MyEvent *that;
-    } mEv;
-
-    static void *PR_CALLBACK eventHandler(PLEvent *self)
-    {
-        return reinterpret_cast<Ev *>(self)->that->handler();
-    }
-
-    static void PR_CALLBACK eventDestructor(PLEvent *self)
-    {
-        delete reinterpret_cast<Ev *>(self)->that;
-    }
-};
-
-////////////////////////////////////////////////////////////////////////////////
 
 /**
  *  VirtualBox class factory that destroys the created instance right after
@@ -326,10 +145,7 @@ public:
             /* the last reference held by clients is being released
              * (see GetInstance()) */
 
-            PRBool onMainThread = PR_TRUE;
-            if (gEventQ)
-                gEventQ->IsOnCurrentThread(&onMainThread);
-
+            bool onMainThread = RTThreadIsMain(RTThreadSelf());
             PRBool timerStarted = PR_FALSE;
 
             /* sTimer is null if this call originates from FactoryDestructor()*/
@@ -345,7 +161,7 @@ public:
 
                 int vrc = RTTimerLRStart(sTimer, gShutdownDelayMs * RT_NS_1MS_64);
                 AssertRC(vrc);
-                timerStarted = SUCCEEDED(vrc);
+                timerStarted = !!(SUCCEEDED(vrc));
             }
             else
             {
@@ -384,7 +200,7 @@ public:
                      * any more. Thus, we assert below.
                      */
 
-                    Assert(gEventQ == NULL);
+                    Assert(!gEventQ);
                 }
             }
         }
@@ -392,8 +208,20 @@ public:
         return count;
     }
 
-    class MaybeQuitEvent : public MyEvent
+    class MaybeQuitEvent : public NativeEvent
     {
+    public:
+        MaybeQuitEvent() :
+            m_fSignal(false)
+        {
+        }
+
+        MaybeQuitEvent(bool fSignal) :
+            m_fSignal(fSignal)
+        {
+        }
+
+    private:
         /* called on the main thread */
         void *handler()
         {
@@ -405,19 +233,30 @@ public:
              * possible destruction */
             RTCritSectEnter(&sLock);
 
-            nsrefcnt count = 0;
+            nsrefcnt count = 1;
 
             /* sInstance is NULL here if it was deleted immediately after
              * creation due to initialization error. See GetInstance(). */
             if (sInstance != NULL)
             {
-                /* Release the guard reference added in GetInstance() */
+                /* Safe way to get current refcount is by first increasing and
+                 * then decreasing. Keep in mind that the Release is overloaded
+                 * (see VirtualBoxClassFactory::Release) and will start the
+                 * timer again if the returned count is 1. It won't do harm,
+                 * but also serves no purpose, so stop it ASAP. */
+                sInstance->AddRef();
                 count = sInstance->Release();
+                if (count == 1)
+                {
+                    RTTimerLRStop(sTimer);
+                    /* Release the guard reference added in GetInstance() */
+                    sInstance->Release();
+                }
             }
 
-            if (count == 0)
+            if (count == 1)
             {
-                if (gAutoShutdown)
+                if (gAutoShutdown || m_fSignal)
                 {
                     Assert(sInstance == NULL);
                     LogFlowFunc(("Terminating the server process...\n"));
@@ -432,7 +271,7 @@ public:
                 /* This condition is quite rare: a new client happened to
                  * connect after this event has been posted to the main queue
                  * but before it started to process it. */
-                LogFlowFunc(("Destruction is canceled (refcnt=%d).\n", count));
+                LogRel(("Destruction is canceled (refcnt=%d).\n", count));
             }
 
             RTCritSectLeave(&sLock);
@@ -440,9 +279,11 @@ public:
             LogFlowFuncLeave();
             return NULL;
         }
+
+        bool m_fSignal;
     };
 
-    static void ShutdownTimer(RTTIMERLR hTimerLR, void *pvUser, uint64_t /*iTick*/)
+    static DECLCALLBACK(void) ShutdownTimer(RTTIMERLR hTimerLR, void *pvUser, uint64_t /*iTick*/)
     {
         NOREF(hTimerLR);
         NOREF(pvUser);
@@ -451,12 +292,13 @@ public:
          * manually ended the server after a destruction has been scheduled
          * and this method was so lucky that it got a chance to run before
          * the timer was killed. */
-        AssertReturnVoid(gEventQ);
+        com::NativeEventQueue *q = gEventQ;
+        AssertReturnVoid(q);
 
         /* post a quit event to the main queue */
-        MaybeQuitEvent *ev = new MaybeQuitEvent();
-        nsresult rv = ev->postTo(gEventQ);
-        NOREF(rv);
+        MaybeQuitEvent *ev = new MaybeQuitEvent(false /* fSignal */);
+        if (!q->postEvent(ev))
+            delete ev;
 
         /* A failure above means we've been already stopped (for example
          * by Ctrl-C). FactoryDestructor() (NS_ShutdownXPCOM())
@@ -488,8 +330,6 @@ public:
         RTTimerLRDestroy(sTimer);
         sTimer = NULL;
 
-        RTCritSectDelete(&sLock);
-
         if (sInstance != NULL)
         {
             /* Either posting a destruction event failed for some reason (most
@@ -499,6 +339,10 @@ public:
              * Release the guard reference we added in GetInstance(). */
             sInstance->Release();
         }
+
+        /* Destroy lock after releasing the VirtualBox instance, otherwise
+         * there are races with cleanup. */
+        RTCritSectDelete(&sLock);
 
         return NS_OK;
     }
@@ -526,7 +370,7 @@ public:
 
         if (sInstance == NULL)
         {
-            LogFlowFunc (("Creating new VirtualBox object...\n"));
+            LogFlowFunc(("Creating new VirtualBox object...\n"));
             sInstance = new VirtualBoxClassFactory();
             if (sInstance != NULL)
             {
@@ -571,7 +415,7 @@ public:
             nsrefcnt count = sInstance->AddRef();
             Assert(count > 1);
 
-            if (count == 2)
+            if (count >= 2)
             {
                 LogFlowFunc(("Another client has requested a reference to VirtualBox, canceling destruction...\n"));
 
@@ -672,7 +516,7 @@ RegisterSelfComponents(nsIComponentRegistrar *registrar,
 static ipcIService *gIpcServ = nsnull;
 static const char *g_pszPidFile = NULL;
 
-class ForceQuitEvent : public MyEvent
+class ForceQuitEvent : public NativeEvent
 {
     void *handler()
     {
@@ -689,14 +533,17 @@ class ForceQuitEvent : public MyEvent
 
 static void signal_handler(int sig)
 {
-    if (gEventQ && gKeepRunning)
+    com::NativeEventQueue *q = gEventQ;
+    if (q && gKeepRunning)
     {
         if (sig == SIGUSR1)
         {
             if (gAllowSigUsrQuit)
             {
-                VirtualBoxClassFactory::MaybeQuitEvent *ev = new VirtualBoxClassFactory::MaybeQuitEvent();
-                ev->postTo(gEventQ);
+                /* terminate the server process if it is idle */
+                VirtualBoxClassFactory::MaybeQuitEvent *ev = new VirtualBoxClassFactory::MaybeQuitEvent(true /* fSignal */);
+                if (!q->postEvent(ev))
+                    delete ev;
             }
             /* else do nothing */
         }
@@ -704,7 +551,8 @@ static void signal_handler(int sig)
         {
             /* post a force quit event to the queue */
             ForceQuitEvent *ev = new ForceQuitEvent();
-            ev->postTo(gEventQ);
+            if (!q->postEvent(ev))
+                delete ev;
         }
     }
 }
@@ -860,11 +708,11 @@ int main(int argc, char **argv)
 
             case 'h':
                 RTPrintf("no help\n");
-                return 1;
+                return RTEXITCODE_SYNTAX;
 
             case 'V':
                 RTPrintf("%sr%s\n", RTBldCfgVersion(), RTBldCfgRevisionStr());
-                return 0;
+                return RTEXITCODE_SUCCESS;
 
             default:
                 return RTGetOptPrintError(vrc, &ValueUnion);
@@ -895,15 +743,21 @@ int main(int argc, char **argv)
     if (RT_FAILURE(vrc))
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "failed to create logging file name, rc=%Rrc", vrc);
 
-    char szError[RTPATH_MAX + 128];
+    RTERRINFOSTATIC ErrInfo;
     vrc = com::VBoxLogRelCreate("XPCOM Server", szLogFile,
                                 RTLOGFLAGS_PREFIX_THREAD | RTLOGFLAGS_PREFIX_TIME_PROG,
                                 VBOXSVC_LOG_DEFAULT, "VBOXSVC_RELEASE_LOG",
                                 RTLOGDEST_FILE, UINT32_MAX /* cMaxEntriesPerGroup */,
                                 cHistory, uHistoryFileTime, uHistoryFileSize,
-                                szError, sizeof(szError));
+                                RTErrInfoInitStatic(&ErrInfo));
     if (RT_FAILURE(vrc))
-        return RTMsgErrorExit(RTEXITCODE_FAILURE, "failed to open release log (%s, %Rrc)", szError, vrc);
+        return RTMsgErrorExit(RTEXITCODE_FAILURE, "failed to open release log (%s, %Rrc)", ErrInfo.Core.pszMsg, vrc);
+
+    /* Set up a build identifier so that it can be seen from core dumps what
+     * exact build was used to produce the core. Same as in Console::i_powerUpThread(). */
+    static char saBuildID[48];
+    RTStrPrintf(saBuildID, sizeof(saBuildID), "%s%s%s%s VirtualBox %s r%u %s%s%s%s",
+                "BU", "IL", "DI", "D", RTBldCfgVersion(), RTBldCfgRevision(), "BU", "IL", "DI", "D");
 
     daemon_pipe_wr = PR_GetInheritedFD(VBOXSVC_STARTUP_PIPE_NAME);
     RTEnvUnset("NSPR_INHERIT_FDS");
@@ -916,9 +770,9 @@ int main(int argc, char **argv)
         NULL, // registration function
         NULL, // deregistration function
         VirtualBoxClassFactory::FactoryDestructor, // factory destructor function
-        NS_CI_INTERFACE_GETTER_NAME(VirtualBox),
+        NS_CI_INTERFACE_GETTER_NAME(VirtualBoxWrap),
         NULL, // language helper
-        &NS_CLASSINFO_NAME(VirtualBox),
+        &NS_CLASSINFO_NAME(VirtualBoxWrap),
         0 // flags
     };
 
@@ -929,7 +783,7 @@ int main(int argc, char **argv)
         }
     };
 
-    do
+    do /* goto avoidance only */
     {
         rc = com::Initialize();
         if (NS_FAILED(rc))
@@ -938,7 +792,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        nsCOMPtr <nsIComponentRegistrar> registrar;
+        nsCOMPtr<nsIComponentRegistrar> registrar;
         rc = NS_GetComponentRegistrar(getter_AddRefs(registrar));
         if (NS_FAILED(rc))
         {
@@ -955,17 +809,7 @@ int main(int argc, char **argv)
             break;
         }
 
-        /* get the main thread's event queue (afaik, the dconnect service always
-         * gets created upon XPCOM startup, so it will use the main (this)
-         * thread's event queue to receive IPC events) */
-        rc = NS_GetMainEventQ(&gEventQ);
-        if (NS_FAILED(rc))
-        {
-            RTMsgError("Failed to get the main event queue! (rc=%Rhrc)", rc);
-            break;
-        }
-
-        nsCOMPtr<ipcIService> ipcServ (do_GetService(IPC_SERVICE_CONTRACTID, &rc));
+        nsCOMPtr<ipcIService> ipcServ(do_GetService(IPC_SERVICE_CONTRACTID, &rc));
         if (NS_FAILED(rc))
         {
             RTMsgError("Failed to get IPC service! (rc=%Rhrc)", rc);
@@ -998,18 +842,19 @@ int main(int argc, char **argv)
             sigaction(SIGINT, &sa, NULL);
             sigaction(SIGQUIT, &sa, NULL);
             sigaction(SIGTERM, &sa, NULL);
-            sigaction(SIGTRAP, &sa, NULL);
+// XXX Temporary allow release assertions to terminate VBoxSVC
+//            sigaction(SIGTRAP, &sa, NULL);
             sigaction(SIGUSR1, &sa, NULL);
         }
 
         {
             char szBuf[80];
-            int  iSize;
+            size_t cSize;
 
-            iSize = RTStrPrintf(szBuf, sizeof(szBuf),
+            cSize = RTStrPrintf(szBuf, sizeof(szBuf),
                                 VBOX_PRODUCT" XPCOM Server Version "
                                 VBOX_VERSION_STRING);
-            for (int i = iSize; i > 0; i--)
+            for (size_t i = cSize; i > 0; i--)
                 putchar('*');
             RTPrintf("\n%s\n", szBuf);
             RTPrintf("(C) 2004-" VBOX_C_YEAR " " VBOX_VENDOR "\n"
@@ -1023,7 +868,7 @@ int main(int argc, char **argv)
         {
             RTPrintf("\nStarting event loop....\n[send TERM signal to quit]\n");
             /* now we're ready, signal the parent process */
-            PR_Write(daemon_pipe_wr, "READY", strlen("READY"));
+            PR_Write(daemon_pipe_wr, RT_STR_TUPLE("READY"));
             /* close writing end of the pipe, its job is done */
             PR_Close(daemon_pipe_wr);
         }
@@ -1060,35 +905,34 @@ int main(int argc, char **argv)
         else
             RTPrintf("WARNING: failed to obtain per-process file-descriptor limit (%d).\n", errno);
 
-        PLEvent *ev;
-        while (gKeepRunning)
+        /* get the main thread's event queue */
+        gEventQ = com::NativeEventQueue::getMainEventQueue();
+        if (!gEventQ)
         {
-            gEventQ->WaitForEvent(&ev);
-            gEventQ->HandleEvent(ev);
+            RTMsgError("Failed to get the main event queue! (rc=%Rhrc)", rc);
+            break;
         }
 
-        /* stop accepting new events. Clients that happen to resolve our
-         * name and issue a CreateInstance() request after this point will
-         * get NS_ERROR_ABORT once we handle the remaining messages. As a
-         * result, they should try to start a new server process. */
-        gEventQ->StopAcceptingEvents();
+        while (gKeepRunning)
+        {
+            vrc = gEventQ->processEventQueue(RT_INDEFINITE_WAIT);
+            if (RT_FAILURE(vrc) && vrc != VERR_TIMEOUT)
+            {
+                LogRel(("Failed to wait for events! (rc=%Rrc)", vrc));
+                break;
+            }
+        }
+
+        gEventQ = NULL;
+        RTPrintf("Terminated event loop.\n");
 
         /* unregister ourselves. After this point, clients will start a new
          * process because they won't be able to resolve the server name.*/
         gIpcServ->RemoveName(VBOXSVC_IPC_NAME);
-
-        /* process any remaining events. These events may include
-         * CreateInstance() requests received right before we called
-         * StopAcceptingEvents() above. We will detect this case below,
-         * restore gKeepRunning and continue to serve. */
-        gEventQ->ProcessPendingEvents();
-
-        RTPrintf("Terminated event loop.\n");
     }
     while (0); // this scopes the nsCOMPtrs
 
     NS_IF_RELEASE(gIpcServ);
-    NS_IF_RELEASE(gEventQ);
 
     /* no nsCOMPtrs are allowed to be alive when you call com::Shutdown(). */
 
@@ -1104,5 +948,5 @@ int main(int argc, char **argv)
     if (g_pszPidFile)
         RTFileDelete(g_pszPidFile);
 
-    return 0;
+    return RTEXITCODE_SUCCESS;
 }

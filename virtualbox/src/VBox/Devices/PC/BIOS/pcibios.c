@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2004-2012 Oracle Corporation
+ * Copyright (C) 2004-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -52,7 +52,7 @@ enum pci_error {
     BUFFER_TOO_SMALL    = 0x89      /* Routing table buffer insufficient. */
 };
 
-// @todo: merge with system.c
+/// @todo merge with system.c
 #define AX      r.gr.u.r16.ax
 #define BX      r.gr.u.r16.bx
 #define CX      r.gr.u.r16.cx
@@ -133,7 +133,7 @@ extern unsigned outpd(unsigned port, unsigned value);
 
 #else
 
-//@todo: merge with AHCI code
+/// @todo merge with AHCI code
 
 /* Warning: Destroys high bits of EAX. */
 uint32_t inpd(uint16_t port);
@@ -322,7 +322,7 @@ void BIOSCALL PCIxx(function)(volatile pci_regs_t r)
     case PCI_BIOS_PRESENT:
         AX  = 0x0001;   /* Configuration mechanism #1 supported. */
         BX  = 0x0210;   /* Version 2.1. */
-        //@todo: return true max bus # in CL
+        /// @todo return true max bus # in CL
         CX  = 0;        /* Maximum bus number. */
         EDX = 'P' | ('C' << 8) | ((uint32_t)'I' << 16) | ((uint32_t)' ' << 24);
         break;
@@ -387,9 +387,9 @@ void BIOSCALL PCIxx(function)(volatile pci_regs_t r)
         break;
     case GET_IRQ_ROUTING:
         route_buf = ES :> (void *)DI;
-        BX_DEBUG_PCI("PCI: Route Buf %04X:%04X size %04X (at %04X:%04X)\n",
+        BX_DEBUG_PCI("PCI: Route Buf %04X:%04X size %04X, need %04X (at %04X:%04X)\n",
                      FP_SEG(route_buf->buf_ptr), FP_OFF(route_buf->buf_ptr),
-                     route_buf->buf_size, ES, DI);
+                     route_buf->buf_size, pci_routing_table_size, ES, DI);
         if (pci_routing_table_size > route_buf->buf_size) {
             SET_AH(BUFFER_TOO_SMALL);
             SET_CF();

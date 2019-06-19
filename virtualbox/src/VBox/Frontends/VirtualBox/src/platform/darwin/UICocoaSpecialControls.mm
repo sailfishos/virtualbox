@@ -1,12 +1,10 @@
 /* $Id: UICocoaSpecialControls.mm $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UICocoaSpecialControls implementation
+ * VBox Qt GUI - UICocoaSpecialControls implementation.
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,12 +28,25 @@
 #import <AppKit/NSFont.h>
 #import <AppKit/NSImage.h>
 #import <AppKit/NSSegmentedControl.h>
+#import <AppKit/NSEvent.h>
+#import <AppKit/NSColor.h>
+#import <AppKit/NSSearchFieldCell.h>
+#import <AppKit/NSSearchField.h>
+#import <AppKit/NSSegmentedCell.h>
 
 /* Qt includes */
+#include <QAccessibleWidget>
 #include <QApplication>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QMacCocoaViewContainer>
+
+/* Other VBox includes: */
+#include <iprt/assert.h>
+
+/* Forward declarations: */
+class UIAccessibilityInterfaceForUICocoaSegmentedButton;
+
 
 /*
  * Private interfaces
@@ -44,9 +55,9 @@
 {
     UICocoaButton *mRealTarget;
 }
-/* The next method used to be called initWithObject, but Xcode 4.1 preview 5 
+/* The next method used to be called initWithObject, but Xcode 4.1 preview 5
    cannot cope with that for some reason.  Hope this doesn't break anything... */
--(id)initWithObjectAndLionTrouble:(UICocoaButton*)object; 
+-(id)initWithObjectAndLionTrouble:(UICocoaButton*)object;
 -(IBAction)clicked:(id)sender;
 @end
 
@@ -93,8 +104,9 @@
     return self;
 }
 
--(IBAction)clicked:(id)sender;
+-(IBAction)clicked:(id)sender
 {
+    RT_NOREF(sender);
     mRealTarget->onClicked();
 }
 @end
@@ -109,7 +121,7 @@
     return self;
 }
 
--(IBAction)segControlClicked:(id)sender;
+-(IBAction)segControlClicked:(id)sender
 {
     mRealTarget->onClicked([sender selectedSegment]);
 }
@@ -213,11 +225,12 @@
 @implementation UISearchFieldDelegatePrivate
 -(BOOL)control:(NSControl*)control textView:(NSTextView*)textView doCommandBySelector:(SEL)commandSelector
 {
+    RT_NOREF(control, textView);
 //    NSLog(NSStringFromSelector(commandSelector));
     /* Don't execute the selector for Enter & Escape. */
     if (   commandSelector == @selector(insertNewline:)
-	    || commandSelector == @selector(cancelOperation:))
-		return YES;
+            || commandSelector == @selector(cancelOperation:))
+                return YES;
     return NO;
 }
 @end
@@ -235,74 +248,75 @@ NSRect darwinCenterRectVerticalTo(NSRect aRect, const NSRect& aToRect)
 /*
  * Public classes
  */
-UICocoaWrapper::UICocoaWrapper(QWidget *pParent /* = 0 */)
-    : QWidget(pParent)
-    , m_pContainer(0)
+UICocoaButton::UICocoaButton(QWidget *pParent, CocoaButtonType type)
+    : QMacCocoaViewContainer(0, pParent)
 {
-}
+    /* Prepare auto-release pool: */
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
 
-void UICocoaWrapper::resizeEvent(QResizeEvent *pEvent)
-{
-    if (m_pContainer)
-        m_pContainer->resize(pEvent->size());
-    QWidget::resizeEvent(pEvent);
-}
-
-UICocoaButton::UICocoaButton(CocoaButtonType aType, QWidget *pParent /* = 0 */)
-  : UICocoaWrapper(pParent)
-{
+    /* Prepare native button reference: */
+    NativeNSButtonRef pNativeRef;
     NSRect initFrame;
 
-    switch (aType)
+    /* Configure button: */
+    switch (type)
     {
         case HelpButton:
         {
-            m_pNativeRef = [[NSButton alloc] init];
-            [m_pNativeRef setTitle: @""];
-            [m_pNativeRef setBezelStyle: NSHelpButtonBezelStyle];
-            [m_pNativeRef setBordered: YES];
-            [m_pNativeRef setAlignment: NSCenterTextAlignment];
-            [m_pNativeRef sizeToFit];
-            initFrame = [m_pNativeRef frame];
+            pNativeRef = [[NSButton alloc] init];
+            [pNativeRef setTitle: @""];
+            [pNativeRef setBezelStyle: NSHelpButtonBezelStyle];
+            [pNativeRef setBordered: YES];
+            [pNativeRef setAlignment: NSCenterTextAlignment];
+            [pNativeRef sizeToFit];
+            initFrame = [pNativeRef frame];
             initFrame.size.width += 12; /* Margin */
-            [m_pNativeRef setFrame:initFrame];
+            [pNativeRef setFrame:initFrame];
             break;
         };
         case CancelButton:
         {
-            m_pNativeRef = [[NSButton alloc] initWithFrame: NSMakeRect(0, 0, 13, 13)];
-            [m_pNativeRef setTitle: @""];
-            [m_pNativeRef setBezelStyle:NSShadowlessSquareBezelStyle];
-            [m_pNativeRef setButtonType:NSMomentaryChangeButton];
-            [m_pNativeRef setImage: [NSImage imageNamed: NSImageNameStopProgressFreestandingTemplate]];
-            [m_pNativeRef setBordered: NO];
-            [[m_pNativeRef cell] setImageScaling: NSImageScaleProportionallyDown];
-            initFrame = [m_pNativeRef frame];
+            pNativeRef = [[NSButton alloc] initWithFrame: NSMakeRect(0, 0, 13, 13)];
+            [pNativeRef setTitle: @""];
+            [pNativeRef setBezelStyle:NSShadowlessSquareBezelStyle];
+            [pNativeRef setButtonType:NSMomentaryChangeButton];
+            [pNativeRef setImage: [NSImage imageNamed: NSImageNameStopProgressFreestandingTemplate]];
+            [pNativeRef setBordered: NO];
+            [[pNativeRef cell] setImageScaling: NSImageScaleProportionallyDown];
+            initFrame = [pNativeRef frame];
             break;
         }
         case ResetButton:
         {
-            m_pNativeRef = [[NSButton alloc] initWithFrame: NSMakeRect(0, 0, 13, 13)];
-            [m_pNativeRef setTitle: @""];
-            [m_pNativeRef setBezelStyle:NSShadowlessSquareBezelStyle];
-            [m_pNativeRef setButtonType:NSMomentaryChangeButton];
-            [m_pNativeRef setImage: [NSImage imageNamed: NSImageNameRefreshFreestandingTemplate]];
-            [m_pNativeRef setBordered: NO];
-            [[m_pNativeRef cell] setImageScaling: NSImageScaleProportionallyDown];
-            initFrame = [m_pNativeRef frame];
+            pNativeRef = [[NSButton alloc] initWithFrame: NSMakeRect(0, 0, 13, 13)];
+            [pNativeRef setTitle: @""];
+            [pNativeRef setBezelStyle:NSShadowlessSquareBezelStyle];
+            [pNativeRef setButtonType:NSMomentaryChangeButton];
+            [pNativeRef setImage: [NSImage imageNamed: NSImageNameRefreshFreestandingTemplate]];
+            [pNativeRef setBordered: NO];
+            [[pNativeRef cell] setImageScaling: NSImageScaleProportionallyDown];
+            initFrame = [pNativeRef frame];
             break;
         }
     }
 
+    /* Install click listener: */
     UIButtonTargetPrivate *bt = [[UIButtonTargetPrivate alloc] initWithObjectAndLionTrouble:this];
-    [m_pNativeRef setTarget:bt];
-    [m_pNativeRef setAction:@selector(clicked:)];
+    [pNativeRef setTarget:bt];
+    [pNativeRef setAction:@selector(clicked:)];
 
-    /* Create the container widget and attach the native view. */
-    m_pContainer = new QMacCocoaViewContainer(m_pNativeRef, this);
-    /* Finally resize the widget */
+    /* Put the button to the QCocoaViewContainer: */
+    setCocoaView(pNativeRef);
+    /* Release our reference, since our super class
+     * takes ownership and we don't need it anymore. */
+    [pNativeRef release];
+
+    /* Finally resize the widget: */
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setFixedSize(NSWidth(initFrame), NSHeight(initFrame));
+
+    /* Cleanup auto-release pool: */
+    [pool release];
 }
 
 UICocoaButton::~UICocoaButton()
@@ -311,7 +325,7 @@ UICocoaButton::~UICocoaButton()
 
 QSize UICocoaButton::sizeHint() const
 {
-    NSRect frame = [m_pNativeRef frame];
+    NSRect frame = [nativeRef() frame];
     return QSize(frame.size.width, frame.size.height);
 }
 
@@ -319,12 +333,12 @@ void UICocoaButton::setText(const QString& strText)
 {
     QString s(strText);
     /* Set it for accessibility reasons as alternative title */
-    [m_pNativeRef setAlternateTitle: ::darwinQStringToNSString(s.remove('&'))];
+    [nativeRef() setAlternateTitle: ::darwinQStringToNSString(s.remove('&'))];
 }
 
 void UICocoaButton::setToolTip(const QString& strTip)
 {
-    [m_pNativeRef setToolTip: ::darwinQStringToNSString(strTip)];
+    [nativeRef() setToolTip: ::darwinQStringToNSString(strTip)];
 }
 
 void UICocoaButton::onClicked()
@@ -332,89 +346,280 @@ void UICocoaButton::onClicked()
     emit clicked(false);
 }
 
-UICocoaSegmentedButton::UICocoaSegmentedButton(int count, CocoaSegmentType type /* = RoundRectSegment */, QWidget *pParent /* = 0 */)
-  : UICocoaWrapper(pParent)
+
+/** QAccessibleInterface extension used as an accessibility interface for segmented-button segment. */
+class UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment : public QAccessibleInterface
 {
+public:
+
+    /** Constructs an accessibility interface.
+      * @param  pParent  Brings the parent interface we are linked to.
+      * @param  iIndex   Brings the index of segment we are referring to. */
+    UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment(UIAccessibilityInterfaceForUICocoaSegmentedButton *pParent, int iIndex)
+        : m_pParent(pParent)
+        , m_iIndex(iIndex)
+    {}
+
+    /** Returns whether the interface is valid. */
+    virtual bool isValid() const /* override */ { return true; }
+
+    /** Returns the wrapped object. */
+    virtual QObject *object() const /* override */ { return 0; }
+    /** Returns the parent. */
+    virtual QAccessibleInterface *parent() const /* override */;
+
+    /** Returns the number of children. */
+    virtual int childCount() const /* override */ { return 0; }
+    /** Returns the child with the passed @a iIndex. */
+    virtual QAccessibleInterface *child(int /* iIndex */) const /* override */ { return 0; }
+    /** Returns the child at position QPoint(@a x, @a y). */
+    virtual QAccessibleInterface *childAt(int /* x */, int /* y */) const /* override */ { return 0; }
+    /** Returns the index of the passed @a pChild. */
+    virtual int indexOfChild(const QAccessibleInterface * /* pChild */) const /* override */ { return -1; }
+
+    /** Returns the rect. */
+    virtual QRect rect() const /* override */;
+
+    /** Defines a @a strText for the passed @a enmTextRole. */
+    virtual void setText(QAccessible::Text /* enmTextRole */, const QString & /* strText */) /* override */ {}
+    /** Returns a text for the passed @a enmTextRole. */
+    virtual QString text(QAccessible::Text /* enmTextRole */) const /* override */;
+
+    /** Returns the role. */
+    virtual QAccessible::Role role() const /* override */ { return QAccessible::RadioButton; }
+    /** Returns the state. */
+    virtual QAccessible::State state() const /* override */;
+
+private:
+
+    /** Holds the parent interface we are linked to. */
+    UIAccessibilityInterfaceForUICocoaSegmentedButton *m_pParent;
+    /** Holds the index of segment we are referring to. */
+    const int m_iIndex;
+};
+
+
+/** QAccessibleWidget extension used as an accessibility interface for segmented-button. */
+class UIAccessibilityInterfaceForUICocoaSegmentedButton : public QAccessibleWidget
+{
+public:
+
+    /** Returns an accessibility interface for passed @a strClassname and @a pObject. */
+    static QAccessibleInterface *pFactory(const QString &strClassname, QObject *pObject)
+    {
+        /* Creating segmented-button accessibility interface: */
+        if (pObject && strClassname == QLatin1String("UICocoaSegmentedButton"))
+            return new UIAccessibilityInterfaceForUICocoaSegmentedButton(qobject_cast<QWidget*>(pObject));
+
+        /* Null by default: */
+        return 0;
+    }
+
+    /** Constructs an accessibility interface passing @a pWidget to the base-class. */
+    UIAccessibilityInterfaceForUICocoaSegmentedButton(QWidget *pWidget)
+        : QAccessibleWidget(pWidget, QAccessible::ToolBar)
+    {
+        /* Prepare: */
+        prepare();
+    }
+
+    /** Destructs an accessibility interface. */
+    ~UIAccessibilityInterfaceForUICocoaSegmentedButton()
+    {
+        /* Cleanup: */
+        cleanup();
+    }
+
+    /** Returns the number of children. */
+    virtual int childCount() const /* override */ { return m_children.size(); }
+    /** Returns the child with the passed @a iIndex. */
+    virtual QAccessibleInterface *child(int iIndex) const /* override */ { return m_children.at(iIndex); }
+
+    /** Returns corresponding segmented-button. */
+    UICocoaSegmentedButton *button() const { return qobject_cast<UICocoaSegmentedButton*>(widget()); }
+
+private:
+
+    /** Prepares all. */
+    void prepare()
+    {
+        /* Prepare the list of children interfaces: */
+        for (int i = 0; i < button()->count(); ++i)
+            m_children << new UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment(this, i);
+    }
+
+    /** Cleanups all. */
+    void cleanup()
+    {
+        /* Cleanup the list of children interfaces: */
+        qDeleteAll(m_children);
+        m_children.clear();
+    }
+
+    /** Holds the list of children interfaces. */
+    QList<UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment*> m_children;
+};
+
+
+QAccessibleInterface *UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment::parent() const
+{
+    return m_pParent;
+}
+
+QRect UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment::rect() const
+{
+    /// @todo Return the -=real=- segment rectangle.
+    const QRect myRect = m_pParent->rect();
+    return QRect(myRect.x() + myRect.width() / 2 * m_iIndex,
+                 myRect.y(), myRect.width() / 2, myRect.height());
+}
+
+QString UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment::text(QAccessible::Text /* enmTextRole */) const
+{
+    /* Return the segment description: */
+    return m_pParent->button()->description(m_iIndex);
+}
+
+QAccessible::State UIAccessibilityInterfaceForUICocoaSegmentedButtonSegment::state() const
+{
+    /* Compose the segment state: */
+    QAccessible::State state;
+    state.checkable = true;
+    state.checked = m_pParent->button()->isSelected(m_iIndex);
+
+    /* Return the segment state: */
+    return state;
+}
+
+
+UICocoaSegmentedButton::UICocoaSegmentedButton(QWidget *pParent, int count, CocoaSegmentType type /* = RoundRectSegment */)
+    : QMacCocoaViewContainer(0, pParent)
+{
+    /* Install segmented-button accessibility interface factory: */
+    QAccessible::installFactory(UIAccessibilityInterfaceForUICocoaSegmentedButton::pFactory);
+
+    /* Prepare auto-release pool: */
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+    /* Prepare native segmented-button reference: */
+    NativeNSSegmentedControlRef pNativeRef;
     NSRect initFrame;
 
-    m_pNativeRef = [[NSSegmentedControl alloc] init];
-    [m_pNativeRef setSegmentCount:count];
+    /* Configure segmented-button: */
+    pNativeRef = [[NSSegmentedControl alloc] init];
+    [pNativeRef setSegmentCount:count];
     switch (type)
     {
         case RoundRectSegment:
         {
-            [[m_pNativeRef cell] setTrackingMode: NSSegmentSwitchTrackingMomentary];
-            [m_pNativeRef setFont: [NSFont controlContentFontOfSize:
+            [pNativeRef setSegmentStyle: NSSegmentStyleRoundRect];
+            [pNativeRef setFont: [NSFont controlContentFontOfSize:
                 [NSFont systemFontSizeForControlSize: NSSmallControlSize]]];
-            [m_pNativeRef setSegmentStyle:NSSegmentStyleRoundRect];
+            [[pNativeRef cell] setTrackingMode: NSSegmentSwitchTrackingMomentary];
             break;
         }
         case TexturedRoundedSegment:
         {
-            [m_pNativeRef setSegmentStyle:NSSegmentStyleTexturedRounded];
-            [m_pNativeRef setFont: [NSFont controlContentFontOfSize:
+            [pNativeRef setSegmentStyle: NSSegmentStyleTexturedRounded];
+            [pNativeRef setFont: [NSFont controlContentFontOfSize:
                 [NSFont systemFontSizeForControlSize: NSSmallControlSize]]];
             break;
         }
     }
-    [m_pNativeRef sizeToFit];
 
+    /* Calculate corresponding size: */
+    [pNativeRef sizeToFit];
+    initFrame = [pNativeRef frame];
+
+    /* Install click listener: */
     UISegmentedButtonTargetPrivate *bt = [[UISegmentedButtonTargetPrivate alloc] initWithObject1:this];
-    [m_pNativeRef setTarget:bt];
-    [m_pNativeRef setAction:@selector(segControlClicked:)];
+    [pNativeRef setTarget:bt];
+    [pNativeRef setAction:@selector(segControlClicked:)];
 
-    initFrame = [m_pNativeRef frame];
-    /* Create the container widget and attach the native view. */
-    m_pContainer = new QMacCocoaViewContainer(m_pNativeRef, this);
-    /* Finally resize the widget */
+    /* Put the button to the QCocoaViewContainer: */
+    setCocoaView(pNativeRef);
+    /* Release our reference, since our super class
+     * takes ownership and we don't need it anymore. */
+    [pNativeRef release];
+
+    /* Finally resize the widget: */
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setFixedSize(NSWidth(initFrame), NSHeight(initFrame));
+
+    /* Cleanup auto-release pool: */
+    [pool release];
 }
 
-UICocoaSegmentedButton::~UICocoaSegmentedButton()
+int UICocoaSegmentedButton::count() const
 {
+    return [nativeRef() segmentCount];
+}
+
+bool UICocoaSegmentedButton::isSelected(int iSegment) const
+{
+    /* Return whether the segment is selected if segment index inside the bounds: */
+    if (iSegment >=0 && iSegment < count())
+        return [nativeRef() isSelectedForSegment: iSegment];
+
+    /* False by default: */
+    return false;
+}
+
+QString UICocoaSegmentedButton::description(int iSegment) const
+{
+    /* Return segment description if segment index inside the bounds: */
+    if (iSegment >=0 && iSegment < count())
+        return ::darwinNSStringToQString([nativeRef() labelForSegment: iSegment]);
+
+    /* Null-string by default: */
+    return QString();
 }
 
 QSize UICocoaSegmentedButton::sizeHint() const
 {
-    NSRect frame = [m_pNativeRef frame];
+    NSRect frame = [nativeRef() frame];
     return QSize(frame.size.width, frame.size.height);
 }
 
 void UICocoaSegmentedButton::setTitle(int iSegment, const QString &strTitle)
 {
     QString s(strTitle);
-    [m_pNativeRef setLabel: ::darwinQStringToNSString(s.remove('&')) forSegment: iSegment];
-    [m_pNativeRef sizeToFit];
-    NSRect frame = [m_pNativeRef frame];
+    [nativeRef() setLabel: ::darwinQStringToNSString(s.remove('&')) forSegment: iSegment];
+    [nativeRef() sizeToFit];
+    NSRect frame = [nativeRef() frame];
     setFixedSize(NSWidth(frame), NSHeight(frame));
 }
 
 void UICocoaSegmentedButton::setToolTip(int iSegment, const QString &strTip)
 {
-    [[m_pNativeRef cell] setToolTip: ::darwinQStringToNSString(strTip) forSegment: iSegment];
+    [[nativeRef() cell] setToolTip: ::darwinQStringToNSString(strTip) forSegment: iSegment];
 }
 
 void UICocoaSegmentedButton::setIcon(int iSegment, const QIcon& icon)
 {
-    QImage image = toGray(icon.pixmap(icon.actualSize(QSize(13, 13))).toImage());
+    QImage image = toGray(icon.pixmap(icon.availableSizes().value(0, QSize(16, 16))).toImage());
 
     NSImage *pNSimage = [::darwinToNSImageRef(&image) autorelease];
-    [m_pNativeRef setImage: pNSimage forSegment: iSegment];
-    [m_pNativeRef sizeToFit];
-    NSRect frame = [m_pNativeRef frame];
+    [nativeRef() setImage: pNSimage forSegment: iSegment];
+    [nativeRef() sizeToFit];
+    NSRect frame = [nativeRef() frame];
     setFixedSize(NSWidth(frame), NSHeight(frame));
 }
 
 void UICocoaSegmentedButton::setEnabled(int iSegment, bool fEnabled)
 {
-    [[m_pNativeRef cell] setEnabled: fEnabled forSegment: iSegment];
+    [[nativeRef() cell] setEnabled: fEnabled forSegment: iSegment];
+}
+
+void UICocoaSegmentedButton::setSelected(int iSegment)
+{
+    [nativeRef() setSelectedSegment: iSegment];
 }
 
 void UICocoaSegmentedButton::animateClick(int iSegment)
 {
-    [m_pNativeRef setSelectedSegment: iSegment];
-    [[m_pNativeRef cell] performClick: m_pNativeRef];
+    [nativeRef() setSelectedSegment: iSegment];
+    [[nativeRef() cell] performClick: nativeRef()];
 }
 
 void UICocoaSegmentedButton::onClicked(int iSegment)
@@ -422,32 +627,80 @@ void UICocoaSegmentedButton::onClicked(int iSegment)
     emit clicked(iSegment, false);
 }
 
-UICocoaSearchField::UICocoaSearchField(QWidget *pParent /* = 0 */)
-  : UICocoaWrapper(pParent)
+
+/** QAccessibleWidget extension used as an accessibility interface for search-field. */
+class UIAccessibilityInterfaceForUICocoaSearchField : public QAccessibleWidget
 {
+public:
+
+    /** Returns an accessibility interface for passed @a strClassname and @a pObject. */
+    static QAccessibleInterface *pFactory(const QString &strClassname, QObject *pObject)
+    {
+        /* Creating segmented-button accessibility interface: */
+        if (pObject && strClassname == QLatin1String("UICocoaSearchField"))
+            return new UIAccessibilityInterfaceForUICocoaSearchField(qobject_cast<QWidget*>(pObject));
+
+        /* Null by default: */
+        return 0;
+    }
+
+    /** Constructs an accessibility interface passing @a pWidget to the base-class. */
+    UIAccessibilityInterfaceForUICocoaSearchField(QWidget *pWidget)
+        : QAccessibleWidget(pWidget, QAccessible::EditableText)
+    {
+        // For now this class doesn't implement interface casting.
+        // Which means there will be no editable text accessible
+        // in basic accessibility layer, only in advanced one.
+    }
+
+private:
+
+    /** Returns corresponding search-field. */
+    UICocoaSearchField *field() const { return qobject_cast<UICocoaSearchField*>(widget()); }
+};
+
+
+UICocoaSearchField::UICocoaSearchField(QWidget *pParent)
+    : QMacCocoaViewContainer(0, pParent)
+{
+    /* Install segmented-button accessibility interface factory: */
+    QAccessible::installFactory(UIAccessibilityInterfaceForUICocoaSearchField::pFactory);
+
+    /* Prepare auto-release pool: */
+    NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+
+    /* Prepare native search-field reference: */
+    NativeNSSearchFieldRef pNativeRef;
     NSRect initFrame;
 
-    m_pNativeRef = [[UISearchFieldPrivate alloc] initWithObject2: this];
-    [m_pNativeRef setFont: [NSFont controlContentFontOfSize:
+    /* Configure search-field: */
+    pNativeRef = [[UISearchFieldPrivate alloc] initWithObject2: this];
+    [pNativeRef setFont: [NSFont controlContentFontOfSize:
         [NSFont systemFontSizeForControlSize: NSMiniControlSize]]];
-    [[m_pNativeRef cell] setControlSize: NSMiniControlSize];
-    [m_pNativeRef sizeToFit];
-    initFrame = [m_pNativeRef frame];
+    [[pNativeRef cell] setControlSize: NSMiniControlSize];
+    [pNativeRef sizeToFit];
+    initFrame = [pNativeRef frame];
     initFrame.size.width = 180;
-    [m_pNativeRef setFrame: initFrame];
+    [pNativeRef setFrame: initFrame];
 
-    /* Use our own delegate */
+    /* Use our own delegate: */
     UISearchFieldDelegatePrivate *sfd = [[UISearchFieldDelegatePrivate alloc] init];
-    [m_pNativeRef setDelegate: sfd];
+    [pNativeRef setDelegate: sfd];
 
-    /* Create the container widget and attach the native view. */
-    m_pContainer = new QMacCocoaViewContainer(m_pNativeRef, this);
+    /* Put the button to the QCocoaViewContainer: */
+    setCocoaView(pNativeRef);
+    /* Release our reference, since our super class
+     * takes ownership and we don't need it anymore. */
+    [pNativeRef release];
 
-    /* Finally resize the widget */
+    /* Finally resize the widget: */
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     setMinimumWidth(NSWidth(initFrame));
     setFixedHeight(NSHeight(initFrame));
     setFocusPolicy(Qt::StrongFocus);
+
+    /* Cleanup auto-release pool: */
+    [pool release];
 }
 
 UICocoaSearchField::~UICocoaSearchField()
@@ -456,38 +709,38 @@ UICocoaSearchField::~UICocoaSearchField()
 
 QSize UICocoaSearchField::sizeHint() const
 {
-    NSRect frame = [m_pNativeRef frame];
+    NSRect frame = [nativeRef() frame];
     return QSize(frame.size.width, frame.size.height);
 }
 
 QString UICocoaSearchField::text() const
 {
-    return ::darwinNSStringToQString([m_pNativeRef stringValue]);
+    return ::darwinNSStringToQString([nativeRef() stringValue]);
 }
 
 void UICocoaSearchField::insert(const QString &strText)
 {
-    [[m_pNativeRef currentEditor] setString: [[m_pNativeRef stringValue] stringByAppendingString: ::darwinQStringToNSString(strText)]];
+    [[nativeRef() currentEditor] setString: [[nativeRef() stringValue] stringByAppendingString: ::darwinQStringToNSString(strText)]];
 }
 
 void UICocoaSearchField::setToolTip(const QString &strTip)
 {
-    [m_pNativeRef setToolTip: ::darwinQStringToNSString(strTip)];
+    [nativeRef() setToolTip: ::darwinQStringToNSString(strTip)];
 }
 
 void UICocoaSearchField::selectAll()
 {
-    [m_pNativeRef selectText: m_pNativeRef];
+    [nativeRef() selectText: nativeRef()];
 }
 
 void UICocoaSearchField::markError()
 {
-    [[m_pNativeRef cell] setBackgroundColor: [[NSColor redColor] colorWithAlphaComponent: 0.3]];
+    [[nativeRef() cell] setBackgroundColor: [[NSColor redColor] colorWithAlphaComponent: 0.3]];
 }
 
 void UICocoaSearchField::unmarkError()
 {
-    [[m_pNativeRef cell] setBackgroundColor: nil];
+    [[nativeRef() cell] setBackgroundColor: nil];
 }
 
 void UICocoaSearchField::onTextChanged(const QString &strText)

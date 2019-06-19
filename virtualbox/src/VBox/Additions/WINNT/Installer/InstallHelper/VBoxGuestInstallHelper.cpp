@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,41 +15,46 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <windows.h>
-#include <atlconv.h>
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
 #include <stdlib.h>
 #include <tchar.h>
 #include <strsafe.h>
+#pragma warning(push)
+#pragma warning(disable: 4995) /* warning C4995: 'lstrcpyA': name was marked as #pragma deprecated */
 #include "exdll.h"
+#pragma warning(pop)
 
 #include <iprt/err.h>
 #include <iprt/initterm.h>
+#include <iprt/ldr.h>
 #include <iprt/localipc.h>
 #include <iprt/mem.h>
+#include <iprt/process.h>
 #include <iprt/string.h>
 
 /* Required structures/defines of VBoxTray. */
 #include "../../VBoxTray/VBoxTrayMsg.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define VBOXINSTALLHELPER_EXPORT extern "C" void __declspec(dllexport)
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef DWORD (WINAPI *PFNSFCFILEEXCEPTION)(DWORD param1, PWCHAR param2, DWORD param3);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 HINSTANCE               g_hInstance;
 HWND                    g_hwndParent;
 PFNSFCFILEEXCEPTION     g_pfnSfcFileException = NULL;
@@ -134,33 +139,14 @@ static void vboxPushResultAsString(HRESULT hr)
  */
 static int vboxConnectToVBoxTray(RTLOCALIPCSESSION *phSession)
 {
-    int rc = VINF_SUCCESS;
-
-    RTUTF16 wszUserName[255];
-    DWORD cchUserName = sizeof(wszUserName) / sizeof(RTUTF16);
-    BOOL fRc = GetUserNameW(wszUserName, &cchUserName);
-    if (!fRc)
-        rc = RTErrConvertFromWin32(GetLastError());
-
+    char szPipeName[512 + sizeof(VBOXTRAY_IPC_PIPE_PREFIX)];
+    memcpy(szPipeName, VBOXTRAY_IPC_PIPE_PREFIX, sizeof(VBOXTRAY_IPC_PIPE_PREFIX));
+    int rc = RTProcQueryUsername(NIL_RTPROCESS,
+                                 &szPipeName[sizeof(VBOXTRAY_IPC_PIPE_PREFIX) - 1],
+                                 sizeof(szPipeName) - sizeof(VBOXTRAY_IPC_PIPE_PREFIX) + 1,
+                                 NULL /*pcbUser*/);
     if (RT_SUCCESS(rc))
-    {
-        char *pszUserName;
-        rc = RTUtf16ToUtf8(wszUserName, &pszUserName);
-        if (RT_SUCCESS(rc))
-        {
-            char szPipeName[255];
-            if (RTStrPrintf(szPipeName, sizeof(szPipeName), "%s%s",
-                            VBOXTRAY_IPC_PIPE_PREFIX, pszUserName))
-            {
-                rc = RTLocalIpcSessionConnect(phSession, szPipeName, 0 /* Flags */);
-            }
-            else
-                rc = VERR_NO_MEMORY;
-
-            RTStrFree(pszUserName);
-        }
-    }
-
+        rc = RTLocalIpcSessionConnect(phSession, szPipeName, RTLOCALIPC_FLAGS_NATIVE_NAME);
     return rc;
 }
 
@@ -220,9 +206,9 @@ static HMODULE loadSystemDll(const char *pszName)
  * @param   variables           The actual variable string.
  * @param   stacktop            Pointer to a pointer to the current stack.
  */
-VBOXINSTALLHELPER_EXPORT DisableWFP(HWND hwndParent, int string_size,
-                                    TCHAR *variables, stack_t **stacktop)
+VBOXINSTALLHELPER_EXPORT DisableWFP(HWND hwndParent, int string_size, TCHAR *variables, stack_t **stacktop)
 {
+    NOREF(hwndParent);
     EXDLL_INIT();
 
     TCHAR szFile[MAX_PATH + 1];
@@ -251,7 +237,7 @@ VBOXINSTALLHELPER_EXPORT DisableWFP(HWND hwndParent, int string_size,
             hr = vboxChar2WCharAlloc(szFile, &pwszFile);
             if (SUCCEEDED(hr))
             {
-                if (g_pfnSfcFileException(0, pwszFile, -1) != 0)
+                if (g_pfnSfcFileException(0, pwszFile, UINT32_MAX) != 0)
                     hr = HRESULT_FROM_WIN32(GetLastError());
                 vboxChar2WCharFree(pwszFile);
             }
@@ -273,96 +259,51 @@ VBOXINSTALLHELPER_EXPORT DisableWFP(HWND hwndParent, int string_size,
  * @param   variables           The actual variable string.
  * @param   stacktop            Pointer to a pointer to the current stack.
  */
-VBOXINSTALLHELPER_EXPORT FileGetArchitecture(HWND hwndParent, int string_size,
-                                             TCHAR *variables, stack_t **stacktop)
+VBOXINSTALLHELPER_EXPORT FileGetArchitecture(HWND hwndParent, int string_size, TCHAR *variables, stack_t **stacktop)
 {
+    NOREF(hwndParent);
     EXDLL_INIT();
 
     TCHAR szFile[MAX_PATH + 1];
     HRESULT hr = vboxPopString(szFile, sizeof(szFile) / sizeof(TCHAR));
     if (SUCCEEDED(hr))
     {
-        /* See: http://www.microsoft.com/whdc/system/platform/firmware/PECOFF.mspx */
-        FILE *pFh = fopen(szFile, "rb");
-        if (pFh)
+        RTLDRMOD hLdrMod;
+        int rc = RTLdrOpen(szFile, RTLDR_O_FOR_VALIDATION, RTLDRARCH_WHATEVER, &hLdrMod);
+        if (RT_SUCCESS(rc))
         {
-            /* Assume the file is invalid. */
-            hr = __HRESULT_FROM_WIN32(ERROR_FILE_INVALID);
-
-            BYTE byOffsetPE; /* Absolute offset of PE signature. */
-
-            /* Do some basic validation. */
-            /* Check for "MZ" header (DOS stub). */
-            BYTE byBuf[255];
-            if (   fread(&byBuf, sizeof(BYTE), 2, pFh) == 2
-                && !memcmp(&byBuf, "MZ", 2))
+            if (RTLdrGetFormat(hLdrMod) == RTLDRFMT_PE)
             {
-                /* Seek to 0x3C to get the PE offset. */
-                if (!fseek(pFh, 60L /*0x3C*/, SEEK_SET))
+                RTLDRARCH enmLdrArch = RTLdrGetArch(hLdrMod);
+                switch (enmLdrArch)
                 {
-                    /* Read actual offset of PE signature. */
-                    if (fread(&byOffsetPE, sizeof(BYTE), 1, pFh) == 1)
-                    {
-                        /* ... and seek to it. */
-                        if (!fseek(pFh, byOffsetPE, SEEK_SET))
-                        {
-                            /* Validate PE signature. */
-                            if (fread(byBuf, sizeof(BYTE), 4, pFh) == 4)
-                            {
-                                if (!memcmp(byBuf, "PE\0\0", 4))
-                                    hr = S_OK;
-                            }
-                        }
-                    }
+                    case RTLDRARCH_X86_32:
+                        pushstring("x86");
+                        break;
+
+                    case RTLDRARCH_AMD64:
+                        pushstring("amd64");
+                        break;
+
+                    default:
+                        pushstring("Error: Unknown / invalid architecture");
+                        break;
                 }
             }
+            else
+                pushstring("Error: Unknown / invalid PE signature");
 
-            /* Validation successful? */
-            if (SUCCEEDED(hr))
-            {
-                BYTE byOffsetCOFF = byOffsetPE + 0x4; /* Skip PE signature. */
-
-                /** @todo When we need to do more stuff here, we probably should
-                 *        mmap the file w/ a struct so that we easily could access
-                 *        all the fixed size stuff. Later. */
-
-                /* Jump to machine type (first entry, 2 bytes):
-                 * Use absolute PE offset retrieved above. */
-                if (!fseek(pFh, byOffsetCOFF, SEEK_SET))
-                {
-                    WORD wMachineType;
-                    if (fread(&wMachineType, 1,
-                              sizeof(wMachineType), pFh) == 2)
-                    {
-                        switch (wMachineType)
-                        {
-                            case 0x14C: /* Intel 86 */
-                                pushstring("x86");
-                                break;
-
-                            case 0x8664: /* AMD64 / x64 */
-                                pushstring("amd64");
-                                break;
-
-                            default:
-                                hr = __HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED);
-                                break;
-                        }
-                    }
-                    else
-                        hr = __HRESULT_FROM_WIN32(ERROR_FILE_INVALID);
-                }
-                else
-                    hr = __HRESULT_FROM_WIN32(ERROR_FILE_INVALID);
-            }
-
-            fclose(pFh);
+            RTLdrClose(hLdrMod);
         }
         else
-            hr = __HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
-    }
+        {
+            char szMsg[64];
+            RTStrPrintf(szMsg, sizeof(szMsg), "Error: Could not open file: %Rrc", rc);
 
-    if (FAILED(hr))
+            pushstring(szMsg);
+        }
+    }
+    else
         vboxPushResultAsString(hr);
 }
 
@@ -375,9 +316,9 @@ VBOXINSTALLHELPER_EXPORT FileGetArchitecture(HWND hwndParent, int string_size,
  * @param   variables           The actual variable string.
  * @param   stacktop            Pointer to a pointer to the current stack.
  */
-VBOXINSTALLHELPER_EXPORT FileGetVendor(HWND hwndParent, int string_size,
-                                       TCHAR *variables, stack_t **stacktop)
+VBOXINSTALLHELPER_EXPORT FileGetVendor(HWND hwndParent, int string_size, TCHAR *variables, stack_t **stacktop)
 {
+    NOREF(hwndParent);
     EXDLL_INIT();
 
     TCHAR szFile[MAX_PATH + 1];
@@ -401,6 +342,7 @@ VBOXINSTALLHELPER_EXPORT FileGetVendor(HWND hwndParent, int string_size,
                         WORD wLanguageID = HIWORD(*(DWORD*)pvInfo);
 
                         TCHAR szQuery[MAX_PATH];
+#pragma warning(suppress:4995) /* warning C4995: '_sntprintf': name was marked as #pragma deprecated */
                         _sntprintf(szQuery, sizeof(szQuery), _T("StringFileInfo\\%04X%04X\\CompanyName"),
                                    wCodePage,wLanguageID);
 
@@ -437,9 +379,9 @@ VBOXINSTALLHELPER_EXPORT FileGetVendor(HWND hwndParent, int string_size,
  * @param   variables           The actual variable string.
  * @param   stacktop            Pointer to a pointer to the current stack.
  */
-VBOXINSTALLHELPER_EXPORT VBoxTrayShowBallonMsg(HWND hwndParent, int string_size,
-                                               TCHAR *variables, stack_t **stacktop)
+VBOXINSTALLHELPER_EXPORT VBoxTrayShowBallonMsg(HWND hwndParent, int string_size, TCHAR *variables, stack_t **stacktop)
 {
+    NOREF(hwndParent);
     EXDLL_INIT();
 
     char szMsg[256];
@@ -504,8 +446,9 @@ VBOXINSTALLHELPER_EXPORT VBoxTrayShowBallonMsg(HWND hwndParent, int string_size,
     SUCCEEDED(hr) ? pushstring("0") : pushstring("1");
 }
 
-BOOL WINAPI DllMain(HANDLE hInst, ULONG uReason, LPVOID lpReserved)
+BOOL WINAPI DllMain(HANDLE hInst, ULONG uReason, LPVOID pReserved)
 {
+    RT_NOREF(uReason, pReserved);
     g_hInstance = (HINSTANCE)hInst;
     return TRUE;
 }

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/thread.h>
 
 #include <iprt/asm.h>
@@ -36,15 +37,17 @@
 #include <iprt/time.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static RTTEST g_hTest;
 static volatile uint64_t g_kernel, g_user;
 
 
 static DECLCALLBACK(int) testThread(RTTHREAD hSelf, void *pvUser)
 {
+    RT_NOREF_PV(hSelf); RT_NOREF_PV(pvUser);
+
     uint64_t u64Now = RTTimeMilliTS();
     uint64_t kernel, kernelStart, user, userStart;
     RTThreadGetExecutionTimeMilli(&kernelStart, &userStart);

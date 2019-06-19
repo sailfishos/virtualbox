@@ -1,12 +1,10 @@
 /* $Id: UIShortcutPool.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIShortcutPool class implementation
+ * VBox Qt GUI - UIShortcutPool class implementation.
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,10 +15,21 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* GUI includes: */
-#include "UIShortcutPool.h"
-#include "UIActionPool.h"
-#include "UIExtraDataEventHandler.h"
+# include "UIShortcutPool.h"
+# include "UIActionPool.h"
+# include "UIExtraDataManager.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+
+/* Namespaces: */
+using namespace UIExtraDataDefs;
+
 
 void UIShortcut::setDescription(const QString &strDescription)
 {
@@ -177,8 +186,12 @@ void UIShortcutPool::sltReloadSelectorShortcuts()
     foreach (const QString &strShortcutKey, shortcutKeyList)
         if (strShortcutKey.startsWith(GUI_Input_SelectorShortcuts))
             m_shortcuts.remove(strShortcutKey);
+
+    /* Load selector defaults: */
+    loadDefaultsFor(GUI_Input_SelectorShortcuts);
     /* Load selector overrides: */
     loadOverridesFor(GUI_Input_SelectorShortcuts);
+
     /* Notify selector shortcuts reloaded: */
     emit sigSelectorShortcutsReloaded();
 }
@@ -190,8 +203,12 @@ void UIShortcutPool::sltReloadMachineShortcuts()
     foreach (const QString &strShortcutKey, shortcutKeyList)
         if (strShortcutKey.startsWith(GUI_Input_MachineShortcuts))
             m_shortcuts.remove(strShortcutKey);
+
+    /* Load machine defaults: */
+    loadDefaultsFor(GUI_Input_MachineShortcuts);
     /* Load machine overrides: */
     loadOverridesFor(GUI_Input_MachineShortcuts);
+
     /* Notify machine shortcuts reloaded: */
     emit sigMachineShortcutsReloaded();
 }
@@ -223,8 +240,10 @@ void UIShortcutPool::prepare()
 void UIShortcutPool::prepareConnections()
 {
     /* Connect to extra-data signals: */
-    connect(gEDataEvents, SIGNAL(sigSelectorShortcutsChanged()), this, SLOT(sltReloadSelectorShortcuts()));
-    connect(gEDataEvents, SIGNAL(sigMachineShortcutsChanged()), this, SLOT(sltReloadMachineShortcuts()));
+    connect(gEDataManager, &UIExtraDataManager::sigSelectorUIShortcutChange,
+            this, &UIShortcutPool::sltReloadSelectorShortcuts);
+    connect(gEDataManager, &UIExtraDataManager::sigRuntimeUIShortcutChange,
+            this, &UIShortcutPool::sltReloadMachineShortcuts);
 }
 
 void UIShortcutPool::retranslateUi()
@@ -236,10 +255,27 @@ void UIShortcutPool::retranslateUi()
 
 void UIShortcutPool::loadDefaults()
 {
-    /* Default shortcut for the Runtime Popup Menu invokation: */
-    m_shortcuts.insert(m_sstrShortcutKeyTemplateRuntime.arg("PopupMenu"),
-                       UIShortcut(QApplication::translate("UIActionPool", "Popup Menu"),
-                                  QString("Home"), QString("Home")));
+    /* Load selector defaults: */
+    loadDefaultsFor(GUI_Input_SelectorShortcuts);
+    /* Load machine defaults: */
+    loadDefaultsFor(GUI_Input_MachineShortcuts);
+}
+
+void UIShortcutPool::loadDefaultsFor(const QString &strPoolExtraDataID)
+{
+    /* Default shortcuts for Selector UI: */
+    if (strPoolExtraDataID == GUI_Input_SelectorShortcuts)
+    {
+        /* Nothing for now.. */
+    }
+    /* Default shortcuts for Runtime UI: */
+    else if (strPoolExtraDataID == GUI_Input_MachineShortcuts)
+    {
+        /* Default shortcut for the Runtime Popup Menu: */
+        m_shortcuts.insert(m_sstrShortcutKeyTemplateRuntime.arg("PopupMenu"),
+                           UIShortcut(QApplication::translate("UIActionPool", "Popup Menu"),
+                                      QString("Home"), QString("Home")));
+    }
 }
 
 void UIShortcutPool::loadOverrides()
@@ -255,7 +291,7 @@ void UIShortcutPool::loadOverridesFor(const QString &strPoolExtraDataID)
     /* Compose shortcut key template: */
     const QString strShortcutKeyTemplate(m_sstrShortcutKeyTemplate.arg(strPoolExtraDataID));
     /* Iterate over all the overrides: */
-    const QStringList overrides = vboxGlobal().virtualBox().GetExtraDataStringList(strPoolExtraDataID);
+    const QStringList overrides = gEDataManager->shortcutOverrides(strPoolExtraDataID);
     foreach (const QString &strKeyValuePair, overrides)
     {
         /* Make sure override structure is valid: */
@@ -264,8 +300,12 @@ void UIShortcutPool::loadOverridesFor(const QString &strPoolExtraDataID)
             continue;
 
         /* Get shortcut ID/sequence: */
-        const QString strShortcutExtraDataID = strKeyValuePair.left(iDelimiterPosition);
+        QString strShortcutExtraDataID = strKeyValuePair.left(iDelimiterPosition);
         const QString strShortcutSequence = strKeyValuePair.right(strKeyValuePair.length() - iDelimiterPosition - 1);
+
+        // Hack for handling "Save" as "SaveState":
+        if (strShortcutExtraDataID == "Save")
+            strShortcutExtraDataID = "SaveState";
 
         /* Compose corresponding shortcut key: */
         const QString strShortcutKey(strShortcutKeyTemplate.arg(strShortcutExtraDataID));

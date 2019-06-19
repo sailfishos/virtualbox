@@ -1,11 +1,10 @@
 /* $Id: VBoxMPRegistry.cpp $ */
-
 /** @file
  * VBox XPDM Miniport registry related functions
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,9 +18,9 @@
 #include "common/VBoxMPCommon.h"
 
 static VP_STATUS
-VBoxMPQueryNamedValueCB(PVOID HwDeviceExtension, PVOID Context,
-                        PWSTR ValueName, PVOID ValueData, ULONG ValueLength)
+VBoxMPQueryNamedValueCB(PVOID HwDeviceExtension, PVOID Context, PWSTR ValueName, PVOID ValueData, ULONG ValueLength)
 {
+    RT_NOREF(HwDeviceExtension, ValueName);
     PAGED_CODE();
 
     if (!ValueLength || !Context)
@@ -44,6 +43,7 @@ VP_STATUS VBoxMPCmnRegInit(IN PVBOXMP_DEVEXT pExt, OUT VBOXMPCMNREGISTRY *pReg)
 
 VP_STATUS VBoxMPCmnRegFini(IN VBOXMPCMNREGISTRY Reg)
 {
+    RT_NOREF(Reg);
     return NO_ERROR;
 }
 

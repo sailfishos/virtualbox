@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,10 +16,10 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#define LOG_GROUP LOG_GROUP_DBGF ///@todo add new log group.
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define LOG_GROUP LOG_GROUP_DBGF /// @todo add new log group.
 #include "DBGPlugIns.h"
 #include <VBox/vmm/dbgf.h>
 #include <VBox/err.h>
@@ -28,14 +28,13 @@
 #include <iprt/mem.h>
 #include <iprt/stream.h>
 #include <iprt/string.h>
+#include <iprt/formats/pecoff.h>
+#include <iprt/formats/mz.h>
 
-#include "../Runtime/include/internal/ldrMZ.h"  /* ugly */
-#include "../Runtime/include/internal/ldrPE.h"  /* ugly */
 
-
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /** @name Internal WinNT structures
  * @{ */
@@ -70,10 +69,7 @@ typedef struct NTMTE32
 typedef NTMTE32 *PNTMTE32;
 
 /**
- * PsLoadedModuleList entry for 32-bit NT aka LDR_DATA_TABLE_ENTRY.
- * Tested with XP.
- *
- * @todo This is incomplete and just to get rid of warnings.
+ * PsLoadedModuleList entry for 64-bit NT aka LDR_DATA_TABLE_ENTRY.
  */
 typedef struct NTMTE64
 {
@@ -254,9 +250,9 @@ typedef struct DBGDIGGERWINNTRDR
 typedef DBGDIGGERWINNTRDR *PDBGDIGGERWINNTRDR;
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Validates a 32-bit Windows NT kernel address */
 #define WINNT32_VALID_ADDRESS(Addr)         ((Addr) >         UINT32_C(0x80000000) && (Addr) <         UINT32_C(0xfffff000))
 /** Validates a 64-bit Windows NT kernel address */
@@ -273,15 +269,15 @@ typedef DBGDIGGERWINNTRDR *PDBGDIGGERWINNTRDR;
 #define DIG_WINNT_MOD_TAG                   UINT64_C(0x54696e646f774e54)
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int)  dbgDiggerWinNtInit(PUVM pUVM, void *pvData);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Kernel names. */
 static const RTUTF16 g_wszKernelNames[][WINNT_KERNEL_BASE_NAME_LEN + 1] =
 {
@@ -380,9 +376,10 @@ static DECLCALLBACK(int) dbgDiggerWinNtRdr_Read(void *pvBuf, size_t cb, size_t o
 
 
 /** @callback_method_impl{PFNRTLDRRDRMEMDTOR} */
-static DECLCALLBACK(void) dbgDiggerWinNtRdr_Dtor(void *pvUser)
+static DECLCALLBACK(void) dbgDiggerWinNtRdr_Dtor(void *pvUser, size_t cbImage)
 {
     PDBGDIGGERWINNTRDR pThis = (PDBGDIGGERWINNTRDR)pvUser;
+    RT_NOREF(cbImage);
 
     VMR3ReleaseUVM(pThis->pUVM);
     pThis->pUVM = NULL;
@@ -473,7 +470,7 @@ static int dbgDiggerWinNtCreateLdrMod(PDBGDIGGERWINNT pThis, PUVM pUVM, const ch
      * Allocate and create a reader instance.
      */
     uint32_t const      cShs = WINNT_UNION(pThis, pHdrs, FileHeader.NumberOfSections);
-    PDBGDIGGERWINNTRDR  pRdr = (PDBGDIGGERWINNTRDR)RTMemAlloc(RT_OFFSETOF(DBGDIGGERWINNTRDR, aMappings[cShs + 2]));
+    PDBGDIGGERWINNTRDR  pRdr = (PDBGDIGGERWINNTRDR)RTMemAlloc(RT_UOFFSETOF_DYN(DBGDIGGERWINNTRDR, aMappings[cShs + 2]));
     if (!pRdr)
         return VERR_NO_MEMORY;
 
@@ -621,7 +618,7 @@ static void dbgDiggerWinNtProcessImage(PDBGDIGGERWINNT pThis, PUVM pUVM, const c
              || pMzHdr->e_lfanew < sizeof(*pMzHdr)
              || pMzHdr->e_lfanew + sizeof(IMAGE_NT_HEADERS64) > cbImage)
     {
-        Log(("DigWinNt: %s: PE header to far into image: %#x  cbImage=%#x\n", pMzHdr->e_lfanew, cbImage));
+        Log(("DigWinNt: %s: PE header to far into image: %#x  cbImage=%#x\n", pszName, pMzHdr->e_lfanew, cbImage));
         return;
     }
     else if (   pMzHdr->e_lfanew < cbBuf
@@ -632,7 +629,7 @@ static void dbgDiggerWinNtProcessImage(PDBGDIGGERWINNT pThis, PUVM pUVM, const c
     }
     else
     {
-        Log(("DigWinNt: %s: PE header to far into image (lazy bird): %#x\n",  pMzHdr->e_lfanew));
+        Log(("DigWinNt: %s: PE header to far into image (lazy bird): %#x\n", pszName, pMzHdr->e_lfanew));
         return;
     }
     if (pHdrs->vX_32.Signature != IMAGE_NT_SIGNATURE)
@@ -726,6 +723,7 @@ static void dbgDiggerWinNtProcessImage(PDBGDIGGERWINNT pThis, PUVM pUVM, const c
  */
 static DECLCALLBACK(void *) dbgDiggerWinNtQueryInterface(PUVM pUVM, void *pvData, DBGFOSINTERFACE enmIf)
 {
+    RT_NOREF3(pUVM, pvData, enmIf);
     return NULL;
 }
 
@@ -735,6 +733,7 @@ static DECLCALLBACK(void *) dbgDiggerWinNtQueryInterface(PUVM pUVM, void *pvData
  */
 static DECLCALLBACK(int)  dbgDiggerWinNtQueryVersion(PUVM pUVM, void *pvData, char *pszVersion, size_t cchVersion)
 {
+    RT_NOREF1(pUVM);
     PDBGDIGGERWINNT pThis = (PDBGDIGGERWINNT)pvData;
     Assert(pThis->fValid);
     const char *pszNtProductType;
@@ -756,6 +755,7 @@ static DECLCALLBACK(int)  dbgDiggerWinNtQueryVersion(PUVM pUVM, void *pvData, ch
  */
 static DECLCALLBACK(void)  dbgDiggerWinNtTerm(PUVM pUVM, void *pvData)
 {
+    RT_NOREF1(pUVM);
     PDBGDIGGERWINNT pThis = (PDBGDIGGERWINNT)pvData;
     Assert(pThis->fValid);
 
@@ -952,7 +952,7 @@ static DECLCALLBACK(bool)  dbgDiggerWinNtProbe(PUVM pUVM, void *pvData)
      * success.
      */
     CPUMMODE        enmMode = DBGFR3CpuGetMode(pUVM, 0 /*idCpu*/);
-    uint64_t const  uStart  = enmMode == CPUMMODE_LONG ? UINT64_C(0xfffff80000000000) : UINT32_C(0x80001000);
+    uint64_t const  uStart  = enmMode == CPUMMODE_LONG ? UINT64_C(0xffff080000000000) : UINT32_C(0x80001000);
     uint64_t const  uEnd    = enmMode == CPUMMODE_LONG ? UINT64_C(0xffffffffffff0000) : UINT32_C(0xffff0000);
     DBGFADDRESS     KernelAddr;
     for (DBGFR3AddrFromFlat(pUVM, &KernelAddr, uStart);
@@ -1060,7 +1060,8 @@ static DECLCALLBACK(bool)  dbgDiggerWinNtProbe(PUVM pUVM, void *pvData)
                     &&  pHdrs->FileHeader.Machine                   == IMAGE_FILE_MACHINE_AMD64
                     &&  pHdrs->FileHeader.SizeOfOptionalHeader      == sizeof(pHdrs->OptionalHeader)
                     &&  pHdrs->FileHeader.NumberOfSections          >= 10 /* the kernel has lots */
-                    &&  (pHdrs->FileHeader.Characteristics & (IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_DLL)) == IMAGE_FILE_EXECUTABLE_IMAGE
+                    &&      (pHdrs->FileHeader.Characteristics & (IMAGE_FILE_EXECUTABLE_IMAGE | IMAGE_FILE_DLL))
+                         == IMAGE_FILE_EXECUTABLE_IMAGE
                     &&  pHdrs->OptionalHeader.Magic                 == IMAGE_NT_OPTIONAL_HDR64_MAGIC
                     &&  pHdrs->OptionalHeader.NumberOfRvaAndSizes   == IMAGE_NUMBEROF_DIRECTORY_ENTRIES
                     )
@@ -1076,7 +1077,7 @@ static DECLCALLBACK(bool)  dbgDiggerWinNtProbe(PUVM pUVM, void *pvData)
                                        uEnd - uStart, 8 /*align*/, &uMte.v64.DllBase, 5 * sizeof(uint32_t), &HitAddr);
                     while (RT_SUCCESS(rc))
                     {
-                        /* check the name. */
+                        /* Read the start of the MTE and check some basic members. */
                         DBGFADDRESS MteAddr = HitAddr;
                         rc = DBGFR3MemRead(pUVM, 0 /*idCpu*/, DBGFR3AddrSub(&MteAddr, RT_OFFSETOF(NTMTE64, DllBase)),
                                            &uMte2.v64, sizeof(uMte2.v64));
@@ -1091,6 +1092,7 @@ static DECLCALLBACK(bool)  dbgDiggerWinNtProbe(PUVM pUVM, void *pvData)
                             &&  uMte2.v64.FullDllName.Length <= 260
                             )
                         {
+                            /* Try read the base name and compare with known NT kernel names. */
                             rc = DBGFR3MemRead(pUVM, 0 /*idCpu*/, DBGFR3AddrFromFlat(pUVM, &Addr, uMte2.v64.BaseDllName.Buffer),
                                                u.wsz, uMte2.v64.BaseDllName.Length);
                             u.wsz[uMte2.v64.BaseDllName.Length / 2] = '\0';
@@ -1100,6 +1102,8 @@ static DECLCALLBACK(bool)  dbgDiggerWinNtProbe(PUVM pUVM, void *pvData)
                                     )
                                )
                             {
+                                /* Read the link entry of the previous entry in the list and check that its
+                                   forward pointer points at the MTE we've found. */
                                 rc = DBGFR3MemRead(pUVM, 0 /*idCpu*/,
                                                    DBGFR3AddrFromFlat(pUVM, &Addr, uMte2.v64.InLoadOrderLinks.Blink),
                                                    &uMte3.v64, RT_SIZEOFMEMB(NTMTE64, InLoadOrderLinks));
@@ -1145,7 +1149,7 @@ static DECLCALLBACK(bool)  dbgDiggerWinNtProbe(PUVM pUVM, void *pvData)
  */
 static DECLCALLBACK(void)  dbgDiggerWinNtDestruct(PUVM pUVM, void *pvData)
 {
-
+    RT_NOREF2(pUVM, pvData);
 }
 
 
@@ -1154,6 +1158,7 @@ static DECLCALLBACK(void)  dbgDiggerWinNtDestruct(PUVM pUVM, void *pvData)
  */
 static DECLCALLBACK(int)  dbgDiggerWinNtConstruct(PUVM pUVM, void *pvData)
 {
+    RT_NOREF1(pUVM);
     PDBGDIGGERWINNT pThis = (PDBGDIGGERWINNT)pvData;
     pThis->fValid = false;
     pThis->f32Bit = false;

@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2009-2012 Oracle Corporation
+# Copyright (C) 2009-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -23,8 +23,8 @@ include $(KBUILD_PATH)/subheader.kmk
 # Template for building wine stuff.
 #
 TEMPLATE_VBoxGuestWineDLL = Template for building a wine DLL.
-TEMPLATE_VBoxGuestWineDLL_EXTENDS = VBOXGUESTR3NPDLL
-TEMPLATE_VBoxGuestWineDLL_DEFS = $(TEMPLATE_VBOXGUESTR3NPDLL_DEFS) \
+TEMPLATE_VBoxGuestWineDLL_EXTENDS = VBoxGuestR3Dll
+TEMPLATE_VBoxGuestWineDLL_DEFS = $(TEMPLATE_VBoxGuestR3Dll_DEFS) \
 	__WINESRC__ \
 	WINE_UNICODE_API="" \
 	_REENTRANT \
@@ -39,18 +39,39 @@ TEMPLATE_VBoxGuestWineDLL_DEFS = $(TEMPLATE_VBOXGUESTR3NPDLL_DEFS) \
 	BIN_TO_DATADIR=\"\"
 
 TEMPLATE_VBoxGuestWineDLL_DEFS.x86 = __i386__
+#  -wd4100: unreferenced format parameter
+#  -wd4204: nonstandard extension used : non-constant initializer
+#  -wd4245: '=' : conversion from 'int' to 'DWORD', signed/unsigned mismatch
+#  -wd4305: 'function' : truncation from 'double' to 'GLclampf'
+#  -wd4305: 'function' : truncation from 'double' to 'GLclampf'
+#  -wd4018: '>' : signed/unsigned mismatch
+#  -wd4389: '!=' : signed/unsigned mismatch
+#  -wd4221: nonstandard extension used : 'render_targets' : cannot be initialized using address of automatic variable 'dst_surface'
+#  -wd4334: '<<' : result of 32-bit shift implicitly converted to 64 bits (was 64-bit shift intended?)
+#  -wd4267: 'function' : conversion from 'size_t' to 'GLsizei', possible loss of data
+TEMPLATE_VBoxGuestWineDLL_CFLAGS = $(filter-out -WX,$(TEMPLATE_VBoxGuestR3Dll_CFLAGS)) \
+	-wd4100  -wd4204 -wd4245 -wd4305 -wd4018 -wd4389 -wd4221 -wd4334 -wd4267
+if1of ($(VBOX_VCC_TOOL_STEM), VCC120)
+  # -wd4005: v7.1\include\sal_supp.h(57) : warning C4005: '__useHeader' : macro redefinition
+  # -wd4133: swapchain.c(384) : warning C4133: 'function' : incompatible types - from 'IDirect3DSwapChain9 *' to 'IDirect3DSwapChain9Ex *'
+ TEMPLATE_VBoxGuestWineDLL_CFLAGS += -wd4005 -wd4133
+endif
 
 #
 # Template for building the D3D[89] stuff.
 #
 TEMPLATE_VBoxGuestWineD3DxDLL = Template for building the D3D8/9 stuff.
-TEMPLATE_VBoxGuestWineD3DxDLL_EXTENDS    = VBOXGUESTR3NPDLL
+TEMPLATE_VBoxGuestWineD3DxDLL_EXTENDS    = VBoxGuestR3Dll
 TEMPLATE_VBoxGuestWineD3DxDLL_EXTENDS_BY = appending
 TEMPLATE_VBoxGuestWineD3DxDLL_SDKS = ReorderCompilerIncs $(VBOX_WINDDK_GST_WLH)
 TEMPLATE_VBoxGuestWineD3DxDLL_DEFS = VBOX_USING_WINDDK_W7_OR_LATER
 TEMPLATE_VBoxGuestWineD3DxDLL_DEFS.x86   = __i386__
 #TEMPLATE_VBoxGuestWineD3DxDLL_INCS.x86   = vbox/libWineStub/include
 TEMPLATE_VBoxGuestWineD3DxDLL_DEFS = VBOX_WINE_WITH_IPRT
+TEMPLATE_VBoxGuestWineD3DxDLL_CFLAGS = -wd4100  -wd4204 -wd4245 -wd4305
+if1of ($(VBOX_VCC_TOOL_STEM), VCC120)
+ TEMPLATE_VBoxGuestWineD3DxDLL_CFLAGS += -wd4005
+endif
 TEMPLATE_VBoxGuestWineD3DxDLL_LIBS = \
  	$(VBOX_LIB_IPRT_GUEST_R3) \
  	$(VBOX_LIB_VBGL_R3)
@@ -176,10 +197,12 @@ wined3d_DEFS        += \
 	VBOX_WITH_WINE_FIX_SURFUPDATA \
 	VBOX_WITH_WINE_FIX_CURVBO \
 	VBOX_WITH_WINE_FIX_FTOA \
+	VBOX_WITH_WINE_FIX_SHADER_DECL \
 	VBOX_WITH_WINE_DBG
 #wined3d_DEFS        += VBOX_WITH_WINE_FIXES
 wined3d_INCS        := \
-	vbox/libWineStub/include
+	vbox/libWineStub/include \
+	$(VBOX_GRAPHICS_INCS)
 wined3d_SOURCES     := \
 	wined3d/arb_program_shader.c \
 	wined3d/ati_fragment_shader.c \
@@ -236,10 +259,12 @@ ifdef VBOX_WINE_WITH_PROFILE
  wined3dwddm_DEFS       += VBOX_WINE_WITH_PROFILE
 endif
  wined3dwddm_INCS           = $(wined3d_INCS) \
+ 	$(PATH_ROOT)/src/VBox/Additions/WINNT/Graphics/Video/disp/wddm/shared \
  	$(PATH_ROOT)/src/VBox/Additions/WINNT/Graphics/Video/disp/wddm
  wined3dwddm_SOURCES        = $(subst wined3d.def,wined3dwddm.def,$(subst wined3dxpdm.rc,wined3dwddm.rc,$(wined3d_SOURCES)))
  wined3dwddm_LIBS           = $(wined3d_LIBS) \
  	$(VBOX_PATH_ADDITIONS_LIB)/VBoxDispMpLogger$(VBOX_SUFF_LIB) \
+	$(VBOX_PATH_ADDITIONS_LIB)/VBoxWddmUmKmt$(VBOX_SUFF_LIB) \
  	$(VBOX_PATH_ADDITIONS_LIB)/VBoxCrHgsmi$(VBOX_SUFF_LIB)
 
  #
@@ -253,6 +278,7 @@ endif
  	$(VBOX_LIB_IPRT_GUEST_R3_X86) \
  	$(VBOX_LIB_VBGL_R3_X86) \
  	$(VBOX_PATH_ADDITIONS_LIB)/VBoxDispMpLogger-x86$(VBOX_SUFF_LIB) \
+	$(VBOX_PATH_ADDITIONS_LIB)/VBoxWddmUmKmt-x86$(VBOX_SUFF_LIB) \
  	$(VBOX_PATH_ADDITIONS_LIB)/VBoxCrHgsmi-x86$(VBOX_SUFF_LIB) \
  	$(PATH_STAGE_LIB)/VBoxOGL-x86$(VBOX_SUFF_LIB)
 endif # ifdef VBOX_WITH_WDDM
@@ -343,6 +369,7 @@ ifdef VBOX_WITH_WDDM
   VBoxD3D9wddm_DEBUG_INSTTYPE = both
  endif
  VBoxD3D9wddm_INCS     = $(VBoxD3D9_INCS) \
+ 	$(PATH_ROOT)/src/VBox/Additions/WINNT/Graphics/Video/disp/wddm/shared \
  	$(PATH_ROOT)/src/VBox/Additions/WINNT/Graphics/Video/disp/wddm
  VBoxD3D9wddm_DEFS    += $(VBoxD3D9_DEFS) \
  	VBOX_WITH_WDDM \
@@ -352,6 +379,7 @@ ifdef VBOX_WITH_WDDM
  VBoxD3D9wddm_LIBS     = \
  	$(subst $(PATH_STAGE_LIB)/wined3d$(VBOX_SUFF_LIB),$(PATH_STAGE_LIB)/wined3dwddm$(VBOX_SUFF_LIB),$(VBoxD3D9_LIBS)) \
  	$(VBOX_PATH_ADDITIONS_LIB)/VBoxDispMpLogger$(VBOX_SUFF_LIB) \
+	$(VBOX_PATH_ADDITIONS_LIB)/VBoxWddmUmKmt$(VBOX_SUFF_LIB) \
  	$(VBOX_PATH_ADDITIONS_LIB)/VBoxCrHgsmi$(VBOX_SUFF_LIB)
 
  #
@@ -367,6 +395,7 @@ ifdef VBOX_WITH_WDDM
   	$(VBOX_LIB_VBGL_R3_X86)
  VBoxD3D9wddm-x86_LIBS        += \
   	$(VBOX_PATH_ADDITIONS_LIB)/VBoxDispMpLogger-x86$(VBOX_SUFF_LIB) \
+	$(VBOX_PATH_ADDITIONS_LIB)/VBoxWddmUmKmt-x86$(VBOX_SUFF_LIB) \
  	$(VBOX_PATH_ADDITIONS_LIB)/VBoxCrHgsmi-x86$(VBOX_SUFF_LIB)
 endif # VBOX_WITH_WDDM
 

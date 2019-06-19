@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -49,6 +49,32 @@ typedef struct DBGCBP
 typedef DBGCBP *PDBGCBP;
 
 
+typedef enum DBGCEVTSTATE
+{
+    kDbgcEvtState_Invalid = 0,
+    kDbgcEvtState_Disabled,
+    kDbgcEvtState_Enabled,
+    kDbgcEvtState_Notify
+} DBGCEVTSTATE;
+
+/**
+ * Debugger console per event configuration.
+ */
+typedef struct DBGCEVTCFG
+{
+    /** The event state. */
+    DBGCEVTSTATE    enmState;
+    /** The size of the command. */
+    size_t          cchCmd;
+    /** The command to execute when the event occurs. */
+    char            szCmd[1];
+} DBGCEVTCFG;
+/** Pointer to a event configuration. */
+typedef DBGCEVTCFG *PDBGCEVTCFG;
+/** Pointer to a const event configuration. */
+typedef DBGCEVTCFG const *PCDBGCEVTCFG;
+
+
 /**
  * Named variable.
  *
@@ -63,27 +89,6 @@ typedef struct DBGCNAMEDVAR
 } DBGCNAMEDVAR;
 /** Pointer to named variable. */
 typedef DBGCNAMEDVAR *PDBGCNAMEDVAR;
-
-
-/** The max length of a plug-in name, zero terminator included. */
-#define DBGCPLUGIN_MAX_NAME     32
-
-/**
- * Plug-in tracking record.
- */
-typedef struct DBGCPLUGIN
-{
-    /** Pointer to the next plug-in. */
-    struct DBGCPLUGIN  *pNext;
-    /** The loader handle.  */
-    RTLDRMOD            hLdrMod;
-    /** The plug-in entry point. */
-    PFNDBGCPLUGIN       pfnEntry;
-    /** The plug-in name (variable length).  */
-    char                szName[DBGCPLUGIN_MAX_NAME];
-} DBGCPLUGIN;
-/** Pointer to plug-in tracking record. */
-typedef DBGCPLUGIN *PDBGCPLUGIN;
 
 
 /**
@@ -122,7 +127,7 @@ typedef struct DBGC
     /** Pointer to the commands for the current debugger emulation. */
     PCDBGCCMD           paEmulationCmds;
     /** The number of commands paEmulationCmds points to. */
-    unsigned            cEmulationCmds;
+    uint32_t            cEmulationCmds;
     /** Pointer to the functions for the current debugger emulation. */
     PCDBGCFUNC          paEmulationFuncs;
     /** The number of functions paEmulationFuncs points to. */
@@ -134,6 +139,8 @@ typedef struct DBGC
     bool                fRegCtxGuest;
     /** Indicates whether the register are terse or sparse. */
     bool                fRegTerse;
+    /** Whether to display registers when tracing. */
+    bool                fStepTraceRegs;
     /** Counter use to suppress the printing of the headers. */
     uint8_t             cPagingHierarchyDumps;
 
@@ -158,11 +165,15 @@ typedef struct DBGC
      * and unset using command with those names. */
     PDBGCNAMEDVAR      *papVars;
 
-    /** The list of plug-in. (singly linked) */
-    PDBGCPLUGIN         pPlugInHead;
-
     /** The list of breakpoints. (singly linked) */
     PDBGCBP             pFirstBp;
+
+    /** Software interrupt events. */
+    PDBGCEVTCFG         apSoftInts[256];
+    /** Hardware interrupt events. */
+    PDBGCEVTCFG         apHardInts[256];
+    /** Selectable events (first few entries are unused). */
+    PDBGCEVTCFG         apEventCfgs[DBGFEVENT_END];
 
     /** Save search pattern. */
     uint8_t             abSearch[256];
@@ -212,12 +223,19 @@ typedef struct DBGC
     /** rc from the last command. */
     int                 rcCmd;
     /** @} */
+
+    /** The command history file (not yet implemented). */
+    char               *pszHistoryFile;
+    /** The global debugger init script. */
+    char               *pszGlobalInitScript;
+    /** The per VM debugger init script. */
+    char               *pszLocalInitScript;
 } DBGC;
 /** Pointer to debugger console instance data. */
 typedef DBGC *PDBGC;
 
 /** Converts a Command Helper pointer to a pointer to DBGC instance data. */
-#define DBGC_CMDHLP2DBGC(pCmdHlp)   ( (PDBGC)((uintptr_t)(pCmdHlp) - RT_OFFSETOF(DBGC, CmdHlp)) )
+#define DBGC_CMDHLP2DBGC(pCmdHlp)   ( (PDBGC)((uintptr_t)(pCmdHlp) - RT_UOFFSETOF(DBGC, CmdHlp)) )
 
 
 /**
@@ -370,6 +388,89 @@ typedef struct DBGCSYM
 } DBGCSYM;
 
 
+/** Selectable debug event kind. */
+typedef enum
+{
+    kDbgcSxEventKind_Plain,
+    kDbgcSxEventKind_Interrupt
+} DBGCSXEVENTKIND;
+
+/**
+ * Selectable debug event name / type lookup table entry.
+ *
+ * This also contains the default setting and an alternative name.
+ */
+typedef struct DBGCSXEVT
+{
+    /** The event type. */
+    DBGFEVENTTYPE   enmType;
+    /** The event name. */
+    const char     *pszName;
+    /** Alternative event name (optional). */
+    const char     *pszAltNm;
+    /** The kind of event. */
+    DBGCSXEVENTKIND enmKind;
+    /** The default state. */
+    DBGCEVTSTATE    enmDefault;
+    /** Flags, DBGCSXEVT_F_XXX. */
+    uint32_t        fFlags;
+    /** Description for use when reporting the event, optional. */
+    const char     *pszDesc;
+} DBGCSXEVT;
+/** Pointer to a constant selectable debug event descriptor. */
+typedef DBGCSXEVT const *PCDBGCSXEVT;
+
+/** @name DBGCSXEVT_F_XXX
+ * @{ */
+#define DBGCSXEVT_F_TAKE_ARG        RT_BIT_32(0)
+/** @} */
+
+
+/**
+ * Control flow graph basic block dumper state
+ */
+typedef struct DBGCFLOWBBDUMP
+{
+    /** The basic block referenced. */
+    DBGFFLOWBB              hFlowBb;
+    /** Cached start address. */
+    DBGFADDRESS             AddrStart;
+    /** Target address. */
+    DBGFADDRESS             AddrTarget;
+    /** Width of the basic block in chars. */
+    uint32_t                cchWidth;
+    /** Height of the basic block in chars. */
+    uint32_t                cchHeight;
+    /** X coordinate of the start. */
+    uint32_t                uStartX;
+    /** Y coordinate of the start. */
+    uint32_t                uStartY;
+} DBGCFLOWBBDUMP;
+/** Pointer to the control flow graph basic block dump state. */
+typedef DBGCFLOWBBDUMP *PDBGCFLOWBBDUMP;
+
+
+/**
+ * Control flow graph branch table dumper state.
+ */
+typedef struct DBGCFLOWBRANCHTBLDUMP
+{
+    /** The branch table referenced. */
+    DBGFFLOWBRANCHTBL       hFlowBranchTbl;
+    /** Cached start address. */
+    DBGFADDRESS             AddrStart;
+    /** Width of the branch table in chars. */
+    uint32_t                cchWidth;
+    /** Height of the branch table in chars. */
+    uint32_t                cchHeight;
+    /** X coordinate of the start. */
+    uint32_t                uStartX;
+    /** Y coordinate of the start. */
+    uint32_t                uStartY;
+} DBGCFLOWBRANCHTBLDUMP;
+/** Pointer to control flow graph branch table state. */
+typedef DBGCFLOWBRANCHTBLDUMP *PDBGCFLOWBRANCHTBLDUMP;
+
 /*******************************************************************************
 *   Internal Functions                                                         *
 *******************************************************************************/
@@ -382,6 +483,7 @@ int     dbgcBpExec(PDBGC pDbgc, RTUINT iBp);
 void    dbgcEvalInit(void);
 int     dbgcEvalSub(PDBGC pDbgc, char *pszExpr, size_t cchExpr, DBGCVARCAT enmCategory, PDBGCVAR pResult);
 int     dbgcEvalCommand(PDBGC pDbgc, char *pszCmd, size_t cchCmd, bool fNoExecute);
+int     dbgcEvalScript(PDBGC pDbgc, const char *pszFilename, bool fAnnounce);
 
 int     dbgcSymbolGet(PDBGC pDbgc, const char *pszSymbol, DBGCVARTYPE enmType, PDBGCVAR pResult);
 PCDBGCSYM   dbgcLookupRegisterSymbol(PDBGC pDbgc, const char *pszSymbol);
@@ -397,8 +499,74 @@ DECLCALLBACK(int) dbgcOpAddrHostPhys(PDBGC pDbgc, PCDBGCVAR pArg, DBGCVARCAT enm
 
 void    dbgcInitCmdHlp(PDBGC pDbgc);
 
-void    dbgcPlugInAutoLoad(PDBGC pDbgc);
-void    dbgcPlugInUnloadAll(PDBGC pDbgc);
+void    dbgcEventInit(PDBGC pDbgc);
+void    dbgcEventTerm(PDBGC pDbgc);
+
+/** Console ASCII screen handle. */
+typedef struct DBGCSCREENINT *DBGCSCREEN;
+/** Pointer to ASCII screen handle. */
+typedef DBGCSCREEN *PDBGCSCREEN;
+
+/**
+ * ASCII screen blit callback.
+ *
+ * @returns VBox status code. Any non VINF_SUCCESS status code will abort the dumping.
+ *
+ * @param   psz             The string to dump
+ * @param   pvUser          Opaque user data.
+ */
+typedef DECLCALLBACK(int) FNDGCSCREENBLIT(const char *psz, void *pvUser);
+/** Pointer to a FNDGCSCREENBLIT. */
+typedef FNDGCSCREENBLIT *PFNDGCSCREENBLIT;
+
+/**
+ * ASCII screen supported colors.
+ */
+typedef enum DBGCSCREENCOLOR
+{
+    /** Invalid color. */
+    DBGCSCREENCOLOR_INVALID = 0,
+    /** Default color of the terminal. */
+    DBGCSCREENCOLOR_DEFAULT,
+    /** Black. */
+    DBGCSCREENCOLOR_BLACK,
+    DBGCSCREENCOLOR_BLACK_BRIGHT,
+    /** Red. */
+    DBGCSCREENCOLOR_RED,
+    DBGCSCREENCOLOR_RED_BRIGHT,
+    /** Green. */
+    DBGCSCREENCOLOR_GREEN,
+    DBGCSCREENCOLOR_GREEN_BRIGHT,
+    /** Yellow. */
+    DBGCSCREENCOLOR_YELLOW,
+    DBGCSCREENCOLOR_YELLOW_BRIGHT,
+    /** Blue. */
+    DBGCSCREENCOLOR_BLUE,
+    DBGCSCREENCOLOR_BLUE_BRIGHT,
+    /** Magenta. */
+    DBGCSCREENCOLOR_MAGENTA,
+    DBGCSCREENCOLOR_MAGENTA_BRIGHT,
+    /** Cyan. */
+    DBGCSCREENCOLOR_CYAN,
+    DBGCSCREENCOLOR_CYAN_BRIGHT,
+    /** White. */
+    DBGCSCREENCOLOR_WHITE,
+    DBGCSCREENCOLOR_WHITE_BRIGHT
+} DBGCSCREENCOLOR;
+/** Pointer to a screen color. */
+typedef DBGCSCREENCOLOR *PDBGCSCREENCOLOR;
+
+DECLHIDDEN(int)  dbgcScreenAsciiCreate(PDBGCSCREEN phScreen, uint32_t cchWidth, uint32_t cchHeight);
+DECLHIDDEN(void) dbgcScreenAsciiDestroy(DBGCSCREEN hScreen);
+DECLHIDDEN(int)  dbgcScreenAsciiBlit(DBGCSCREEN hScreen, PFNDGCSCREENBLIT pfnBlit, void *pvUser, bool fAddColors);
+DECLHIDDEN(int)  dbgcScreenAsciiDrawLineVertical(DBGCSCREEN hScreen, uint32_t uX, uint32_t uStartY,
+                                                 uint32_t uEndY, char ch, DBGCSCREENCOLOR enmColor);
+DECLHIDDEN(int)  dbgcScreenAsciiDrawLineHorizontal(DBGCSCREEN hScreen, uint32_t uStartX, uint32_t uEndX,
+                                                   uint32_t uY, char ch, DBGCSCREENCOLOR enmColor);
+DECLHIDDEN(int)  dbgcScreenAsciiDrawCharacter(DBGCSCREEN hScreen, uint32_t uX, uint32_t uY, char ch,
+                                              DBGCSCREENCOLOR enmColor);
+DECLHIDDEN(int)  dbgcScreenAsciiDrawString(DBGCSCREEN hScreen, uint32_t uX, uint32_t uY, const char *pszText,
+                                           DBGCSCREENCOLOR enmColor);
 
 /* For tstDBGCParser: */
 int     dbgcCreate(PDBGC *ppDbgc, PDBGCBACK pBack, unsigned fFlags);
@@ -420,6 +588,8 @@ extern const DBGCFUNC   g_aFuncsCodeView[];
 extern const uint32_t   g_cFuncsCodeView;
 extern const DBGCOP     g_aDbgcOps[];
 extern const uint32_t   g_cDbgcOps;
+extern const DBGCSXEVT  g_aDbgcSxEvents[];
+extern const uint32_t   g_cDbgcSxEvents;
 
 
 /*******************************************************************************

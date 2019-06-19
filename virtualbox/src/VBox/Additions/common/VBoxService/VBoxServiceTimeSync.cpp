@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,12 +16,15 @@
  */
 
 
-/** @page pg_vboxservice_timesync       The Time Sync Service
+/** @page pg_vgsvc_timesync     VBoxService - The Time Sync Service
+ *
+ * The time sync subservice synchronizes the guest OS walltime with the host.
  *
  * The time sync service plays along with the Time Manager (TM) in the VMM
  * to keep the guest time accurate using the host machine as reference.
- * TM will try its best to make sure all timer ticks gets delivered so that
- * there isn't normally any need to adjust the guest time.
+ * Communication is facilitated by VMMDev.  TM will try its best to make sure
+ * all timer ticks gets delivered so that there isn't normally any need to
+ * adjust the guest time.
  *
  * There are three normal (= acceptable) cases:
  *      -# When the service starts up. This is because ticks and such might
@@ -67,21 +70,21 @@
  * the drift is noticeable.
  *
  * It now boils down to these three (configuration) factors:
- *  -# g_TimesyncMinAdjust - The minimum drift we will ever bother with.
- *  -# g_TimesyncLatencyFactor - The factor we multiply the latency by to
+ *  -# g_cMsTimeSyncMinAdjust - The minimum drift we will ever bother with.
+ *  -# g_TimeSyncLatencyFactor - The factor we multiply the latency by to
  *     calculate the dynamic minimum adjust factor.
- *  -# g_TimesyncMaxLatency - When to start discarding the data as utterly
+ *  -# g_cMsTimeSyncMaxLatency - When to start discarding the data as utterly
  *     useless and take a rest (someone is too busy to give us good data).
  *  -# g_TimeSyncSetThreshold - The threshold at which we will just set the time
  *     instead of trying to adjust it (milliseconds).
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_OS_WINDOWS
-# include <Windows.h>
-# include <winbase.h> /** @todo r=bird: Why is this here? Windows.h should include winbase.h... */
+# include <iprt/win/windows.h>
 #else
 # include <unistd.h>
 # include <errno.h>
@@ -99,61 +102,69 @@
 #include "VBoxServiceUtils.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The timesync interval (milliseconds). */
-uint32_t g_TimeSyncInterval = 0;
+static uint32_t         g_TimeSyncInterval = 0;
 /**
- * @see pg_vboxservice_timesync
+ * @see pg_vgsvc_timesync
  *
  * @remark  OS/2: There is either a 1 second resolution on the DosSetDateTime
- *                API or a but in the settimeofday implementation. Thus, don't
+ *                API or a bug in my settimeofday implementation.  Thus, don't
  *                bother unless there is at least a 1 second drift.
  */
 #ifdef RT_OS_OS2
-static uint32_t g_TimeSyncMinAdjust = 1000;
+static uint32_t         g_cMsTimeSyncMinAdjust = 1000;
 #else
-static uint32_t g_TimeSyncMinAdjust = 100;
+static uint32_t         g_cMsTimeSyncMinAdjust = 100;
 #endif
-/** @see pg_vboxservice_timesync */
-static uint32_t g_TimeSyncLatencyFactor = 8;
-/** @see pg_vboxservice_timesync */
-static uint32_t g_TimeSyncMaxLatency = 250;
-/** @see pg_vboxservice_timesync */
-static uint32_t g_TimeSyncSetThreshold = 20*60*1000;
+/** @see pg_vgsvc_timesync */
+static uint32_t         g_TimeSyncLatencyFactor = 8;
+/** @see pg_vgsvc_timesync */
+static uint32_t         g_cMsTimeSyncMaxLatency = 250;
+/** @see pg_vgsvc_timesync */
+static uint32_t         g_TimeSyncSetThreshold = 20*60*1000;
 /** Whether the next adjustment should just set the time instead of trying to
  * adjust it. This is used to implement --timesync-set-start.  */
-static bool volatile g_fTimeSyncSetNext = false;
+static bool volatile    g_fTimeSyncSetNext = false;
 /** Whether to set the time when the VM was restored. */
-static bool g_fTimeSyncSetOnRestore = true;
+static bool             g_fTimeSyncSetOnRestore = true;
+/** The logging verbosity level.
+ *  This uses the global verbosity level by default. */
+static uint32_t         g_cTimeSyncVerbosity = 0;
 
 /** Current error count. Used to knowing when to bitch and when not to. */
-static uint32_t g_cTimeSyncErrors = 0;
+static uint32_t         g_cTimeSyncErrors = 0;
 
 /** The semaphore we're blocking on. */
-static RTSEMEVENTMULTI g_TimeSyncEvent = NIL_RTSEMEVENTMULTI;
+static RTSEMEVENTMULTI  g_TimeSyncEvent = NIL_RTSEMEVENTMULTI;
 
 /** The VM session ID. Changes whenever the VM is restored or reset. */
-static uint64_t g_idTimeSyncSession;
+static uint64_t         g_idTimeSyncSession;
 
 #ifdef RT_OS_WINDOWS
 /** Process token. */
-static HANDLE g_hTokenProcess = NULL;
+static HANDLE           g_hTokenProcess = NULL;
 /** Old token privileges. */
 static TOKEN_PRIVILEGES g_TkOldPrivileges;
 /** Backup values for time adjustment. */
-static DWORD g_dwWinTimeAdjustment;
-static DWORD g_dwWinTimeIncrement;
-static BOOL g_bWinTimeAdjustmentDisabled;
+static DWORD            g_dwWinTimeAdjustment;
+static DWORD            g_dwWinTimeIncrement;
+static BOOL             g_bWinTimeAdjustmentDisabled;
 #endif
 
 
-/** @copydoc VBOXSERVICE::pfnPreInit */
-static DECLCALLBACK(int) VBoxServiceTimeSyncPreInit(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnPreInit}
+ */
+static DECLCALLBACK(int) vgsvcTimeSyncPreInit(void)
 {
+    /* Use global verbosity as default. */
+    g_cTimeSyncVerbosity = g_cVerbosity;
+
 #ifdef VBOX_WITH_GUEST_PROPS
-    /** @todo Merge this function with VBoxServiceTimeSyncOption() to generalize
+    /** @todo Merge this function with vgsvcTimeSyncOption() to generalize
      *        the "command line args override guest property values" behavior. */
 
     /*
@@ -166,62 +177,62 @@ static DECLCALLBACK(int) VBoxServiceTimeSyncPreInit(void)
     {
         if (rc == VERR_HGCM_SERVICE_NOT_FOUND) /* Host service is not available. */
         {
-            VBoxServiceVerbose(0, "VMInfo: Guest property service is not available, skipping\n");
+            VGSvcVerbose(0, "VMInfo: Guest property service is not available, skipping\n");
             rc = VINF_SUCCESS;
         }
         else
-            VBoxServiceError("Failed to connect to the guest property service! Error: %Rrc\n", rc);
+            VGSvcError("Failed to connect to the guest property service! Error: %Rrc\n", rc);
     }
     else
     {
-        rc = VBoxServiceReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-interval",
-                                       &g_TimeSyncInterval, 50, UINT32_MAX - 1);
+        rc = VGSvcReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-interval",
+                                 &g_TimeSyncInterval, 50, UINT32_MAX - 1);
+        if (   RT_SUCCESS(rc)
+            || rc == VERR_NOT_FOUND)
+            rc = VGSvcReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-min-adjust",
+                                     &g_cMsTimeSyncMinAdjust, 0, 3600000);
+        if (   RT_SUCCESS(rc)
+            || rc == VERR_NOT_FOUND)
+            rc = VGSvcReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-latency-factor",
+                                     &g_TimeSyncLatencyFactor, 1, 1024);
+        if (   RT_SUCCESS(rc)
+            || rc == VERR_NOT_FOUND)
+            rc = VGSvcReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-max-latency",
+                                     &g_cMsTimeSyncMaxLatency, 1, 3600000);
+        if (   RT_SUCCESS(rc)
+            || rc == VERR_NOT_FOUND)
+            rc = VGSvcReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-set-threshold",
+                                     &g_TimeSyncSetThreshold, 0, 7*24*60*60*1000 /* a week */);
         if (   RT_SUCCESS(rc)
             || rc == VERR_NOT_FOUND)
         {
-            rc = VBoxServiceReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-min-adjust",
-                                           &g_TimeSyncMinAdjust, 0, 3600000);
-        }
-        if (   RT_SUCCESS(rc)
-            || rc == VERR_NOT_FOUND)
-        {
-            rc = VBoxServiceReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-latency-factor",
-                                           &g_TimeSyncLatencyFactor, 1, 1024);
-        }
-        if (   RT_SUCCESS(rc)
-            || rc == VERR_NOT_FOUND)
-        {
-            rc = VBoxServiceReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-max-latency",
-                                           &g_TimeSyncMaxLatency, 1, 3600000);
-        }
-        if (   RT_SUCCESS(rc)
-            || rc == VERR_NOT_FOUND)
-        {
-            rc = VBoxServiceReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-set-threshold",
-                                           &g_TimeSyncSetThreshold, 0, 7*24*60*60*1000 /* a week */);
-        }
-        if (   RT_SUCCESS(rc)
-            || rc == VERR_NOT_FOUND)
-        {
-            char *pszValue;
-            rc = VBoxServiceReadProp(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-set-start",
-                                     &pszValue, NULL /* ppszFlags */, NULL /* puTimestamp */);
+            rc = VGSvcCheckPropExist(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-set-start");
             if (RT_SUCCESS(rc))
-            {
                 g_fTimeSyncSetNext = true;
-                RTStrFree(pszValue);
-            }
         }
         if (   RT_SUCCESS(rc)
             || rc == VERR_NOT_FOUND)
         {
-            uint32_t value;
-            rc = VBoxServiceReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-set-on-restore",
-                                           &value, 1, 1);
+            rc = VGSvcCheckPropExist(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-set-on-restore");
             if (RT_SUCCESS(rc))
-                g_fTimeSyncSetOnRestore = !!value;
+                g_fTimeSyncSetOnRestore = true;
         }
-
+        if (   RT_SUCCESS(rc)
+            || rc == VERR_NOT_FOUND)
+        {
+            rc = VGSvcCheckPropExist(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-no-set-on-restore");
+            if (RT_SUCCESS(rc))
+                g_fTimeSyncSetOnRestore = false;
+        }
+        if (   RT_SUCCESS(rc)
+            || rc == VERR_NOT_FOUND)
+        {
+            uint32_t uValue;
+            rc = VGSvcReadPropUInt32(uGuestPropSvcClientID, "/VirtualBox/GuestAdd/VBoxService/--timesync-verbosity",
+                                     &uValue, 0 /*uMin*/, 255 /*uMax*/);
+            if (RT_SUCCESS(rc))
+                g_cTimeSyncVerbosity = uValue;
+        }
         VbglR3GuestPropDisconnect(uGuestPropSvcClientID);
     }
 
@@ -235,46 +246,63 @@ static DECLCALLBACK(int) VBoxServiceTimeSyncPreInit(void)
 }
 
 
-/** @copydoc VBOXSERVICE::pfnOption */
-static DECLCALLBACK(int) VBoxServiceTimeSyncOption(const char **ppszShort, int argc, char **argv, int *pi)
+/**
+ * Displays a verbose message based on the currently
+ * set timesync verbosity level.
+ *
+ * @param   iLevel      Minimum log level required to display this message.
+ * @param   pszFormat   The message text.
+ * @param   ...         Format arguments.
+ */
+static void vgsvcTimeSyncLog(unsigned iLevel, const char *pszFormat, ...)
 {
-    int rc = -1;
-    uint32_t value;
+    if (iLevel <= g_cTimeSyncVerbosity)
+    {
+        va_list va;
+        va_start(va, pszFormat);
+        VGSvcLogV(pszFormat, va);
+        va_end(va);
+    }
+}
+
+
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnOption}
+ */
+static DECLCALLBACK(int) vgsvcTimeSyncOption(const char **ppszShort, int argc, char **argv, int *pi)
+{
+    int rc = VINF_SUCCESS;
     if (ppszShort)
-        /* no short options */;
+        rc = -1 ;/* no short options */
     else if (!strcmp(argv[*pi], "--timesync-interval"))
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi,
-                                  &g_TimeSyncInterval, 50, UINT32_MAX - 1);
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_TimeSyncInterval, 50, UINT32_MAX - 1);
     else if (!strcmp(argv[*pi], "--timesync-min-adjust"))
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi,
-                                  &g_TimeSyncMinAdjust, 0, 3600000);
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_cMsTimeSyncMinAdjust, 0, 3600000);
     else if (!strcmp(argv[*pi], "--timesync-latency-factor"))
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi,
-                                  &g_TimeSyncLatencyFactor, 1, 1024);
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_TimeSyncLatencyFactor, 1, 1024);
     else if (!strcmp(argv[*pi], "--timesync-max-latency"))
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi,
-                                  &g_TimeSyncMaxLatency, 1, 3600000);
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_cMsTimeSyncMaxLatency, 1, 3600000);
     else if (!strcmp(argv[*pi], "--timesync-set-threshold"))
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi,
-                                  &g_TimeSyncSetThreshold, 0, 7*24*60*60*1000); /* a week */
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_TimeSyncSetThreshold, 0, 7*24*60*60*1000); /* a week */
     else if (!strcmp(argv[*pi], "--timesync-set-start"))
-    {
         g_fTimeSyncSetNext = true;
-        rc = VINF_SUCCESS;
-    }
     else if (!strcmp(argv[*pi], "--timesync-set-on-restore"))
-    {
-        rc = VBoxServiceArgUInt32(argc, argv, "", pi, &value, 1, 1);
-        if (RT_SUCCESS(rc))
-            g_fTimeSyncSetOnRestore = !!value;
-    }
+        g_fTimeSyncSetOnRestore = true;
+    else if (!strcmp(argv[*pi], "--timesync-no-set-on-restore"))
+        g_fTimeSyncSetOnRestore = false;
+    else if (!strcmp(argv[*pi], "--timesync-verbosity"))
+        rc = VGSvcArgUInt32(argc, argv, "", pi, &g_cTimeSyncVerbosity, 0 /*uMin*/, 255 /*uMax*/);
+    else
+        rc = -1;
 
     return rc;
 }
 
 
-/** @copydoc VBOXSERVICE::pfnInit */
-static DECLCALLBACK(int) VBoxServiceTimeSyncInit(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnInit}
+ */
+static DECLCALLBACK(int) vgsvcTimeSyncInit(void)
 {
     /*
      * If not specified, find the right interval default.
@@ -311,14 +339,16 @@ static DECLCALLBACK(int) VBoxServiceTimeSyncInit(void)
                 {
                     DWORD dwErr = GetLastError();
                     rc = RTErrConvertFromWin32(dwErr);
-                    VBoxServiceError("VBoxServiceTimeSyncInit: Adjusting token privileges (SE_SYSTEMTIME_NAME) failed with status code %u/%Rrc!\n", dwErr, rc);
+                    VGSvcError("vgsvcTimeSyncInit: Adjusting token privileges (SE_SYSTEMTIME_NAME) failed with status code %u/%Rrc!\n",
+                               dwErr, rc);
                 }
             }
             else
             {
                 DWORD dwErr = GetLastError();
                 rc = RTErrConvertFromWin32(dwErr);
-                VBoxServiceError("VBoxServiceTimeSyncInit: Looking up token privileges (SE_SYSTEMTIME_NAME) failed with status code %u/%Rrc!\n", dwErr, rc);
+                VGSvcError("vgsvcTimeSyncInit: Looking up token privileges (SE_SYSTEMTIME_NAME) failed with status code %u/%Rrc!\n",
+                           dwErr, rc);
             }
             if (RT_FAILURE(rc))
             {
@@ -330,19 +360,20 @@ static DECLCALLBACK(int) VBoxServiceTimeSyncInit(void)
         {
             DWORD dwErr = GetLastError();
             rc = RTErrConvertFromWin32(dwErr);
-            VBoxServiceError("VBoxServiceTimeSyncInit: Opening process token (SE_SYSTEMTIME_NAME) failed with status code %u/%Rrc!\n", dwErr, rc);
+            VGSvcError("vgsvcTimeSyncInit: Opening process token (SE_SYSTEMTIME_NAME) failed with status code %u/%Rrc!\n",
+                       dwErr, rc);
             g_hTokenProcess = NULL;
         }
     }
 
     if (GetSystemTimeAdjustment(&g_dwWinTimeAdjustment, &g_dwWinTimeIncrement, &g_bWinTimeAdjustmentDisabled))
-        VBoxServiceVerbose(3, "VBoxServiceTimeSyncInit: Initially %ld (100ns) units per %ld (100 ns) units interval, disabled=%d\n",
-                           g_dwWinTimeAdjustment, g_dwWinTimeIncrement, g_bWinTimeAdjustmentDisabled ? 1 : 0);
+        vgsvcTimeSyncLog(3, "vgsvcTimeSyncInit: Initially %ld (100ns) units per %ld (100 ns) units interval, disabled=%d\n",
+                         g_dwWinTimeAdjustment, g_dwWinTimeIncrement, g_bWinTimeAdjustmentDisabled ? 1 : 0);
     else
     {
         DWORD dwErr = GetLastError();
         rc = RTErrConvertFromWin32(dwErr);
-        VBoxServiceError("VBoxServiceTimeSyncInit: Could not get time adjustment values! Last error: %ld!\n", dwErr);
+        VGSvcError("vgsvcTimeSyncInit: Could not get time adjustment values! Last error: %ld!\n", dwErr);
     }
 #endif /* RT_OS_WINDOWS */
 
@@ -357,14 +388,13 @@ static DECLCALLBACK(int) VBoxServiceTimeSyncInit(void)
  *
  * @param   pDrift          The time adjustment.
  */
-static bool VBoxServiceTimeSyncAdjust(PCRTTIMESPEC pDrift)
+static bool vgsvcTimeSyncAdjust(PCRTTIMESPEC pDrift)
 {
 #ifdef RT_OS_WINDOWS
-/** @todo r=bird: NT4 doesn't have GetSystemTimeAdjustment according to MSDN. */
 /** @todo r=bird: g_hTokenProcess cannot be NULL here.
- *        VBoxServiceTimeSyncInit will fail and the service will not be
- *        started with it being NULL.  VBoxServiceTimeSyncInit OTOH will *NOT*
- *        be called until the service thread has terminated.  If anything
+ *        vgsvcTimeSyncInit will fail and the service will not be started with
+ *        it being NULL.  vgsvcTimeSyncInit OTOH will *NOT* be called until the
+ *        service thread has terminated.  If anything
  *        else is the case, there is buggy code somewhere.*/
     if (g_hTokenProcess == NULL) /* Is the token already closed when shutting down? */
         return false;
@@ -395,9 +425,9 @@ static bool VBoxServiceTimeSyncAdjust(PCRTTIMESPEC pDrift)
             }
         }
 
-        VBoxServiceVerbose(3, "VBoxServiceTimeSyncAdjust: Drift=%lldms\n", RTTimeSpecGetMilli(pDrift));
-        VBoxServiceVerbose(3, "VBoxServiceTimeSyncAdjust: OrgTA=%ld, CurTA=%ld, NewTA=%ld, DiffNew=%ld, DiffMax=%ld\n",
-                           g_dwWinTimeAdjustment, dwWinTimeAdjustment, dwWinNewTimeAdjustment, dwDiffNew, dwDiffMax);
+        vgsvcTimeSyncLog(3, "vgsvcTimeSyncAdjust: Drift=%lldms\n", RTTimeSpecGetMilli(pDrift));
+        vgsvcTimeSyncLog(3, "vgsvcTimeSyncAdjust: OrgTA=%ld, CurTA=%ld, NewTA=%ld, DiffNew=%ld, DiffMax=%ld\n",
+                         g_dwWinTimeAdjustment, dwWinTimeAdjustment, dwWinNewTimeAdjustment, dwDiffNew, dwDiffMax);
         if (SetSystemTimeAdjustment(dwWinNewTimeAdjustment, FALSE /* Periodic adjustments enabled. */))
         {
             g_cTimeSyncErrors = 0;
@@ -405,10 +435,10 @@ static bool VBoxServiceTimeSyncAdjust(PCRTTIMESPEC pDrift)
         }
 
         if (g_cTimeSyncErrors++ < 10)
-             VBoxServiceError("VBoxServiceTimeSyncAdjust: SetSystemTimeAdjustment failed, error=%u\n", GetLastError());
+             VGSvcError("vgsvcTimeSyncAdjust: SetSystemTimeAdjustment failed, error=%u\n", GetLastError());
     }
     else if (g_cTimeSyncErrors++ < 10)
-        VBoxServiceError("VBoxServiceTimeSyncAdjust: GetSystemTimeAdjustment failed, error=%ld\n", GetLastError());
+        VGSvcError("vgsvcTimeSyncAdjust: GetSystemTimeAdjustment failed, error=%ld\n", GetLastError());
 
 #elif defined(RT_OS_OS2) || defined(RT_OS_HAIKU)
     /* No API for doing gradual time adjustments. */
@@ -422,7 +452,7 @@ static bool VBoxServiceTimeSyncAdjust(PCRTTIMESPEC pDrift)
     if (adjtime(&tv, NULL) == 0)
     {
         if (g_cVerbosity >= 1)
-            VBoxServiceVerbose(1, "VBoxServiceTimeSyncAdjust: adjtime by %RDtimespec\n", pDrift);
+            vgsvcTimeSyncLog(1, "vgsvcTimeSyncAdjust: adjtime by %RDtimespec\n", pDrift);
         g_cTimeSyncErrors = 0;
         return true;
     }
@@ -436,19 +466,19 @@ static bool VBoxServiceTimeSyncAdjust(PCRTTIMESPEC pDrift)
 /**
  * Cancels any pending time adjustment.
  *
- * Called when we've caught up and before calls to VBoxServiceTimeSyncSet.
+ * Called when we've caught up and before calls to vgsvcTimeSyncSet.
  */
-static void VBoxServiceTimeSyncCancelAdjust(void)
+static void vgsvcTimeSyncCancelAdjust(void)
 {
 #ifdef RT_OS_WINDOWS
 /** @todo r=bird: g_hTokenProcess cannot be NULL here.  See argumentation in
- *        VBoxServiceTimeSyncAdjust.  */
+ *        vgsvcTimeSyncAdjust.  */
     if (g_hTokenProcess == NULL) /* No process token (anymore)? */
         return;
     if (SetSystemTimeAdjustment(0, TRUE /* Periodic adjustments disabled. */))
-        VBoxServiceVerbose(3, "VBoxServiceTimeSyncCancelAdjust: Windows Time Adjustment is now disabled.\n");
+        vgsvcTimeSyncLog(3, "vgsvcTimeSyncCancelAdjust: Windows Time Adjustment is now disabled.\n");
     else if (g_cTimeSyncErrors++ < 10)
-        VBoxServiceError("VBoxServiceTimeSyncCancelAdjust: SetSystemTimeAdjustment(,disable) failed, error=%u\n", GetLastError());
+        VGSvcError("vgsvcTimeSyncCancelAdjust: SetSystemTimeAdjustment(,disable) failed, error=%u\n", GetLastError());
 #endif /* !RT_OS_WINDOWS */
 }
 
@@ -460,7 +490,7 @@ static void VBoxServiceTimeSyncCancelAdjust(void)
  *
  * @param   pDrift              The time adjustment.
  */
-static void VBoxServiceTimeSyncSet(PCRTTIMESPEC pDrift)
+static void vgsvcTimeSyncSet(PCRTTIMESPEC pDrift)
 {
     /*
      * Query the current time, adjust it by adding the drift and set it.
@@ -476,23 +506,23 @@ static void VBoxServiceTimeSyncSet(PCRTTIMESPEC pDrift)
         {
             char        sz[64];
             RTTIME      Time;
-            VBoxServiceVerbose(1, "time set to %s\n",
-                               RTTimeToString(RTTimeExplode(&Time, &NewGuestTime), sz, sizeof(sz)));
+            vgsvcTimeSyncLog(1, "time set to %s\n", RTTimeToString(RTTimeExplode(&Time, &NewGuestTime), sz, sizeof(sz)));
 #ifdef DEBUG
             RTTIMESPEC  Tmp;
             if (g_cVerbosity >= 3)
-                VBoxServiceVerbose(3, "        now %s\n",
-                                   RTTimeToString(RTTimeExplode(&Time, RTTimeNow(&Tmp)), sz, sizeof(sz)));
+                vgsvcTimeSyncLog(3, "        now %s\n", RTTimeToString(RTTimeExplode(&Time, RTTimeNow(&Tmp)), sz, sizeof(sz)));
 #endif
         }
     }
     else if (g_cTimeSyncErrors++ < 10)
-        VBoxServiceError("VBoxServiceTimeSyncSet: RTTimeSet(%RDtimespec) failed: %Rrc\n", &NewGuestTime, rc);
+        VGSvcError("vgsvcTimeSyncSet: RTTimeSet(%RDtimespec) failed: %Rrc\n", &NewGuestTime, rc);
 }
 
 
-/** @copydoc VBOXSERVICE::pfnWorker */
-DECLCALLBACK(int) VBoxServiceTimeSyncWorker(bool volatile *pfShutdown)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnWorker}
+ */
+DECLCALLBACK(int) vgsvcTimeSyncWorker(bool volatile *pfShutdown)
 {
     RTTIME Time;
     char sz[64];
@@ -502,6 +532,17 @@ DECLCALLBACK(int) VBoxServiceTimeSyncWorker(bool volatile *pfShutdown)
      * Tell the control thread that it can continue spawning services.
      */
     RTThreadUserSignal(RTThreadSelf());
+
+    /*
+     * Initialize the last host and guest times to prevent log message.
+     * We also tracks whether we set the time in the previous loop.
+     */
+    RTTIMESPEC HostLast;
+    if (RT_FAILURE(VbglR3GetHostTime(&HostLast)))
+        RTTimeSpecSetNano(&HostLast, 0);
+    RTTIMESPEC GuestLast;
+    RTTimeNow(&GuestLast);
+    bool fSetTimeLastLoop = false;
 
     /*
      * The Work Loop.
@@ -514,64 +555,71 @@ DECLCALLBACK(int) VBoxServiceTimeSyncWorker(bool volatile *pfShutdown)
         int cTries = 3;
         do
         {
-            /* query it. */
-            RTTIMESPEC GuestNow0, GuestNow, HostNow;
+            /*
+             * Query the session id (first to keep lantency low) and the time.
+             */
+            uint64_t idNewSession = g_idTimeSyncSession;
+            if (g_fTimeSyncSetOnRestore)
+                VbglR3GetSessionId(&idNewSession);
+
+            RTTIMESPEC GuestNow0;
             RTTimeNow(&GuestNow0);
+
+            RTTIMESPEC HostNow;
             int rc2 = VbglR3GetHostTime(&HostNow);
             if (RT_FAILURE(rc2))
             {
                 if (g_cTimeSyncErrors++ < 10)
-                    VBoxServiceError("VBoxServiceTimeSyncWorker: VbglR3GetHostTime failed; rc2=%Rrc\n", rc2);
+                    VGSvcError("vgsvcTimeSyncWorker: VbglR3GetHostTime failed; rc2=%Rrc\n", rc2);
                 break;
             }
+
+            RTTIMESPEC GuestNow;
             RTTimeNow(&GuestNow);
 
-            /* calc latency and check if it's ok. */
+            /*
+             * Calc latency and check if it's ok.
+             */
             RTTIMESPEC GuestElapsed = GuestNow;
             RTTimeSpecSub(&GuestElapsed, &GuestNow0);
-            if ((uint32_t)RTTimeSpecGetMilli(&GuestElapsed) < g_TimeSyncMaxLatency)
+            if ((uint32_t)RTTimeSpecGetMilli(&GuestElapsed) < g_cMsTimeSyncMaxLatency)
             {
                 /*
-                 * Set the time once after we were restored.
-                 * (Of course only if the drift is bigger than MinAdjust)
+                 * If we were just restored, set the adjustment threshold to zero to force a resync.
                  */
                 uint32_t TimeSyncSetThreshold = g_TimeSyncSetThreshold;
-                if (g_fTimeSyncSetOnRestore)
+                if (   g_fTimeSyncSetOnRestore
+                    && idNewSession != g_idTimeSyncSession)
                 {
-                    uint64_t idNewSession = g_idTimeSyncSession;
-                    VbglR3GetSessionId(&idNewSession);
-                    if (idNewSession != g_idTimeSyncSession)
-                    {
-                        VBoxServiceVerbose(3, "VBoxServiceTimeSyncWorker: The VM session ID changed, forcing resync.\n");
-                        TimeSyncSetThreshold = 0;
-                        g_idTimeSyncSession  = idNewSession;
-                    }
+                    vgsvcTimeSyncLog(3, "vgsvcTimeSyncWorker: The VM session ID changed, forcing resync.\n");
+                    g_idTimeSyncSession  = idNewSession;
+                    TimeSyncSetThreshold = 0;
                 }
 
                 /*
                  * Calculate the adjustment threshold and the current drift.
                  */
                 uint32_t MinAdjust = RTTimeSpecGetMilli(&GuestElapsed) * g_TimeSyncLatencyFactor;
-                if (MinAdjust < g_TimeSyncMinAdjust)
-                    MinAdjust = g_TimeSyncMinAdjust;
+                if (MinAdjust < g_cMsTimeSyncMinAdjust)
+                    MinAdjust = g_cMsTimeSyncMinAdjust;
 
                 RTTIMESPEC Drift = HostNow;
                 RTTimeSpecSub(&Drift, &GuestNow);
                 if (RTTimeSpecGetMilli(&Drift) < 0)
-                    MinAdjust += g_TimeSyncMinAdjust; /* extra buffer against moving time backwards. */
+                    MinAdjust += g_cMsTimeSyncMinAdjust; /* extra buffer against moving time backwards. */
 
                 RTTIMESPEC AbsDrift = Drift;
                 RTTimeSpecAbsolute(&AbsDrift);
                 if (g_cVerbosity >= 3)
                 {
-                    VBoxServiceVerbose(3, "VBoxServiceTimeSyncWorker: Host:    %s    (MinAdjust: %RU32 ms)\n",
-                                       RTTimeToString(RTTimeExplode(&Time, &HostNow), sz, sizeof(sz)), MinAdjust);
-                    VBoxServiceVerbose(3, "VBoxServiceTimeSyncWorker: Guest: - %s => %RDtimespec drift\n",
-                                       RTTimeToString(RTTimeExplode(&Time, &GuestNow), sz, sizeof(sz)),
-                                       &Drift);
+                    vgsvcTimeSyncLog(3, "vgsvcTimeSyncWorker: Host:    %s    (MinAdjust: %RU32 ms)\n",
+                                     RTTimeToString(RTTimeExplode(&Time, &HostNow), sz, sizeof(sz)), MinAdjust);
+                    vgsvcTimeSyncLog(3, "vgsvcTimeSyncWorker: Guest: - %s => %RDtimespec drift\n",
+                                     RTTimeToString(RTTimeExplode(&Time, &GuestNow), sz, sizeof(sz)), &Drift);
                 }
 
-                uint32_t AbsDriftMilli = RTTimeSpecGetMilli(&AbsDrift);
+                bool fSetTimeInThisLoop = false;
+                uint64_t AbsDriftMilli = RTTimeSpecGetMilli(&AbsDrift);
                 if (AbsDriftMilli > MinAdjust)
                 {
                     /*
@@ -580,20 +628,42 @@ DECLCALLBACK(int) VBoxServiceTimeSyncWorker(bool volatile *pfShutdown)
                      * Try a gradual adjustment first, if that fails or the drift is
                      * too big, fall back on just setting the time.
                      */
-
-                    if (    AbsDriftMilli > TimeSyncSetThreshold
-                        ||  g_fTimeSyncSetNext
-                        ||  !VBoxServiceTimeSyncAdjust(&Drift))
+                    if (   AbsDriftMilli > TimeSyncSetThreshold
+                        || g_fTimeSyncSetNext
+                        || !vgsvcTimeSyncAdjust(&Drift))
                     {
-                        VBoxServiceTimeSyncCancelAdjust();
-                        VBoxServiceTimeSyncSet(&Drift);
+                        vgsvcTimeSyncCancelAdjust();
+                        vgsvcTimeSyncSet(&Drift);
+                        fSetTimeInThisLoop = true;
                     }
+
+                    /*
+                     * Log radical host time changes.
+                     */
+                    int64_t cNsHostDelta = RTTimeSpecGetNano(&HostNow) - RTTimeSpecGetNano(&HostLast);
+                    if ((uint64_t)RT_ABS(cNsHostDelta) > RT_NS_1HOUR / 2)
+                        vgsvcTimeSyncLog(0, "vgsvcTimeSyncWorker: Radical host time change: %'RI64ns (HostNow=%RDtimespec HostLast=%RDtimespec)\n",
+                                         cNsHostDelta, &HostNow, &HostLast);
                 }
                 else
-                    VBoxServiceTimeSyncCancelAdjust();
+                    vgsvcTimeSyncCancelAdjust();
+                HostLast = HostNow;
+
+                /*
+                 * Log radical guest time changes (we could be the cause of these, mind).
+                 * Note! Right now we don't care about an extra log line after we called
+                 *       vgsvcTimeSyncSet.  fSetTimeLastLoop helps show it though.
+                 */
+                int64_t cNsGuestDelta = RTTimeSpecGetNano(&GuestNow) - RTTimeSpecGetNano(&GuestLast);
+                if ((uint64_t)RT_ABS(cNsGuestDelta) > RT_NS_1HOUR / 2)
+                    vgsvcTimeSyncLog(0, "vgsvcTimeSyncWorker: Radical guest time change: %'RI64ns (GuestNow=%RDtimespec GuestLast=%RDtimespec fSetTimeLastLoop=%RTbool)\n",
+                                     cNsGuestDelta, &GuestNow, &GuestLast, fSetTimeLastLoop);
+                GuestLast = GuestNow;
+                fSetTimeLastLoop = fSetTimeInThisLoop;
                 break;
             }
-            VBoxServiceVerbose(3, "VBoxServiceTimeSyncWorker: %RDtimespec: latency too high (%RDtimespec) sleeping 1s\n", GuestElapsed);
+            vgsvcTimeSyncLog(3, "vgsvcTimeSyncWorker: %RDtimespec: latency too high (%RDtimespec, max %ums) sleeping 1s\n",
+                             &GuestNow, &GuestElapsed, g_cMsTimeSyncMaxLatency);
             RTThreadSleep(1000);
         } while (--cTries > 0);
 
@@ -613,28 +683,31 @@ DECLCALLBACK(int) VBoxServiceTimeSyncWorker(bool volatile *pfShutdown)
             break;
         if (rc2 != VERR_TIMEOUT && RT_FAILURE(rc2))
         {
-            VBoxServiceError("VBoxServiceTimeSyncWorker: RTSemEventMultiWait failed; rc2=%Rrc\n", rc2);
+            VGSvcError("vgsvcTimeSyncWorker: RTSemEventMultiWait failed; rc2=%Rrc\n", rc2);
             rc = rc2;
             break;
         }
     }
 
-    VBoxServiceTimeSyncCancelAdjust();
-    RTSemEventMultiDestroy(g_TimeSyncEvent);
-    g_TimeSyncEvent = NIL_RTSEMEVENTMULTI;
+    vgsvcTimeSyncCancelAdjust();
     return rc;
 }
 
 
-/** @copydoc VBOXSERVICE::pfnStop */
-static DECLCALLBACK(void) VBoxServiceTimeSyncStop(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnStop}
+ */
+static DECLCALLBACK(void) vgsvcTimeSyncStop(void)
 {
-    RTSemEventMultiSignal(g_TimeSyncEvent);
+    if (g_TimeSyncEvent != NIL_RTSEMEVENTMULTI)
+        RTSemEventMultiSignal(g_TimeSyncEvent);
 }
 
 
-/** @copydoc VBOXSERVICE::pfnTerm */
-static DECLCALLBACK(void) VBoxServiceTimeSyncTerm(void)
+/**
+ * @interface_method_impl{VBOXSERVICE,pfnTerm}
+ */
+static DECLCALLBACK(void) vgsvcTimeSyncTerm(void)
 {
 #ifdef RT_OS_WINDOWS
     /*
@@ -645,7 +718,7 @@ static DECLCALLBACK(void) VBoxServiceTimeSyncTerm(void)
         if (!AdjustTokenPrivileges(g_hTokenProcess, FALSE, &g_TkOldPrivileges, sizeof(TOKEN_PRIVILEGES), NULL, NULL))
         {
             DWORD dwErr = GetLastError();
-            VBoxServiceError("VBoxServiceTimeSyncTerm: Restoring token privileges (SE_SYSTEMTIME_NAME) failed with code %u!\n", dwErr);
+            VGSvcError("vgsvcTimeSyncTerm: Restoring token privileges (SE_SYSTEMTIME_NAME) failed with code %u!\n", dwErr);
         }
         CloseHandle(g_hTokenProcess);
         g_hTokenProcess = NULL;
@@ -673,7 +746,8 @@ VBOXSERVICE g_TimeSync =
     "              [--timesync-interval <ms>] [--timesync-min-adjust <ms>]\n"
     "              [--timesync-latency-factor <x>] [--timesync-max-latency <ms>]\n"
     "              [--timesync-set-threshold <ms>] [--timesync-set-start]\n"
-    "              [--timesync-set-on-restore 0|1]"
+    "              [--timesync-set-on-restore|--timesync-no-set-on-restore]\n"
+    "              [--timesync-verbosity <level>]"
     ,
     /* pszOptions. */
     "    --timesync-interval     Specifies the interval at which to synchronize the\n"
@@ -692,16 +766,18 @@ VBOXSERVICE g_TimeSync =
     "                            where to start setting the time instead of trying to\n"
     "                            adjust it. The default is 20 min.\n"
     "    --timesync-set-start    Set the time when starting the time sync service.\n"
-    "    --timesync-set-on-restore 0|1\n"
-    "                            Immediately set the time when the VM was restored.\n"
-    "                            1 = set (default), 0 = don't set.\n"
+    "    --timesync-set-on-restore, --timesync-no-set-on-restore\n"
+    "                            Whether to immediately set the time when the VM is\n"
+    "                            restored or not.  Default: --timesync-set-on-restore\n"
+    "    --timesync-verbosity    Sets the verbosity level.  Defaults to service wide\n"
+    "                            verbosity level.\n"
     ,
     /* methods */
-    VBoxServiceTimeSyncPreInit,
-    VBoxServiceTimeSyncOption,
-    VBoxServiceTimeSyncInit,
-    VBoxServiceTimeSyncWorker,
-    VBoxServiceTimeSyncStop,
-    VBoxServiceTimeSyncTerm
+    vgsvcTimeSyncPreInit,
+    vgsvcTimeSyncOption,
+    vgsvcTimeSyncInit,
+    vgsvcTimeSyncWorker,
+    vgsvcTimeSyncStop,
+    vgsvcTimeSyncTerm
 };
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -40,9 +40,10 @@
  * THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_RTC
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/log.h>
@@ -58,9 +59,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /*#define DEBUG_CMOS*/
 #define RTC_CRC_START   0x10
 #define RTC_CRC_LAST    0x2d
@@ -111,9 +112,9 @@
 #define RTC_SAVED_STATE_VERSION_VBOX_30     1
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** @todo Replace struct my_tm with RTTIME. */
 struct my_tm
 {
@@ -189,6 +190,11 @@ typedef struct RTCSTATE
 
     /** HPET legacy mode notification interface. */
     PDMIHPETLEGACYNOTIFY  IHpetLegacyNotify;
+
+    /** Number of IRQs that's been raised. */
+    STAMCOUNTER             StatRTCIrq;
+    /** Number of times the timer callback handler ran. */
+    STAMCOUNTER             StatRTCTimerCB;
 } RTCSTATE;
 /** Pointer to the RTC device state. */
 typedef RTCSTATE *PRTCSTATE;
@@ -249,16 +255,22 @@ static void rtc_timer_update(PRTCSTATE pThis, int64_t current_time)
 static void rtc_raise_irq(PRTCSTATE pThis, uint32_t iLevel)
 {
     if (!pThis->fDisabledByHpet)
+    {
         PDMDevHlpISASetIrq(pThis->CTX_SUFF(pDevIns), pThis->irq, iLevel);
+        if (iLevel)
+            STAM_COUNTER_INC(&pThis->StatRTCIrq);
+    }
 }
 
 
+#ifdef IN_RING3
 DECLINLINE(int) to_bcd(PRTCSTATE pThis, int a)
 {
     if (pThis->cmos_data[RTC_REG_B] & 0x04)
         return a;
     return ((a / 10) << 4) | (a % 10);
 }
+#endif
 
 
 DECLINLINE(int) from_bcd(PRTCSTATE pThis, int a)
@@ -276,9 +288,12 @@ static void rtc_set_time(PRTCSTATE pThis)
     tm->tm_sec  = from_bcd(pThis, pThis->cmos_data[RTC_SECONDS]);
     tm->tm_min  = from_bcd(pThis, pThis->cmos_data[RTC_MINUTES]);
     tm->tm_hour = from_bcd(pThis, pThis->cmos_data[RTC_HOURS] & 0x7f);
-    if (   !(pThis->cmos_data[RTC_REG_B] & 0x02)
-        && (pThis->cmos_data[RTC_HOURS] & 0x80))
-        tm->tm_hour += 12;
+    if (!(pThis->cmos_data[RTC_REG_B] & 0x02))
+    {
+        tm->tm_hour %= 12;
+        if (pThis->cmos_data[RTC_HOURS] & 0x80)
+            tm->tm_hour += 12;
+    }
     tm->tm_wday = from_bcd(pThis, pThis->cmos_data[RTC_DAY_OF_WEEK]);
     tm->tm_mday = from_bcd(pThis, pThis->cmos_data[RTC_DAY_OF_MONTH]);
     tm->tm_mon  = from_bcd(pThis, pThis->cmos_data[RTC_MONTH]) - 1;
@@ -292,18 +307,18 @@ static void rtc_set_time(PRTCSTATE pThis)
 /**
  * @callback_method_impl{FNIOMIOPORTIN}
  */
-PDMBOTHCBDECL(int) rtcIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t *pu32, unsigned cb)
+PDMBOTHCBDECL(int) rtcIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t *pu32, unsigned cb)
 {
     NOREF(pvUser);
     if (cb != 1)
         return VERR_IOM_IOPORT_UNUSED;
 
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
-    if ((Port & 1) == 0)
+    if ((uPort & 1) == 0)
         *pu32 = 0xff;
     else
     {
-        unsigned bank = (Port >> 1) & 1;
+        unsigned bank = (uPort >> 1) & 1;
         switch (pThis->cmos_index[bank])
         {
             case RTC_SECONDS:
@@ -350,15 +365,15 @@ PDMBOTHCBDECL(int) rtcIOPortRead(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port
 /**
  * @callback_method_impl{FNIOMIOPORTOUT}
  */
-PDMBOTHCBDECL(int) rtcIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb)
+PDMBOTHCBDECL(int) rtcIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT uPort, uint32_t u32, unsigned cb)
 {
     NOREF(pvUser);
     if (cb != 1)
         return VINF_SUCCESS;
 
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
-    uint32_t bank = (Port >> 1) & 1;
-    if ((Port & 1) == 0)
+    uint32_t bank = (uPort >> 1) & 1;
+    if ((uPort & 1) == 0)
     {
         pThis->cmos_index[bank] = (u32 & 0x7f) + (bank * CMOS_BANK_SIZE);
 
@@ -464,6 +479,7 @@ PDMBOTHCBDECL(int) rtcIOPortWrite(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Por
  */
 static DECLCALLBACK(void) rtcCmosBankInfo(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, const char *pszArgs)
 {
+    RT_NOREF1(pszArgs);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
 
     pHlp->pfnPrintf(pHlp,
@@ -488,6 +504,7 @@ static DECLCALLBACK(void) rtcCmosBankInfo(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp
  */
 static DECLCALLBACK(void) rtcCmosBank2Info(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, const char *pszArgs)
 {
+    RT_NOREF1(pszArgs);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
 
     pHlp->pfnPrintf(pHlp, "Second CMOS bank, offsets 0x80 - 0xFF\n");
@@ -510,6 +527,7 @@ static DECLCALLBACK(void) rtcCmosBank2Info(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHl
  */
 static DECLCALLBACK(void) rtcCmosClockInfo(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, const char *pszArgs)
 {
+    RT_NOREF1(pszArgs);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
     uint8_t u8Sec   = from_bcd(pThis, pThis->cmos_data[RTC_SECONDS]);
     uint8_t u8Min   = from_bcd(pThis, pThis->cmos_data[RTC_MINUTES]);
@@ -537,11 +555,13 @@ static DECLCALLBACK(void) rtcCmosClockInfo(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHl
  */
 static DECLCALLBACK(void) rtcTimerPeriodic(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
 {
+    RT_NOREF2(pTimer, pvUser);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
     Assert(TMTimerIsLockOwner(pThis->CTX_SUFF(pPeriodicTimer)));
     Assert(PDMCritSectIsOwner(pThis->CTX_SUFF(pDevIns)->CTX_SUFF(pCritSectRo)));
 
     rtc_timer_update(pThis, pThis->next_periodic_time);
+    STAM_COUNTER_INC(&pThis->StatRTCTimerCB);
     pThis->cmos_data[RTC_REG_C] |= 0xc0;
 
     rtc_raise_irq(pThis, 1);
@@ -617,6 +637,7 @@ static void rtc_next_second(struct my_tm *tm)
  */
 static DECLCALLBACK(void) rtcTimerSecond(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
 {
+    RT_NOREF2(pTimer, pvUser);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
     Assert(TMTimerIsLockOwner(pThis->CTX_SUFF(pPeriodicTimer)));
     Assert(PDMCritSectIsOwner(pThis->CTX_SUFF(pDevIns)->CTX_SUFF(pCritSectRo)));
@@ -660,7 +681,8 @@ static void rtc_copy_date(PRTCSTATE pThis)
     else
     {
         /* 12 hour format */
-        pThis->cmos_data[RTC_HOURS] = to_bcd(pThis, tm->tm_hour % 12);
+        int h = tm->tm_hour % 12;
+        pThis->cmos_data[RTC_HOURS] = to_bcd(pThis, h ? h : 12);
         if (tm->tm_hour >= 12)
             pThis->cmos_data[RTC_HOURS] |= 0x80;
     }
@@ -676,6 +698,7 @@ static void rtc_copy_date(PRTCSTATE pThis)
  */
 static DECLCALLBACK(void) rtcTimerSecond2(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
 {
+    RT_NOREF2(pTimer, pvUser);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
     Assert(TMTimerIsLockOwner(pThis->CTX_SUFF(pPeriodicTimer)));
     Assert(PDMCritSectIsOwner(pThis->CTX_SUFF(pDevIns)->CTX_SUFF(pCritSectRo)));
@@ -723,6 +746,7 @@ static DECLCALLBACK(void) rtcTimerSecond2(PPDMDEVINS pDevIns, PTMTIMER pTimer, v
  */
 static DECLCALLBACK(int) rtcLiveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t uPass)
 {
+    RT_NOREF1(uPass);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
 
     SSMR3PutU8(    pSSM, pThis->irq);
@@ -1022,6 +1046,7 @@ static DECLCALLBACK(int)  rtcInitComplete(PPDMDEVINS pDevIns)
  */
 static DECLCALLBACK(void) rtcRelocate(PPDMDEVINS pDevIns, RTGCINTPTR offDelta)
 {
+    RT_NOREF1(offDelta);
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
 
     pThis->pDevInsRC        = PDMDEVINS_2_RCPTR(pDevIns);
@@ -1038,25 +1063,9 @@ static DECLCALLBACK(void) rtcReset(PPDMDEVINS pDevIns)
 {
     PRTCSTATE pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
 
-    /* If shutdown status is non-zero, log its value. */
-    if (pThis->cmos_data[0xF])
-    {
-        LogRel(("CMOS shutdown status byte is %02X\n", pThis->cmos_data[0xF]));
-
-#if 0   /* It would be nice to log the warm reboot vector but alas, we already trashed it. */
-        uint32_t u32WarmVector;
-        int rc;
-        rc = PDMDevHlpPhysRead(pDevIns, 0x467, &u32WarmVector, sizeof(u32WarmVector));
-        AssertRC(rc);
-        LogRel((", 40:67 contains %04X:%04X\n", u32WarmVector >> 16, u32WarmVector & 0xFFFF));
-#endif
-        /* If we're going to trash the VM's memory, we also have to clear this. */
-        pThis->cmos_data[0xF] = 0;
-    }
-
     /* Reset index values (important for second bank). */
-    pThis->cmos_index[0]        = 0;
-    pThis->cmos_index[1]        = CMOS_BANK_SIZE;   /* Point to start of second bank. */
+    pThis->cmos_index[0] = 0;
+    pThis->cmos_index[1] = CMOS_BANK_SIZE;   /* Point to start of second bank. */
 }
 
 
@@ -1065,9 +1074,10 @@ static DECLCALLBACK(void) rtcReset(PPDMDEVINS pDevIns)
  */
 static DECLCALLBACK(int)  rtcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
     PRTCSTATE   pThis = PDMINS_2_DATA(pDevIns, PRTCSTATE);
     int         rc;
-    Assert(iInstance == 0);
+    Assert(iInstance == 0); RT_NOREF(iInstance);
 
     /*
      * Validate configuration.
@@ -1076,7 +1086,7 @@ static DECLCALLBACK(int)  rtcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
                               "Irq\0"
                               "Base\0"
                               "UseUTC\0"
-                              "GCEnabled\0"
+                              "RCEnabled\0"
                               "R0Enabled\0"))
         return VERR_PDM_DEVINS_UNKNOWN_CFG_VALUES;
 
@@ -1100,8 +1110,8 @@ static DECLCALLBACK(int)  rtcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
         return PDMDEV_SET_ERROR(pDevIns, rc,
                                 N_("Configuration error: Querying \"UseUTC\" as a bool failed"));
 
-    bool fGCEnabled;
-    rc = CFGMR3QueryBoolDef(pCfg, "GCEnabled", &fGCEnabled, true);
+    bool fRCEnabled;
+    rc = CFGMR3QueryBoolDef(pCfg, "RCEnabled", &fRCEnabled, true);
     if (RT_FAILURE(rc))
         return PDMDEV_SET_ERROR(pDevIns, rc,
                                 N_("Configuration error: failed to read GCEnabled as boolean"));
@@ -1112,8 +1122,8 @@ static DECLCALLBACK(int)  rtcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
         return PDMDEV_SET_ERROR(pDevIns, rc,
                                 N_("Configuration error: failed to read R0Enabled as boolean"));
 
-    Log(("RTC: Irq=%#x Base=%#x fGCEnabled=%RTbool fR0Enabled=%RTbool\n",
-         u8Irq, pThis->IOPortBase, fGCEnabled, fR0Enabled));
+    Log(("RTC: Irq=%#x Base=%#x fRCEnabled=%RTbool fR0Enabled=%RTbool\n",
+         u8Irq, pThis->IOPortBase, fRCEnabled, fR0Enabled));
 
 
     pThis->pDevInsR3            = pDevIns;
@@ -1183,7 +1193,7 @@ static DECLCALLBACK(int)  rtcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
                                  rtcIOPortWrite, rtcIOPortRead, NULL, NULL, "MC146818 RTC/CMOS");
     if (RT_FAILURE(rc))
         return rc;
-    if (fGCEnabled)
+    if (fRCEnabled)
     {
         rc = PDMDevHlpIOPortRegisterRC(pDevIns, pThis->IOPortBase, 4, NIL_RTRCPTR,
                                        "rtcIOPortWrite", "rtcIOPortRead", NULL, NULL, "MC146818 RTC/CMOS");
@@ -1218,6 +1228,13 @@ static DECLCALLBACK(int)  rtcConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMN
     PDMDevHlpDBGFInfoRegister(pDevIns, "cmos1", "Display CMOS Bank 1 Info (0x0e-0x7f). No arguments. See also rtc.", rtcCmosBankInfo);
     PDMDevHlpDBGFInfoRegister(pDevIns, "cmos2", "Display CMOS Bank 2 Info (0x0e-0x7f). No arguments.", rtcCmosBank2Info);
     PDMDevHlpDBGFInfoRegister(pDevIns, "rtc",   "Display CMOS RTC (0x00-0x0d). No arguments. See also cmos1 & cmos2", rtcCmosClockInfo);
+
+    /*
+     * Register statistics.
+     */
+    PDMDevHlpSTAMRegister(pDevIns, &pThis->StatRTCIrq,      STAMTYPE_COUNTER, "/TM/RTC/Irq",      STAMUNIT_OCCURENCES,  "The number of times a RTC interrupt was triggered.");
+    PDMDevHlpSTAMRegister(pDevIns, &pThis->StatRTCTimerCB,  STAMTYPE_COUNTER, "/TM/RTC/TimerCB",  STAMUNIT_OCCURENCES,  "The number of times the RTC timer callback ran.");
+
     return VINF_SUCCESS;
 }
 
@@ -1232,7 +1249,7 @@ const PDMDEVREG g_DeviceMC146818 =
     /* szName */
     "mc146818",
     /* szRCMod */
-    "VBoxDDGC.gc",
+    "VBoxDDRC.rc",
     /* szR0Mod */
     "VBoxDDR0.r0",
     /* pszDescription */

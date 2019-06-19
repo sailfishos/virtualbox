@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -39,6 +39,9 @@
 #define VBOXOSHINT_ACCEL3D              RT_BIT(10)
 #define VBOXOSHINT_FLOPPY               RT_BIT(11)
 #define VBOXOSHINT_NOUSB                RT_BIT(12)
+#define VBOXOSHINT_TFRESET              RT_BIT(13)
+#define VBOXOSHINT_USB3                 RT_BIT(14)
+#define VBOXOSHINT_X2APIC               RT_BIT(15)
 
 /** The VBoxVRDP kludge extension pack name.
  *
@@ -75,15 +78,22 @@ public:
         const StorageBus_T             hdStorageBusType;
         const ChipsetType_T            chipsetType;
         const AudioControllerType_T    audioControllerType;
+        const AudioCodecType_T         audioCodecType;
     };
 
     static const OSType sOSTypes[];
-    static uint32_t cOSTypes;
+    static size_t cOSTypes;
 
     /**
      * Maps VBOXOSTYPE to the OS type which is used in VM configs.
      */
     static const char *OSTypeId(VBOXOSTYPE aOSType);
+
+    /**
+     * Maps an OS type ID string to index into sOSTypes.
+     * @returns index on success, UINT32_MAX if not found.
+     */
+    static uint32_t getOSTypeIndexFromId(const char *pszId);
 
     /**
      * Get the network adapter limit for each chipset type.
@@ -94,35 +104,12 @@ public:
      * Returns @c true if the given machine state is an online state. This is a
      * recommended way to detect if the VM is online (being executed in a
      * dedicated process) or not. Note that some online states are also
-     * transitional states (see #IsTransitional()).
-     *
-     * @remarks Saving may actually be an offline state according to the
-     *          documentation (offline snapshot).
+     * transitional states (see #IsTransient()).
      */
     static bool IsOnline(MachineState_T aState)
     {
-#if 0
         return aState >= MachineState_FirstOnline &&
                aState <= MachineState_LastOnline;
-#else
-        switch (aState)
-        {
-            case MachineState_Running:
-            case MachineState_Paused:
-            case MachineState_Teleporting:
-            case MachineState_LiveSnapshotting:
-            case MachineState_Stuck:
-            case MachineState_Starting:
-            case MachineState_Stopping:
-            case MachineState_Saving:
-            case MachineState_Restoring:
-            case MachineState_TeleportingPausedVM:
-            case MachineState_TeleportingIn:
-                return true;
-            default:
-                return false;
-        }
-#endif
     }
 
     /**
@@ -134,33 +121,13 @@ public:
      */
     static bool IsTransient(MachineState_T aState)
     {
-#if 0
         return aState >= MachineState_FirstTransient &&
                aState <= MachineState_LastTransient;
-#else
-        switch (aState)
-        {
-            case MachineState_Teleporting:
-            case MachineState_LiveSnapshotting:
-            case MachineState_Starting:
-            case MachineState_Stopping:
-            case MachineState_Saving:
-            case MachineState_Restoring:
-            case MachineState_TeleportingPausedVM:
-            case MachineState_TeleportingIn:
-            case MachineState_RestoringSnapshot:
-            case MachineState_DeletingSnapshot:
-            case MachineState_SettingUp:
-                return true;
-            default:
-                return false;
-        }
-#endif
     }
 
     /**
      * Shortcut to <tt>IsOnline(aState) || IsTransient(aState)</tt>. When it returns
-     * @false, the VM is turned off (no VM process) and not busy with
+     * @c false, the VM is turned off (no VM process) and not busy with
      * another exclusive operation.
      */
     static bool IsOnlineOrTransient(MachineState_T aState)

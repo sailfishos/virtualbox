@@ -1,9 +1,10 @@
+/* $Id: UIMediumEnumerator.h $ */
 /** @file
  * VBox Qt GUI - UIMediumEnumerator class declaration.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,9 +20,11 @@
 
 /* Qt includes: */
 #include <QObject>
+#include <QSet>
 
 /* GUI includes: */
 #include "UIMedium.h"
+#include "QIWithRetranslateUI.h"
 
 /* Forward declarations: */
 class UIThreadPool;
@@ -32,7 +35,7 @@ typedef QMap<QString, CMedium> CMediumMap;
 
 /* Medium-enumerator prototype.
  * Manages access to medium information using thread-pool interface. */
-class UIMediumEnumerator : public QObject
+class UIMediumEnumerator : public QIWithRetranslateUI3<QObject>
 {
     Q_OBJECT;
 
@@ -49,9 +52,8 @@ signals:
 
 public:
 
-    /* Constructor/destructor: */
-    UIMediumEnumerator(ulong uWorkerCount = 3, ulong uWorkerTimeout = 5000);
-    ~UIMediumEnumerator();
+    /** Constructs medium-enumerator object. */
+    UIMediumEnumerator();
 
     /* API: Medium-access stuff: */
     QList<QString> mediumIDs() const;
@@ -77,6 +79,9 @@ private slots:
 
 private:
 
+    /** Handles translation event. */
+    virtual void retranslateUi() /* override */;
+
     /* Helpers: Medium-enumeration stuff: */
     void createMediumEnumerationTask(const UIMedium &medium);
     void addNullMediumToMap(UIMediumMap &mediums);
@@ -92,9 +97,8 @@ private:
     void recacheFromActualUsage(const CMediumMap &currentCMediums, const QStringList &currentCMediumIDs);
 
     /* Variables: */
-    UIThreadPool *m_pThreadPool;
     bool m_fMediumEnumerationInProgress;
-    QList<UITask*> m_tasks;
+    QSet<UITask*> m_tasks;
     UIMediumMap m_mediums;
 };
 

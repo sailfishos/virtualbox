@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -94,28 +94,15 @@ ip_input(PNATState pData, struct mbuf *m)
     register struct ip *ip;
     int hlen = 0;
     int mlen = 0;
+    int iplen = 0;
 
     STAM_PROFILE_START(&pData->StatIP_input, a);
 
-    LogFlowFunc(("ENTER: m = %lx\n", (long)m));
+    LogFlowFunc(("ENTER: m = %p\n", m));
     ip = mtod(m, struct ip *);
     Log2(("ip_dst=%RTnaipv4(len:%d) m_len = %d\n", ip->ip_dst, RT_N2H_U16(ip->ip_len), m->m_len));
 
     ipstat.ips_total++;
-    {
-        int rc;
-        if (!(m->m_flags & M_SKIP_FIREWALL))
-        {
-            STAM_PROFILE_START(&pData->StatALIAS_input, b);
-            rc = LibAliasIn(pData->proxy_alias, mtod(m, char *), m_length(m, NULL));
-            STAM_PROFILE_STOP(&pData->StatALIAS_input, b);
-            Log2(("NAT: LibAlias return %d\n", rc));
-        }
-        else
-            m->m_flags &= ~M_SKIP_FIREWALL;
-        if (m->m_len != RT_N2H_U16(ip->ip_len))
-            m->m_len = RT_N2H_U16(ip->ip_len);
-    }
 
     mlen = m->m_len;
 
@@ -134,7 +121,7 @@ ip_input(PNATState pData, struct mbuf *m)
 
     hlen = ip->ip_hl << 2;
     if (   hlen < sizeof(struct ip)
-        || hlen > m->m_len)
+        || hlen > mlen)
     {
         /* min header length */
         ipstat.ips_badhlen++;                     /* or packet too short */
@@ -151,18 +138,12 @@ ip_input(PNATState pData, struct mbuf *m)
         goto bad_free_m;
     }
 
-    /*
-     * Convert fields to host representation.
-     */
-    NTOHS(ip->ip_len);
-    if (ip->ip_len < hlen)
+    iplen = RT_N2H_U16(ip->ip_len);
+    if (iplen < hlen)
     {
         ipstat.ips_badlen++;
         goto bad_free_m;
     }
-
-    NTOHS(ip->ip_id);
-    NTOHS(ip->ip_off);
 
     /*
      * Check that the amount of data in the buffers
@@ -170,29 +151,22 @@ ip_input(PNATState pData, struct mbuf *m)
      * Trim mbufs if longer than we expect.
      * Drop packet if shorter than we expect.
      */
-    if (mlen < ip->ip_len)
+    if (mlen < iplen)
     {
         ipstat.ips_tooshort++;
         goto bad_free_m;
     }
 
     /* Should drop packet if mbuf too long? hmmm... */
-    if (mlen > ip->ip_len)
-        m_adj(m, ip->ip_len - m->m_len);
+    if (mlen > iplen)
+    {
+        m_adj(m, iplen - mlen);
+        mlen = m->m_len;
+    }
 
     /* source must be unicast */
     if ((ip->ip_src.s_addr & RT_N2H_U32_C(0xe0000000)) == RT_N2H_U32_C(0xe0000000))
         goto free_m;
-
-    /* check ip_ttl for a correct ICMP reply */
-    if (ip->ip_ttl==0 || ip->ip_ttl == 1)
-    {
-        /* XXX: if we're in destination so perhaps we need to send ICMP_TIMXCEED_REASS */
-        icmp_error(pData, m, ICMP_TIMXCEED, ICMP_TIMXCEED_INTRANS, 0, "ttl");
-        goto no_free_m;
-    }
-
-    ip->ip_ttl--;
 
     /*
      * Drop multicast (class d) and reserved (class e) here.  The rest
@@ -204,6 +178,70 @@ ip_input(PNATState pData, struct mbuf *m)
     {
         goto free_m;
     }
+
+
+    /* do we need to "forward" this packet? */
+    if (!CTL_CHECK_MINE(ip->ip_dst.s_addr))
+    {
+        if (ip->ip_ttl <= 1)
+        {
+            /* icmp_error expects these in host order */
+            NTOHS(ip->ip_len);
+            NTOHS(ip->ip_id);
+            NTOHS(ip->ip_off);
+
+            icmp_error(pData, m, ICMP_TIMXCEED, ICMP_TIMXCEED_INTRANS, 0, "ttl");
+            goto no_free_m;
+        }
+
+        /* ignore packets to other nodes from our private network */
+        if (   CTL_CHECK_NETWORK(ip->ip_dst.s_addr)
+            && !CTL_CHECK_BROADCAST(ip->ip_dst.s_addr))
+        {
+            /* XXX: send ICMP_REDIRECT_HOST to be pedantic? */
+            goto free_m;
+        }
+
+        ip->ip_ttl--;
+        if (ip->ip_sum > RT_H2N_U16_C(0xffffU - (1 << 8)))
+            ip->ip_sum += RT_H2N_U16_C(1 << 8) + 1;
+        else
+            ip->ip_sum += RT_H2N_U16_C(1 << 8);
+    }
+
+    /* run it through libalias */
+    {
+        int rc;
+        if (!(m->m_flags & M_SKIP_FIREWALL))
+        {
+            STAM_PROFILE_START(&pData->StatALIAS_input, b);
+            rc = LibAliasIn(pData->proxy_alias, mtod(m, char *), mlen);
+            STAM_PROFILE_STOP(&pData->StatALIAS_input, b);
+            Log2(("NAT: LibAlias return %d\n", rc));
+        }
+        else
+            m->m_flags &= ~M_SKIP_FIREWALL;
+
+#if 0 /* disabled: no module we use does it in this direction */
+        /*
+         * XXX: spooky action at a distance - libalias may modify the
+         * packet and will update ip_len to reflect the new length.
+         */
+        if (iplen != RT_N2H_U16(ip->ip_len))
+        {
+            iplen = RT_N2H_U16(ip->ip_len);
+            m->m_len = iplen;
+            mlen = m->m_len;
+        }
+#endif
+    }
+
+    /*
+     * Convert fields to host representation.
+     */
+    NTOHS(ip->ip_len);
+    NTOHS(ip->ip_id);
+    NTOHS(ip->ip_off);
 
     /*
      * If offset or IP_MF are set, must reassemble.
@@ -637,7 +675,7 @@ ip_stripoptions(struct mbuf *m, struct mbuf *mopt)
     struct ip *ip = mtod(m, struct ip *);
     register caddr_t opts;
     int olen;
-    NOREF(mopt); /* @todo: do we really will need this options buffer? */
+    NOREF(mopt); /** @todo do we really will need this options buffer? */
 
     olen = (ip->ip_hl<<2) - sizeof(struct ip);
     opts = (caddr_t)(ip + 1);

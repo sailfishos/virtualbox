@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2015 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,7 +36,7 @@
  * @{
  */
 
-/** Tests if a valid CPU ID is present in the set.. */
+/** Tests if a valid CPU ID is present in the set. */
 #define VMCPUSET_IS_PRESENT(pSet, idCpu)    ASMBitTest( &(pSet)->au32Bitmap[0], (idCpu))
 /** Adds a CPU to the set. */
 #define VMCPUSET_ADD(pSet, idCpu)           ASMBitSet(  &(pSet)->au32Bitmap[0], (idCpu))
@@ -105,7 +105,7 @@ DECLINLINE(int32_t) VMCpuSetFindLastPresentInternal(PCVMCPUSET pSet)
     return NIL_VMCPUID;
 }
 
-/** @ */
+/** @} */
 
 #endif
 

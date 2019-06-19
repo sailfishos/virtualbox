@@ -1,11 +1,10 @@
+/* $Id: UINetworkRequestWidget.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkRequestWidget stuff declaration
+ * VBox Qt GUI - UINetworkRequestWidget stuff declaration.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -71,6 +70,9 @@ private:
 
     /* Translation stuff: */
     void retranslateUi();
+
+    /** Composes error text on the basis of the passed @a strErrorText. */
+    static const QString composeErrorText(QString strErrorText);
 
     /* Widgets: */
     QWidget *m_pContentWidget;

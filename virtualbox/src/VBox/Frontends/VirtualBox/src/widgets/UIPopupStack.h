@@ -1,11 +1,10 @@
+/* $Id: UIPopupStack.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIPopupStack class declaration
+ * VBox Qt GUI - UIPopupStack class declaration.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -39,7 +38,7 @@ class UIPopupStack : public QWidget
 signals:
 
     /* Notifier: Layout stuff: */
-    void sigProposeStackViewportWidth(int iWidth);
+    void sigProposeStackViewportSize(QSize newSize);
 
     /* Notifier: Popup-pane stuff: */
     void sigPopupPaneDone(QString strPopupPaneID, int iResultCode);
@@ -88,7 +87,7 @@ private:
     void showEvent(QShowEvent *pEvent);
 
     /* Helper: Layout stuff: */
-    void propagateWidth();
+    void propagateSize();
 
     /* Static helpers: Prepare stuff: */
     static int parentMenuBarHeight(QWidget *pParent);

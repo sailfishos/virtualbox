@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/initterm.h>
 #include <iprt/process.h>
 #include <iprt/thread.h>
@@ -49,6 +49,7 @@ typedef struct SpawnerArgs
 
 DECLCALLBACK(int) SpawnerThread(RTTHREAD Thread, void *pvUser)
 {
+    RT_NOREF1(Thread);
     PSPAWNERARGS pArgs = (PSPAWNERARGS)pvUser;
     pArgs->Process = NIL_RTPROCESS;
     const char *apszArgs[3] = { pArgs->pszExe, "child", NULL };

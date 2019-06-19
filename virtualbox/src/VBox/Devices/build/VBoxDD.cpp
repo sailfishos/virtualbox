@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV
 #include <VBox/vmm/pdm.h>
 #include <VBox/version.h>
@@ -31,9 +31,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 const void *g_apvVBoxDDDependencies[] =
 {
     NULL,
@@ -65,6 +65,9 @@ extern "C" DECLEXPORT(int) VBoxDevicesRegister(PPDMDEVREGCB pCallbacks, uint32_t
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DevicePcBios);
     if (RT_FAILURE(rc))
         return rc;
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceIOAPIC);
+    if (RT_FAILURE(rc))
+        return rc;
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DevicePS2KeyboardMouse);
     if (RT_FAILURE(rc))
         return rc;
@@ -81,6 +84,9 @@ extern "C" DECLEXPORT(int) VBoxDevicesRegister(PPDMDEVREGCB pCallbacks, uint32_t
     if (RT_FAILURE(rc))
         return rc;
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceSmc);
+    if (RT_FAILURE(rc))
+        return rc;
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceFlash);
     if (RT_FAILURE(rc))
         return rc;
 #ifdef VBOX_WITH_EFI
@@ -121,10 +127,7 @@ extern "C" DECLEXPORT(int) VBoxDevicesRegister(PPDMDEVREGCB pCallbacks, uint32_t
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceSB16);
     if (RT_FAILURE(rc))
         return rc;
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceICH6_HDA);
-    if (RT_FAILURE(rc))
-        return rc;
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceAudioSniffer);
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceHDA);
     if (RT_FAILURE(rc))
         return rc;
 #ifdef VBOX_WITH_VUSB
@@ -134,6 +137,11 @@ extern "C" DECLEXPORT(int) VBoxDevicesRegister(PPDMDEVREGCB pCallbacks, uint32_t
 #endif
 #ifdef VBOX_WITH_EHCI_IMPL
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceEHCI);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
+#ifdef VBOX_WITH_XHCI_IMPL
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceXHCI);
     if (RT_FAILURE(rc))
         return rc;
 #endif
@@ -178,11 +186,19 @@ extern "C" DECLEXPORT(int) VBoxDevicesRegister(PPDMDEVREGCB pCallbacks, uint32_t
     if (RT_FAILURE(rc))
         return rc;
 #endif
+#ifdef VBOX_WITH_NVME_IMPL
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceNVMe);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
 #ifdef VBOX_WITH_PCI_PASSTHROUGH_IMPL
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DevicePciRaw);
     if (RT_FAILURE(rc))
         return rc;
 #endif
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceGIMDev);
+    if (RT_FAILURE(rc))
+        return rc;
 #ifdef VBOX_WITH_VIRTUALKD
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DeviceVirtualKD);
     if (RT_FAILURE(rc))
@@ -211,9 +227,6 @@ extern "C" DECLEXPORT(int) VBoxDriversRegister(PCPDMDRVREGCB pCallbacks, uint32_
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvKeyboardQueue);
     if (RT_FAILURE(rc))
         return rc;
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvBlock);
-    if (RT_FAILURE(rc))
-        return rc;
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvVD);
     if (RT_FAILURE(rc))
         return rc;
@@ -227,12 +240,6 @@ extern "C" DECLEXPORT(int) VBoxDriversRegister(PCPDMDRVREGCB pCallbacks, uint32_
     if (RT_FAILURE(rc))
         return rc;
 #endif
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvMediaISO);
-    if (RT_FAILURE(rc))
-        return rc;
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvRawImage);
-    if (RT_FAILURE(rc))
-        return rc;
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvNAT);
     if (RT_FAILURE(rc))
         return rc;
@@ -268,6 +275,44 @@ extern "C" DECLEXPORT(int) VBoxDriversRegister(PCPDMDRVREGCB pCallbacks, uint32_
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvAUDIO);
     if (RT_FAILURE(rc))
         return rc;
+#ifdef VBOX_WITH_AUDIO_DEBUG
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostDebugAudio);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
+#ifdef VBOX_WITH_AUDIO_VALIDATIONKIT
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostValidationKitAudio);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostNullAudio);
+    if (RT_FAILURE(rc))
+        return rc;
+#if defined(RT_OS_WINDOWS)
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostDSound);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
+#if defined(RT_OS_DARWIN)
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostCoreAudio);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
+#ifdef VBOX_WITH_AUDIO_ALSA
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostALSAAudio);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
+#ifdef VBOX_WITH_AUDIO_OSS
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostOSSAudio);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
+#ifdef VBOX_WITH_AUDIO_PULSE
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvHostPulseAudio);
+    if (RT_FAILURE(rc))
+        return rc;
+#endif
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvACPI);
     if (RT_FAILURE(rc))
         return rc;
@@ -285,6 +330,12 @@ extern "C" DECLEXPORT(int) VBoxDriversRegister(PCPDMDRVREGCB pCallbacks, uint32_
         return rc;
 #endif
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvNamedPipe);
+    if (RT_FAILURE(rc))
+        return rc;
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvTCP);
+    if (RT_FAILURE(rc))
+        return rc;
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvUDP);
     if (RT_FAILURE(rc))
         return rc;
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvRawFile);
@@ -307,14 +358,13 @@ extern "C" DECLEXPORT(int) VBoxDriversRegister(PCPDMDRVREGCB pCallbacks, uint32_
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvSCSI);
     if (RT_FAILURE(rc))
         return rc;
-# if defined(RT_OS_LINUX)
-    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvSCSIHost);
-    if (RT_FAILURE(rc))
-        return rc;
-# endif
 #endif
 #ifdef VBOX_WITH_DRV_DISK_INTEGRITY
     rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvDiskIntegrity);
+    if (RT_FAILURE(rc))
+        return rc;
+
+    rc = pCallbacks->pfnRegister(pCallbacks, &g_DrvRamDisk);
     if (RT_FAILURE(rc))
         return rc;
 #endif
@@ -338,6 +388,7 @@ extern "C" DECLEXPORT(int) VBoxDriversRegister(PCPDMDRVREGCB pCallbacks, uint32_
 extern "C" DECLEXPORT(int) VBoxUsbRegister(PCPDMUSBREGCB pCallbacks, uint32_t u32Version)
 {
     int rc = VINF_SUCCESS;
+    RT_NOREF1(u32Version);
 
 #ifdef VBOX_WITH_USB
     rc = pCallbacks->pfnRegister(pCallbacks, &g_UsbDevProxy);

@@ -1,12 +1,10 @@
+/* $Id: vbsf.h $ */
 /** @file
- *
- * VirtualBox Windows Guest Shared Folders
- *
- * File System Driver header file
+ * VirtualBox Windows Guest Shared Folders - File System Driver header file
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,10 +27,12 @@
 /*
  * System and RX headers.
  */
-#include <ntifs.h>
-#include <windef.h>
-
-#include "rx.h"
+#include <iprt/nt/nt.h> /* includes ntifs.h + wdm.h */
+#include <iprt/win/windef.h>
+#ifndef INVALID_HANDLE_VALUE
+# define INVALID_HANDLE_VALUE RTNT_INVALID_HANDLE_VALUE /* (The rx.h definition causes warnings for amd64)  */
+#endif
+#include <iprt/nt/rx.h>
 
 /*
  * VBox shared folders.
@@ -64,7 +64,7 @@ typedef struct _MRX_VBOX_DEVICE_EXTENSION
     FAST_MUTEX mtxLocalCon;
 
     /* The HGCM client information. */
-    VBSFCLIENT hgcmClient;
+    VBGLSFCLIENT hgcmClient;
 
     /* Saved pointer to the original IRP_MJ_DEVICE_CONTROL handler. */
     NTSTATUS (* pfnRDBSSDeviceControl) (PDEVICE_OBJECT pDevObj, PIRP pIrp);
@@ -77,10 +77,10 @@ typedef struct _MRX_VBOX_DEVICE_EXTENSION
 typedef struct _MRX_VBOX_NETROOT_EXTENSION
 {
     /* The pointert to HGCM client information in device extension. */
-    VBSFCLIENT *phgcmClient;
+    VBGLSFCLIENT *phgcmClient;
 
     /* The shared folder map handle of this netroot. */
-    VBSFMAP map;
+    VBGLSFMAP map;
 } MRX_VBOX_NETROOT_EXTENSION, *PMRX_VBOX_NETROOT_EXTENSION;
 
 #define VBOX_FOBX_F_INFO_CREATION_TIME   0x01
@@ -157,9 +157,9 @@ NTSTATUS VBoxMRxFsCtl(IN OUT PRX_CONTEXT RxContext);
 NTSTATUS VBoxMRxIoCtl(IN OUT PRX_CONTEXT RxContext);
 NTSTATUS VBoxMRxNotifyChangeDirectory(IN OUT PRX_CONTEXT RxContext);
 
-NTSTATUS VBoxMRxExtendStub(IN OUT struct _RX_CONTEXT * RxContext,
-                           IN OUT PLARGE_INTEGER pNewFileSize,
-                           OUT PLARGE_INTEGER pNewAllocationSize);
+ULONG NTAPI VBoxMRxExtendStub(IN OUT struct _RX_CONTEXT * RxContext,
+                              IN OUT PLARGE_INTEGER pNewFileSize,
+                              OUT PLARGE_INTEGER pNewAllocationSize);
 NTSTATUS VBoxMRxCompleteBufferingStateChangeRequest(IN OUT PRX_CONTEXT RxContext,
                                                     IN OUT PMRX_SRV_OPEN SrvOpen,
                                                     IN PVOID pContext);

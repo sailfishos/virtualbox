@@ -8,7 +8,7 @@
 ;
 
 ;
-; Copyright (C) 2008-2011 Oracle Corporation
+; Copyright (C) 2008-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -33,5 +33,4 @@
     push    qword [rbp]
  %endif
 %endif
-
 

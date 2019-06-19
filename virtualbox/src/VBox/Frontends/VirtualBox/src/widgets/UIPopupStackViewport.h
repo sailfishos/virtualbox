@@ -1,11 +1,10 @@
+/* $Id: UIPopupStackViewport.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIPopupStackViewport class declaration
+ * VBox Qt GUI - UIPopupStackViewport class declaration.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -34,7 +33,7 @@ class UIPopupStackViewport : public QWidget
 signals:
 
     /* Notifiers: Layout stuff: */
-    void sigProposePopupPaneWidth(int iWidth);
+    void sigProposePopupPaneSize(QSize newSize);
     void sigSizeHintChanged();
 
     /* Notifiers: Popup-pane stuff: */
@@ -59,10 +58,14 @@ public:
     /* API: Layout stuff: */
     QSize minimumSizeHint() const { return m_minimumSizeHint; }
 
+public slots:
+
+    /* Handler: Layout stuff: */
+    void sltHandleProposalForSize(QSize newSize);
+
 private slots:
 
-    /* Handlers: Layout stuff: */
-    void sltHandleProposalForWidth(int iWidth);
+    /* Handler: Layout stuff: */
     void sltAdjustGeometry();
 
     /* Handler: Popup-pane stuff: */

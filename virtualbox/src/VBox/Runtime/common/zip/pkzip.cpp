@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/******************************************************************************
- *   Header Files                                                             *
- ******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/zip.h>
 #include <iprt/file.h>
 #include <iprt/fs.h>
@@ -37,9 +37,9 @@
 #include <iprt/vfslowlevel.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Memory stream private data.
  */
@@ -90,6 +90,7 @@ static DECLCALLBACK(int) memFssIos_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgB
 {
     PMEMIOSTREAM pThis = (PMEMIOSTREAM)pvThis;
     Assert(pSgBuf->cSegs == 1);
+    RT_NOREF_PV(fBlocking);
 
     if (off < 0)
         off = pThis->off;
@@ -118,6 +119,7 @@ static DECLCALLBACK(int) memFssIos_Read(void *pvThis, RTFOFF off, PCRTSGBUF pSgB
  */
 static DECLCALLBACK(int) memFssIos_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSgBuf, bool fBlocking, size_t *pcbWritten)
 {
+    RT_NOREF_PV(pvThis); RT_NOREF_PV(off); RT_NOREF_PV(pSgBuf); RT_NOREF_PV(fBlocking); RT_NOREF_PV(pcbWritten);
     return VERR_NOT_IMPLEMENTED;
 }
 
@@ -126,6 +128,7 @@ static DECLCALLBACK(int) memFssIos_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSg
  */
 static DECLCALLBACK(int) memFssIos_Flush(void *pvThis)
 {
+    RT_NOREF_PV(pvThis);
     return VERR_NOT_IMPLEMENTED;
 }
 
@@ -134,6 +137,7 @@ static DECLCALLBACK(int) memFssIos_Flush(void *pvThis)
  */
 static DECLCALLBACK(int) memFssIos_PollOne(void *pvThis, uint32_t fEvents, RTMSINTERVAL cMillies, bool fIntr, uint32_t *pfRetEvents)
 {
+    RT_NOREF_PV(pvThis); RT_NOREF_PV(fEvents); RT_NOREF_PV(cMillies); RT_NOREF_PV(fIntr); RT_NOREF_PV(pfRetEvents);
     return VERR_NOT_IMPLEMENTED;
 }
 
@@ -216,7 +220,7 @@ RTDECL(int) RTZipPkzipMemDecompress(void **ppvDst, size_t *pcbDst, const void *p
                         if (pv)
                         {
                             RTVFSIOSTREAM hVfsIosObj = RTVfsObjToIoStream(hVfsObj);
-                            if (hVfsIos)
+                            if (hVfsIos != NIL_RTVFSIOSTREAM)
                             {
                                 rc = RTVfsIoStrmRead(hVfsIosObj, pv, cb, true /*fBlocking*/, NULL);
                                 if (RT_SUCCESS(rc))
@@ -224,9 +228,11 @@ RTDECL(int) RTZipPkzipMemDecompress(void **ppvDst, size_t *pcbDst, const void *p
                                     *ppvDst = pv;
                                     *pcbDst = cb;
                                 }
-                                else
-                                    RTMemFree(pv);
                             }
+                            else
+                                rc = VERR_INTERNAL_ERROR_4;
+                            if (RT_FAILURE(rc))
+                                RTMemFree(pv);
                         }
                     }
                 }

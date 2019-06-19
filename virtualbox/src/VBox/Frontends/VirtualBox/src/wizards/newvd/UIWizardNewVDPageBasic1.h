@@ -1,11 +1,10 @@
+/* $Id: UIWizardNewVDPageBasic1.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVDPageBasic1 class declaration
+ * VBox Qt GUI - UIWizardNewVDPageBasic1 class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -41,7 +40,7 @@ protected:
     UIWizardNewVDPage1();
 
     /* Helping stuff: */
-    void addFormatButton(QWidget *pParent, QVBoxLayout *pFormatsLayout, CMediumFormat medFormat);
+    void addFormatButton(QWidget *pParent, QVBoxLayout *pFormatsLayout, CMediumFormat medFormat, bool fPreferred = false);
 
     /* Stuff for 'mediumFormat' field: */
     CMediumFormat mediumFormat() const;

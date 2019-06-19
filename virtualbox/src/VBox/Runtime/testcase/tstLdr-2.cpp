@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/ldr.h>
 #include <iprt/alloc.h>
 #include <iprt/stream.h>
@@ -70,8 +70,10 @@ bool MyDisBlock(uint8_t const *pbCodeBlock, int32_t cbMax)
  * @param   pValue          Where to store the symbol value (address).
  * @param   pvUser          User argument.
  */
-static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol, unsigned uSymbol, RTUINTPTR *pValue, void *pvUser)
+static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol, unsigned uSymbol,
+                                       RTUINTPTR *pValue, void *pvUser)
 {
+    RT_NOREF5(hLdrMod, pszModule, pszSymbol, uSymbol, pvUser);
     /* check the name format and only permit certain names */
     *pValue = 0xf0f0f0f0;
     return VINF_SUCCESS;
@@ -91,11 +93,14 @@ static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, 
  */
 static int testLdrOne(const char *pszFilename)
 {
+    RTERRINFOSTATIC ErrInfo;
     RTLDRMOD hLdrMod;
-    int rc = RTLdrOpen(pszFilename, 0, RTLDRARCH_WHATEVER, &hLdrMod);
+    int rc = RTLdrOpenEx(pszFilename, 0, RTLDRARCH_WHATEVER, &hLdrMod, RTErrInfoInitStatic(&ErrInfo));
     if (RT_FAILURE(rc))
     {
         RTPrintf("tstLdr: Failed to open '%s', rc=%Rrc. aborting test.\n", pszFilename, rc);
+        if (ErrInfo.szMsg[0])
+            RTPrintf("tstLdr: %s\n", ErrInfo.szMsg);
         Assert(hLdrMod == NIL_RTLDRMOD);
         return 1;
     }

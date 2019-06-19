@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_FTM
 #include <VBox/vmm/ftm.h>
 #include <VBox/vmm/em.h>
@@ -41,8 +41,6 @@
 #include <iprt/socket.h>
 #include <iprt/semaphore.h>
 #include <iprt/asm.h>
-
-#include "internal/pgm.h"
 
 
 /*******************************************************************************
@@ -89,9 +87,10 @@ typedef struct FTMTCPHDRMEM
     uint32_t    cb;
 } FTMTCPHDRMEM;
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static const char g_szWelcome[] = "VirtualBox-Fault-Tolerance-Sync-1.0\n";
 
 static DECLCALLBACK(int) ftmR3PageTreeDestroyCallback(PAVLGCPHYSNODECORE pBaseNode, void *pvUser);
@@ -100,7 +99,7 @@ static DECLCALLBACK(int) ftmR3PageTreeDestroyCallback(PAVLGCPHYSNODECORE pBaseNo
  * Initializes the FTM.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(int) FTMR3Init(PVM pVM)
 {
@@ -156,7 +155,7 @@ VMMR3_INT_DECL(int) FTMR3Init(PVM pVM)
  * the VM itself is at this point powered off or suspended.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3_INT_DECL(int) FTMR3Term(PVM pVM)
 {
@@ -230,7 +229,7 @@ static int ftmR3TcpWriteNACK(PVM pVM, int32_t rc2, const char *pszMsgText = NULL
  *
  * @returns VBox status code.
  *
- * @param   pState      The teleporter state structure.
+ * @param   pVM         The cross context VM structure.
  * @param   pszBuf      The output buffer.
  * @param   cchBuf      The size of the output buffer.
  *
@@ -271,7 +270,7 @@ static int ftmR3TcpReadLine(PVM pVM, char *pszBuf, size_t cchBuf)
  * Reads an ACK or NACK.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszWhich            Which ACK is this this?
  * @param   pszNAckMsg          Optional NACK message.
  */
@@ -327,7 +326,7 @@ static int ftmR3TcpReadACK(PVM pVM, const char *pszWhich, const char *pszNAckMsg
  *
  * @returns VBox status code.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pszCommand          The command.
  * @param   fWaitForAck         Whether to wait for the ACK.
  */
@@ -342,7 +341,7 @@ static int ftmR3TcpSubmitCommand(PVM pVM, const char *pszCommand, bool fWaitForA
 }
 
 /**
- * @copydoc SSMSTRMOPS::pfnWrite
+ * @interface_method_impl{SSMSTRMOPS,pfnWrite}
  */
 static DECLCALLBACK(int) ftmR3TcpOpWrite(void *pvUser, uint64_t offStream, const void *pvBuf, size_t cbToWrite)
 {
@@ -386,7 +385,7 @@ static DECLCALLBACK(int) ftmR3TcpOpWrite(void *pvUser, uint64_t offStream, const
  *
  * @returns VBox status code.
  *
- * @param   pState          The teleporter state data.
+ * @param   pVM         The cross context VM structure.
  */
 static int ftmR3TcpReadSelect(PVM pVM)
 {
@@ -411,7 +410,7 @@ static int ftmR3TcpReadSelect(PVM pVM)
 
 
 /**
- * @copydoc SSMSTRMOPS::pfnRead
+ * @interface_method_impl{SSMSTRMOPS,pfnRead}
  */
 static DECLCALLBACK(int) ftmR3TcpOpRead(void *pvUser, uint64_t offStream, void *pvBuf, size_t cbToRead, size_t *pcbRead)
 {
@@ -512,7 +511,7 @@ static DECLCALLBACK(int) ftmR3TcpOpRead(void *pvUser, uint64_t offStream, void *
 
 
 /**
- * @copydoc SSMSTRMOPS::pfnSeek
+ * @interface_method_impl{SSMSTRMOPS,pfnSeek}
  */
 static DECLCALLBACK(int) ftmR3TcpOpSeek(void *pvUser, int64_t offSeek, unsigned uMethod, uint64_t *poffActual)
 {
@@ -522,7 +521,7 @@ static DECLCALLBACK(int) ftmR3TcpOpSeek(void *pvUser, int64_t offSeek, unsigned 
 
 
 /**
- * @copydoc SSMSTRMOPS::pfnTell
+ * @interface_method_impl{SSMSTRMOPS,pfnTell}
  */
 static DECLCALLBACK(uint64_t) ftmR3TcpOpTell(void *pvUser)
 {
@@ -532,7 +531,7 @@ static DECLCALLBACK(uint64_t) ftmR3TcpOpTell(void *pvUser)
 
 
 /**
- * @copydoc SSMSTRMOPS::pfnSize
+ * @interface_method_impl{SSMSTRMOPS,pfnSize}
  */
 static DECLCALLBACK(int) ftmR3TcpOpSize(void *pvUser, uint64_t *pcb)
 {
@@ -542,7 +541,7 @@ static DECLCALLBACK(int) ftmR3TcpOpSize(void *pvUser, uint64_t *pcb)
 
 
 /**
- * @copydoc SSMSTRMOPS::pfnIsOk
+ * @interface_method_impl{SSMSTRMOPS,pfnIsOk}
  */
 static DECLCALLBACK(int) ftmR3TcpOpIsOk(void *pvUser)
 {
@@ -570,9 +569,9 @@ static DECLCALLBACK(int) ftmR3TcpOpIsOk(void *pvUser)
 
 
 /**
- * @copydoc SSMSTRMOPS::pfnClose
+ * @interface_method_impl{SSMSTRMOPS,pfnClose}
  */
-static DECLCALLBACK(int) ftmR3TcpOpClose(void *pvUser, bool fCanceled)
+static DECLCALLBACK(int) ftmR3TcpOpClose(void *pvUser, bool fCancelled)
 {
     PVM pVM = (PVM)pvUser;
 
@@ -580,7 +579,7 @@ static DECLCALLBACK(int) ftmR3TcpOpClose(void *pvUser, bool fCanceled)
     {
         FTMTCPHDR EofHdr;
         EofHdr.u32Magic = FTMTCPHDR_MAGIC;
-        EofHdr.cb       = fCanceled ? UINT32_MAX : 0;
+        EofHdr.cb       = fCancelled ? UINT32_MAX : 0;
         int rc = RTTcpWrite(pVM->ftm.s.hSocket, &EofHdr, sizeof(EofHdr));
         if (RT_FAILURE(rc))
         {
@@ -617,7 +616,7 @@ static SSMSTRMOPS const g_ftmR3TcpOps =
 /**
  * VMR3ReqCallWait callback
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  *
  */
 static DECLCALLBACK(void) ftmR3WriteProtectMemory(PVM pVM)
@@ -631,7 +630,7 @@ static DECLCALLBACK(void) ftmR3WriteProtectMemory(PVM pVM)
  * Sync the VM state
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 static int ftmR3PerformFullSync(PVM pVM)
 {
@@ -677,7 +676,7 @@ static int ftmR3PerformFullSync(PVM pVM)
 /**
  * PGMR3PhysEnumDirtyFTPages callback for syncing dirty physical pages
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   GCPhys          GC physical address
  * @param   pRange          HC virtual address of the page(s)
  * @param   cbRange         Size of the dirty range in bytes.
@@ -775,7 +774,7 @@ static DECLCALLBACK(int) ftmR3MasterThread(RTTHREAD hThread, void *pvUser)
                     rc = ftmR3TcpReadACK(pVM, "password", "Invalid password");
                     if (RT_SUCCESS(rc))
                     {
-                        /** todo: verify VM config. */
+                        /** @todo verify VM config. */
                         break;
                     }
                 }
@@ -850,7 +849,7 @@ static DECLCALLBACK(int) ftmR3MasterThread(RTTHREAD hThread, void *pvUser)
  * Syncs memory from the master VM
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  */
 static int ftmR3SyncMem(PVM pVM)
 {
@@ -924,7 +923,7 @@ static DECLCALLBACK(int) ftmR3PageTreeDestroyCallback(PAVLGCPHYSNODECORE pBaseNo
     if (pVM)    /* NULL when the VM is destroyed. */
     {
         /* Update the guest memory of the standby VM. */
-        int rc = PGMR3PhysWriteExternal(pVM, pNode->Core.Key, pNode->pPage, PAGE_SIZE, "FTMemSync");
+        int rc = PGMR3PhysWriteExternal(pVM, pNode->Core.Key, pNode->pPage, PAGE_SIZE, PGMACCESSORIGIN_FTM);
         AssertRC(rc);
     }
     RTMemFree(pNode);
@@ -962,7 +961,7 @@ static DECLCALLBACK(int) ftmR3StandbyThread(RTTHREAD hThread, void *pvUser)
                 LogRel(("FTSync: TIMEOUT (%RX64 vs %RX64 ms): activate standby VM!\n", u64TimeNow, pVM->ftm.s.standby.u64LastHeartbeat + pVM->ftm.s.uInterval * 2));
 
                 pVM->ftm.s.fActivateStandby = true;
-                /** todo: prevent split-brain. */
+                /** @todo prevent split-brain. */
                 break;
             }
         }
@@ -979,20 +978,20 @@ static DECLCALLBACK(int) ftmR3StandbyThread(RTTHREAD hThread, void *pvUser)
  *
  * @returns VINF_SUCCESS or VERR_TCP_SERVER_STOP.
  */
-static DECLCALLBACK(int) ftmR3StandbyServeConnection(RTSOCKET Sock, void *pvUser)
+static DECLCALLBACK(int) ftmR3StandbyServeConnection(RTSOCKET hSocket, void *pvUser)
 {
     PVM pVM = (PVM)pvUser;
 
-    pVM->ftm.s.hSocket = Sock;
+    pVM->ftm.s.hSocket = hSocket;
 
     /*
      * Disable Nagle.
      */
-    int rc = RTTcpSetSendCoalescing(Sock, false /*fEnable*/);
+    int rc = RTTcpSetSendCoalescing(hSocket, false /*fEnable*/);
     AssertRC(rc);
 
     /* Send the welcome message to the master node. */
-    rc = RTTcpWrite(Sock, g_szWelcome, sizeof(g_szWelcome) - 1);
+    rc = RTTcpWrite(hSocket, g_szWelcome, sizeof(g_szWelcome) - 1);
     if (RT_FAILURE(rc))
     {
         LogRel(("Teleporter: Failed to write welcome message: %Rrc\n", rc));
@@ -1009,7 +1008,7 @@ static DECLCALLBACK(int) ftmR3StandbyServeConnection(RTSOCKET Sock, void *pvUser
         while (pszPassword[off])
         {
             char ch;
-            rc = RTTcpRead(Sock, &ch, sizeof(ch), NULL);
+            rc = RTTcpRead(hSocket, &ch, sizeof(ch), NULL);
             if (    RT_FAILURE(rc)
                 ||  pszPassword[off] != ch)
             {
@@ -1238,8 +1237,8 @@ VMMR3DECL(int) FTMR3CancelStandby(PUVM pUVM)
  * it to complete this function.
  *
  * @returns VINF_SUCCESS (VBox strict status code).
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       The VMCPU for the EMT we're being called on. Unused.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure of the calling EMT. Unused.
  * @param   pvUser      Not used.
  */
 static DECLCALLBACK(VBOXSTRICTRC) ftmR3SetCheckpointRendezvous(PVM pVM, PVMCPU pVCpu, void *pvUser)
@@ -1306,7 +1305,7 @@ static DECLCALLBACK(VBOXSTRICTRC) ftmR3SetCheckpointRendezvous(PVM pVM, PVMCPU p
  *
  * @returns VBox status code.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   enmCheckpoint   Checkpoint type
  */
 VMMR3_INT_DECL(int) FTMR3SetCheckpoint(PVM pVM, FTMCHECKPOINTTYPE enmCheckpoint)

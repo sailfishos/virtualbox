@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/thread.h>
@@ -132,13 +132,22 @@ DECLHIDDEN(int) rtThreadNativeSetPriority(PRTTHREADINT pThread, RTTHREADTYPE enm
 
 DECLHIDDEN(int) rtThreadNativeAdopt(PRTTHREADINT pThread)
 {
+    RT_NOREF(pThread);
     return VERR_NOT_IMPLEMENTED;
+}
+
+
+DECLHIDDEN(void) rtThreadNativeWaitKludge(PRTTHREADINT pThread)
+{
+    RT_NOREF(pThread);
+    /** @todo fix RTThreadWait/RTR0Term race on darwin. */
+    RTThreadSleep(1);
 }
 
 
 DECLHIDDEN(void) rtThreadNativeDestroy(PRTTHREADINT pThread)
 {
-    NOREF(pThread);
+    RT_NOREF(pThread);
 }
 
 
@@ -152,6 +161,7 @@ DECLHIDDEN(void) rtThreadNativeDestroy(PRTTHREADINT pThread)
  */
 static void rtThreadNativeMain(void *pvArg, wait_result_t Ignored)
 {
+    RT_NOREF(Ignored);
     const thread_t Self = current_thread();
     PRTTHREADINT pThread = (PRTTHREADINT)pvArg;
 
@@ -165,6 +175,7 @@ static void rtThreadNativeMain(void *pvArg, wait_result_t Ignored)
 DECLHIDDEN(int) rtThreadNativeCreate(PRTTHREADINT pThreadInt, PRTNATIVETHREAD pNativeThread)
 {
     RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     thread_t NativeThread;
     kern_return_t kr = kernel_thread_start(rtThreadNativeMain, pThreadInt, &NativeThread);
@@ -172,8 +183,10 @@ DECLHIDDEN(int) rtThreadNativeCreate(PRTTHREADINT pThreadInt, PRTNATIVETHREAD pN
     {
         *pNativeThread = (RTNATIVETHREAD)NativeThread;
         thread_deallocate(NativeThread);
+        IPRT_DARWIN_RESTORE_EFL_AC();
         return VINF_SUCCESS;
     }
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return RTErrConvertFromMachKernReturn(kr);
 }
 

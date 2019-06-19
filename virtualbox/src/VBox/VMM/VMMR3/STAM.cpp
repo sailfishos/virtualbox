@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -44,9 +44,10 @@
  * @see grp_stam
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_STAM
 #include <VBox/vmm/stam.h>
 #include "STAMInternal.h"
@@ -63,16 +64,16 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The maximum name length excluding the terminator. */
 #define STAM_MAX_NAME_LEN   239
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Argument structure for stamR3PrintOne().
  */
@@ -136,9 +137,9 @@ typedef struct STAMR0SAMPLE
 } STAMR0SAMPLE;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef STAM_WITH_LOOKUP_TREE
 static void                 stamR3LookupDestroyTree(PSTAMLOOKUP pRoot);
 #endif
@@ -166,9 +167,9 @@ static FNDBGCCMD            stamR3CmdStatsReset;
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef VBOX_WITH_DEBUGGER
 /** Pattern argument. */
 static const DBGCVARDESC    g_aArgPat[] =
@@ -268,7 +269,7 @@ static const STAMR0SAMPLE g_aGMMStats[] =
  * Initializes the STAM.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pUVM        The user mode VM structure.
  */
 VMMR3DECL(int) STAMR3InitUVM(PUVM pUVM)
 {
@@ -377,7 +378,7 @@ VMMR3DECL(void) STAMR3TermUVM(PUVM pUVM)
  *
  * It is not possible to register the same sample twice.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
@@ -407,8 +408,8 @@ VMMR3DECL(int)  STAMR3RegisterU(PUVM pUVM, void *pvSample, STAMTYPE enmType, STA
  *
  * It is not possible to register the same sample twice.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   enmVisibility  Visibility type specifying whether unused statistics should be visible or not.
@@ -428,7 +429,7 @@ VMMR3DECL(int)  STAMR3Register(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVI
  * Same as STAMR3RegisterU except that the name is specified in a
  * RTStrPrintf like fashion.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
@@ -453,8 +454,8 @@ VMMR3DECL(int)  STAMR3RegisterFU(PUVM pUVM, void *pvSample, STAMTYPE enmType, ST
  * Same as STAMR3Register except that the name is specified in a
  * RTStrPrintf like fashion.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   enmVisibility  Visibility type specifying whether unused statistics should be visible or not.
@@ -478,8 +479,8 @@ VMMR3DECL(int)  STAMR3RegisterF(PVM pVM, void *pvSample, STAMTYPE enmType, STAMV
  * Same as STAMR3Register except that the name is specified in a
  * RTStrPrintfV like fashion.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pUVM        The user mode VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   enmVisibility  Visibility type specifying whether unused statistics should be visible or not.
@@ -505,8 +506,8 @@ VMMR3DECL(int)  STAMR3RegisterVU(PUVM pUVM, void *pvSample, STAMTYPE enmType, ST
  * Same as STAMR3Register except that the name is specified in a
  * RTStrPrintfV like fashion.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   enmVisibility  Visibility type specifying whether unused statistics should be visible or not.
@@ -526,8 +527,8 @@ VMMR3DECL(int)  STAMR3RegisterV(PVM pVM, void *pvSample, STAMTYPE enmType, STAMV
  * Similar to STAMR3Register except for the two callbacks, the implied type (STAMTYPE_CALLBACK),
  * and name given in an RTStrPrintf like fashion.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmVisibility  Visibility type specifying whether unused statistics should be visible or not.
  * @param   enmUnit     Sample unit.
@@ -553,8 +554,8 @@ VMMR3DECL(int)  STAMR3RegisterCallback(PVM pVM, void *pvSample, STAMVISIBILITY e
 /**
  * Same as STAMR3RegisterCallback() except for the ellipsis which is a va_list here.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmVisibility  Visibility type specifying whether unused statistics should be visible or not.
  * @param   enmUnit     Sample unit.
@@ -659,7 +660,7 @@ static PSTAMLOOKUP stamR3LookupNewChild(PSTAMLOOKUP pParent, const char *pchName
     /*
      * Allocate a new entry.
      */
-    PSTAMLOOKUP pNew = (PSTAMLOOKUP)RTMemAlloc(RT_OFFSETOF(STAMLOOKUP, szName[cchName + 1]));
+    PSTAMLOOKUP pNew = (PSTAMLOOKUP)RTMemAlloc(RT_UOFFSETOF_DYN(STAMLOOKUP, szName[cchName + 1]));
     if (!pNew)
         return NULL;
     pNew->pParent       = pParent;
@@ -828,7 +829,7 @@ static PSTAMDESC stamR3LookupFindNextWithDesc(PSTAMLOOKUP pLookup)
             PSTAMLOOKUP *papChildren = pCur->papChildren;
             do
             {
-                PSTAMLOOKUP pChild = pCur->papChildren[iCur];
+                PSTAMLOOKUP pChild = papChildren[iCur];
                 if (pChild->pDesc)
                     return pChild->pDesc;
 
@@ -906,10 +907,10 @@ static PSTAMDESC stamR3LookupFindFirstDescForRange(PSTAMLOOKUP pFirst, PSTAMLOOK
             /*
              * Check all children.
              */
-            PSTAMLOOKUP *papChildren = pCur->papChildren;
+            PSTAMLOOKUP * const papChildren = pCur->papChildren;
             do
             {
-                PSTAMLOOKUP pChild = pCur->papChildren[iCur];
+                PSTAMLOOKUP pChild = papChildren[iCur];
                 if (pChild->pDesc)
                     return pChild->pDesc;
                 if (pChild->cChildren > 0)
@@ -961,10 +962,10 @@ static PSTAMDESC stamR3LookupFindLastDescForRange(PSTAMLOOKUP pFirst, PSTAMLOOKU
             /*
              * Check children backwards, depth first.
              */
-            PSTAMLOOKUP *papChildren = pCur->papChildren;
+            PSTAMLOOKUP * const papChildren = pCur->papChildren;
             do
             {
-                PSTAMLOOKUP pChild = pCur->papChildren[iCur];
+                PSTAMLOOKUP pChild = papChildren[iCur];
                 if (pChild->cChildren > 0)
                 {
                     /* One level down. */
@@ -1239,21 +1240,21 @@ static void stamR3LookupDestroyTree(PSTAMLOOKUP pRoot)
 /**
  * Internal worker for the different register calls.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   pfnReset    Callback for resetting the sample. NULL should be used if the sample can't be reset.
  * @param   pfnPrint    Print the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   enmVisibility  Visibility type specifying whether unused statistics should be visible or not.
+ * @param   pszName     The sample name format string.
  * @param   enmUnit     Sample unit.
  * @param   pszDesc     Sample description.
- * @param   pszName     The sample name format string.
- * @param   args        Arguments to the format string.
  * @remark  There is currently no device or driver variant of this API. Add one if it should become necessary!
  */
 static int stamR3RegisterU(PUVM pUVM, void *pvSample, PFNSTAMR3CALLBACKRESET pfnReset, PFNSTAMR3CALLBACKPRINT pfnPrint,
-                           STAMTYPE enmType, STAMVISIBILITY enmVisibility, const char *pszName, STAMUNIT enmUnit, const char *pszDesc)
+                           STAMTYPE enmType, STAMVISIBILITY enmVisibility,
+                           const char *pszName, STAMUNIT enmUnit, const char *pszDesc)
 {
     AssertReturn(pszName[0] == '/', VERR_INVALID_NAME);
     AssertReturn(pszName[1] != '/' && pszName[1], VERR_INVALID_NAME);
@@ -1331,7 +1332,7 @@ static int stamR3RegisterU(PUVM pUVM, void *pvSample, PFNSTAMR3CALLBACKRESET pfn
 
     /*
      * Check that the name doesn't screw up sorting order when taking
-     * slashes into account. The QT4 GUI makes some assumptions.
+     * slashes into account. The QT GUI makes some assumptions.
      * Problematic chars are: !"#$%&'()*+,-.
      */
 #ifdef VBOX_STRICT
@@ -1444,10 +1445,9 @@ static int stamR3RegisterU(PUVM pUVM, void *pvSample, PFNSTAMR3CALLBACKRESET pfn
  * Destroys the statistics descriptor, unlinking it and freeing all resources.
  *
  * @returns VINF_SUCCESS
- * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pCur        The descriptor to destroy.
  */
-static int stamR3DestroyDesc(PUVM pUVM, PSTAMDESC pCur)
+static int stamR3DestroyDesc(PSTAMDESC pCur)
 {
     RTListNodeRemove(&pCur->ListEntry);
 #ifdef STAM_WITH_LOOKUP_TREE
@@ -1468,7 +1468,7 @@ static int stamR3DestroyDesc(PUVM pUVM, PSTAMDESC pCur)
  * This is intended used for devices which can be unplugged and for
  * temporary samples.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pvSample    Pointer to the sample registered with STAMR3Register().
  */
@@ -1491,7 +1491,7 @@ VMMR3DECL(int)  STAMR3DeregisterByAddr(PUVM pUVM, void *pvSample)
     RTListForEachSafe(&pUVM->stam.s.List, pCur, pNext, STAMDESC, ListEntry)
     {
         if (pCur->u.pv == pvSample)
-            rc = stamR3DestroyDesc(pUVM, pCur);
+            rc = stamR3DestroyDesc(pCur);
     }
 
     STAM_UNLOCK_WR(pUVM);
@@ -1524,7 +1524,7 @@ static int stamR3DeregisterByPattern(PUVM pUVM, const char *pszPat)
             PSTAMDESC pNext = RTListNodeGetNext(&pCur->ListEntry, STAMDESC, ListEntry);
 
             if (RTStrSimplePatternMatch(pszPat, pCur->pszName))
-                rc = stamR3DestroyDesc(pUVM, pCur);
+                rc = stamR3DestroyDesc(pCur);
 
             /* advance. */
             if (pCur == pLast)
@@ -1545,7 +1545,7 @@ static int stamR3DeregisterByPattern(PUVM pUVM, const char *pszPat)
  * Deregister zero or more samples given a (single) pattern matching their
  * names.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pszPat      The name pattern.
  * @sa      STAMR3DeregisterF, STAMR3DeregisterV
@@ -1567,7 +1567,7 @@ VMMR3DECL(int)  STAMR3Deregister(PUVM pUVM, const char *pszPat)
  * Deregister zero or more samples given a (single) pattern matching their
  * names.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pszPatFmt   The name pattern format string.
  * @param   ...         Format string arguments.
@@ -1587,7 +1587,7 @@ VMMR3DECL(int)  STAMR3DeregisterF(PUVM pUVM, const char *pszPatFmt, ...)
  * Deregister zero or more samples given a (single) pattern matching their
  * names.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM        Pointer to the user mode VM structure.
  * @param   pszPatFmt   The name pattern format string.
  * @param   va          Format string arguments.
@@ -1614,7 +1614,7 @@ VMMR3DECL(int)  STAMR3DeregisterV(PUVM pUVM, const char *pszPatFmt, va_list va)
  * Resets statistics for the specified VM.
  * It's possible to select a subset of the samples.
  *
- * @returns VBox status. (Basically, it cannot fail.)
+ * @returns VBox status code. (Basically, it cannot fail.)
  * @param   pUVM        The user mode VM handle.
  * @param   pszPat      The name matching pattern. See somewhere_where_this_is_described_in_detail.
  *                      If NULL all samples are reset.
@@ -1655,7 +1655,7 @@ VMMR3DECL(int)  STAMR3Reset(PUVM pUVM, const char *pszPat)
             }
         if (!fGVMMMatched)
         {
-            /** @todo match cpu leaves some rainy day.  */
+            /** @todo match cpu leaves some rainy day. */
         }
 
         /* GMM */
@@ -1720,7 +1720,7 @@ static int stamR3ResetOne(PSTAMDESC pDesc, void *pvArg)
             ASMAtomicXchgU64(&pDesc->u.pProfile->cPeriods, 0);
             ASMAtomicXchgU64(&pDesc->u.pProfile->cTicks, 0);
             ASMAtomicXchgU64(&pDesc->u.pProfile->cTicksMax, 0);
-            ASMAtomicXchgU64(&pDesc->u.pProfile->cTicksMin, ~0);
+            ASMAtomicXchgU64(&pDesc->u.pProfile->cTicksMin, UINT64_MAX);
             break;
 
         case STAMTYPE_RATIO_U32_RESET:
@@ -1783,7 +1783,7 @@ static int stamR3ResetOne(PSTAMDESC pDesc, void *pvArg)
  * Get a snapshot of the statistics.
  * It's possible to select a subset of the samples.
  *
- * @returns VBox status. (Basically, it cannot fail.)
+ * @returns VBox status code. (Basically, it cannot fail.)
  * @param   pUVM            The user mode VM handle.
  * @param   pszPat          The name matching pattern. See somewhere_where_this_is_described_in_detail.
  *                          If NULL all samples are reset.
@@ -2043,8 +2043,11 @@ static DECLCALLBACK(size_t) stamR3SnapshotOutput(void *pvArg, const char *pach, 
     /*
      * Copy the chars to the buffer and terminate it.
      */
-    memcpy(pThis->psz, pach, cch);
-    pThis->psz += cch;
+    if (cch)
+    {
+        memcpy(pThis->psz, pach, cch);
+        pThis->psz += cch;
+    }
     *pThis->psz = '\0';
     return cch;
 }
@@ -2071,14 +2074,14 @@ static int stamR3SnapshotPrintf(PSTAMR3SNAPSHOTONE pThis, const char *pszFormat,
 /**
  * Releases a statistics snapshot returned by STAMR3Snapshot().
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM            The user mode VM handle.
  * @param   pszSnapshot     The snapshot data pointer returned by STAMR3Snapshot().
  *                          NULL is allowed.
  */
 VMMR3DECL(int)  STAMR3SnapshotFree(PUVM pUVM, char *pszSnapshot)
 {
-    if (!pszSnapshot)
+    if (pszSnapshot)
         RTMemFree(pszSnapshot);
     NOREF(pUVM);
     return VINF_SUCCESS;
@@ -2088,7 +2091,7 @@ VMMR3DECL(int)  STAMR3SnapshotFree(PUVM pUVM, char *pszSnapshot)
 /**
  * Dumps the selected statistics to the log.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM            Pointer to the user mode VM structure.
  * @param   pszPat          The name matching pattern. See somewhere_where_this_is_described_in_detail.
  *                          If NULL all samples are written to the log.
@@ -2128,7 +2131,7 @@ static DECLCALLBACK(void) stamR3EnumLogPrintf(PSTAMR3PRINTONEARGS pArgs, const c
 /**
  * Dumps the selected statistics to the release log.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM            Pointer to the user mode VM structure.
  * @param   pszPat          The name matching pattern. See somewhere_where_this_is_described_in_detail.
  *                          If NULL all samples are written to the log.
@@ -2167,7 +2170,7 @@ static DECLCALLBACK(void) stamR3EnumRelLogPrintf(PSTAMR3PRINTONEARGS pArgs, cons
 /**
  * Prints the selected statistics to standard out.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pUVM            The user mode VM handle.
  * @param   pszPat          The name matching pattern. See somewhere_where_this_is_described_in_detail.
  *                          If NULL all samples are reset.
@@ -2424,7 +2427,7 @@ static bool stamR3MultiMatch(const char * const *papszExpressions, unsigned cExp
  * @returns Pointer to an array of single patterns. Free it with RTMemTmpFree.
  * @param   pszPat          The pattern to split.
  * @param   pcExpressions   The number of array elements.
- * @param   pszCopy         The pattern copy to free using RTStrFree.
+ * @param   ppszCopy        The pattern copy to free using RTStrFree.
  */
 static char **stamR3SplitPattern(const char *pszPat, unsigned *pcExpressions, char **ppszCopy)
 {
@@ -2642,8 +2645,9 @@ static void stamR3Ring0StatsUpdateU(PUVM pUVM, const char *pszPat)
  * The ring-0 statistics aren't directly addressable from ring-3 and must be
  * copied when needed.
  *
- * @param   pUVM        Pointer to the user mode VM structure.
- * @param   pszPat      The pattern (for knowing when to skip).
+ * @param   pUVM                Pointer to the user mode VM structure.
+ * @param   papszExpressions    The patterns (for knowing when to skip).
+ * @param   cExpressions        Number of patterns.
  */
 static void stamR3Ring0StatsUpdateMultiU(PUVM pUVM, const char * const *papszExpressions, unsigned cExpressions)
 {
@@ -2663,7 +2667,7 @@ static void stamR3Ring0StatsUpdateMultiU(PUVM pUVM, const char * const *papszExp
         }
     if (!fUpdate)
     {
-        /** @todo check the cpu leaves - rainy day.   */
+        /** @todo check the cpu leaves - rainy day. */
     }
     if (fUpdate)
     {

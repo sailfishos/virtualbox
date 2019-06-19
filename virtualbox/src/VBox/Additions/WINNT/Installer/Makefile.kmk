@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -30,7 +30,7 @@ VBOX_WITH_GUEST_INSTALL_HELPER := 1 # Use our guest install helper DLL.
 ## @todo VBOX_WIN_ADD_INS_OUT_DIR := $(PATH_TARGET)/Additions/Installer/win
 
 PROGRAMS += VBoxDrvInst
-VBoxDrvInst_TEMPLATE= NewVBoxGuestR3Exe
+VBoxDrvInst_TEMPLATE= VBoxGuestR3Exe
 VBoxDrvInst_DEFS    = _WIN32_WINNT=0x0400 _UNICODE UNICODE
 VBoxDrvInst_DEFS   += VBOX_SVN_REV=$(VBOX_SVN_REV)
 ifdef VBOX_WITH_WDDM
@@ -46,14 +46,14 @@ VBoxDrvInst_SOURCES = \
 	VBoxDrvInst.rc
 
 PROGRAMS += VBoxGuestDrvInst
-VBoxGuestDrvInst_TEMPLATE= NewVBoxGuestR3Exe
+VBoxGuestDrvInst_TEMPLATE= VBoxGuestR3Exe
 VBoxGuestDrvInst_DEFS    =  _WIN32_WINNT=0x0400 UNICODE
 VBoxGuestDrvInst_SOURCES = \
 	VBoxGuestDrvInst.cpp \
 	VBoxGuestDrvInst.rc
 
 PROGRAMS += RegCleanup
-RegCleanup_TEMPLATE = NewVBoxGuestR3Exe
+RegCleanup_TEMPLATE = VBoxGuestR3Exe
 RegCleanup_DEFS     = _WIN32_WINNT=0x0400 UNICODE
 RegCleanup_SOURCES  = \
 	RegCleanup.cpp \
@@ -169,16 +169,6 @@ DRIVER_FILES += \
   endif
  endif
 endif
-ifdef VBOX_WITH_MMR
-DRIVER_FILES += \
-	$(PATH_STAGE_BIN)/additions/VBoxMMR.exe \
-	$(PATH_STAGE_BIN)/additions/VBoxMMRHook.dll
-  ifeq ($(KBUILD_TARGET_ARCH),amd64)
-	DRIVER_FILES += \
-		$(PATH_STAGE_BIN)/additions/VBoxMMR-x86.exe \
-		$(PATH_STAGE_BIN)/additions/VBoxMMRHook-x86.dll
-  endif
-endif
 
 
 VB_WIN_ADD_NSIS_ENV := \
@@ -204,7 +194,6 @@ VB_WIN_ADD_NSIS_ENV := \
 	-E 'VBOX_WITH_LICENSE_INSTALL_RTF=$(if $(VBOX_BRAND_LICENSE_RTF),1,0)' \
 	-E 'VBOX_WITH_WDDM=$(if $(VBOX_WITH_WDDM),1,0)' \
 	-E 'VBOX_WITH_WDDM_W8=$(if $(VBOX_WITH_WDDM_W8),1,0)' \
-	-E 'VBOX_WITH_MMR=$(if $(VBOX_WITH_MMR),1,0)' \
 	-E 'VBOX_BRAND_WIN_ADD_INST_DLGBMP=$(subst /,\,$(VBOX_BRAND_WIN_ADD_INST_DLGBMP))' \
 	-E 'VBOX_BRAND_LICENSE_RTF=$(subst /,\,$(VBOX_BRAND_LICENSE_RTF))' \
 	$(foreach lang,$(VBOX_INSTALLER_ADD_LANGUAGES),-E 'VBOX_BRAND_$(lang)_LICENSE_RTF=$(VBOX_BRAND_$(lang)_LICENSE_RTF)') \

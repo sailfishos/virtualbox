@@ -1,10 +1,10 @@
 /* $Id: VBoxGuestInternal.h $ */
 /** @file
- * VBoxGuest - Guest Additions Driver.
+ * VBoxGuest - Guest Additions Driver, Internal Header.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,16 +31,24 @@
 #include <iprt/list.h>
 #include <iprt/semaphore.h>
 #include <iprt/spinlock.h>
+#include <iprt/timer.h>
 #include <VBox/VMMDev.h>
 #include <VBox/VBoxGuest.h>
 #include <VBox/VBoxGuestLib.h>
 
-/** @def VBOXGUEST_USE_WAKE_UP_LIST
+/** @def VBOXGUEST_USE_DEFERRED_WAKE_UP
  * Defer wake-up of waiting thread when defined. */
-#if defined(RT_OS_SOLARIS) || defined(RT_OS_WINDOWS) || defined(DOXYGEN_RUNNING)
+#if defined(RT_OS_DARWIN) || defined(RT_OS_SOLARIS) || defined(RT_OS_WINDOWS) || defined(DOXYGEN_RUNNING)
 # define VBOXGUEST_USE_DEFERRED_WAKE_UP
 #endif
 
+/** @def VBOXGUEST_MOUSE_NOTIFY_CAN_PREEMPT
+ * The mouse notification callback can cause preemption and must not be invoked
+ * while holding a high-level spinlock.
+ */
+#if defined(RT_OS_SOLARIS) || defined(RT_OS_WINDOWS) || defined(DOXYGEN_RUNNING)
+# define VBOXGUEST_MOUSE_NOTIFY_CAN_PREEMPT
+#endif
 
 /** Pointer to the VBoxGuest per session data. */
 typedef struct VBOXGUESTSESSION *PVBOXGUESTSESSION;
@@ -63,11 +71,11 @@ typedef struct VBOXGUESTWAIT
     /** The events we received. */
     uint32_t volatile           fResEvents;
 #ifdef VBOXGUEST_USE_DEFERRED_WAKE_UP
-    /** Set by VBoxGuestWaitDoWakeUps before leaving the spinlock to call
+    /** Set by VGDrvCommonWaitDoWakeUps before leaving the spinlock to call
      *  RTSemEventMultiSignal. */
     bool volatile               fPendingWakeUp;
     /** Set by the requestor thread if it got the spinlock before the
-     * signaller.  Deals with the race in VBoxGuestWaitDoWakeUps. */
+     * signaller.  Deals with the race in VGDrvCommonWaitDoWakeUps. */
     bool volatile               fFreeMe;
 #endif
     /** The event semaphore. */
@@ -86,7 +94,7 @@ typedef struct VBOXGUESTWAIT
  */
 typedef struct VBOXGUESTMEMBALLOON
 {
-    /** Mutex protecting the members below from concurrent access.. */
+    /** Mutex protecting the members below from concurrent access. */
     RTSEMFASTMUTEX              hMtx;
     /** The current number of chunks in the balloon. */
     uint32_t                    cChunks;
@@ -107,6 +115,25 @@ typedef struct VBOXGUESTMEMBALLOON
 /** Pointer to a memory balloon. */
 typedef VBOXGUESTMEMBALLOON *PVBOXGUESTMEMBALLOON;
 
+
+/**
+ * Per bit usage tracker for a uint32_t mask.
+ *
+ * Used for optimal handling of guest properties, mouse status and event filter.
+ */
+typedef struct VBOXGUESTBITUSAGETRACER
+{
+    /** Per bit usage counters. */
+    uint32_t        acPerBitUsage[32];
+    /** The current mask according to acPerBitUsage. */
+    uint32_t        fMask;
+} VBOXGUESTBITUSAGETRACER;
+/** Pointer to a per bit usage tracker.  */
+typedef VBOXGUESTBITUSAGETRACER *PVBOXGUESTBITUSAGETRACER;
+/** Pointer to a const per bit usage tracker.  */
+typedef VBOXGUESTBITUSAGETRACER const *PCVBOXGUESTBITUSAGETRACER;
+
+
 /**
  * VBox guest device (data) extension.
  */
@@ -116,8 +143,6 @@ typedef struct VBOXGUESTDEVEXT
     RTIOPORT                    IOPortBase;
     /** Pointer to the mapping of the VMMDev adapter memory. */
     VMMDevMemory volatile      *pVMMDevMemory;
-    /** Events we won't permit anyone to filter out. */
-    uint32_t                    fFixedEvents;
     /** The memory object reserving space for the guest mappings. */
     RTR0MEMOBJ                  hGuestMappings;
     /** Spinlock protecting the signaling and resetting of the wait-for-event
@@ -161,23 +186,66 @@ typedef struct VBOXGUESTDEVEXT
      * but do not search it, so a list data type should be fine.  Use under the
      * #SessionSpinlock lock. */
     RTLISTANCHOR                SessionList;
+    /** Number of session. */
+    uint32_t                    cSessions;
     /** Flag indicating whether logging to the release log
      *  is enabled. */
     bool                        fLoggingEnabled;
     /** Memory balloon information for RTR0MemObjAllocPhysNC(). */
     VBOXGUESTMEMBALLOON         MemBalloon;
-    /** Callback and user data for a kernel mouse handler. */
-    VBoxGuestMouseSetNotifyCallback MouseNotifyCallback;
+    /** Mouse notification callback function. */
+    PFNVBOXGUESTMOUSENOTIFY     pfnMouseNotifyCallback;
+    /** The callback argument for the mouse ntofication callback. */
+    void                       *pvMouseNotifyCallbackArg;
+
+    /** @name Host Event Filtering
+     * @{ */
+    /** Events we won't permit anyone to filter out. */
+    uint32_t                    fFixedEvents;
+    /** Usage counters for the host events. (Fixed events are not included.) */
+    VBOXGUESTBITUSAGETRACER     EventFilterTracker;
+    /** The event filter last reported to the host (UINT32_MAX on failure). */
+    uint32_t                    fEventFilterHost;
+    /** @} */
+
+    /** @name Mouse Status
+     * @{ */
+    /** Usage counters for the mouse statuses (VMMDEV_MOUSE_XXX). */
+    VBOXGUESTBITUSAGETRACER     MouseStatusTracker;
+    /** The mouse status last reported to the host (UINT32_MAX on failure). */
+    uint32_t                    fMouseStatusHost;
+    /** @} */
+
+    /** @name Guest Capabilities
+     * @{ */
     /** Guest capabilities which have been set to "acquire" mode.  This means
      * that only one session can use them at a time, and that they will be
-     * automatically cleaned up if that session exits without doing so. */
-    uint32_t                    u32AcquireModeGuestCaps;
+     * automatically cleaned up if that session exits without doing so.
+     *
+     * Protected by VBOXGUESTDEVEXT::SessionSpinlock, but is unfortunately read
+     * without holding the lock in a couple of places. */
+    uint32_t volatile           fAcquireModeGuestCaps;
     /** Guest capabilities which have been set to "set" mode.  This just means
      * that they have been blocked from ever being set to "acquire" mode. */
-    uint32_t                    u32SetModeGuestCaps;
+    uint32_t                    fSetModeGuestCaps;
     /** Mask of all capabilities which are currently acquired by some session
      * and as such reported to the host. */
-    uint32_t                    u32GuestCaps;
+    uint32_t                    fAcquiredGuestCaps;
+    /** Usage counters for guest capabilities in "set" mode. Indexed by
+     *  capability bit number, one count per session using a capability. */
+    VBOXGUESTBITUSAGETRACER     SetGuestCapsTracker;
+    /** The guest capabilities last reported to the host (UINT32_MAX on failure). */
+    uint32_t                    fGuestCapsHost;
+    /** @} */
+
+    /** Heartbeat timer which fires with interval
+      * cNsHearbeatInterval and its handler sends
+      * VMMDevReq_GuestHeartbeat to VMMDev. */
+    PRTTIMER                    pHeartbeatTimer;
+    /** Heartbeat timer interval in nanoseconds. */
+    uint64_t                    cNsHeartbeatInterval;
+    /** Preallocated VMMDevReq_GuestHeartbeat request. */
+    VMMDevRequestHeader         *pReqGuestHeartbeat;
 } VBOXGUESTDEVEXT;
 /** Pointer to the VBoxGuest driver data. */
 typedef VBOXGUESTDEVEXT *PVBOXGUESTDEVEXT;
@@ -185,10 +253,6 @@ typedef VBOXGUESTDEVEXT *PVBOXGUESTDEVEXT;
 
 /**
  * The VBoxGuest per session data.
- *
- * @remark  Not quite sure whether this will be useful or not, but since
- *          its already there let's keep it for now in case it might come
- *          in handy later.
  */
 typedef struct VBOXGUESTSESSION
 {
@@ -220,13 +284,17 @@ typedef struct VBOXGUESTSESSION
     /** The last consumed VMMDEV_EVENT_MOUSE_POSITION_CHANGED sequence number.
      * Used to implement polling.  */
     uint32_t volatile           u32MousePosChangedSeq;
-    /** VMMDev events requested.  An event type requested in any guest session
-     * will be added to the host filter.
-     * Use under the VBOXGUESTDEVEXT#SessionSpinlock lock. */
-    uint32_t                    fFilterMask;
-    /** Capabilities supported.  A capability enabled in any guest session will
-     * be enabled for the host.
-     * Use under the VBOXGUESTDEVEXT#SessionSpinlock lock. */
+    /** Host events requested by the session.
+     * An event type requested in any guest session will be added to the host
+     * filter.  Protected by VBOXGUESTDEVEXT::SessionSpinlock. */
+    uint32_t                    fEventFilter;
+    /** Guest capabilities held in "acquired" by this session.
+     * Protected by VBOXGUESTDEVEXT::SessionSpinlock, but is unfortunately read
+     * without holding the lock in a couple of places. */
+    uint32_t volatile           fAcquiredGuestCaps;
+    /** Guest capabilities in "set" mode for this session.
+     * These accumulated for sessions via VBOXGUESTDEVEXT::acGuestCapsSet and
+     * reported to the host.  Protected by VBOXGUESTDEVEXT::SessionSpinlock.  */
     uint32_t                    fCapabilities;
     /** Mouse features supported.  A feature enabled in any guest session will
      * be enabled for the host.
@@ -243,9 +311,6 @@ typedef struct VBOXGUESTSESSION
     /** Whether this session has been opened or not. */
     bool                        fOpened;
 #endif
-    /** Mask of guest capabilities acquired by this session.  These will all be
-     *  reported to the host. */
-    uint32_t                    u32AquiredGuestCaps;
     /** Whether a CANCEL_ALL_WAITEVENTS is pending.  This happens when
      * CANCEL_ALL_WAITEVENTS is called, but no call to WAITEVENT is in process
      * in the current session.  In that case the next call will be interrupted
@@ -257,30 +322,23 @@ typedef struct VBOXGUESTSESSION
 
 RT_C_DECLS_BEGIN
 
-int  VBoxGuestInitDevExt(PVBOXGUESTDEVEXT pDevExt, uint16_t IOPortBase, void *pvMMIOBase, uint32_t cbMMIO, VBOXOSTYPE enmOSType, uint32_t fEvents);
-bool VBoxGuestCommonISR(PVBOXGUESTDEVEXT pDevExt);
-void VBoxGuestDeleteDevExt(PVBOXGUESTDEVEXT pDevExt);
-int  VBoxGuestReinitDevExtAfterHibernation(PVBOXGUESTDEVEXT pDevExt, VBOXOSTYPE enmOSType);
-int  VBoxGuestSetGuestCapabilities(uint32_t fOr, uint32_t fNot);
+int  VGDrvCommonInitDevExt(PVBOXGUESTDEVEXT pDevExt, uint16_t IOPortBase, void *pvMMIOBase, uint32_t cbMMIO,
+                           VBOXOSTYPE enmOSType, uint32_t fEvents);
+bool VGDrvCommonIsOurIRQ(PVBOXGUESTDEVEXT pDevExt);
+bool VGDrvCommonISR(PVBOXGUESTDEVEXT pDevExt);
+void VGDrvCommonDeleteDevExt(PVBOXGUESTDEVEXT pDevExt);
+int  VGDrvCommonReinitDevExtAfterHibernation(PVBOXGUESTDEVEXT pDevExt, VBOXOSTYPE enmOSType);
 #ifdef VBOXGUEST_USE_DEFERRED_WAKE_UP
-void VBoxGuestWaitDoWakeUps(PVBOXGUESTDEVEXT pDevExt);
+void VGDrvCommonWaitDoWakeUps(PVBOXGUESTDEVEXT pDevExt);
 #endif
 
-int  VBoxGuestCreateUserSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION *ppSession);
-int  VBoxGuestCreateKernelSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION *ppSession);
-void VBoxGuestCloseSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
+int  VGDrvCommonCreateUserSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION *ppSession);
+int  VGDrvCommonCreateKernelSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION *ppSession);
+void VGDrvCommonCloseSession(PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
 
-int  VBoxGuestCommonIOCtlFast(unsigned iFunction, PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
-int  VBoxGuestCommonIOCtl(unsigned iFunction, PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
-                          void *pvData, size_t cbData, size_t *pcbDataReturned);
-
-#if defined(RT_OS_SOLARIS) \
- || defined(RT_OS_FREEBSD) \
- || defined(RT_OS_LINUX)
-DECLVBGL(void *) VBoxGuestNativeServiceOpen(uint32_t *pu32Version);
-DECLVBGL(void)   VBoxGuestNativeServiceClose(void *pvOpaque);
-DECLVBGL(int)    VBoxGuestNativeServiceCall(void *pvOpaque, unsigned int iCmd, void *pvData, size_t cbSize, size_t *pcbReturn);
-#endif
+int  VGDrvCommonIoCtlFast(uintptr_t iFunction, PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession);
+int  VGDrvCommonIoCtl(uintptr_t iFunction, PVBOXGUESTDEVEXT pDevExt, PVBOXGUESTSESSION pSession,
+                      PVBGLREQHDR pReqHdr, size_t cbReq);
 
 /**
  * ISR callback for notifying threads polling for mouse events.
@@ -290,11 +348,15 @@ DECLVBGL(int)    VBoxGuestNativeServiceCall(void *pvOpaque, unsigned int iCmd, v
  *
  * @param   pDevExt     The device extension.
  */
-void VBoxGuestNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt);
+void VGDrvNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt);
 
 
 #ifdef VBOX_WITH_DPC_LATENCY_CHECKER
-int VbgdNtIOCtl_DpcLatencyChecker(void);
+int VGDrvNtIOCtl_DpcLatencyChecker(void);
+#endif
+
+#ifdef VBOXGUEST_MOUSE_NOTIFY_CAN_PREEMPT
+int VGDrvNativeSetMouseNotifyCallback(PVBOXGUESTDEVEXT pDevExt, PVBGLIOCSETMOUSENOTIFYCALLBACK pNotify);
 #endif
 
 RT_C_DECLS_END

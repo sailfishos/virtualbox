@@ -9,6 +9,7 @@
 #include "cr_mem.h"
 #include "server_dispatch.h"
 #include "server.h"
+#include "cr_unpack.h"
 
 void * SERVER_DISPATCH_APIENTRY
 crServerDispatchMapBufferARB( GLenum target, GLenum access )
@@ -25,17 +26,37 @@ crServerDispatchUnmapBufferARB( GLenum target )
 void SERVER_DISPATCH_APIENTRY
 crServerDispatchGenBuffersARB(GLsizei n, GLuint *buffers)
 {
-	GLuint *local_buffers = (GLuint *) crAlloc( n * sizeof(*local_buffers) );
-	(void) buffers;
+    GLuint *local_buffers;
+    (void) buffers;
 
-	crStateGenBuffersARB(n, local_buffers);
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint))
+    {
+        crError("crServerDispatchGenBuffersARB: parameter 'n' is out of range");
+        return;
+    }
 
-	crServerReturnValue( local_buffers, n * sizeof(*local_buffers) );
-	crFree( local_buffers );
+    local_buffers = (GLuint *)crCalloc(n * sizeof(*local_buffers));
+
+    if (!local_buffers)
+    {
+        crError("crServerDispatchGenBuffersARB: out of memory");
+        return;
+    }
+
+    crStateGenBuffersARB(n, local_buffers);
+
+    crServerReturnValue( local_buffers, n * sizeof(*local_buffers) );
+    crFree( local_buffers );
 }
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchDeleteBuffersARB( GLsizei n, const GLuint * buffer )
 {
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint) || !DATA_POINTER_CHECK(n * sizeof(GLuint)))
+    {
+        crError("glDeleteBuffersARB: parameter 'n' is out of range");
+        return;
+    }
+
     crStateDeleteBuffersARB( n, buffer );
 }
 
@@ -49,21 +70,27 @@ crServerDispatchGetBufferPointervARB(GLenum target, GLenum pname, GLvoid **param
 }
 
 void SERVER_DISPATCH_APIENTRY
-crServerDispatchGetBufferSubDataARB(GLenum target, GLintptrARB offset,
-																		GLsizeiptrARB size, void * data)
+crServerDispatchGetBufferSubDataARB(GLenum target, GLintptrARB offset, GLsizeiptrARB size, void * data)
 {
-	void *b;
+    void *b;
 
-	b = crAlloc(size);
-	if (b) {
-		cr_server.head_spu->dispatch_table.GetBufferSubDataARB( target, offset, size, b );
+    if (size <= 0 || size >= INT32_MAX / 2)
+    {
+        crError("crServerDispatchGetBufferSubDataARB: size is out of range");
+        return;
+    }
 
-		crServerReturnValue( b, size );
-		crFree( b );
-	}
-	else {
-		crError("Out of memory in crServerDispatchGetBufferSubDataARB");
-	}
+    b = crCalloc(size);
+
+    if (b) {
+        cr_server.head_spu->dispatch_table.GetBufferSubDataARB( target, offset, size, b );
+
+        crServerReturnValue( b, size );
+        crFree( b );
+    }
+    else {
+        crError("Out of memory in crServerDispatchGetBufferSubDataARB");
+    }
 }
 
 void SERVER_DISPATCH_APIENTRY

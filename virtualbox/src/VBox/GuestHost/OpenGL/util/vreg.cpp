@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2014 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef IN_VMSVGA3D
 # include "../include/cr_vreg.h"
 # define WARN AssertMsgFailed
@@ -65,37 +66,7 @@ DECLINLINE(int) vboxVrLaCreate(PRTMEMCACHE phCache, size_t cbElement)
 # ifdef RT_OS_WINDOWS
 #  undef PAGE_SIZE
 #  undef PAGE_SHIFT
-#  define VBOX_WITH_WORKAROUND_MISSING_PACK
-#  if (_MSC_VER >= 1400) && !defined(VBOX_WITH_PATCHED_DDK)
-#    define _InterlockedExchange           _InterlockedExchange_StupidDDKVsCompilerCrap
-#    define _InterlockedExchangeAdd        _InterlockedExchangeAdd_StupidDDKVsCompilerCrap
-#    define _InterlockedCompareExchange    _InterlockedCompareExchange_StupidDDKVsCompilerCrap
-#    define _InterlockedAddLargeStatistic  _InterlockedAddLargeStatistic_StupidDDKVsCompilerCrap
-#    define _interlockedbittestandset      _interlockedbittestandset_StupidDDKVsCompilerCrap
-#    define _interlockedbittestandreset    _interlockedbittestandreset_StupidDDKVsCompilerCrap
-#    define _interlockedbittestandset64    _interlockedbittestandset64_StupidDDKVsCompilerCrap
-#    define _interlockedbittestandreset64  _interlockedbittestandreset64_StupidDDKVsCompilerCrap
-#    pragma warning(disable : 4163)
-#    ifdef VBOX_WITH_WORKAROUND_MISSING_PACK
-#     pragma warning(disable : 4103)
-#    endif
-#    include <ntddk.h>
-#    pragma warning(default : 4163)
-#    ifdef VBOX_WITH_WORKAROUND_MISSING_PACK
-#     pragma pack()
-#     pragma warning(default : 4103)
-#    endif
-#    undef  _InterlockedExchange
-#    undef  _InterlockedExchangeAdd
-#    undef  _InterlockedCompareExchange
-#    undef  _InterlockedAddLargeStatistic
-#    undef  _interlockedbittestandset
-#    undef  _interlockedbittestandreset
-#    undef  _interlockedbittestandset64
-#    undef  _interlockedbittestandreset64
-#  else
-#    include <ntddk.h>
-#  endif
+#  include <iprt/nt/ntddk.h>
 #  ifndef VBOXVDBG_VR_LAL_DISABLE
 static LOOKASIDE_LIST_EX g_VBoxVrLookasideList;
 #   define vboxVrRegLaAlloc(_c) ExAllocateFromLookasideListEx(&(_c))
@@ -128,15 +99,15 @@ DECLINLINE(int) vboxVrLaCreate(LOOKASIDE_LIST_EX *pCache, size_t cbElement)
 #endif /* IN_RING0 */
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define VBOXVR_INVALID_COORD    (~0U)
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static volatile int32_t g_cVBoxVrInits = 0;
 
 
@@ -166,7 +137,6 @@ static void vboxVrRegTerm(PVBOXVR_REG pReg)
 VBOXVREGDECL(void) VBoxVrListClear(PVBOXVR_LIST pList)
 {
     PVBOXVR_REG pReg, pRegNext;
-
     RTListForEachSafe(&pList->ListHead, pReg, pRegNext, VBOXVR_REG, ListEntry)
     {
         vboxVrRegTerm(pReg);
@@ -430,6 +400,7 @@ static void vboxVrListVisitIntersected(PVBOXVR_LIST pList1, uint32_t cRects, PCR
     }
 }
 
+#if 0 /* unused */
 /**
  * @returns Entry to be iterated next. ListHead is returned to break the
  *          iteration
@@ -464,6 +435,7 @@ static void vboxVrListVisitNonintersected(PVBOXVR_LIST pList1, uint32_t cRects, 
             pNext1 = pEntry1->pNext;
     }
 }
+#endif /* unused */
 
 static void vboxVrListJoinRectsHV(PVBOXVR_LIST pList, bool fHorizontal)
 {
@@ -741,6 +713,8 @@ VBOXVREGDECL(void) VBoxVrListTranslate(PVBOXVR_LIST pList, int32_t x, int32_t y)
     }
 }
 
+#if 0 /* unused */
+
 static DECLCALLBACK(PRTLISTNODE) vboxVrListIntersectNoJoinNonintersectedCb(PVBOXVR_LIST pList1, PVBOXVR_REG pReg1, void *pvContext)
 {
     VBOXVR_CBDATA_SUBST *pData = (VBOXVR_CBDATA_SUBST*)pvContext;
@@ -762,6 +736,7 @@ static DECLCALLBACK(PRTLISTNODE) vboxVrListIntersectNoJoinNonintersectedCb(PVBOX
 static DECLCALLBACK(PRTLISTNODE) vboxVrListIntersectNoJoinIntersectedCb(PVBOXVR_LIST pList1, PVBOXVR_REG pReg1, PCRTRECT pRect2,
                                                                         void *pvContext, PPRTLISTNODE ppNext)
 {
+    RT_NOREF1(ppNext);
     PVBOXVR_CBDATA_SUBST pData = (PVBOXVR_CBDATA_SUBST)pvContext;
     pData->fChanged = true;
 
@@ -783,10 +758,13 @@ static DECLCALLBACK(PRTLISTNODE) vboxVrListIntersectNoJoinIntersectedCb(PVBOXVR_
     return &pReg1->ListEntry;
 }
 
+#endif /* unused */
+
 static int vboxVrListIntersectNoJoin(PVBOXVR_LIST pList, PCVBOXVR_LIST pList2, bool *pfChanged)
 {
     bool fChanged = false;
-    *pfChanged = false;
+    if (pfChanged)
+        *pfChanged = false;
 
     if (VBoxVrListIsEmpty(pList))
         return VINF_SUCCESS;
@@ -834,7 +812,7 @@ static int vboxVrListIntersectNoJoin(PVBOXVR_LIST pList, PCVBOXVR_LIST pList2, b
                     /*just to ensure the VBoxRectCovers is true for equal rects */
                     Assert(VBoxRectCmp(pRect2, &RegRect1));
 
-                    /* @todo: this can have false-alarming sometimes if the separated rects will then be joind into the original rect,
+                    /** @todo this can have false-alarming sometimes if the separated rects will then be joind into the original rect,
                      * so far this should not be a problem for VReg clients, so keep it this way for now  */
                     fChanged = true;
 
@@ -877,17 +855,19 @@ static int vboxVrListIntersectNoJoin(PVBOXVR_LIST pList, PCVBOXVR_LIST pList2, b
 
 VBOXVREGDECL(int) VBoxVrListIntersect(PVBOXVR_LIST pList, PCVBOXVR_LIST pList2, bool *pfChanged)
 {
-    if (pfChanged)
-        *pfChanged = false;
+    bool fChanged = false;
 
-    int rc = vboxVrListIntersectNoJoin(pList, pList2, pfChanged);
+    int rc = vboxVrListIntersectNoJoin(pList, pList2, &fChanged);
+    if (pfChanged)
+        *pfChanged = fChanged;
+
     if (!RT_SUCCESS(rc))
     {
         WARN(("vboxVrListSubstNoJoin failed!"));
         return rc;
     }
 
-    if (*pfChanged)
+    if (fChanged)
     {
         vboxVrListJoinRects(pList);
     }
@@ -981,7 +961,7 @@ VBOXVREGDECL(int) VBoxVrListRectsSet(PVBOXVR_LIST pList, uint32_t cRects, PCRTRE
     if (!cRects && VBoxVrListIsEmpty(pList))
         return VINF_SUCCESS;
 
-    /* @todo: fChanged will have false alarming here, fix if needed */
+    /** @todo fChanged will have false alarming here, fix if needed */
     VBoxVrListClear(pList);
 
     int rc = VBoxVrListRectsAdd(pList, cRects, aRects, NULL);
@@ -1591,9 +1571,7 @@ VBOXVREGDECL(int) VBoxVrCompositorEntryListIntersectAll(PVBOXVR_COMPOSITOR pComp
         bool fTmpChanged = false;
         int tmpRc = VBoxVrCompositorEntryListIntersect(pCompositor, pEntry, pList2, &fTmpChanged);
         if (RT_SUCCESS(tmpRc))
-        {
-            fChanged |= fChanged;
-        }
+            fChanged |= fTmpChanged;
         else
         {
             WARN(("VBoxVrCompositorEntryRegionsIntersect failed, rc %d", tmpRc));
@@ -1621,9 +1599,7 @@ VBOXVREGDECL(int) VBoxVrCompositorEntryRegionsIntersectAll(PVBOXVR_COMPOSITOR pC
         bool fTmpChanged = false;
         int tmpRc = VBoxVrCompositorEntryRegionsIntersect(pCompositor, pEntry, cRegions, paRegions, &fTmpChanged);
         if (RT_SUCCESS(tmpRc))
-        {
-            fChanged |= fChanged;
-        }
+            fChanged |= fTmpChanged;
         else
         {
             WARN(("VBoxVrCompositorEntryRegionsIntersect failed, rc %d", tmpRc));

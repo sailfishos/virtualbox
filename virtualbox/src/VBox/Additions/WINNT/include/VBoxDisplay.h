@@ -1,8 +1,9 @@
 /** @file
- *
  * VBoxDisplay - private windows additions display header
- *
- * Copyright (C) 2006-2012 Oracle Corporation
+ */
+
+/*
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,8 +13,9 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-#ifndef __VBoxDisplay_h__
-#define __VBoxDisplay_h__
+
+#ifndef ___winnt_include_VBoxDisplay_h___
+#define ___winnt_include_VBoxDisplay_h___
 
 #include <iprt/types.h>
 #include <iprt/assert.h>
@@ -41,6 +43,8 @@
 # define VBOXESC_SETALLOCHOSTID             0xABCD9014
 # define VBOXESC_CRHGSMICTLCON_GETHOSTCAPS  0xABCD9015
 # define VBOXESC_UPDATEMODES                0xABCD9016
+# define VBOXESC_GUEST_DISPLAYCHANGED       0xABCD9017
+# define VBOXESC_TARGET_CONNECTIVITY        0xABCD9018
 #endif /* #ifdef VBOX_WITH_WDDM */
 
 # define VBOXESC_ISANYX                     0xABCD9200
@@ -73,8 +77,13 @@ typedef struct VBOXDISPIFESCAPE_ISANYX
 
 #ifdef VBOX_WITH_WDDM
 
+/* Enables code which performs (un)plugging of virtual displays in VBOXESC_UPDATEMODES.
+ * The code has been disabled as part of #8244.
+ */
+//#define VBOX_WDDM_REPLUG_ON_MODE_CHANGE
+
 /* for VBOX_VIDEO_MAX_SCREENS definition */
-#include <VBox/Hardware/VBoxVideoVBE.h>
+#include <VBoxVideo.h>
 
 typedef struct VBOXWDDM_RECOMMENDVIDPN_SOURCE
 {
@@ -101,6 +110,14 @@ typedef struct VBOXDISPIFESCAPE_UPDATEMODES
     RTRECTSIZE Size;
 } VBOXDISPIFESCAPE_UPDATEMODES;
 
+typedef struct VBOXDISPIFESCAPE_TARGETCONNECTIVITY
+{
+    VBOXDISPIFESCAPE EscapeHdr;
+    uint32_t u32TargetId;
+    uint32_t fu32Connect;
+} VBOXDISPIFESCAPE_TARGETCONNECTIVITY;
+
 #endif /* VBOX_WITH_WDDM */
 
-#endif /* __VBoxDisplay_h__ */
+#endif
+

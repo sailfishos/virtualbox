@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/VBoxTpG.h>
 
 #include <iprt/alloca.h>
@@ -41,9 +41,9 @@
 #include "scmstream.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 typedef struct VTGATTRS
 {
@@ -117,9 +117,9 @@ typedef struct VTGSTRING
 typedef VTGSTRING *PVTGSTRING;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The string space organizing the string table strings. Each node is a VTGSTRING. */
 static RTSTRSPACE       g_StrSpace = NULL;
 /** Used by the string table enumerator to set VTGSTRING::offStrTab. */
@@ -219,7 +219,7 @@ static const char *strtabInsertN(const char *pch, size_t cch)
     /*
      * Create a new entry.
      */
-    pStr = (PVTGSTRING)RTMemAlloc(RT_OFFSETOF(VTGSTRING, szString[cch + 1]));
+    pStr = (PVTGSTRING)RTMemAlloc(RT_UOFFSETOF_DYN(VTGSTRING, szString[cch + 1]));
     if (!pStr)
         return NULL;
 
@@ -532,7 +532,7 @@ static RTEXITCODE generateAssembly(PSCMSTREAM pStrm)
                     "VTG_GLOBAL g_VTGObjHeader, data\n"
                     "                ;0         1         2         3\n"
                     "                ;012345678901234567890123456789012\n"
-                    "    db          'VTG Object Header v1.5', 0, 0\n"
+                    "    db          'VTG Object Header v1.7', 0, 0\n"
                     "    dd          %u\n"
                     "    dd          NAME(g_acVTGProbeEnabled_End) - NAME(g_VTGObjHeader)\n"
                     "    dd          NAME(g_achVTGStringTable)     - NAME(g_VTGObjHeader)\n"
@@ -737,6 +737,10 @@ static RTEXITCODE generateAssembly(PSCMSTREAM pStrm)
                         "    db %d, %d, %d ; AttrName\n"
                         "    db %d, %d, %d ; AttrArguments\n"
                         "    db 0       ; reserved\n"
+                        "VTG_GLOBAL g_cVTGProviderProbesEnabled_%s, data\n"
+                        "    dd 0\n"
+                        "VTG_GLOBAL g_cVTGProviderSettingsSeqNo_%s, data\n"
+                        "    dd 0\n"
                         ,
                         iProvider, pProvider->pszName,
                         strtabGetOff(pProvider->pszName),
@@ -746,7 +750,9 @@ static RTEXITCODE generateAssembly(PSCMSTREAM pStrm)
                         pProvider->AttrModules.enmCode,     pProvider->AttrModules.enmData,     pProvider->AttrModules.enmDataDep,
                         pProvider->AttrFunctions.enmCode,   pProvider->AttrFunctions.enmData,   pProvider->AttrFunctions.enmDataDep,
                         pProvider->AttrName.enmCode,        pProvider->AttrName.enmData,        pProvider->AttrName.enmDataDep,
-                        pProvider->AttrArguments.enmCode,   pProvider->AttrArguments.enmData,   pProvider->AttrArguments.enmDataDep);
+                        pProvider->AttrArguments.enmCode,   pProvider->AttrArguments.enmData,   pProvider->AttrArguments.enmDataDep,
+                        pProvider->pszName,
+                        pProvider->pszName);
         iProvider++;
     }
     ScmStreamPrintf(pStrm, "VTG_GLOBAL g_aVTGProviders_End, data\n");
@@ -908,6 +914,20 @@ static RTEXITCODE generateProbeDefineName(char *pszBuf, size_t cbBuf, const char
 }
 
 
+static RTEXITCODE generateProviderDefineName(char *pszBuf, size_t cbBuf, const char *pszProvider)
+{
+    size_t cbMax = strlen(pszProvider) + 1;
+    if (cbMax > cbBuf || cbMax > 80)
+        return RTMsgErrorExit(RTEXITCODE_FAILURE, "Provider '%s' ends up with a too long defined\n", pszProvider);
+
+    while (*pszProvider)
+        *pszBuf++ = RT_C_TO_UPPER(*pszProvider++);
+
+    *pszBuf = '\0';
+    return RTEXITCODE_SUCCESS;
+}
+
+
 /**
  * Called via generateFile to generate the header file.
  *
@@ -979,14 +999,31 @@ static RTEXITCODE generateHeader(PSCMSTREAM pStrm)
     PVTGARG      pArg;
     RTListForEach(&g_ProviderHead, pProv, VTGPROVIDER, ListEntry)
     {
+        /* This macro is not available in ring-3 because we don't have
+           anything similar available for native dtrace. */
+        ScmStreamPrintf(pStrm, "\n\n");
+        if (g_fTypeContext != VTG_TYPE_CTX_R3)
+        {
+            generateProviderDefineName(szTmp, sizeof(szTmp), pProv->pszName);
+            ScmStreamPrintf(pStrm,
+                            "extern uint32_t const volatile g_cVTGProviderProbesEnabled_%s;\n"
+                            "# define %s_ANY_PROBES_ENABLED() \\\n"
+                            "    (RT_UNLIKELY(g_cVTGProviderProbesEnabled_%s != 0))\n"
+                            "extern uint32_t const volatile g_cVTGProviderSettingsSeqNo_%s;\n"
+                            "# define %s_GET_SETTINGS_SEQ_NO() (g_cVTGProviderSettingsSeqNo_%s)\n"
+                            "\n",
+                            pProv->pszName,
+                            szTmp, pProv->pszName,
+                            pProv->pszName,
+                            szTmp, pProv->pszName);
+        }
+
         RTListForEach(&pProv->ProbeHead, pProbe, VTGPROBE, ListEntry)
         {
-            PVTGARG const pFirstArg = RTListGetFirst(&pProbe->ArgHead, VTGARG, ListEntry);
-
             ScmStreamPrintf(pStrm,
-                            "extern uint32_t        g_cVTGProbeEnabled_%s_%s;\n"
-                            "extern VTGDESCPROBE    g_VTGProbeData_%s_%s;\n"
-                            "DECLASM(void)          VTGProbeStub_%s_%s(PVTGPROBELOC",
+                            "extern uint32_t const volatile g_cVTGProbeEnabled_%s_%s;\n"
+                            "extern VTGDESCPROBE            g_VTGProbeData_%s_%s;\n"
+                            "DECLASM(void)                  VTGProbeStub_%s_%s(PVTGPROBELOC",
                             pProv->pszName, pProbe->pszMangledName,
                             pProv->pszName, pProbe->pszMangledName,
                             pProv->pszName, pProbe->pszMangledName);
@@ -997,11 +1034,12 @@ static RTEXITCODE generateHeader(PSCMSTREAM pStrm)
             generateProbeDefineName(szTmp, sizeof(szTmp), pProv->pszName, pProbe->pszMangledName);
             ScmStreamPrintf(pStrm,
                             ");\n"
-                            "# define %s_ENABLED() \\\n"
-                            "    (RT_UNLIKELY(g_cVTGProbeEnabled_%s_%s)) \n"
+                            "# define %s_ENABLED() (RT_UNLIKELY(g_cVTGProbeEnabled_%s_%s != 0))\n"
+                            "# define %s_ENABLED_RAW() (g_cVTGProbeEnabled_%s_%s)\n"
                             "# define %s("
-                            , szTmp,
-                            pProv->pszName, pProbe->pszMangledName,
+                            ,
+                            szTmp, pProv->pszName, pProbe->pszMangledName,
+                            szTmp, pProv->pszName, pProbe->pszMangledName,
                             szTmp);
             RTListForEach(&pProbe->ArgHead, pArg, VTGARG, ListEntry)
             {
@@ -1059,13 +1097,24 @@ static RTEXITCODE generateHeader(PSCMSTREAM pStrm)
                     "\n");
     RTListForEach(&g_ProviderHead, pProv, VTGPROVIDER, ListEntry)
     {
+        if (g_fTypeContext != VTG_TYPE_CTX_R3)
+        {
+            generateProviderDefineName(szTmp, sizeof(szTmp), pProv->pszName);
+            ScmStreamPrintf(pStrm,
+                            "# define %s_ANY_PROBES_ENABLED() (false)\n"
+                            "# define %s_GET_SETTINGS_SEQ_NO() UINT32_C(0)\n"
+                            "\n",
+                            szTmp, szTmp);
+        }
+
         RTListForEach(&pProv->ProbeHead, pProbe, VTGPROBE, ListEntry)
         {
             generateProbeDefineName(szTmp, sizeof(szTmp), pProv->pszName, pProbe->pszMangledName);
             ScmStreamPrintf(pStrm,
                             "# define %s_ENABLED() (false)\n"
+                            "# define %s_ENABLED_RAW() UINT32_C(0)\n"
                             "# define %s("
-                            , szTmp, szTmp);
+                            , szTmp, szTmp, szTmp);
             RTListForEach(&pProbe->ArgHead, pArg, VTGARG, ListEntry)
             {
                 if (RTListNodeIsFirst(&pProbe->ArgHead, &pArg->ListEntry))
@@ -1150,8 +1199,6 @@ static RTEXITCODE generateWrapperHeader(PSCMSTREAM pStrm)
     {
         RTListForEach(&pProv->ProbeHead, pProbe, VTGPROBE, ListEntry)
         {
-            PVTGARG const pFirstArg = RTListGetFirst(&pProbe->ArgHead, VTGARG, ListEntry);
-
             generateProbeDefineName(szTmp, sizeof(szTmp), pProv->pszName, pProbe->pszMangledName);
             ScmStreamPrintf(pStrm,
                             "# define %s("
@@ -1181,6 +1228,15 @@ static RTEXITCODE generateWrapperHeader(PSCMSTREAM pStrm)
                         ScmStreamPrintf(pStrm, "(%s)%M", pArg->pszTracerType, pszFmt, pArg->pszName);
                     else
                         ScmStreamPrintf(pStrm, ", (%s)%M", pArg->pszTracerType, pszFmt, pArg->pszName);
+                }
+                else if (pArg->fType & VTG_TYPE_CONST_CHAR_PTR)
+                {
+                    /* Casting from 'const char *' (probe) to 'char *' (dtrace) is required to shut up warnings. */
+                    pszFmt += sizeof(", ") - 1;
+                    if (RTListNodeIsFirst(&pProbe->ArgHead, &pArg->ListEntry))
+                        ScmStreamPrintf(pStrm, "(char *)%M", pszFmt, pArg->pszName);
+                    else
+                        ScmStreamPrintf(pStrm, ", (char *)%M", pszFmt, pArg->pszName);
                 }
                 else
                 {
@@ -1276,6 +1332,7 @@ static RTEXITCODE parseErrorAbs(PSCMSTREAM pStrm, size_t off, const char *pszMsg
     return parseError(pStrm, 0, pszMsg);
 }
 
+
 /**
  * Handles a C++ one line comment.
  *
@@ -1287,6 +1344,7 @@ static RTEXITCODE parseOneLineComment(PSCMSTREAM pStrm)
     ScmStreamSeekByLine(pStrm, ScmStreamTellLine(pStrm) + 1);
     return RTEXITCODE_SUCCESS;
 }
+
 
 /**
  * Handles a multi-line C/C++ comment.
@@ -1652,7 +1710,11 @@ static uint32_t parseTypeExpression(const char *pszType)
     /*
      * Try detect pointers.
      */
-    if (pszType[cchType - 1] == '*')    return VTG_TYPE_POINTER;
+    if (pszType[cchType - 1] == '*')
+    {
+        if (MY_STRMATCH("const char *")) return VTG_TYPE_POINTER | VTG_TYPE_CONST_CHAR_PTR;
+        return VTG_TYPE_POINTER;
+    }
     if (pszType[cchType - 1] == '&')
     {
         RTMsgWarning("Please avoid using references like '%s' for probe arguments!", pszType);
@@ -2312,7 +2374,7 @@ static RTEXITCODE parseArguments(int argc,  char **argv)
             case 'V':
             {
                 /* The following is assuming that svn does it's job here. */
-                static const char s_szRev[] = "$Revision: 87697 $";
+                static const char s_szRev[] = "$Revision: 125570 $";
                 const char *psz = RTStrStripL(strchr(s_szRev, ' '));
                 RTPrintf("r%.*s\n", strchr(psz, ' ') - psz, psz);
                 return RTEXITCODE_SUCCESS;

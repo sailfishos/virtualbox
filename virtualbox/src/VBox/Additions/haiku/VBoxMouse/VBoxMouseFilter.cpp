@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -54,14 +54,12 @@
 #include <String.h>
 
 #include "VBoxMouseFilter.h"
-#include <VBox/VBoxGuest.h> /** @todo use the VbglR3 interface! */
 #include <VBox/VBoxGuestLib.h>
 #include <VBoxGuestInternal.h>
-#include <VBox/VMMDev.h>
 #include <VBox/log.h>
 #include <iprt/err.h>
 
-/* @todo can this be merged with VBoxMouse? */
+/** @todo can this be merged with VBoxMouse? */
 
 RTDECL(BInputServerFilter *)
 instantiate_input_filter()

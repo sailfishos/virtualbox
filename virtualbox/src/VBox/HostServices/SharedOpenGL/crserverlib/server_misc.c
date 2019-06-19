@@ -25,29 +25,39 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetChromiumParametervCR(GLenum tar
 {
     GLubyte local_storage[4096];
     GLint bytes = 0;
+    GLint cbType = 1; /* One byte by default. */
+
+    memset(local_storage, 0, sizeof(local_storage));
 
     switch (type) {
     case GL_BYTE:
     case GL_UNSIGNED_BYTE:
-         bytes = count * sizeof(GLbyte);
+         cbType = sizeof(GLbyte);
          break;
     case GL_SHORT:
     case GL_UNSIGNED_SHORT:
-         bytes = count * sizeof(GLshort);
+         cbType = sizeof(GLshort);
          break;
     case GL_INT:
     case GL_UNSIGNED_INT:
-         bytes = count * sizeof(GLint);
+         cbType = sizeof(GLint);
          break;
     case GL_FLOAT:
-         bytes = count * sizeof(GLfloat);
+         cbType = sizeof(GLfloat);
          break;
     case GL_DOUBLE:
-         bytes = count * sizeof(GLdouble);
+         cbType = sizeof(GLdouble);
          break;
     default:
          crError("Bad type in crServerDispatchGetChromiumParametervCR");
     }
+
+    if (count < 0) /* 'GLsizei' is usually an 'int'. */
+        count = 0;
+    else if ((size_t)count > sizeof(local_storage) / cbType)
+        count = sizeof(local_storage) / cbType;
+
+    bytes = count * cbType;
 
     CRASSERT(bytes >= 0);
     CRASSERT(bytes < 4096);
@@ -289,7 +299,7 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchChromiumParametervCR(GLenum target
               crDebug("Frustum: left, right, bottom, top, near, far: %f, %f, %f, %f, %f, %f", left, right, bottom, top, znear, zfar);
             }
             else {
-                /* Todo: Add debug output for orthographic projection*/
+                /** @todo Add debug output for orthographic projection*/
             }
 
         }
@@ -399,7 +409,7 @@ static int copynum=0;
 void SERVER_DISPATCH_APIENTRY
 crServerDispatchCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint x, GLint y, GLsizei width, GLsizei height)
 {
-    /*@todo pbo/fbo disabled for now as it's slower, check on other gpus*/
+    /** @todo pbo/fbo disabled for now as it's slower, check on other gpus*/
     static int siHavePBO = 0;
     static int siHaveFBO = 0;
 
@@ -486,7 +496,7 @@ crServerDispatchCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLi
             }
 #endif
         }
-        else if (siHaveFBO==1) /*@todo more states to set and restore here*/
+        else if (siHaveFBO==1) /** @todo more states to set and restore here*/
         {
             GLuint tID, fboID;
             GLenum status;
@@ -587,7 +597,8 @@ crServerDispatchCopyTexSubImage2D(GLenum target, GLint level, GLint xoffset, GLi
         }
         else
         {
-            GLuint pboId, dRow, sRow;
+            GLint dRow;
+            GLuint pboId, sRow;
             CRContext *ctx = crStateGetCurrent();
 
             gl->GenBuffersARB(1, &pboId);
@@ -708,8 +719,9 @@ DECLEXPORT(void) crDbgPrint(const char *format, ... )
     va_list args;
     static char txt[8092];
 
-    va_start( args, format );
-    vsprintf( txt, format, args );
+    va_start(args, format);
+    vsprintf(txt, format, args);
+    va_end(args);
 
     OutputDebugString(txt);
 }
@@ -1331,6 +1343,19 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchDrawBuffer( GLenum mode )
     }
 
     cr_server.head_spu->dispatch_table.DrawBuffer( mode );
+}
+
+void SERVER_DISPATCH_APIENTRY crServerDispatchDrawBuffers( GLsizei n, const GLenum* bufs )
+{
+    if (n == 1)
+    {
+        crServerDispatchDrawBuffer( bufs[0] );
+    }
+    else
+    {
+        /** @todo State tracker. */
+        cr_server.head_spu->dispatch_table.DrawBuffers( n, bufs );
+    }
 }
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchReadBuffer( GLenum mode )
@@ -1971,7 +1996,7 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchBegin(GLenum mode)
         GLint pid=-1;
 
         gl->GetIntegerv(GL_CURRENT_PROGRAM, &pid);
-        crDebug("pid %i, state: id %i, hwid %i", pid, ctx->glsl.activeProgram->id, ctx->glsl.activeProgram->hwid);
+        //crDebug("pid %i, state: id %i, hwid %i", pid, ctx->glsl.activeProgram->id, ctx->glsl.activeProgram->hwid);
         if (pid != ctx->glsl.activeProgram->hwid)
         {
             crWarning("pid(%d) != ctx->glsl.activeProgram->hwid(%d)", pid, ctx->glsl.activeProgram->hwid);

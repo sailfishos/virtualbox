@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,16 +25,16 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/rand.h>
 #include "internal/iprt.h"
 
 #include <iprt/err.h>
 
 
-RTDECL(int) RTRandAdvCreateSystemFaster(PRTRAND phRand) RT_NO_THROW
+RTDECL(int) RTRandAdvCreateSystemFaster(PRTRAND phRand) RT_NO_THROW_DEF
 {
     NOREF(phRand);
     return VERR_NOT_SUPPORTED;

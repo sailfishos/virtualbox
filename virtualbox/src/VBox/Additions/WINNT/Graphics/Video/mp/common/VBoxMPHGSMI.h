@@ -1,11 +1,10 @@
 /* $Id: VBoxMPHGSMI.h $ */
-
 /** @file
  * VBox Miniport HGSMI related header
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,4 +25,4 @@ void VBoxSetupDisplaysHGSMI(PVBOXMP_COMMON pCommon, PHYSICAL_ADDRESS phVRAM, uin
 void VBoxFreeDisplaysHGSMI(PVBOXMP_COMMON pCommon);
 RT_C_DECLS_END
 
-#endif /*VBOXMPHGSMI_H*/
+#endif /*!VBOXMPHGSMI_H*/

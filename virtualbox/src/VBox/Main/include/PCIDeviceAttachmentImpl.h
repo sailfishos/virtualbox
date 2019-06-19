@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,51 +20,45 @@
 #ifndef ____H_PCIDEVICEATTACHMENTIMPL
 #define ____H_PCIDEVICEATTACHMENTIMPL
 
-#include "VirtualBoxBase.h"
-#include <VBox/settings.h>
+#include "PCIDeviceAttachmentWrap.h"
+
+namespace settings
+{
+    struct HostPCIDeviceAttachment;
+}
 
 class ATL_NO_VTABLE PCIDeviceAttachment :
-    public VirtualBoxBase,
-    VBOX_SCRIPTABLE_IMPL(IPCIDeviceAttachment)
+    public PCIDeviceAttachmentWrap
 {
 public:
-    VIRTUALBOXBASE_ADD_ERRORINFO_SUPPORT(PCIDeviceAttachment, IPCIDeviceAttachment)
 
-    DECLARE_NOT_AGGREGATABLE(PCIDeviceAttachment)
-
-    DECLARE_PROTECT_FINAL_CONSTRUCT()
-
-    BEGIN_COM_MAP(PCIDeviceAttachment)
-        VBOX_DEFAULT_INTERFACE_ENTRIES(IPCIDeviceAttachment)
-    END_COM_MAP()
-
-    PCIDeviceAttachment() { }
-    ~PCIDeviceAttachment() { }
+    DECLARE_EMPTY_CTOR_DTOR(PCIDeviceAttachment)
 
     // public initializer/uninitializer for internal purposes only
     HRESULT init(IMachine *    aParent,
-                 const Bstr    &aName,
+                 const Utf8Str &aDevName,
                  LONG          aHostAddess,
                  LONG          aGuestAddress,
                  BOOL          fPhysical);
-
+    HRESULT initCopy(IMachine *aParent, PCIDeviceAttachment *aThat);
     void uninit();
 
     // settings
-    HRESULT loadSettings(IMachine * aParent,
-                         const settings::HostPCIDeviceAttachment& aHpda);
-    HRESULT saveSettings(settings::HostPCIDeviceAttachment &data);
+    HRESULT i_loadSettings(IMachine * aParent,
+                           const settings::HostPCIDeviceAttachment& aHpda);
+    HRESULT i_saveSettings(settings::HostPCIDeviceAttachment &data);
 
     HRESULT FinalConstruct();
     void FinalRelease();
 
-    // IPCIDeviceAttachment properties
-    STDMETHOD(COMGETTER(Name))(BSTR * aName);
-    STDMETHOD(COMGETTER(IsPhysicalDevice))(BOOL * aPhysical);
-    STDMETHOD(COMGETTER(HostAddress))(LONG  * hostAddress);
-    STDMETHOD(COMGETTER(GuestAddress))(LONG * guestAddress);
-
 private:
+
+    // wrapped IPCIDeviceAttachment properties
+    HRESULT getName(com::Utf8Str &aName);
+    HRESULT getIsPhysicalDevice(BOOL *aIsPhysicalDevice);
+    HRESULT getHostAddress(LONG *aHostAddress);
+    HRESULT getGuestAddress(LONG *aGuestAddress);
+
     struct Data;
     Data*  m;
 };

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -47,9 +47,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_THREAD
 #include <errno.h>
 #include <pthread.h>
@@ -68,9 +68,9 @@
 #include "internal/thread.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /** Array scheduler attributes corresponding to each of the thread types.
  * @internal */
@@ -121,9 +121,9 @@ typedef struct
 } SAVEDPRIORITY, *PSAVEDPRIORITY;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Deltas for a process in which we are not restricted
  * to only be lowering the priority.
@@ -262,9 +262,9 @@ static bool g_fInitialized = false;
 
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 
 /**
@@ -324,7 +324,7 @@ static int rtSchedRunThread(void *(*pfnThread)(void *pvArg), void *pvArg)
         do
         {
             rc = pthread_join(Thread, &pvRet);
-        } while (errno == EINTR);
+        } while (rc == EINTR);
         if (rc)
             return RTErrConvertFromErrno(rc);
         return (int)(uintptr_t)pvRet;
@@ -588,7 +588,7 @@ DECLHIDDEN(int) rtThreadNativeSetPriority(PRTTHREADINT pThread, RTTHREADTYPE enm
     /* sanity */
     Assert(enmType > RTTHREADTYPE_INVALID && enmType < RTTHREADTYPE_END);
     Assert(enmType == g_pProcessPriority->paTypes[enmType].enmType);
-    Assert((pthread_t)pThread->Core.Key == pthread_self());
+    Assert((pthread_t)pThread->Core.Key == pthread_self()); RT_NOREF_PV(pThread);
 
     /*
      * Calculate the thread priority and apply it.

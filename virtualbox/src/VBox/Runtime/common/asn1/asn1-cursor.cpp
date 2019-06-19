@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,12 +24,14 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
+#include <iprt/asm.h>
 #include <iprt/alloca.h>
 #include <iprt/err.h>
 #include <iprt/string.h>
@@ -38,9 +40,9 @@
 #include <iprt/formats/asn1.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @def RTASN1_MAX_NESTING
  * The maximum nesting depth we allow.  This limit is enforced to avoid running
  * out of stack due to malformed ASN.1 input.
@@ -56,12 +58,6 @@
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
-static char const g_achDigits[11] = "0123456789";
-
-
 
 RTDECL(PRTASN1CURSOR) RTAsn1CursorInitPrimary(PRTASN1CURSORPRIMARY pPrimaryCursor, void const *pvFirst, uint32_t cb,
                                               PRTERRINFO pErrInfo, PCRTASN1ALLOCATORVTABLE pAllocator, uint32_t fFlags,
@@ -69,7 +65,7 @@ RTDECL(PRTASN1CURSOR) RTAsn1CursorInitPrimary(PRTASN1CURSORPRIMARY pPrimaryCurso
 {
     pPrimaryCursor->Cursor.pbCur            = (uint8_t const *)pvFirst;
     pPrimaryCursor->Cursor.cbLeft           = cb;
-    pPrimaryCursor->Cursor.fFlags           = fFlags;
+    pPrimaryCursor->Cursor.fFlags           = (uint8_t)fFlags; Assert(fFlags <= UINT8_MAX);
     pPrimaryCursor->Cursor.cDepth           = 0;
     pPrimaryCursor->Cursor.abReserved[0]    = 0;
     pPrimaryCursor->Cursor.abReserved[1]    = 0;
@@ -78,6 +74,7 @@ RTDECL(PRTASN1CURSOR) RTAsn1CursorInitPrimary(PRTASN1CURSORPRIMARY pPrimaryCurso
     pPrimaryCursor->Cursor.pszErrorTag      = pszErrorTag;
     pPrimaryCursor->pErrInfo                = pErrInfo;
     pPrimaryCursor->pAllocator              = pAllocator;
+    pPrimaryCursor->pbFirst                 = (uint8_t const *)pvFirst;
     return &pPrimaryCursor->Cursor;
 }
 
@@ -89,7 +86,7 @@ RTDECL(int) RTAsn1CursorInitSub(PRTASN1CURSOR pParent, uint32_t cb, PRTASN1CURSO
 
     pChild->pbCur           = pParent->pbCur;
     pChild->cbLeft          = cb;
-    pChild->fFlags          = pParent->fFlags;
+    pChild->fFlags          = pParent->fFlags & ~RTASN1CURSOR_FLAGS_INDEFINITE_LENGTH;
     pChild->cDepth          = pParent->cDepth + 1;
     AssertReturn(pChild->cDepth < RTASN1_MAX_NESTING, VERR_ASN1_TOO_DEEPLY_NESTED);
     pChild->abReserved[0]   = 0;
@@ -114,7 +111,7 @@ RTDECL(int) RTAsn1CursorInitSubFromCore(PRTASN1CURSOR pParent, PRTASN1CORE pAsn1
 
     pChild->pbCur           = pAsn1Core->uData.pu8;
     pChild->cbLeft          = pAsn1Core->cb;
-    pChild->fFlags          = pParent->fFlags;
+    pChild->fFlags          = pParent->fFlags & ~RTASN1CURSOR_FLAGS_INDEFINITE_LENGTH;
     pChild->cDepth          = pParent->cDepth + 1;
     AssertReturn(pChild->cDepth < RTASN1_MAX_NESTING, VERR_ASN1_TOO_DEEPLY_NESTED);
     pChild->abReserved[0]   = 0;
@@ -191,12 +188,106 @@ RTDECL(int) RTAsn1CursorSetInfo(PRTASN1CURSOR pCursor, int rc, const char *pszMs
 }
 
 
-RTDECL(int) RTAsn1CursorCheckEnd(PRTASN1CURSOR pCursor)
+RTDECL(bool) RTAsn1CursorIsEnd(PRTASN1CURSOR pCursor)
 {
     if (pCursor->cbLeft == 0)
-        return VINF_SUCCESS;
+        return true;
+    if (!(pCursor->fFlags & RTASN1CURSOR_FLAGS_INDEFINITE_LENGTH))
+        return false;
+    return pCursor->cbLeft >= 2
+        && pCursor->pbCur[0] == 0
+        && pCursor->pbCur[1] == 0;
+}
+
+
+RTDECL(int) RTAsn1CursorCheckEnd(PRTASN1CURSOR pCursor)
+{
+    if (!(pCursor->fFlags & RTASN1CURSOR_FLAGS_INDEFINITE_LENGTH))
+    {
+        if (pCursor->cbLeft == 0)
+            return VINF_SUCCESS;
+        return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_NOT_AT_END,
+                                   "%u (%#x) bytes left over", pCursor->cbLeft, pCursor->cbLeft);
+    }
+
+    /*
+     * There must be exactly two zero bytes here.
+     */
+    if (pCursor->cbLeft == 2)
+    {
+        if (   pCursor->pbCur[0] == 0
+            && pCursor->pbCur[1] == 0)
+            return VINF_SUCCESS;
+        return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_NOT_AT_END,
+                                   "%u (%#x) bytes left over [indef: %.*Rhxs]",
+                                   pCursor->cbLeft, pCursor->cbLeft, RT_MIN(pCursor->cbLeft, 16), pCursor->pbCur);
+    }
     return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_NOT_AT_END,
-                               "%u (%#x) bytes left over", pCursor->cbLeft, pCursor->cbLeft);
+                               "%u (%#x) byte(s) left over, exepcted exactly two zero bytes [indef len]",
+                               pCursor->cbLeft, pCursor->cbLeft);
+}
+
+
+/**
+ * Worker for RTAsn1CursorCheckSeqEnd and RTAsn1CursorCheckSetEnd.
+ */
+static int rtAsn1CursorCheckSeqOrSetEnd(PRTASN1CURSOR pCursor, PRTASN1CORE pAsn1Core)
+{
+    if (!(pAsn1Core->fFlags & RTASN1CORE_F_INDEFINITE_LENGTH))
+    {
+        if (pCursor->cbLeft == 0)
+            return VINF_SUCCESS;
+        return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_NOT_AT_END,
+                                   "%u (%#x) bytes left over", pCursor->cbLeft, pCursor->cbLeft);
+    }
+
+    if (pCursor->cbLeft >= 2)
+    {
+        if (   pCursor->pbCur[0] == 0
+            && pCursor->pbCur[1] == 0)
+        {
+            pAsn1Core->cb = (uint32_t)(pCursor->pbCur - pAsn1Core->uData.pu8);
+            pCursor->cbLeft -= 2;
+            pCursor->pbCur  += 2;
+
+            PRTASN1CURSOR pParentCursor = pCursor->pUp;
+            if (   pParentCursor
+                && (pParentCursor->fFlags & RTASN1CURSOR_FLAGS_INDEFINITE_LENGTH))
+            {
+                pParentCursor->pbCur  -= pCursor->cbLeft;
+                pParentCursor->cbLeft += pCursor->cbLeft;
+                return VINF_SUCCESS;
+            }
+
+            if (pCursor->cbLeft == 0)
+                return VINF_SUCCESS;
+
+            return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_NOT_AT_END,
+                                       "%u (%#x) bytes left over (parent not indefinite length)", pCursor->cbLeft, pCursor->cbLeft);
+        }
+        return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_NOT_AT_END, "%u (%#x) bytes left over [indef: %.*Rhxs]",
+                                   pCursor->cbLeft, pCursor->cbLeft, RT_MIN(pCursor->cbLeft, 16), pCursor->pbCur);
+    }
+    return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_NOT_AT_END,
+                               "1 byte left over, expected two for indefinite length end-of-content sequence");
+}
+
+
+RTDECL(int) RTAsn1CursorCheckSeqEnd(PRTASN1CURSOR pCursor, PRTASN1SEQUENCECORE pSeqCore)
+{
+    return rtAsn1CursorCheckSeqOrSetEnd(pCursor, &pSeqCore->Asn1Core);
+}
+
+
+RTDECL(int) RTAsn1CursorCheckSetEnd(PRTASN1CURSOR pCursor, PRTASN1SETCORE pSetCore)
+{
+    return rtAsn1CursorCheckSeqOrSetEnd(pCursor, &pSetCore->Asn1Core);
+}
+
+
+RTDECL(int) RTAsn1CursorCheckOctStrEnd(PRTASN1CURSOR pCursor, PRTASN1OCTETSTRING pOctetString)
+{
+    return rtAsn1CursorCheckSeqOrSetEnd(pCursor, &pOctetString->Asn1Core);
 }
 
 
@@ -206,6 +297,22 @@ RTDECL(PRTASN1ALLOCATION) RTAsn1CursorInitAllocation(PRTASN1CURSOR pCursor, PRTA
     pAllocation->cReallocs   = 0;
     pAllocation->uReserved0  = 0;
     pAllocation->pAllocator  = pCursor->pPrimary->pAllocator;
+    return pAllocation;
+}
+
+
+RTDECL(PRTASN1ARRAYALLOCATION) RTAsn1CursorInitArrayAllocation(PRTASN1CURSOR pCursor, PRTASN1ARRAYALLOCATION pAllocation,
+                                                               size_t cbEntry)
+{
+    Assert(cbEntry >= sizeof(RTASN1CORE));
+    Assert(cbEntry < _1M);
+    Assert(RT_ALIGN_Z(cbEntry, sizeof(void *)) == cbEntry);
+    pAllocation->cbEntry            = (uint32_t)cbEntry;
+    pAllocation->cPointersAllocated = 0;
+    pAllocation->cEntriesAllocated  = 0;
+    pAllocation->cResizeCalls       = 0;
+    pAllocation->uReserved0         = 0;
+    pAllocation->pAllocator         = pCursor->pPrimary->pAllocator;
     return pAllocation;
 }
 
@@ -296,12 +403,31 @@ RTDECL(int) RTAsn1CursorReadHdr(PRTASN1CURSOR pCursor, PRTASN1CORE pAsn1Core, co
             }
             /* Indefinite form. */
             else if (pCursor->fFlags & RTASN1CURSOR_FLAGS_DER)
-                return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_ILLEGAL_IDEFINITE_LENGTH,
+                return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_ILLEGAL_INDEFINITE_LENGTH,
                                            "%s: Indefinite length form not allowed in DER mode (uTag=%#x).", pszErrorTag, uTag);
+            else if (!(uTag & ASN1_TAGFLAG_CONSTRUCTED))
+                return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_BAD_INDEFINITE_LENGTH,
+                                           "%s: Indefinite BER/CER encoding is for non-constructed tag (uTag=%#x)", pszErrorTag, uTag);
+            else if (   uTag != (ASN1_TAG_SEQUENCE | ASN1_TAGFLAG_CONSTRUCTED)
+                     && uTag != (ASN1_TAG_SET      | ASN1_TAGFLAG_CONSTRUCTED)
+                     &&    (uTag & (ASN1_TAGFLAG_CONSTRUCTED | ASN1_TAGCLASS_CONTEXT))
+                        !=         (ASN1_TAGFLAG_CONSTRUCTED | ASN1_TAGCLASS_CONTEXT) )
+                return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_BAD_INDEFINITE_LENGTH,
+                                           "%s: Indefinite BER/CER encoding not supported for this tag (uTag=%#x)", pszErrorTag, uTag);
+            else if (pCursor->fFlags & RTASN1CURSOR_FLAGS_INDEFINITE_LENGTH)
+                return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_BAD_INDEFINITE_LENGTH,
+                                           "%s: Nested indefinite BER/CER encoding. (uTag=%#x)", pszErrorTag, uTag);
+            else if (pCursor->cbLeft < 2)
+                return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_BAD_INDEFINITE_LENGTH,
+                                           "%s: Too little data left for indefinite BER/CER encoding (uTag=%#x)", pszErrorTag, uTag);
             else
-                return RTAsn1CursorSetInfo(pCursor, VERR_ASN1_CURSOR_IDEFINITE_LENGTH_NOT_SUP,
-                                           "%s: Indefinite BER/CER length not supported (uTag=%#x)", pszErrorTag, uTag);
+            {
+                pCursor->fFlags   |= RTASN1CURSOR_FLAGS_INDEFINITE_LENGTH;
+                pAsn1Core->fFlags |= RTASN1CORE_F_INDEFINITE_LENGTH;
+                cb = pCursor->cbLeft; /* Start out with the whole sequence, adjusted later upon reach the end. */
+            }
         }
+        /* else if (cb == 0 && uTag == 0) { end of content } - callers handle this */
 
         /* Check if the length makes sense. */
         if (cb > pCursor->cbLeft)
@@ -413,25 +539,30 @@ RTDECL(int) RTAsn1CursorGetSetCursor(PRTASN1CURSOR pCursor, uint32_t fFlags,
 
 
 RTDECL(int) RTAsn1CursorGetContextTagNCursor(PRTASN1CURSOR pCursor, uint32_t fFlags, uint32_t uExpectedTag,
-                                             PRTASN1CONTEXTTAG pCtxTag, PRTASN1CURSOR pCtxTagCursor, const char *pszErrorTag)
+                                             PCRTASN1COREVTABLE pVtable, PRTASN1CONTEXTTAG pCtxTag, PRTASN1CURSOR pCtxTagCursor,
+                                             const char *pszErrorTag)
 {
-    return rtAsn1CursorGetXxxxCursor(pCursor, fFlags, uExpectedTag, ASN1_TAGCLASS_CONTEXT | ASN1_TAGFLAG_CONSTRUCTED,
-                                     &pCtxTag->Asn1Core, pCtxTagCursor, pszErrorTag, "ctx tag");
+    int rc = rtAsn1CursorGetXxxxCursor(pCursor, fFlags, uExpectedTag, ASN1_TAGCLASS_CONTEXT | ASN1_TAGFLAG_CONSTRUCTED,
+                                       &pCtxTag->Asn1Core, pCtxTagCursor, pszErrorTag, "ctx tag");
+    pCtxTag->Asn1Core.pOps = pVtable;
+    return rc;
 }
 
 
 RTDECL(int) RTAsn1CursorPeek(PRTASN1CURSOR pCursor, PRTASN1CORE pAsn1Core)
 {
-    uint32_t        cbSavedLeft = pCursor->cbLeft;
-    uint8_t const  *pbSavedCur  = pCursor->pbCur;
-    PRTERRINFO      pErrInfo    = pCursor->pPrimary->pErrInfo;
+    uint32_t            cbSavedLeft         = pCursor->cbLeft;
+    uint8_t const      *pbSavedCur          = pCursor->pbCur;
+    uint8_t const       fSavedFlags         = pCursor->fFlags;
+    PRTERRINFO const    pErrInfo            = pCursor->pPrimary->pErrInfo;
     pCursor->pPrimary->pErrInfo = NULL;
 
     int rc = RTAsn1CursorReadHdr(pCursor, pAsn1Core, "peek");
 
     pCursor->pPrimary->pErrInfo = pErrInfo;
-    pCursor->pbCur  = pbSavedCur;
-    pCursor->cbLeft = cbSavedLeft;
+    pCursor->pbCur              = pbSavedCur;
+    pCursor->cbLeft             = cbSavedLeft;
+    pCursor->fFlags             = fSavedFlags;
     return rc;
 }
 

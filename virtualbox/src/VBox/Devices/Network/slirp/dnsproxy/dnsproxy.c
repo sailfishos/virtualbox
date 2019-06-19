@@ -1,7 +1,7 @@
 /* $Id: dnsproxy.c $ */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -339,7 +339,7 @@ dnsproxy_query(PNATState pData, struct socket *so, struct mbuf *m, int iphlen)
 
     /* check for minimum dns packet length */
     if (byte < 12) {
-        LogRel(("query too short from %RTnaipv4\n", fromaddr.sin_addr));
+        LogRel(("NAT: Query too short from %RTnaipv4\n", fromaddr.sin_addr));
         ++dropped_queries;
         return;
     }
@@ -353,7 +353,7 @@ dnsproxy_query(PNATState pData, struct socket *so, struct mbuf *m, int iphlen)
 
         if ((req = RTMemAllocZ(sizeof(struct request) + byte)) == NULL)
         {
-            LogRel(("calloc failed\n"));
+            LogRel(("NAT: calloc failed\n"));
             ++dropped_queries;
             return;
         }
@@ -427,7 +427,7 @@ dnsproxy_query(PNATState pData, struct socket *so, struct mbuf *m, int iphlen)
     if (byte == -1)
     {
         /* XXX: is it really enough? */
-        LogRel(("sendto failed: %s\n", strerror(errno)));
+        LogRel(("NAT: sendto failed: %s\n", strerror(errno)));
         ++dropped_queries;
         return;
     }
@@ -529,14 +529,14 @@ dnsproxy_answer(PNATState pData, struct socket *so, struct mbuf *m)
 
     /* check for minimum dns packet length */
     if (byte < 12) {
-        LogRel(("answer too short\n"));
+        LogRel(("NAT: Answer too short\n"));
         ++dropped_answers;
         return;
     }
 
+    /* find corresponding query (XXX: but see below) */
     query = hash_find_request(pData, *((unsigned short *)buf));
 
-    /* find corresponding query */
     if (query == NULL)
     {
         /* XXX: if we haven't found anything for this request ...
@@ -547,6 +547,19 @@ dnsproxy_answer(PNATState pData, struct socket *so, struct mbuf *m)
         Log2(("NAT: query wasn't found\n"));
         return;
     }
+
+    /*
+     * XXX: The whole hash thing is pretty meaningless right now since
+     * we use a separate socket for each request, so we already know
+     * the answer.
+     *
+     * If the answer is not what we expect it to be, then it's
+     * probably a stray or malicious reply and we'd better not free a
+     * query owned by some other socket - that would cause
+     * use-after-free later on.
+     */
+    if (query != so->so_timeout_arg)
+        return;
 
     so->so_timeout = NULL;
     so->so_timeout_arg = NULL;
@@ -601,7 +614,7 @@ main(int argc, char *argv[])
         case 'V':
             fprintf(stderr, PACKAGE_STRING "\n");
             exit(0);
-        /* FALLTHROUGH */
+        RT_FALL_THRU();
         case 'h':
         default:
             fprintf(stderr,

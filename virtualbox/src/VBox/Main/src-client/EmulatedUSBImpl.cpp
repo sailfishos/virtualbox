@@ -1,11 +1,10 @@
 /* $Id: EmulatedUSBImpl.cpp $ */
 /** @file
- *
  * Emulated USB manager implementation.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,11 +15,11 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#define LOG_GROUP_MAIN_OVERRIDE LOG_GROUP_MAIN_EMULATEDUSB
+#define LOG_GROUP LOG_GROUP_MAIN_EMULATEDUSB
+#include "LoggingNew.h"
 
 #include "EmulatedUSBImpl.h"
 #include "ConsoleImpl.h"
-#include "Logging.h"
 
 #include <VBox/vmm/pdmusb.h>
 
@@ -156,7 +155,7 @@ static int emulatedWebcamInsertSettings(PCFGMNODE pConfig, EUSBSettingsMap *pSet
     PCFGMNODE pEUSB;
     CFGMR3InsertNode(pConfig,       "EmulatedUSB", &pEUSB);
     CFGMR3InsertString(pEUSB,         "Id", pThis->mszUuid);
-    CFGMR3InsertInteger(pEUSB,        "pfnCallback", (uintptr_t)EmulatedUSB::eusbCallback);
+    CFGMR3InsertInteger(pEUSB,        "pfnCallback", (uintptr_t)EmulatedUSB::i_eusbCallback);
     CFGMR3InsertInteger(pEUSB,        "pvCallback", (uintptr_t)pThis->mpEmulatedUSB);
 
     PCFGMNODE pLunL0;
@@ -170,7 +169,7 @@ static int emulatedWebcamInsertSettings(PCFGMNODE pConfig, EUSBSettingsMap *pSet
         return rc;
 
     /* pInstance will be used by PDM and deallocated on error. */
-    rc = PDMR3UsbCreateEmulatedDevice(pUVM, "Webcam", pInstance, &pThis->mUuid);
+    rc = PDMR3UsbCreateEmulatedDevice(pUVM, "Webcam", pInstance, &pThis->mUuid, NULL);
     LogRelFlowFunc(("PDMR3UsbCreateEmulatedDevice %Rrc\n", rc));
     return rc;
 }
@@ -236,14 +235,14 @@ HRESULT EUSBWEBCAM::settingsParse(void)
             /* Does the setting belong to device of driver. Default is both. */
             bool fDev = true;
             bool fDrv = true;
-            if (RTStrNICmp(pszSrc, "drv:", strlen("drv:")) == 0)
+            if (RTStrNICmp(pszSrc, RT_STR_TUPLE("drv:")) == 0)
             {
-                pszSrc += strlen("drv:");
+                pszSrc += sizeof("drv:")-1;
                 fDev = false;
             }
-            else if (RTStrNICmp(pszSrc, "dev:", strlen("dev:")) == 0)
+            else if (RTStrNICmp(pszSrc, RT_STR_TUPLE("dev:")) == 0)
             {
-                pszSrc += strlen("dev:");
+                pszSrc += sizeof("dev:")-1;
                 fDrv = false;
             }
 
@@ -391,13 +390,16 @@ void EmulatedUSB::uninit()
     m.pConsole.setNull();
 
     AutoWriteLock alock(this COMMA_LOCKVAL_SRC_POS);
-    WebcamsMap::iterator it = m.webcams.begin();
-    while (it != m.webcams.end())
+    for (WebcamsMap::iterator it = m.webcams.begin(); it != m.webcams.end(); ++it)
     {
         EUSBWEBCAM *p = it->second;
-        m.webcams.erase(it++);
-        p->Release();
+        if (p)
+        {
+            it->second = NULL;
+            p->Release();
+        }
     }
+    m.webcams.clear();
     alock.release();
 
     /* Enclose the state transition Ready->InUninit->NotReady */
@@ -441,13 +443,13 @@ static const Utf8Str s_pathDefault(".0");
 HRESULT EmulatedUSB::webcamAttach(const com::Utf8Str &aPath,
                                   const com::Utf8Str &aSettings)
 {
-    return webcamAttachInternal(aPath, aSettings, "HostWebcam", NULL);
+    return i_webcamAttachInternal(aPath, aSettings, "HostWebcam", NULL);
 }
 
-HRESULT EmulatedUSB::webcamAttachInternal(const com::Utf8Str &aPath,
-                                          const com::Utf8Str &aSettings,
-                                          const char *pszDriver,
-                                          void *pvObject)
+HRESULT EmulatedUSB::i_webcamAttachInternal(const com::Utf8Str &aPath,
+                                            const com::Utf8Str &aSettings,
+                                            const char *pszDriver,
+                                            void *pvObject)
 {
     HRESULT hrc = S_OK;
 
@@ -523,10 +525,10 @@ HRESULT EmulatedUSB::webcamAttachInternal(const com::Utf8Str &aPath,
 
 HRESULT EmulatedUSB::webcamDetach(const com::Utf8Str &aPath)
 {
-    return webcamDetachInternal(aPath);
+    return i_webcamDetachInternal(aPath);
 }
 
-HRESULT EmulatedUSB::webcamDetachInternal(const com::Utf8Str &aPath)
+HRESULT EmulatedUSB::i_webcamDetachInternal(const com::Utf8Str &aPath)
 {
     HRESULT hrc = S_OK;
 
@@ -604,8 +606,8 @@ HRESULT EmulatedUSB::webcamDetachInternal(const com::Utf8Str &aPath)
     return rc;
 }
 
-/* static */ DECLCALLBACK(int) EmulatedUSB::eusbCallback(void *pv, const char *pszId, uint32_t iEvent,
-                                                         const void *pvData, uint32_t cbData)
+/* static */ DECLCALLBACK(int) EmulatedUSB::i_eusbCallback(void *pv, const char *pszId, uint32_t iEvent,
+                                                           const void *pvData, uint32_t cbData)
 {
     /* Make a copy of parameters, forward to EMT and leave the callback to not hold any lock in the device. */
     int rc = VINF_SUCCESS;

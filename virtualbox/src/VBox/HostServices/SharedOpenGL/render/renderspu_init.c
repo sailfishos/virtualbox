@@ -70,7 +70,7 @@ static void swapsyncConnect(void)
 static DWORD WINAPI renderSPUWindowThreadProc(void* unused)
 {
     MSG msg;
-    bool bRet;
+    BOOL bRet;
 
     (void) unused;
 
@@ -186,6 +186,7 @@ renderSPUInit( int id, SPU *child, SPU *self,
 
 #ifdef CHROMIUM_THREADSAFE
     crDebug("Render SPU: thread-safe");
+    crInitTSD(&_RenderTSD);
 #endif
 
     crMemZero(&render_spu, sizeof(render_spu));
@@ -241,7 +242,7 @@ renderSPUInit( int id, SPU *child, SPU *self,
 
     if (pcpwSetting)
     {
-        /* TODO: need proper blitter synchronization, do not use so far!
+        /** @todo need proper blitter synchronization, do not use so far!
          * the problem is that rendering can be done in multiple thread: the main command (hgcm) thread and the redraw thread
          * we currently use per-window synchronization, while we'll need a per-blitter synchronization if one blitter is used for multiple windows
          * this is not done currently */
@@ -618,4 +619,5 @@ int SPULoad( char **name, char **super, SPUInitFuncPtr *init,
 DECLEXPORT(void) renderspuSetWindowId(uint64_t winId)
 {
     render_spu_parent_window_id = winId;
+    crDebug("Set new parent window %p (no actual reparent performed)", winId);
 }

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DEFAULT
 #include <iprt/heap.h>
 #include "internal/iprt.h"
@@ -42,9 +42,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to the heap anchor block. */
 typedef struct RTHEAPSIMPLEINTERNAL *PRTHEAPSIMPLEINTERNAL;
 /** Pointer to a heap block. */
@@ -164,9 +164,9 @@ AssertCompile(RTHEAPSIMPLE_MIN_BLOCK >= sizeof(RTHEAPSIMPLEFREE) - sizeof(RTHEAP
 #define RTHEAPSIMPLE_ALIGNMENT  (sizeof(RTHEAPSIMPLEBLOCK))
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_STRICT
 # define RTHEAPSIMPLE_STRICT 1
 #endif
@@ -267,9 +267,9 @@ AssertCompile(RTHEAPSIMPLE_MIN_BLOCK >= sizeof(RTHEAPSIMPLEFREE) - sizeof(RTHEAP
     } while (0)
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef RTHEAPSIMPLE_STRICT
 static void rtHeapSimpleAssertAll(PRTHEAPSIMPLEINTERNAL pHeapInt);
 #endif
@@ -656,7 +656,7 @@ RTDECL(void) RTHeapSimpleFree(RTHEAPSIMPLE hHeap, void *pv)
     pHeapInt = pBlock->pHeap;
     ASSERT_BLOCK_USED(pHeapInt, pBlock);
     ASSERT_ANCHOR(pHeapInt);
-    Assert(pHeapInt == (PRTHEAPSIMPLEINTERNAL)hHeap || !hHeap);
+    Assert(pHeapInt == (PRTHEAPSIMPLEINTERNAL)hHeap || !hHeap); RT_NOREF_PV(hHeap);
 
 #ifdef RTHEAPSIMPLE_FREE_POISON
     /*
@@ -850,7 +850,7 @@ RTDECL(size_t) RTHeapSimpleSize(RTHEAPSIMPLE hHeap, void *pv)
     pHeapInt = pBlock->pHeap;
     ASSERT_BLOCK_USED(pHeapInt, pBlock);
     ASSERT_ANCHOR(pHeapInt);
-    Assert(pHeapInt == (PRTHEAPSIMPLEINTERNAL)hHeap || !hHeap);
+    Assert(pHeapInt == (PRTHEAPSIMPLEINTERNAL)hHeap || !hHeap); RT_NOREF_PV(hHeap);
 
     /*
      * Calculate the block size.

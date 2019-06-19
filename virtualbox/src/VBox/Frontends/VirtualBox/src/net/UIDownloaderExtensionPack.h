@@ -1,11 +1,10 @@
+/* $Id: UIDownloaderExtensionPack.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIDownloaderExtensionPack class declaration
+ * VBox Qt GUI - UIDownloaderExtensionPack class declaration.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -44,12 +43,17 @@ private:
     UIDownloaderExtensionPack();
     ~UIDownloaderExtensionPack();
 
+    /** Returns description of the current network operation. */
+    virtual const QString description() const;
+
     /* Virtual stuff reimplementations: */
     bool askForDownloadingConfirmation(UINetworkReply *pReply);
     void handleDownloadedObject(UINetworkReply *pReply);
+    void handleVerifiedObject(UINetworkReply *pReply);
 
     /* Variables: */
     static UIDownloaderExtensionPack *m_spInstance;
+    QByteArray m_receivedData;
 };
 
 #endif // __UIDownloaderExtensionPack_h__

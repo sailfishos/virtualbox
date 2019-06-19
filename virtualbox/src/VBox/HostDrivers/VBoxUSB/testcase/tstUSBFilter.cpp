@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2011 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,12 +13,21 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/usbfilter.h>
 #include <VBox/err.h>
 
@@ -27,9 +36,10 @@
 #include <iprt/assert.h>
 #include <iprt/initterm.h>
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define TESTCASE "tstUSBFilter"
 
 #define TST_CHECK_RC(expr) do { \
@@ -50,9 +60,10 @@
     } \
 } while (0)
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static const char g_szString64[64+1] =
 {
     "abcdefghijklmnopqrstuvwxyz012345"
@@ -100,30 +111,30 @@ int main()
     TST_CHECK_RC(USBFilterSetNumExact(&Flt1, USBFILTERIDX_PORT, 1, false));
     TST_CHECK_RC(USBFilterSetIgnore(&Flt1, USBFILTERIDX_PORT));
     /* strings */
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR, "foobar", true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR, "foobar", true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       "barbar", true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  "vendor", true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       "product", true ));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, "serial", true ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR, "foobar", true, false ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR, "foobar", true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString128, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       "barbar", true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, g_szString64, true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_MANUFACTURER_STR,  "vendor", true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR,       "product", true, false  ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_SERIAL_NUMBER_STR, "serial", true, false  ));
 
     /* cloning */
     USBFILTER Dev;
@@ -145,9 +156,9 @@ int main()
     TST_CHECK_RC(USBFilterSetNumExact(&Dev,     USBFILTERIDX_DEVICE_PROTOCOL,   0xff, true));
     TST_CHECK_RC(USBFilterSetNumExact(&Dev,     USBFILTERIDX_BUS,               1, true));
     TST_CHECK_RC(USBFilterSetNumExact(&Dev,     USBFILTERIDX_PORT,              2, true));
-    TST_CHECK_RC(USBFilterSetStringExact(&Dev,  USBFILTERIDX_MANUFACTURER_STR,  "vendor", true));
-    TST_CHECK_RC(USBFilterSetStringExact(&Dev,  USBFILTERIDX_PRODUCT_STR,       "product", true));
-    TST_CHECK_RC(USBFilterSetStringExact(&Dev,  USBFILTERIDX_SERIAL_NUMBER_STR, "serial", true));
+    TST_CHECK_RC(USBFilterSetStringExact(&Dev,  USBFILTERIDX_MANUFACTURER_STR,  "vendor", true, false ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Dev,  USBFILTERIDX_PRODUCT_STR,       "product", true, false ));
+    TST_CHECK_RC(USBFilterSetStringExact(&Dev,  USBFILTERIDX_SERIAL_NUMBER_STR, "serial", true, false ));
 
     /* do some basic matching tests */
     USBFilterInit(&Flt1, USBFILTERTYPE_CAPTURE);
@@ -164,9 +175,9 @@ int main()
     TST_CHECK_RC(USBFilterSetNumExact(&Flt1, USBFILTERIDX_BUS, 1, true));
     TST_CHECK_EXPR(USBFilterMatch(&Flt1, &Dev));
 
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR, "no match", true));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR, "no match", true, false ));
     TST_CHECK_EXPR(!USBFilterMatch(&Flt1, &Dev));
-    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR, "product", true));
+    TST_CHECK_RC(USBFilterSetStringExact(&Flt1, USBFILTERIDX_PRODUCT_STR, "product", true, false ));
     TST_CHECK_EXPR(USBFilterMatch(&Flt1, &Dev));
 
     /* string patterns */
@@ -291,34 +302,34 @@ int main()
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
 
     AssertCompileMemberSize(USBFILTER, achStrTab, 256);
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[0],  true ) == VERR_BUFFER_OVERFLOW);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[0],  true, false  ) == VERR_BUFFER_OVERFLOW);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[1],  true ) == VERR_BUFFER_OVERFLOW);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[1],  true, false  ) == VERR_BUFFER_OVERFLOW);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[2],  true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[2],  true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[3],  true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString256[3],  true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
     /* 0 + 1 */
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   "",                 true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   "",                 true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString256[2],  true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString256[2],  true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString256[1],  true ) == VERR_BUFFER_OVERFLOW);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString256[1],  true, false  ) == VERR_BUFFER_OVERFLOW);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
     /* 0 + 2 */
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString128[2],  true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString128[2],  true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString128[1],  true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString128[1],  true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
     /* 3 */
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString64[0],   true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_SERIAL_NUMBER_STR,   &g_szString64[0],   true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString64[0],   true ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_PRODUCT_STR,         &g_szString64[0],   true, false  ) == VINF_SUCCESS);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_MANUFACTURER_STR,    &g_szString128[4],  true ) == VINF_SUCCESS);
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_MANUFACTURER_STR,    &g_szString128[4],  true ) == VINF_SUCCESS);
-    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_MANUFACTURER_STR,    &g_szString128[3],  true ) == VERR_BUFFER_OVERFLOW);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_MANUFACTURER_STR,    &g_szString128[4],  true, false  ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_MANUFACTURER_STR,    &g_szString128[4],  true, false  ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&sOf.Flt, USBFILTERIDX_MANUFACTURER_STR,    &g_szString128[3],  true, false  ) == VERR_BUFFER_OVERFLOW);
     TST_CHECK_EXPR(sOf.u64Pre == UINT64_C(0x1234567887654321)); TST_CHECK_EXPR(sOf.u64Post == UINT64_C(0x1234567887654321));
 
     /*
@@ -333,9 +344,9 @@ int main()
     TST_CHECK_EXPR(USBFilterSetNumExact(&Dev2,      USBFILTERIDX_DEVICE_SUB_CLASS,  0,      true) == VINF_SUCCESS);
     TST_CHECK_EXPR(USBFilterSetNumExact(&Dev2,      USBFILTERIDX_DEVICE_PROTOCOL,   0,      true) == VINF_SUCCESS);
     TST_CHECK_EXPR(USBFilterSetNumExact(&Dev2,      USBFILTERIDX_PORT,              0x1,    true) == VINF_SUCCESS);
-    TST_CHECK_EXPR(USBFilterSetStringExact(&Dev2,   USBFILTERIDX_MANUFACTURER_STR, "Generic", true) == VINF_SUCCESS);
-    TST_CHECK_EXPR(USBFilterSetStringExact(&Dev2,   USBFILTERIDX_PRODUCT_STR, "Mass Storage Device", true) == VINF_SUCCESS);
-    TST_CHECK_EXPR(USBFilterSetStringExact(&Dev2,   USBFILTERIDX_MANUFACTURER_STR, "YBU1PPRS", true) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&Dev2,   USBFILTERIDX_MANUFACTURER_STR, "Generic", true, false ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&Dev2,   USBFILTERIDX_PRODUCT_STR, "Mass Storage Device", true, false ) == VINF_SUCCESS);
+    TST_CHECK_EXPR(USBFilterSetStringExact(&Dev2,   USBFILTERIDX_MANUFACTURER_STR, "YBU1PPRS", true, false ) == VINF_SUCCESS);
     TST_CHECK_EXPR(USBFilterGetNum(&Dev2, USBFILTERIDX_VENDOR_ID) == 0x19b6);
     TST_CHECK_EXPR(USBFilterGetNum(&Dev2, USBFILTERIDX_PRODUCT_ID) == 0x1024);
     TST_CHECK_EXPR(USBFilterGetNum(&Dev2, USBFILTERIDX_DEVICE_REV) == 0x0141);

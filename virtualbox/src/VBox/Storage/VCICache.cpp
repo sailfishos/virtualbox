@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VD_RAW /** @todo logging group */
 #include <VBox/vd-cache-backend.h>
 #include <VBox/err.h>
@@ -201,9 +202,10 @@ AssertCompileSize(VciBlkMap, VCI_BLOCK_SIZE);
 /** Block bitmap entry */
 typedef uint8_t VciBlkMapEnt;
 
-/*******************************************************************************
-*   Constants And Macros, Structures and Typedefs                              *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Constants And Macros, Structures and Typedefs                                                                                *
+*********************************************************************************************************************************/
 
 /**
  * Block range descriptor.
@@ -373,9 +375,10 @@ typedef struct VCICACHE
 #define VCIBLKMAP_ALLOC_META RT_BIT(0)
 #define VCIBLKMAP_ALLOC_MASK 0x1
 
-/*******************************************************************************
-*   Static Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Static Variables                                                                                                             *
+*********************************************************************************************************************************/
 
 /** NULL-terminated array of supported file extensions. */
 static const char *const s_apszVciFileExtensions[] =
@@ -384,9 +387,10 @@ static const char *const s_apszVciFileExtensions[] =
     NULL
 };
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 /**
  * Internal. Flush image data to disk.
@@ -442,7 +446,7 @@ static int vciFreeImage(PVCICACHE pCache, bool fDelete)
  * @returns VBox status code.
  * @param   cBlocks      The number of blocks the bitmap can manage.
  * @param   ppBlkMap     Where to store the pointer to the block bitmap.
- * @param   pcbBlkMap    Where to store the size of the block bitmap in blocks
+ * @param   pcBlkMap     Where to store the size of the block bitmap in blocks
  *                       needed on the disk.
  */
 static int vciBlkMapCreate(uint64_t cBlocks, PVCIBLKMAP *ppBlkMap, uint32_t *pcBlkMap)
@@ -488,6 +492,7 @@ static int vciBlkMapCreate(uint64_t cBlocks, PVCIBLKMAP *ppBlkMap, uint32_t *pcB
     return rc;
 }
 
+#if 0 /** @todo unsued vciBlkMapDestroy */
 /**
  * Frees a block map.
  *
@@ -513,6 +518,7 @@ static void vciBlkMapDestroy(PVCIBLKMAP pBlkMap)
 
     LogFlowFunc(("returns\n"));
 }
+#endif
 
 /**
  * Loads the block map from the specified medium and creates all necessary
@@ -563,8 +569,6 @@ static int vciBlkMapLoad(PVCICACHE pStorage, uint64_t offBlkMap, uint32_t cBlkMa
                     pBlkMap->cBlocksAllocData = BlkMap.cBlocksAllocData;
 
                     /* Load the bitmap and construct the range list. */
-                    uint32_t cBlocksFree = 0;
-                    uint32_t cBlocksAllocated = 0;
                     PVCIBLKRANGEDESC pRangeCur = (PVCIBLKRANGEDESC)RTMemAllocZ(sizeof(VCIBLKRANGEDESC));
 
                     if (pRangeCur)
@@ -588,6 +592,8 @@ static int vciBlkMapLoad(PVCICACHE pStorage, uint64_t offBlkMap, uint32_t cBlkMa
                             pBlkMap->pRangesHead = pRangeCur;
                             pBlkMap->pRangesTail = pRangeCur;
                         }
+                        else
+                            RTMemFree(pRangeCur);
 
                         while (   RT_SUCCESS(rc)
                                && cBlocksLeft)
@@ -662,8 +668,8 @@ static int vciBlkMapLoad(PVCICACHE pStorage, uint64_t offBlkMap, uint32_t cBlkMa
                         LogFlowFunc(("return success\n"));
                         return VINF_SUCCESS;
                     }
-                    else
-                        RTMemFree(pBlkMap);
+
+                    RTMemFree(pBlkMap);
                 }
                 else
                     rc = VERR_NO_MEMORY;
@@ -671,7 +677,7 @@ static int vciBlkMapLoad(PVCICACHE pStorage, uint64_t offBlkMap, uint32_t cBlkMa
             else
                 rc = VERR_VD_GEN_INVALID_HEADER;
         }
-        else if (RT_SUCCESS(rc))
+        else
             rc = VERR_VD_GEN_INVALID_HEADER;
     }
     else
@@ -764,12 +770,13 @@ static int vciBlkMapSave(PVCIBLKMAP pBlkMap, PVCICACHE pStorage, uint64_t offBlk
         }
     }
     else
-        rc = VERR_INTERNAL_ERROR; /* @todo Better error code. */
+        rc = VERR_INTERNAL_ERROR; /** @todo Better error code. */
 
     LogFlowFunc(("returns rc=%Rrc\n", rc));
     return rc;
 }
 
+#if 0 /* unused */
 /**
  * Finds the range block describing the given block address.
  *
@@ -787,6 +794,7 @@ static PVCIBLKRANGEDESC vciBlkMapFindByBlock(PVCIBLKMAP pBlkMap, uint64_t offBlo
 
     return pBlk;
 }
+#endif
 
 /**
  * Allocates the given number of blocks in the bitmap and returns the start block address.
@@ -877,6 +885,7 @@ static int vciBlkMapAllocate(PVCIBLKMAP pBlkMap, uint32_t cBlocks, uint32_t fFla
     return rc;
 }
 
+#if 0 /* unused */
 /**
  * Try to extend the space of an already allocated block.
  *
@@ -895,11 +904,14 @@ static int vciBlkMapRealloc(PVCIBLKMAP pBlkMap, uint32_t cBlocksNew, uint64_t of
                  pBlkMap, cBlocksNew, offBlockAddrOld, poffBlockAddr));
 
     AssertMsgFailed(("Implement\n"));
+    RT_NOREF4(pBlkMap, cBlocksNew, offBlockAddrOld, poffBlockAddr);
 
     LogFlowFunc(("returns rc=%Rrc offBlockAddr=%llu\n", rc, *poffBlockAddr));
     return rc;
 }
+#endif /* unused */
 
+#if 0 /* unused */
 /**
  * Frees a range of blocks.
  *
@@ -981,6 +993,7 @@ static void vciBlkMapFree(PVCIBLKMAP pBlkMap, uint64_t offBlockAddr, uint32_t cB
 
     LogFlowFunc(("returns\n"));
 }
+#endif /* unused */
 
 /**
  * Converts a tree node from the image to the in memory structure.
@@ -1287,6 +1300,7 @@ static int vciCreateImage(PVCICACHE pCache, uint64_t cbSize,
                           void *pvUser, unsigned uPercentStart,
                           unsigned uPercentSpan)
 {
+    RT_NOREF1(pszComment);
     VciHdr Hdr;
     VciTreeNode NodeRoot;
     int rc;
@@ -1411,7 +1425,7 @@ static int vciCreateImage(PVCICACHE pCache, uint64_t cbSize,
 
         /* Setup the root tree. */
         memset(&NodeRoot, 0, sizeof(VciTreeNode));
-        NodeRoot.u8Type = RT_H2LE_U32(VCI_TREE_NODE_TYPE_LEAF);
+        NodeRoot.u8Type = VCI_TREE_NODE_TYPE_LEAF;
 
         rc = vdIfIoIntFileWriteSync(pCache->pIfIo, pCache->pStorage, offTreeRoot,
                                     &NodeRoot, VCI_BYTE2BLOCK(sizeof(VciTreeNode)));
@@ -1441,9 +1455,10 @@ static int vciCreateImage(PVCICACHE pCache, uint64_t cbSize,
 }
 
 /** @copydoc VDCACHEBACKEND::pfnProbe */
-static int vciProbe(const char *pszFilename, PVDINTERFACE pVDIfsCache,
-                    PVDINTERFACE pVDIfsImage)
+static DECLCALLBACK(int) vciProbe(const char *pszFilename, PVDINTERFACE pVDIfsDisk,
+                                  PVDINTERFACE pVDIfsImage)
 {
+    RT_NOREF1(pVDIfsDisk);
     VciHdr Hdr;
     PVDIOSTORAGE pStorage = NULL;
     uint64_t cbFile;
@@ -1498,9 +1513,9 @@ out:
 }
 
 /** @copydoc VDCACHEBACKEND::pfnOpen */
-static int vciOpen(const char *pszFilename, unsigned uOpenFlags,
-                   PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
-                   void **ppBackendData)
+static DECLCALLBACK(int) vciOpen(const char *pszFilename, unsigned uOpenFlags,
+                                 PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
+                                 void **ppBackendData)
 {
     LogFlowFunc(("pszFilename=\"%s\" uOpenFlags=%#x pVDIfsDisk=%#p pVDIfsImage=%#p ppBackendData=%#p\n", pszFilename, uOpenFlags, pVDIfsDisk, pVDIfsImage, ppBackendData));
     int rc;
@@ -1545,13 +1560,14 @@ out:
 }
 
 /** @copydoc VDCACHEBACKEND::pfnCreate */
-static int vciCreate(const char *pszFilename, uint64_t cbSize,
-                     unsigned uImageFlags, const char *pszComment,
-                     PCRTUUID pUuid, unsigned uOpenFlags,
-                     unsigned uPercentStart, unsigned uPercentSpan,
-                     PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
-                     PVDINTERFACE pVDIfsOperation, void **ppBackendData)
+static DECLCALLBACK(int) vciCreate(const char *pszFilename, uint64_t cbSize,
+                                   unsigned uImageFlags, const char *pszComment,
+                                   PCRTUUID pUuid, unsigned uOpenFlags,
+                                   unsigned uPercentStart, unsigned uPercentSpan,
+                                   PVDINTERFACE pVDIfsDisk, PVDINTERFACE pVDIfsImage,
+                                   PVDINTERFACE pVDIfsOperation, void **ppBackendData)
 {
+    RT_NOREF1(pUuid);
     LogFlowFunc(("pszFilename=\"%s\" cbSize=%llu uImageFlags=%#x pszComment=\"%s\" Uuid=%RTuuid uOpenFlags=%#x uPercentStart=%u uPercentSpan=%u pVDIfsDisk=%#p pVDIfsImage=%#p pVDIfsOperation=%#p ppBackendData=%#p",
                  pszFilename, cbSize, uImageFlags, pszComment, pUuid, uOpenFlags, uPercentStart, uPercentSpan, pVDIfsDisk, pVDIfsImage, pVDIfsOperation, ppBackendData));
     int rc;
@@ -1619,7 +1635,7 @@ out:
 }
 
 /** @copydoc VDCACHEBACKEND::pfnClose */
-static int vciClose(void *pBackendData, bool fDelete)
+static DECLCALLBACK(int) vciClose(void *pBackendData, bool fDelete)
 {
     LogFlowFunc(("pBackendData=%#p fDelete=%d\n", pBackendData, fDelete));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
@@ -1633,8 +1649,8 @@ static int vciClose(void *pBackendData, bool fDelete)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnRead */
-static int vciRead(void *pBackendData, uint64_t uOffset, size_t cbToRead,
-                   PVDIOCTX pIoCtx, size_t *pcbActuallyRead)
+static DECLCALLBACK(int) vciRead(void *pBackendData, uint64_t uOffset, size_t cbToRead,
+                                 PVDIOCTX pIoCtx, size_t *pcbActuallyRead)
 {
     LogFlowFunc(("pBackendData=%#p uOffset=%llu cbToRead=%zu pIoCtx=%#p pcbActuallyRead=%#p\n",
                  pBackendData, uOffset, cbToRead, pIoCtx, pcbActuallyRead));
@@ -1673,45 +1689,45 @@ static int vciRead(void *pBackendData, uint64_t uOffset, size_t cbToRead,
 }
 
 /** @copydoc VDCACHEBACKEND::pfnWrite */
-static int vciWrite(void *pBackendData, uint64_t uOffset, size_t cbToWrite,
-                    PVDIOCTX pIoCtx, size_t *pcbWriteProcess)
+static DECLCALLBACK(int) vciWrite(void *pBackendData, uint64_t uOffset, size_t cbToWrite,
+                                  PVDIOCTX pIoCtx, size_t *pcbWriteProcess)
 {
+    RT_NOREF5(pBackendData, uOffset, cbToWrite, pIoCtx, pcbWriteProcess);
     LogFlowFunc(("pBackendData=%#p uOffset=%llu cbToWrite=%zu pIoCtx=%#p pcbWriteProcess=%#p\n",
                  pBackendData, uOffset, cbToWrite, pIoCtx, pcbWriteProcess));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
     int rc = VINF_SUCCESS;
     uint64_t cBlocksToWrite = VCI_BYTE2BLOCK(cbToWrite);
-    uint64_t offBlockAddr  = VCI_BYTE2BLOCK(uOffset);
+    //uint64_t offBlockAddr  = VCI_BYTE2BLOCK(uOffset);
 
-    AssertPtr(pCache);
+    AssertPtr(pCache); NOREF(pCache);
     Assert(uOffset % 512 == 0);
     Assert(cbToWrite % 512 == 0);
-
     while (cBlocksToWrite)
     {
 
     }
 
-    *pcbWriteProcess = cbToWrite; /** @todo: Implement. */
+    *pcbWriteProcess = cbToWrite; /** @todo Implement. */
 
     LogFlowFunc(("returns %Rrc\n", rc));
     return rc;
 }
 
 /** @copydoc VDCACHEBACKEND::pfnFlush */
-static int vciFlush(void *pBackendData, PVDIOCTX pIoCtx)
+static DECLCALLBACK(int) vciFlush(void *pBackendData, PVDIOCTX pIoCtx)
 {
+    RT_NOREF1(pIoCtx);
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
-    int rc = VINF_SUCCESS;
 
-    rc = vciFlushImage(pCache);
+    int rc = vciFlushImage(pCache);
     LogFlowFunc(("returns %Rrc\n", rc));
     return rc;
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetVersion */
-static unsigned vciGetVersion(void *pBackendData)
+static DECLCALLBACK(unsigned) vciGetVersion(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
@@ -1725,7 +1741,7 @@ static unsigned vciGetVersion(void *pBackendData)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetSize */
-static uint64_t vciGetSize(void *pBackendData)
+static DECLCALLBACK(uint64_t) vciGetSize(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
@@ -1741,7 +1757,7 @@ static uint64_t vciGetSize(void *pBackendData)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetFileSize */
-static uint64_t vciGetFileSize(void *pBackendData)
+static DECLCALLBACK(uint64_t) vciGetFileSize(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
@@ -1765,7 +1781,7 @@ static uint64_t vciGetFileSize(void *pBackendData)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetImageFlags */
-static unsigned vciGetImageFlags(void *pBackendData)
+static DECLCALLBACK(unsigned) vciGetImageFlags(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
@@ -1783,7 +1799,7 @@ static unsigned vciGetImageFlags(void *pBackendData)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetOpenFlags */
-static unsigned vciGetOpenFlags(void *pBackendData)
+static DECLCALLBACK(unsigned) vciGetOpenFlags(void *pBackendData)
 {
     LogFlowFunc(("pBackendData=%#p\n", pBackendData));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
@@ -1801,7 +1817,7 @@ static unsigned vciGetOpenFlags(void *pBackendData)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnSetOpenFlags */
-static int vciSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
+static DECLCALLBACK(int) vciSetOpenFlags(void *pBackendData, unsigned uOpenFlags)
 {
     LogFlowFunc(("pBackendData=%#p\n uOpenFlags=%#x", pBackendData, uOpenFlags));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
@@ -1827,9 +1843,10 @@ out:
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetComment */
-static int vciGetComment(void *pBackendData, char *pszComment,
-                          size_t cbComment)
+static DECLCALLBACK(int) vciGetComment(void *pBackendData, char *pszComment,
+                                       size_t cbComment)
 {
+    RT_NOREF2(pszComment, cbComment);
     LogFlowFunc(("pBackendData=%#p pszComment=%#p cbComment=%zu\n", pBackendData, pszComment, cbComment));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
     int rc;
@@ -1846,8 +1863,9 @@ static int vciGetComment(void *pBackendData, char *pszComment,
 }
 
 /** @copydoc VDCACHEBACKEND::pfnSetComment */
-static int vciSetComment(void *pBackendData, const char *pszComment)
+static DECLCALLBACK(int) vciSetComment(void *pBackendData, const char *pszComment)
 {
+    RT_NOREF1(pszComment);
     LogFlowFunc(("pBackendData=%#p pszComment=\"%s\"\n", pBackendData, pszComment));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
     int rc;
@@ -1869,8 +1887,9 @@ static int vciSetComment(void *pBackendData, const char *pszComment)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetUuid */
-static int vciGetUuid(void *pBackendData, PRTUUID pUuid)
+static DECLCALLBACK(int) vciGetUuid(void *pBackendData, PRTUUID pUuid)
 {
+    RT_NOREF1(pUuid);
     LogFlowFunc(("pBackendData=%#p pUuid=%#p\n", pBackendData, pUuid));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
     int rc;
@@ -1887,8 +1906,9 @@ static int vciGetUuid(void *pBackendData, PRTUUID pUuid)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnSetUuid */
-static int vciSetUuid(void *pBackendData, PCRTUUID pUuid)
+static DECLCALLBACK(int) vciSetUuid(void *pBackendData, PCRTUUID pUuid)
 {
+    RT_NOREF1(pUuid);
     LogFlowFunc(("pBackendData=%#p Uuid=%RTuuid\n", pBackendData, pUuid));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
     int rc;
@@ -1911,8 +1931,9 @@ static int vciSetUuid(void *pBackendData, PCRTUUID pUuid)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnGetModificationUuid */
-static int vciGetModificationUuid(void *pBackendData, PRTUUID pUuid)
+static DECLCALLBACK(int) vciGetModificationUuid(void *pBackendData, PRTUUID pUuid)
 {
+    RT_NOREF1(pUuid);
     LogFlowFunc(("pBackendData=%#p pUuid=%#p\n", pBackendData, pUuid));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
     int rc;
@@ -1929,8 +1950,9 @@ static int vciGetModificationUuid(void *pBackendData, PRTUUID pUuid)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnSetModificationUuid */
-static int vciSetModificationUuid(void *pBackendData, PCRTUUID pUuid)
+static DECLCALLBACK(int) vciSetModificationUuid(void *pBackendData, PCRTUUID pUuid)
 {
+    RT_NOREF1(pUuid);
     LogFlowFunc(("pBackendData=%#p Uuid=%RTuuid\n", pBackendData, pUuid));
     PVCICACHE pCache = (PVCICACHE)pBackendData;
     int rc;
@@ -1952,7 +1974,7 @@ static int vciSetModificationUuid(void *pBackendData, PCRTUUID pUuid)
 }
 
 /** @copydoc VDCACHEBACKEND::pfnDump */
-static void vciDump(void *pBackendData)
+static DECLCALLBACK(void) vciDump(void *pBackendData)
 {
     NOREF(pBackendData);
 }
@@ -1960,10 +1982,10 @@ static void vciDump(void *pBackendData)
 
 const VDCACHEBACKEND g_VciCacheBackend =
 {
+    /* u32Version */
+    VD_CACHEBACKEND_VERSION,
     /* pszBackendName */
     "vci",
-    /* cbSize */
-    sizeof(VDCACHEBACKEND),
     /* uBackendCaps */
     VD_CAP_CREATE_FIXED | VD_CAP_CREATE_DYNAMIC | VD_CAP_FILE | VD_CAP_VFS,
     /* papszFileExtensions */
@@ -2015,6 +2037,8 @@ const VDCACHEBACKEND g_VciCacheBackend =
     /* pfnComposeLocation */
     NULL,
     /* pfnComposeName */
-    NULL
+    NULL,
+    /* u32VersionEnd */
+    VD_CACHEBACKEND_VERSION
 };
 

@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2013 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -109,15 +109,14 @@ VBOX_FBSD_STRIP_BIN = \
 		VBoxOGLrenderspu.so \
 		VBoxTestOGL \
 		VBoxSharedCrOpenGL.so,) \
-	$(if $(VBOX_WITH_PYTHON),VBoxPython.so,)
+	$(if $(VBOX_WITH_PYTHON),VBoxPython.so,) \
+	$(if $(VBOX_WITH_DTRACE),VBoxDTrace,)
 
 # Do not remove relocation information of these binaries
 VBOX_FBSD_STRIP_OBJ = \
-	VBoxDD2GC.gc \
-	VBoxDD2R0.r0 \
-	VBoxDDGC.gc \
+	VBoxDDRC.rc \
 	VBoxDDR0.r0 \
-	VMMGC.gc \
+	VMMRC.rc \
 	VMMR0.r0
 
 # Do not strip anything of these files
@@ -130,9 +129,9 @@ VBOX_FBSD_NO_STRIP = \
 
 # EFI firmware
 ifdef VBOX_WITH_EFIFW_PACKING
-  VBOX_FBSD_NO_STRIP += \
-	VBoxEFI32.fd \
-        VBoxEFI64.fd
+ VBOX_FBSD_NO_STRIP += \
+ 	VBoxEFI32.fd \
+ 	VBoxEFI64.fd
 endif
 
 # Symlinks residing in bin/
@@ -140,22 +139,23 @@ VBOX_FBSD_SYMLINKS = \
 	$(if $(VBOX_WITH_MAIN), \
 		VBoxManage \
 		VBoxSVC) \
-	$(if $(VBOX_WITH_VBOXSDL),VBoxSDL,)
+	$(if $(VBOX_WITH_VBOXSDL),VBoxSDL,) \
+	$(if $(VBOX_WITH_DTRACE),VBoxDTrace,)
 
-# Qt4 GUI
+# Qt GUI
 ifdef VBOX_WITH_QTGUI
  include $(PATH_ROOT)/src/VBox/Frontends/VirtualBox/nls/ApprovedLanguages.kmk
  VBOX_FBSD_STRIP_BIN += \
  	VBoxKeyboard.so \
  	VirtualBox \
  	$(if $(VBOX_WITH_HARDENING),VirtualBox.so) \
-	$(if $(VBOX_WITH_DEBUGGER_GUI),VBoxDbg.so)
+	$(if $(VBOX_WITH_DEBUGGER_GUI),VBoxDbg.so DbgPlugInDiggers.so,)
  VBOX_FBSD_SYMLINKS += \
  	VirtualBox
  VBOX_FBSD_NO_STRIP += \
 	$(VBOX_LICENSE_FILES) \
- 	$(if $(VBOX_WITH_QT4_SUN),$(notdir $(wildcard $(PATH_STAGE_BIN)/lib*VBox*)),) \
-	$(if $(VBOX_WITH_QT4_SUN),accessible/libqtaccessiblewidgets.so,) \
+ 	$(if $(VBOX_WITH_ORACLE_QT),$(notdir $(wildcard $(PATH_STAGE_BIN)/lib*VBox*)),) \
+	$(if $(VBOX_WITH_ORACLE_QT),accessible/libqtaccessiblewidgets.so,) \
  	$(foreach f,$(VBOX_APPROVED_GUI_LANGUAGES),nls/VirtualBox_$(f).qm nls/qt_$(f).qm)
  VBOX_FBSD_DESKTOP_FILE = \
 	virtualbox.desktop
@@ -205,10 +205,18 @@ endif
 # Webservices
 ifdef VBOX_WITH_WEBSERVICES
  VBOX_FBSD_STRIP_BIN += \
-	vboxwebsrv \
-	webtest
+	vboxwebsrv
  VBOX_FBSD_SYMLINKS += \
 	vboxwebsrv
+endif
+
+# DTrace library, testcase and scripts (as the rest of this file, this makes bold
+# ASSUMPTIONS about VBPX_INST_XXX variable values).
+ifdef VBOX_WITH_DTRACE
+ VBOX_FBSD_NO_STRIP += \
+       $(addprefix dtrace/lib/$(KBUILD_TARGET_ARCH)/,$(VBOXINST_DTRACE_LIB_ARCH_FILES)) \
+       $(addprefix dtrace/testcase/$(KBUILD_TARGET_ARCH)/,$(VBOXINST_DTRACE_TESTCASE_ARCH_FILES)) \
+       $(addprefix dtrace/scripts/,$(VBOXINST_DTRACE_SCRIPTS_FILES))
 endif
 
 #
@@ -224,12 +232,12 @@ OTHER_CLEAN += $(addprefix $(VBOX_FBSD_INST_LIBVBOX_DIR)/,$(VBOX_FBSD_ARCH_FILES
 #
 $(PATH_STAGE_BIN)/vboxdrv.tar.gz: \
 		src
-	$(call MSG_TOOL, export_modules,,$@)
-	$(QUIET)$(PATH_STAGE_BIN)/export_modules $@
+	$(call MSG_TOOL, export_modules.sh,,$@)
+	$(QUIET)$(PATH_STAGE_BIN)/export_modules.sh $@
 
 #
 # The generic installer.
-# @todo r=aeichner: Create pkg_plist dynamically based on the available features
+## @todo r=aeichner: Create pkg_plist dynamically based on the available features
 #
 $(PATH_STAGE_BIN)/$(VBOX_FBSD_PACKAGE_NAME): \
 		$(VBOX_VERSION_STAMP) \
@@ -315,6 +323,14 @@ $(VBOX_FBSD_INST_OUT_DIR)/pkg_plist: \
 		-e "s;_VBOX_REM_64BIT_MODULE_;$(if $(eq $(KBUILD_TARGET_ARCH),x86),VBoxREM64.so,);g" \
 		--output $@ \
 		$<
+ifdef VBOX_WITH_DTRACE
+	$(QUIET)$(APPEND) -n "$@" "@mode 644" \
+		$(addprefix lib/virtualbox/dtrace/lib/$(KBUILD_TARGET_ARCH)/,$(VBOXINST_DTRACE_LIB_ARCH_FILES)) \
+		$(addprefix lib/virtualbox/dtrace/testcase/$(KBUILD_TARGET_ARCH)/,$(VBOXINST_DTRACE_TESTCASE_ARCH_FILES)) \
+		$(addprefix lib/virtualbox/dtrace/scripts/,$(VBOXINST_DTRACE_SCRIPTS_FILES)) \
+		"@mode 755" \
+		"bin/VBoxDTrace"
+endif
 
 include $(FILE_KBUILD_SUB_FOOTER)
 

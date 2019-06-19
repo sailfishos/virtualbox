@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_NET_SHAPER
 
 #include <VBox/vmm/pdmdrv.h>
@@ -33,9 +33,10 @@
 
 #include "VBoxDD.h"
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Block driver instance data.
  *
@@ -296,7 +297,13 @@ static DECLCALLBACK(int) drvR3NetShaperDownCfg_SetLinkState(PPDMINETWORKCONFIG p
 static DECLCALLBACK(RTR0PTR) drvR3NetShaperIBaseR0_QueryInterface(PPDMIBASER0 pInterface, const char *pszIID)
 {
     PDRVNETSHAPER pThis = RT_FROM_MEMBER(pInterface, DRVNETSHAPER, IBaseR0);
-    PDMIBASER0_RETURN_INTERFACE(pThis->pDrvInsR3, pszIID, PDMINETWORKUP, &pThis->INetworkUpR0);
+    /*
+     * We need to check if the underlying driver supports R0. If it does not,
+     * then it is useless and even harmful to support R0 here, as we will end up
+     * returning errors when a network adapter tries to allocate a buffer in R0.
+     */
+    if (pThis->pIBelowNetR0)
+        PDMIBASER0_RETURN_INTERFACE(pThis->pDrvInsR3, pszIID, PDMINETWORKUP, &pThis->INetworkUpR0);
     return NIL_RTR0PTR;
 }
 
@@ -305,6 +312,7 @@ static DECLCALLBACK(RTR0PTR) drvR3NetShaperIBaseR0_QueryInterface(PPDMIBASER0 pI
  */
 static DECLCALLBACK(RTRCPTR) drvR3NetShaperIBaseRC_QueryInterface(PPDMIBASERC pInterface, const char *pszIID)
 {
+    RT_NOREF(pInterface, pszIID);
     return NIL_RTRCPTR;
 }
 
@@ -330,6 +338,7 @@ static DECLCALLBACK(void *) drvR3NetShaperIBase_QueryInterface(PPDMIBASE pInterf
  */
 static DECLCALLBACK(void) drvR3NetShaperDetach(PPDMDRVINS pDrvIns, uint32_t fFlags)
 {
+    RT_NOREF(fFlags);
     PDRVNETSHAPER pThis = PDMINS_2_DATA(pDrvIns, PDRVNETSHAPER);
 
     LogFlow(("drvNetShaperDetach: pDrvIns: %p, fFlags: %u\n", pDrvIns, fFlags));

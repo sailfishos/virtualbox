@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2011-2012 Oracle Corporation
+# Copyright (C) 2011-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -21,7 +21,7 @@ include $(KBUILD_PATH)/subheader.kmk
 #
 # VBoxDisp - Windows Guest Additions XPDM Display Driver
 #
-# Note. This has to run on NT4! (*_NT4 => *_W2K3 when targetting 64-bit.)
+# Note. This has to run on NT4! (*_NT4 => *_W2K3 when targeting 64-bit.)
 #
 SYSMODS += VBoxDisp
 VBoxDisp_TEMPLATE      = VBOXGUESTR0
@@ -37,7 +37,7 @@ ifdef VBOX_WITH_CROGL
  VBoxDisp_DEFS        += VBOX_WITH_CROGL
 endif
 #VBoxDisp_DEFS         += VBOX_VBVA_ADJUST_RECT
-VBoxDisp_INCS          = ../../../include ..
+VBoxDisp_INCS          = ../../../include .. $(VBOX_GRAPHICS_INCS)
 VBoxDisp_LDFLAGS.x86   = /Entry:DrvEnableDriver@12
 VBoxDisp_LDFLAGS.amd64 = /Entry:DrvEnableDriver
 VBoxDisp_SOURCES     = \
@@ -55,6 +55,8 @@ VBoxDisp_SOURCES     = \
 	xpdm/VBoxDisp.def \
 	xpdm/VBoxDisp.rc \
 	$(PATH_ROOT)/src/VBox/Additions/common/VBoxVideo/HGSMIBase.cpp \
+	$(PATH_ROOT)/src/VBox/Additions/common/VBoxVideo/HGSMIBuffers.cpp \
+	$(PATH_ROOT)/src/VBox/Additions/common/VBoxVideo/HGSMIHostCmd.cpp \
 	$(PATH_ROOT)/src/VBox/Additions/common/VBoxVideo/VBVABase.cpp \
 	$(PATH_ROOT)/src/VBox/Additions/common/VBoxVideo/Modesetting.cpp
 ifdef VBOX_WITH_VIDEOHWACCEL
@@ -83,7 +85,7 @@ ifdef VBOX_WITH_WDDM
 # VBoxDispD3D - Windows Guest Additions WDDM R3 Display Driver
 #
 DLLS += VBoxDispD3D
-VBoxDispD3D_TEMPLATE = VBOXGUESTR3DLL
+VBoxDispD3D_TEMPLATE = VBoxGuestR3Dll
 VBoxDispD3D_SDKS     = ReorderCompilerIncs $(VBOX_WINDDK_GST_WLH)
 VBoxDispD3D_DEFS     = UNICODE _UNICODE VBOX_WITH_WDDM VBOXWDDMDISP LOG_TO_BACKDOOR LOG_TO_BACKDOOR_DRV VBOX_WITH_HGCM D3D_UMD_INTERFACE_VERSION=0x000C
 ifdef DEBUG_misha
@@ -104,19 +106,16 @@ endif
 ifdef VBOX_WITH_CROGL
  VBoxDispD3D_DEFS   += VBOX_WITH_CROGL
 endif
-ifdef VBOX_WITH_NEW_WINE
- VBoxDispD3D_DEFS   += VBOX_WITH_NEW_WINE
-endif
 VBoxDispD3D_INCS     = \
 	../../../include \
 	.. \
-	$(VBOX_PATH_CROGL_INCLUDE)
+	$(VBOX_PATH_CROGL_INCLUDE) \
+	$(PATH_ROOT)/src/VBox/Additions/WINNT/Graphics/Video/disp/wddm/shared \
+	$(VBOX_GRAPHICS_INCS)
 VBoxDispD3D_SOURCES  = \
 	wddm/VBoxDispD3D.cpp \
 	wddm/VBoxDispD3DIf.cpp \
 	wddm/VBoxDispCm.cpp \
-	wddm/VBoxScreen.cpp \
-	wddm/VBoxDispKmt.cpp \
 	wddm/VBoxDispDbg.cpp \
 	wddm/VBoxD3DIf.cpp \
 	wddm/VBoxDispD3D.rc \
@@ -129,6 +128,7 @@ VBoxDispD3D_LIBS     = \
 	$(VBOX_LIB_VBGL_R3) \
 	Psapi.lib \
 	$(VBOX_PATH_ADDITIONS_LIB)/VBoxDispMpLogger$(VBOX_SUFF_LIB) \
+	$(VBOX_PATH_ADDITIONS_LIB)/VBoxWddmUmKmt$(VBOX_SUFF_LIB) \
 	$(VBOX_PATH_ADDITIONS_LIB)/VBoxCrHgsmi$(VBOX_SUFF_LIB)
 
 #
@@ -142,6 +142,7 @@ VBoxDispD3D-x86_LIBS = \
 	$(VBOX_LIB_VBGL_R3_X86) \
 	Psapi.lib \
 	$(VBOX_PATH_ADDITIONS_LIB)/VBoxDispMpLogger-x86$(VBOX_SUFF_LIB) \
+	$(VBOX_PATH_ADDITIONS_LIB)/VBoxWddmUmKmt-x86$(VBOX_SUFF_LIB) \
 	$(VBOX_PATH_ADDITIONS_LIB)/VBoxCrHgsmi-x86$(VBOX_SUFF_LIB)
 VBoxDispD3D-x86_DEFS = $(VBoxDispD3D_DEFS) VBOX_WDDM_WOW64
 
@@ -150,14 +151,18 @@ ifdef VBOX_WITH_CRHGSMI
 # VBoxCrHgsmi - Chromium HGSMI API library
 #
 LIBRARIES += VBoxCrHgsmi
-VBoxCrHgsmi_TEMPLATE    = VBOXGUESTR3LIB
+VBoxCrHgsmi_TEMPLATE    = VBoxGuestR3Lib
 VBoxCrHgsmi_SDKS        = ReorderCompilerIncs $(VBOX_WINDDK_GST_WLH)
 #use same defines as VBoxDispD3D to ensure structure definitions match
 VBoxCrHgsmi_DEFS        = $(subst VBOXWDDMDISP,IN_VBOXCRHGSMI,$(VBoxDispD3D_DEFS))
-VBoxCrHgsmi_INCS        = ../../../include .. $(VBOX_PATH_CROGL_INCLUDE)
+VBoxCrHgsmi_INCS        = \
+	../../../include \
+	.. \
+	$(VBOX_PATH_CROGL_INCLUDE) \
+	$(PATH_ROOT)/src/VBox/Additions/WINNT/Graphics/Video/disp/wddm/shared \
+	$(VBOX_GRAPHICS_INCS)
 VBoxCrHgsmi_SOURCES     = \
 	wddm/VBoxCrHgsmi.cpp \
-	wddm/VBoxDispKmt.cpp \
 	wddm/VBoxDispDbg.cpp \
 	wddm/VBoxUhgsmiKmt.cpp \
 	wddm/VBoxUhgsmiBase.cpp \
@@ -167,31 +172,13 @@ VBoxCrHgsmi_SOURCES     = \
 # 64-bit systems needs a 32-bit version of VBoxCrHgsmi.
 #
 LIBRARIES.amd64 += VBoxCrHgsmi-x86
-VBoxCrHgsmi-x86_TEMPLATE    = VBOXGUESTR3LIB
+VBoxCrHgsmi-x86_TEMPLATE    = VBoxGuestR3Lib
 VBoxCrHgsmi-x86_EXTENDS = VBoxCrHgsmi
 VBoxCrHgsmi-x86_BLD_TRG_ARCH = x86
 VBoxCrHgsmi-x86_DEFS = $(VBoxCrHgsmi_DEFS) VBOX_WDDM_WOW64
 endif #VBOX_WITH_CRHGSMI
 
-#
-# VBoxDispMpLogger - display backdoor logger library
-#
-LIBRARIES += VBoxDispMpLogger
-VBoxDispMpLogger_TEMPLATE    = VBOXGUESTR3LIB
-VBoxDispMpLogger_SDKS        = ReorderCompilerIncs $(VBOX_WINDDK_GST_WLH)
-VBoxDispMpLogger_DEFS        = UNICODE _UNICODE VBOX_WITH_CRHGSMI IN_VBOXCRHGSMI VBOX_WITH_WDDM VBOX_WITH_VDMA VBOX_WITH_HGCM
-VBoxDispMpLogger_INCS        = ../../../include ..
-VBoxDispMpLogger_SOURCES     = \
-    wddm/VBoxDispMpLogger.cpp
-
-#
-# 64-bit systems needs a 32-bit version of VBoxCrHgsmi.
-#
-LIBRARIES.amd64 += VBoxDispMpLogger-x86
-VBoxDispMpLogger-x86_TEMPLATE    = VBOXGUESTR3LIB
-VBoxDispMpLogger-x86_EXTENDS = VBoxDispMpLogger
-VBoxDispMpLogger-x86_BLD_TRG_ARCH = x86
-VBoxDispMpLogger-x86_DEFS = $(VBoxDispMpLogger_DEFS) VBOX_WDDM_WOW64
+include $(PATH_SUB_CURRENT)/wddm/shared/Makefile.kmk
 
 endif #ifdef VBOX_WITH_WDDM
 
@@ -220,6 +207,14 @@ DumpD3DCaps9_SOURCES  = \
 	wddm/dbg/DumpD3DCaps9.cpp
 DumpD3DCaps9_LIBS     = $(VBOX_LIB_IPRT_GUEST_R3) d3d9.lib
 DumpD3DCaps9_LDFLAGS.win = /SUBSYSTEM:CONSOLE
+
+PROGRAMS += D3DFeatureLevel
+D3DFeatureLevel_TEMPLATE = VBOXR3EXE
+D3DFeatureLevel_SDKS     = ReorderCompilerIncs $(VBOX_WINDDK_GST_WLH)
+D3DFeatureLevel_SOURCES  = \
+	wddm/dbg/D3DFeatureLevel.cpp
+D3DFeatureLevel_LIBS     = $(VBOX_LIB_IPRT_GUEST_R3) d3d11.lib
+D3DFeatureLevel_LDFLAGS.win = /SUBSYSTEM:CONSOLE
 
 endif #VBOXVIDEOWINDBG
 

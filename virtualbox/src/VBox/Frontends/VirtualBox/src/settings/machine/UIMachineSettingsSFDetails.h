@@ -1,11 +1,10 @@
+/* $Id: UIMachineSettingsSFDetails.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIMachineSettingsSFDetails class declaration
+ * VBox Qt GUI - UIMachineSettingsSFDetails class declaration.
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -41,7 +40,7 @@ public:
 
     UIMachineSettingsSFDetails(DialogType type,
                                bool fEnableSelector, /* for "permanent" checkbox */
-                               const SFoldersNameList &usedNames,
+                               const QStringList &usedNames,
                                QWidget *pParent = 0);
 
     void setPath(const QString &strPath);
@@ -70,9 +69,9 @@ private slots:
 
 private:
 
-    DialogType       m_type;
-    bool             m_fUsePermanent;
-    SFoldersNameList m_usedNames;
+    DialogType   m_type;
+    bool         m_fUsePermanent;
+    QStringList  m_usedNames;
 };
 
 #endif // __UIMachineSettingsSFDetails_h__

@@ -1,10 +1,10 @@
+/* $Id: VBoxHlp.h $ */
 /** @file
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Declaration of OS/2-specific helpers that require to reside in a DLL
+ * VBox Qt GUI - Declaration of OS/2-specific helpers that require to reside in a DLL.
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

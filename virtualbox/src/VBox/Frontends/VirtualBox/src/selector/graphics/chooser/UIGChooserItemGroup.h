@@ -1,11 +1,10 @@
+/* $Id: UIGChooserItemGroup.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGChooserItemGroup class declaration
+ * VBox Qt GUI - UIGChooserItemGroup class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -69,6 +68,7 @@ public:
 
     /* API: Basic stuff: */
     QString name() const;
+    QString description() const;
     QString fullName() const;
     QString definition() const;
     void setName(const QString &strName);
@@ -150,7 +150,14 @@ private:
     int minimumHeightHint(bool fOpenedGroup) const;
     int minimumWidthHint() const;
     int minimumHeightHint() const;
+#ifdef VBOX_WS_MAC
+# pragma clang diagnostic push
+# pragma clang diagnostic ignored "-Woverloaded-virtual"
+#endif
     QSizeF minimumSizeHint(bool fOpenedGroup) const;
+#ifdef VBOX_WS_MAC
+# pragma clang diagnostic pop
+#endif
     QSizeF sizeHint(Qt::SizeHint which, const QSizeF &constraint = QSizeF()) const;
 
     /* Helpers: Drag&drop stuff: */
@@ -195,6 +202,7 @@ private:
     int m_iBlackoutDarkness;
     /* Cached values: */
     QString m_strName;
+    QString m_strDescription;
     QString m_strVisibleName;
     QString m_strInfoGroups;
     QString m_strInfoMachines;

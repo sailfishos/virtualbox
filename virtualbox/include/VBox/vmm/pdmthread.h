@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -90,7 +90,7 @@ typedef PPDMTHREAD *PPPDMTHREAD;
  * @param   pDevIns     The device instance.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADDEV(PPDMDEVINS pDevIns, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADDEV(PPDMDEVINS pDevIns, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADDEV(). */
 typedef FNPDMTHREADDEV *PFNPDMTHREADDEV;
 
@@ -101,7 +101,7 @@ typedef FNPDMTHREADDEV *PFNPDMTHREADDEV;
  * @param   pUsbIns     The USB device instance.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADUSB(PPDMUSBINS pUsbIns, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADUSB(PPDMUSBINS pUsbIns, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADUSB(). */
 typedef FNPDMTHREADUSB *PFNPDMTHREADUSB;
 
@@ -112,7 +112,7 @@ typedef FNPDMTHREADUSB *PFNPDMTHREADUSB;
  * @param   pDrvIns     The driver instance.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADDRV(PPDMDRVINS pDrvIns, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADDRV(PPDMDRVINS pDrvIns, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADDRV(). */
 typedef FNPDMTHREADDRV *PFNPDMTHREADDRV;
 
@@ -120,10 +120,10 @@ typedef FNPDMTHREADDRV *PFNPDMTHREADDRV;
  * PDM thread, driver variation.
  *
  * @returns VBox status code.
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADINT(PVM pVM, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADINT(PVM pVM, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADINT(). */
 typedef FNPDMTHREADINT *PFNPDMTHREADINT;
 
@@ -146,7 +146,7 @@ typedef FNPDMTHREADEXT *PFNPDMTHREADEXT;
  * @param   pDevIns     The device instance.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADWAKEUPDEV(PPDMDEVINS pDevIns, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADWAKEUPDEV(PPDMDEVINS pDevIns, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADDEV(). */
 typedef FNPDMTHREADWAKEUPDEV *PFNPDMTHREADWAKEUPDEV;
 
@@ -157,7 +157,7 @@ typedef FNPDMTHREADWAKEUPDEV *PFNPDMTHREADWAKEUPDEV;
  * @param   pUsbIns     The USB device instance.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADWAKEUPUSB(PPDMUSBINS pUsbIns, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADWAKEUPUSB(PPDMUSBINS pUsbIns, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADUSB(). */
 typedef FNPDMTHREADWAKEUPUSB *PFNPDMTHREADWAKEUPUSB;
 
@@ -168,7 +168,7 @@ typedef FNPDMTHREADWAKEUPUSB *PFNPDMTHREADWAKEUPUSB;
  * @param   pDrvIns     The driver instance.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADWAKEUPDRV(PPDMDRVINS pDrvIns, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADWAKEUPDRV(PPDMDRVINS pDrvIns, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADDRV(). */
 typedef FNPDMTHREADWAKEUPDRV *PFNPDMTHREADWAKEUPDRV;
 
@@ -176,10 +176,10 @@ typedef FNPDMTHREADWAKEUPDRV *PFNPDMTHREADWAKEUPDRV;
  * PDM thread wakeup call, internal variation.
  *
  * @returns VBox status code.
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pThread     The PDM thread data.
  */
-typedef int FNPDMTHREADWAKEUPINT(PVM pVM, PPDMTHREAD pThread);
+typedef DECLCALLBACK(int) FNPDMTHREADWAKEUPINT(PVM pVM, PPDMTHREAD pThread);
 /** Pointer to a FNPDMTHREADWAKEUPINT(). */
 typedef FNPDMTHREADWAKEUPINT *PFNPDMTHREADWAKEUPINT;
 

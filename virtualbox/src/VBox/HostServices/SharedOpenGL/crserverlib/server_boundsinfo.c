@@ -234,9 +234,11 @@ void SERVER_DISPATCH_APIENTRY
 crServerDispatchBoundsInfoCR( const CRrecti *bounds, const GLbyte *payload,
 															GLint len, GLint num_opcodes )
 {
+#if 0
 	CRMuralInfo *mural = cr_server.curClient->currentMural;
 	char *data_ptr = (char*)(payload + ((num_opcodes + 3 ) & ~0x03));
 	unsigned int bx, by;
+#endif
 
 	/* Save current unpacker state */
 	crUnpackPush();
@@ -294,7 +296,7 @@ crServerDispatchBoundsInfoCR( const CRrecti *bounds, const GLbyte *payload,
 					if (cr_server.run_queue->client->currentCtxInfo && cr_server.run_queue->client->currentCtxInfo->pContext) {
 						crServerSetOutputBounds( mural, mural->curExtent );
 					}
-					crUnpack( data_ptr, data_ptr-1, num_opcodes, &(cr_server.dispatch) );
+                    crUnpack( data_ptr, NULL, data_ptr-1, num_opcodes, &(cr_server.dispatch) );
 				}
 			}
 		}
@@ -317,7 +319,7 @@ crServerDispatchBoundsInfoCR( const CRrecti *bounds, const GLbyte *payload,
 				if (cr_server.run_queue->client->currentCtxInfo && cr_server.run_queue->client->currentCtxInfo->pContext) {
 					crServerSetOutputBounds( mural, i );
 				}
-				crUnpack( data_ptr, data_ptr-1, num_opcodes, &(cr_server.dispatch) );
+                crUnpack( data_ptr, NULL, data_ptr-1, num_opcodes, &(cr_server.dispatch) );
 			}
 		}
 	}

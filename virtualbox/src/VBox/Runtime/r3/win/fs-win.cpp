@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,11 +25,11 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_FS
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/fs.h>
 #include <iprt/path.h>
@@ -61,7 +61,7 @@ typedef enum _FSINFOCLASS {
 typedef struct _FILE_FS_ATTRIBUTE_INFORMATION {
     ULONG FileSystemAttributes;
     LONG MaximumComponentNameLength;
-    ULONG FIleSystemNameLength;
+    ULONG FileSystemNameLength;
     WCHAR FileSystemName[1];
 } FILE_FS_ATTRIBUTE_INFORMATION, *PFILE_FS_ATTRIBUTE_INFORMATION;
 
@@ -280,7 +280,7 @@ RTR3DECL(int) RTFsQuerySerial(const char *pszFsPath, uint32_t *pu32Serial)
              pszFsPath, Err, rc));
     }
 
-    RTUtf16Free(pwszFsRoot);
+    rtFsFreeRoot(pwszFsRoot);
     return rc;
 }
 
@@ -332,8 +332,14 @@ RTR3DECL(int) RTFsQueryProperties(const char *pszFsPath, PRTFSPROPERTIES pProper
              pszFsPath, Err, rc));
     }
 
-    RTUtf16Free(pwszFsRoot);
+    rtFsFreeRoot(pwszFsRoot);
     return rc;
+}
+
+
+RTR3DECL(bool) RTFsIsCaseSensitive(const char *pszFsPath)
+{
+    return false;
 }
 
 
@@ -342,7 +348,7 @@ RTR3DECL(int) RTFsQueryProperties(const char *pszFsPath, PRTFSPROPERTIES pProper
  *
  * @returns @c true if equal, @c false if not.
  * @param   pwsz1               The first string.
- * @param   cb1                 The length of the first string, in bytes.
+ * @param   cch1                The length of the first string, in bytes.
  * @param   psz2                The second string.
  * @param   cch2                The length of the second string.
  */
@@ -372,7 +378,7 @@ RTR3DECL(int) RTFsQueryType(const char *pszFsPath, PRTFSTYPE penmType)
      * Convert the path and try open it.
      */
     PRTUTF16 pwszFsPath;
-    int rc = RTStrToUtf16(pszFsPath, &pwszFsPath);
+    int rc = RTPathWinFromUtf8(&pwszFsPath, pszFsPath, 0 /*fFlags*/);
     if (RT_SUCCESS(rc))
     {
         HANDLE hFile = CreateFileW(pwszFsPath,
@@ -395,17 +401,16 @@ RTR3DECL(int) RTFsQueryType(const char *pszFsPath, PRTFSTYPE penmType)
             if (rcNt >= 0)
             {
                 PFILE_FS_ATTRIBUTE_INFORMATION pFsAttrInfo = (PFILE_FS_ATTRIBUTE_INFORMATION)abBuf;
-                if (pFsAttrInfo->FIleSystemNameLength)
-                {
-                }
 #define IS_FS(szName) \
-    rtFsWinAreEqual(pFsAttrInfo->FileSystemName, pFsAttrInfo->FIleSystemNameLength, szName, sizeof(szName) - 1)
+    rtFsWinAreEqual(pFsAttrInfo->FileSystemName, pFsAttrInfo->FileSystemNameLength, szName, sizeof(szName) - 1)
                 if (IS_FS("NTFS"))
                     *penmType = RTFSTYPE_NTFS;
                 else if (IS_FS("FAT"))
                     *penmType = RTFSTYPE_FAT;
                 else if (IS_FS("FAT32"))
                     *penmType = RTFSTYPE_FAT;
+                else if (IS_FS("EXFAT"))
+                    *penmType = RTFSTYPE_EXFAT;
                 else if (IS_FS("VBoxSharedFolderFS"))
                     *penmType = RTFSTYPE_VBOXSHF;
 #undef IS_FS
@@ -416,7 +421,7 @@ RTR3DECL(int) RTFsQueryType(const char *pszFsPath, PRTFSTYPE penmType)
         }
         else
             rc = RTErrConvertFromWin32(GetLastError());
-        RTUtf16Free(pwszFsPath);
+        RTPathWinFree(pwszFsPath);
     }
     return rc;
 }

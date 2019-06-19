@@ -1,11 +1,10 @@
+/* $Id: UIMachineViewFullscreen.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineViewFullscreen class declaration
+ * VBox Qt GUI - UIMachineViewFullscreen class declaration.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,7 +35,7 @@ protected:
 #endif
     );
     /* Fullscreen machine-view destructor: */
-    virtual ~UIMachineViewFullscreen();
+    virtual ~UIMachineViewFullscreen() {}
 
 private slots:
 
@@ -58,8 +57,10 @@ private:
     //void cleanupFilters() {}
     //void cleanupCommon() {}
 
-    /* Private setters: */
-    void setGuestAutoresizeEnabled(bool bEnabled);
+    /** Returns whether the guest-screen auto-resize is enabled. */
+    virtual bool isGuestAutoresizeEnabled() const /* override */ { return m_bIsGuestAutoresizeEnabled; }
+    /** Defines whether the guest-screen auto-resize is @a fEnabled. */
+    virtual void setGuestAutoresizeEnabled(bool bEnabled) /* override */;
 
     /** Adjusts guest-screen size to correspond current <i>working area</i> size. */
     void adjustGuestScreenSize();

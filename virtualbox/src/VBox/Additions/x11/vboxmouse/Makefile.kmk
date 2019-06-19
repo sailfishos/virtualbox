@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2013 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -37,7 +37,7 @@ if1of ($(KBUILD_TARGET), linux)
  # unsigned long is 64bits
  vboxmouse_drv_DEFS.amd64 += _XSERVER64
  vboxmouse_drv_DEFS += \
-        _POSIX_C_SOURCE=199309L _POSIX_SOURCE _XOPEN_SOURCE \
+        _POSIX_C_SOURCE=199309L _POSIX_SOURCE _XOPEN_SOURCE _DEFAULT_SOURCE \
 	_BSD_SOURCE _SVID_SOURCE _GNU_SOURCE SHAPE XINPUT XKB LBX XAPPGROUP \
 	XCSECURITY TOGCUP XF86BIGFONT DPMSExtension PIXPRIV PANORAMIX RENDER \
 	GCCUSESGAS AVOID_GLYPHBLT PIXPRIV SINGLEDEPTH XFreeXDGA XvExtension \
@@ -45,15 +45,10 @@ if1of ($(KBUILD_TARGET), linux)
 	BUILDDEBUG X_BYTE_ORDER=X_LITTLE_ENDIAN DNDEBUG FUNCPROTO=15 NARROWPROTO \
 	IN_MODULE XFree86Module PNP_MOUSE IN_XF86_MODULE
  vboxmouse_drv_INCS := \
-	$(VBOX_PATH_X11_XFREE_4_3)/include \
-	$(VBOX_PATH_X11_XFREE_4_3)/include/extensions \
-	$(VBOX_PATH_X11_XFREE_4_3)/include/X11 \
-	$(VBOX_PATH_X11_XFREE_4_3)/programs/Xserver/hw/xfree86 \
-	$(VBOX_PATH_X11_XFREE_4_3)/programs/Xserver/hw/xfree86/common \
-	$(VBOX_PATH_X11_XFREE_4_3)/programs/Xserver/hw/xfree86/os-support \
-	$(VBOX_PATH_X11_XFREE_4_3)/programs/Xserver/hw/xfree86/os-support/bus \
-	$(VBOX_PATH_X11_XFREE_4_3)/programs/Xserver/mi \
-	$(VBOX_PATH_X11_XFREE_4_3)/programs/Xserver/include \
+	$(VBOX_PATH_X11_ROOT)/XFree86-4.3 \
+	$(VBOX_PATH_X11_ROOT)/XFree86-4.3/X11 \
+	$(VBOX_PATH_X11_ROOT)/XFree86-4.3/X11/extensions \
+	$(VBOX_PATH_X11_ROOT)/XFree86-4.3/Xserver \
 	$(PATH_SUB_CURRENT)
  vboxmouse_drv_SOURCES = \
 	vboxmouse.c
@@ -159,7 +154,6 @@ ifneq ($(KBUILD_TARGET), linux)
 DLLS += vboxmouse_drv_17
 vboxmouse_drv_17_TEMPLATE = VBOXGUESTR3XORGMOD
 vboxmouse_drv_17_DEFS := $(vboxmouse_drv_70_DEFS) NO_ANSIC
-## @todo replace $(VBOX_PATH_X11_ROOT)/xorg-server-1.6.0-local
 vboxmouse_drv_17_INCS := \
 	$(vboxmouse_xorg_INCS) \
 	$(VBOX_PATH_X11_ROOT)/xorg-server-1.7.7 \
@@ -174,7 +168,6 @@ vboxmouse_drv_17_SOURCES = \
 DLLS += vboxmouse_drv_18
 vboxmouse_drv_18_TEMPLATE = VBOXGUESTR3XORGMOD
 vboxmouse_drv_18_DEFS := $(vboxmouse_drv_70_DEFS) NO_ANSIC
-## @todo replace $(VBOX_PATH_X11_ROOT)/xorg-server-1.6.0-local
 vboxmouse_drv_18_INCS := \
 	$(vboxmouse_xorg_INCS) \
 	$(VBOX_PATH_X11_ROOT)/xorg-server-1.8.0 \
@@ -189,7 +182,6 @@ vboxmouse_drv_18_SOURCES = \
 DLLS += vboxmouse_drv_19
 vboxmouse_drv_19_TEMPLATE = VBOXGUESTR3XORGMOD
 vboxmouse_drv_19_DEFS := $(vboxmouse_drv_70_DEFS) NO_ANSIC
-## @todo replace $(VBOX_PATH_X11_ROOT)/xorg-server-1.6.0-local
 vboxmouse_drv_19_INCS := \
 	$(vboxmouse_xorg_INCS) \
 	$(VBOX_PATH_X11_ROOT)/xorg-server-1.9.0 \
@@ -204,7 +196,6 @@ vboxmouse_drv_19_SOURCES = \
 DLLS += vboxmouse_drv_110
 vboxmouse_drv_110_TEMPLATE = VBOXGUESTR3XORGMOD
 vboxmouse_drv_110_DEFS := $(vboxmouse_drv_70_DEFS) NO_ANSIC
-## @todo replace $(VBOX_PATH_X11_ROOT)/xorg-server-1.6.0-local
 vboxmouse_drv_110_INCS := \
 	$(vboxmouse_xorg_INCS) \
 	$(VBOX_PATH_X11_ROOT)/xorg-server-1.10.0 \
@@ -215,7 +206,6 @@ vboxmouse_drv_110_SOURCES = \
 DLLS += vboxmouse_drv_111
 vboxmouse_drv_111_TEMPLATE = VBOXGUESTR3XORGMOD
 vboxmouse_drv_111_DEFS := $(vboxmouse_drv_70_DEFS) NO_ANSIC
-## @todo replace $(VBOX_PATH_X11_ROOT)/xorg-server-1.6.0-local
 vboxmouse_drv_111_INCS := \
 	$(vboxmouse_xorg_INCS) \
 	$(VBOX_PATH_X11_ROOT)/xorg-server-1.11.0 \
@@ -226,7 +216,6 @@ vboxmouse_drv_111_SOURCES = \
 DLLS += vboxmouse_drv_112
 vboxmouse_drv_112_TEMPLATE = VBOXGUESTR3XORGMOD
 vboxmouse_drv_112_DEFS := $(vboxmouse_drv_70_DEFS) NO_ANSIC
-## @todo replace $(VBOX_PATH_X11_ROOT)/xorg-server-1.6.0-local
 vboxmouse_drv_112_INCS := \
     $(vboxmouse_xorg_INCS) \
 	$(VBOX_PATH_X11_ROOT)/xorg-server-1.12.0 \

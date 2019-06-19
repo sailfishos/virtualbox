@@ -8,7 +8,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -397,6 +397,7 @@ DECLINLINE(void) IntNetRingSkipFrame(PINTNETRINGBUF pRingBuf)
  * @returns VINF_SUCCESS or VERR_BUFFER_OVERFLOW.
  * @param   pRingBuf            The ring buffer.
  * @param   cbFrame             The frame size.
+ * @param   u8Type              The header type.
  * @param   ppHdr               Where to return the frame header.
  *                              Don't touch this!
  * @param   ppvFrame            Where to return the frame pointer.
@@ -423,8 +424,8 @@ DECLINLINE(int) intnetRingAllocateFrameInternal(PINTNETRINGBUF pRingBuf, uint32_
             uint32_t offNew = offWriteInt + cb + sizeof(INTNETHDR);
             if (offNew >= pRingBuf->offEnd)
                 offNew = pRingBuf->offStart;
-            if (RT_UNLIKELY(!ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
-                return VERR_WRONG_ORDER; /* race */
+            if (RT_LIKELY(ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
+            { /* likely */ } else return VERR_WRONG_ORDER; /* race */
             Log2(("intnetRingAllocateFrameInternal: offWriteInt: %#x -> %#x (1) (R=%#x T=%#x S=%#x)\n", offWriteInt, offNew, offRead, u8Type, cbFrame));
 
             PINTNETHDR pHdr = (PINTNETHDR)((uint8_t *)pRingBuf + offWriteInt);
@@ -444,8 +445,8 @@ DECLINLINE(int) intnetRingAllocateFrameInternal(PINTNETRINGBUF pRingBuf, uint32_
         if (offRead - pRingBuf->offStart > cb) /* not >= ! */
         {
             uint32_t offNew = pRingBuf->offStart + cb;
-            if (RT_UNLIKELY(!ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
-                return VERR_WRONG_ORDER; /* race */
+            if (RT_LIKELY(ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
+            { /* likely */ } else return VERR_WRONG_ORDER; /* race */
             Log2(("intnetRingAllocateFrameInternal: offWriteInt: %#x -> %#x (2) (R=%#x T=%#x S=%#x)\n", offWriteInt, offNew, offRead, u8Type, cbFrame));
 
             PINTNETHDR pHdr = (PINTNETHDR)((uint8_t *)pRingBuf + offWriteInt);
@@ -464,8 +465,8 @@ DECLINLINE(int) intnetRingAllocateFrameInternal(PINTNETRINGBUF pRingBuf, uint32_
     else if (offRead - offWriteInt > cb + sizeof(INTNETHDR)) /* not >= ! */
     {
         uint32_t offNew = offWriteInt + cb + sizeof(INTNETHDR);
-        if (RT_UNLIKELY(!ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
-            return VERR_WRONG_ORDER; /* race */
+        if (RT_LIKELY(ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
+        { /* likely */ } else return VERR_WRONG_ORDER; /* race */
         Log2(("intnetRingAllocateFrameInternal: offWriteInt: %#x -> %#x (3) (R=%#x T=%#x S=%#x)\n", offWriteInt, offNew, offRead, u8Type, cbFrame));
 
         PINTNETHDR pHdr = (PINTNETHDR)((uint8_t *)pRingBuf + offWriteInt);
@@ -660,8 +661,8 @@ DECLINLINE(int) IntNetRingWriteFrame(PINTNETRINGBUF pRingBuf, const void *pvFram
             uint32_t offNew = offWriteInt + cb + sizeof(INTNETHDR);
             if (offNew >= pRingBuf->offEnd)
                 offNew = pRingBuf->offStart;
-            if (RT_UNLIKELY(!ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
-                return VERR_WRONG_ORDER; /* race */
+            if (RT_LIKELY(ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
+            { /* likely */ } else return VERR_WRONG_ORDER; /* race */
             Log2(("IntNetRingWriteFrame: offWriteInt: %#x -> %#x (1)\n", offWriteInt, offNew));
 
             PINTNETHDR pHdr = (PINTNETHDR)((uint8_t *)pRingBuf + offWriteInt);
@@ -685,8 +686,8 @@ DECLINLINE(int) IntNetRingWriteFrame(PINTNETRINGBUF pRingBuf, const void *pvFram
         if (offRead - pRingBuf->offStart > cb) /* not >= ! */
         {
             uint32_t offNew = pRingBuf->offStart + cb;
-            if (RT_UNLIKELY(!ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
-                return VERR_WRONG_ORDER; /* race */
+            if (RT_LIKELY(ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
+            { /* likely */ } else return VERR_WRONG_ORDER; /* race */
             Log2(("IntNetRingWriteFrame: offWriteInt: %#x -> %#x (2)\n", offWriteInt, offNew));
 
             PINTNETHDR pHdr = (PINTNETHDR)((uint8_t *)pRingBuf + offWriteInt);
@@ -709,8 +710,8 @@ DECLINLINE(int) IntNetRingWriteFrame(PINTNETRINGBUF pRingBuf, const void *pvFram
     else if (offRead - offWriteInt > cb + sizeof(INTNETHDR)) /* not >= ! */
     {
         uint32_t offNew = offWriteInt + cb + sizeof(INTNETHDR);
-        if (RT_UNLIKELY(!ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
-            return VERR_WRONG_ORDER; /* race */
+        if (RT_LIKELY(ASMAtomicCmpXchgU32(&pRingBuf->offWriteInt, offNew, offWriteInt)))
+        { /* likely */ } else return VERR_WRONG_ORDER; /* race */
         Log2(("IntNetRingWriteFrame: offWriteInt: %#x -> %#x (3)\n", offWriteInt, offNew));
 
         PINTNETHDR pHdr = (PINTNETHDR)((uint8_t *)pRingBuf + offWriteInt);
@@ -737,7 +738,7 @@ DECLINLINE(int) IntNetRingWriteFrame(PINTNETRINGBUF pRingBuf, const void *pvFram
  * Reads the next frame in the buffer and moves the read cursor past it.
  *
  * @returns Size of the frame in bytes.  0 is returned if nothing in the buffer.
- * @param   pRingBuff   The ring buffer to read from.
+ * @param   pRingBuf    The ring buffer to read from.
  * @param   pvFrameDst  Where to put the frame.  The caller is responsible for
  *                      ensuring that there is sufficient space for the frame.
  *
@@ -792,7 +793,7 @@ DECLINLINE(void) IntNetBufInit(PINTNETBUF pIntBuf, uint32_t cbBuf, uint32_t cbRe
     Assert(cbBuf >= sizeof(INTNETBUF) + cbRecv + cbSend);
     Assert(RT_ALIGN_32(cbRecv, INTNETRINGBUF_ALIGNMENT) == cbRecv);
     Assert(RT_ALIGN_32(cbSend, INTNETRINGBUF_ALIGNMENT) == cbSend);
-    Assert(ASMMemIsAll8(pIntBuf, cbBuf, '\0') == NULL);
+    Assert(ASMMemIsZero(pIntBuf, cbBuf));
 
     pIntBuf->u32Magic  = INTNETBUF_MAGIC;
     pIntBuf->cbBuf     = cbBuf;
@@ -800,7 +801,7 @@ DECLINLINE(void) IntNetBufInit(PINTNETBUF pIntBuf, uint32_t cbBuf, uint32_t cbRe
     pIntBuf->cbSend    = cbSend;
 
     /* receive ring buffer. */
-    uint32_t offBuf = RT_ALIGN_32(sizeof(INTNETBUF), INTNETRINGBUF_ALIGNMENT) - RT_OFFSETOF(INTNETBUF, Recv);
+    uint32_t offBuf = RT_ALIGN_32(sizeof(INTNETBUF), INTNETRINGBUF_ALIGNMENT) - RT_UOFFSETOF(INTNETBUF, Recv);
     pIntBuf->Recv.offStart      = offBuf;
     pIntBuf->Recv.offReadX      = offBuf;
     pIntBuf->Recv.offWriteInt   = offBuf;
@@ -808,7 +809,7 @@ DECLINLINE(void) IntNetBufInit(PINTNETBUF pIntBuf, uint32_t cbBuf, uint32_t cbRe
     pIntBuf->Recv.offEnd        = offBuf + cbRecv;
 
     /* send ring buffer. */
-    offBuf += cbRecv + RT_OFFSETOF(INTNETBUF, Recv) - RT_OFFSETOF(INTNETBUF, Send);
+    offBuf += cbRecv + RT_UOFFSETOF(INTNETBUF, Recv) - RT_UOFFSETOF(INTNETBUF, Send);
     pIntBuf->Send.offStart      = offBuf;
     pIntBuf->Send.offReadX      = offBuf;
     pIntBuf->Send.offWriteCom   = offBuf;

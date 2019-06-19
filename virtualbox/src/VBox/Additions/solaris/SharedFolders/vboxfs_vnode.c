@@ -1,10 +1,11 @@
+/* $Id: vboxfs_vnode.c $ */
 /** @file
  * VirtualBox File System for Solaris Guests, vnode implementation.
  * Portions contributed by: Ronald.
  */
 
 /*
- * Copyright (C) 2009-2014 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -85,13 +86,15 @@
 #include <vm/seg_kpm.h>
 #include <vm/pvn.h>
 #if !defined(VBOX_VFS_SOLARIS_10U6)
-#include <sys/vfs_opreg.h>
+# include <sys/vfs_opreg.h>
 #endif
 #include <sys/pathname.h>
 #include <sys/dirent.h>
 #include <sys/fs_subr.h>
 #include <sys/time.h>
 #include <sys/cmn_err.h>
+#undef u /* /usr/include/sys/user.h:249:1 is where this is defined to (curproc->p_user). very cool. */
+
 #include "vboxfs_prov.h"
 #include "vboxfs_vnode.h"
 #include "vboxfs_vfs.h"
@@ -997,14 +1000,7 @@ sffs_read(
 	if (vp->v_type != VREG)
 		return (EINVAL);
 	if (uio->uio_loffset >= MAXOFFSET_T)
-	{
-		proc_t *p = ttoproc(curthread);
-		mutex_enter(&p->p_lock);
-		(void) rctl_action(rctlproc_legacy[RLIMIT_FSIZE], p->p_rctls,
-			p, RCA_UNSAFE_SIGINFO);
-		mutex_exit(&p->p_lock);
-		return (EFBIG);
-	}
+		return (0);
 	if (uio->uio_loffset < 0)
 		return (EINVAL);
 	total = uio->uio_resid;
@@ -1095,11 +1091,6 @@ sffs_write(
 		limit = MAXOFFSET_T;
 
 	if (uiop->uio_loffset >= limit) {
-		proc_t *p = ttoproc(curthread);
-		mutex_enter(&p->p_lock);
-		(void) rctl_action(rctlproc_legacy[RLIMIT_FSIZE], p->p_rctls,
-		    p, RCA_UNSAFE_SIGINFO);
-		mutex_exit(&p->p_lock);
 		mutex_exit(&sffs_lock);
 		return (EFBIG);
 	}

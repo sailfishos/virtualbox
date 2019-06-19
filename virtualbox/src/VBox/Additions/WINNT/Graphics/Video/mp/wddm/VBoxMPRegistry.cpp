@@ -1,11 +1,10 @@
 /* $Id: VBoxMPRegistry.cpp $ */
-
 /** @file
  * VBox WDDM Miniport registry related functions
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -23,11 +22,11 @@ VP_STATUS VBoxMPCmnRegInit(IN PVBOXMP_DEVEXT pExt, OUT VBOXMPCMNREGISTRY *pReg)
     WCHAR Buf[512];
     ULONG cbBuf = sizeof(Buf);
     NTSTATUS Status = vboxWddmRegQueryDrvKeyName(pExt, cbBuf, Buf, &cbBuf);
-    Assert(Status == STATUS_SUCCESS);
+    AssertNtStatusSuccess(Status);
     if (Status == STATUS_SUCCESS)
     {
         Status = vboxWddmRegOpenKey(pReg, Buf, GENERIC_READ | GENERIC_WRITE);
-        Assert(Status == STATUS_SUCCESS);
+        AssertNtStatusSuccess(Status);
         if(Status == STATUS_SUCCESS)
             return NO_ERROR;
     }

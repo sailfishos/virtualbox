@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM_ASYNC_COMPLETION
 
 #include "VMInternal.h" /* UVM */
@@ -130,7 +131,7 @@ typedef struct PDMACTESTFILE
     /** Size of a file segment. */
     size_t                     cbFileSegment;
     /** Maximum number of segments. */
-    unsigned                   cSegments;
+    size_t                     cSegments;
     /** Pointer to the array describing how the file is assembled
      * of the test pattern. Used for comparing read data to ensure
      * that no corruption occurred.
@@ -155,7 +156,7 @@ size_t   g_cbTestPattern;
 /** Array holding test files. */
 PDMACTESTFILE g_aTestFiles[NR_OPEN_ENDPOINTS];
 
-static void tstPDMACStressTestFileTaskCompleted(PVM pVM, void *pvUser, void *pvUser2, int rcReq);
+static DECLCALLBACK(void) tstPDMACStressTestFileTaskCompleted(PVM pVM, void *pvUser, void *pvUser2, int rcReq);
 
 static void tstPDMACStressTestFileVerify(PPDMACTESTFILE pTestFile, PPDMACTESTFILETASK pTestTask)
 {
@@ -166,7 +167,7 @@ static void tstPDMACStressTestFileVerify(PPDMACTESTFILE pTestFile, PPDMACTESTFIL
     while (cbLeft)
     {
         size_t cbCompare;
-        unsigned iSeg = off / pTestFile->cbFileSegment;
+        size_t iSeg = off / pTestFile->cbFileSegment;
         PPDMACTESTFILESEG pSeg = &pTestFile->paSegs[iSeg];
         uint8_t *pbTestPattern;
         unsigned offSeg = off - pSeg->off;
@@ -206,7 +207,7 @@ static void tstPDMACStressTestFileFillBuffer(PPDMACTESTFILE pTestFile, PPDMACTES
     while (cbLeft)
     {
         size_t cbFill;
-        unsigned iSeg = off / pTestFile->cbFileSegment;
+        size_t iSeg = off / pTestFile->cbFileSegment;
         PPDMACTESTFILESEG pSeg = &pTestFile->paSegs[iSeg];
         uint8_t *pbTestPattern;
         unsigned offSeg = off - pSeg->off;
@@ -326,7 +327,7 @@ static bool tstPDMACTestIsTrue(int iPercentage)
     return (uRnd <= iPercentage); /* This should be enough for our purpose */
 }
 
-static int tstPDMACTestFileThread(PVM pVM, PPDMTHREAD pThread)
+static DECLCALLBACK(int) tstPDMACTestFileThread(PVM pVM, PPDMTHREAD pThread)
 {
     PPDMACTESTFILE pTestFile = (PPDMACTESTFILE)pThread->pvUser;
     int iWriteChance = 100; /* Chance to get a write task in percent. */
@@ -387,7 +388,7 @@ static int tstPDMACTestFileThread(PVM pVM, PPDMTHREAD pThread)
     return rc;
 }
 
-static void tstPDMACStressTestFileTaskCompleted(PVM pVM, void *pvUser, void *pvUser2, int rcReq)
+static DECLCALLBACK(void) tstPDMACStressTestFileTaskCompleted(PVM pVM, void *pvUser, void *pvUser2, int rcReq)
 {
     PPDMACTESTFILE pTestFile = (PPDMACTESTFILE)pvUser2;
     PPDMACTESTFILETASK pTestTask = (PPDMACTESTFILETASK)pvUser;
@@ -395,7 +396,7 @@ static void tstPDMACStressTestFileTaskCompleted(PVM pVM, void *pvUser, void *pvU
 
     if (pTestTask->fWrite)
     {
-        /* @todo Do something sensible here. */
+        /** @todo Do something sensible here. */
     }
     else
     {
@@ -457,7 +458,8 @@ static int tstPDMACStressTestFileOpen(PVM pVM, PPDMACTESTFILE pTestFile, unsigne
             char szDesc[256];
 
             RTStrPrintf(szDesc, sizeof(szDesc), "Template-%d", iTestId);
-            rc = PDMR3AsyncCompletionTemplateCreateInternal(pVM, &pTestFile->pTemplate, tstPDMACStressTestFileTaskCompleted, pTestFile, szDesc);
+            rc = PDMR3AsyncCompletionTemplateCreateInternal(pVM, &pTestFile->pTemplate, tstPDMACStressTestFileTaskCompleted,
+                                                            pTestFile, szDesc);
             if (RT_SUCCESS(rc))
             {
                 /* Open the endpoint now. Because async completion endpoints cannot create files we have to do it before. */
@@ -572,6 +574,7 @@ static void tstPDMACStressTestPatternDestroy(void)
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF1(envp);
     int rcRet = 0; /* error count */
 
     RTR3InitExe(argc, &argv, RTR3INIT_FLAGS_SUPLIB);

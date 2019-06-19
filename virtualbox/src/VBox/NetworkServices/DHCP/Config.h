@@ -1,6 +1,18 @@
 /* $Id: Config.h $ */
-/**
- * This file contains declarations of DHCP config.
+/** @file
+ * Config.h
+ */
+
+/*
+ * Copyright (C) 2013-2017 Oracle Corporation
+ *
+ * This file is part of VirtualBox Open Source Edition (OSE), as
+ * available from http://www.virtualbox.org. This file is free software;
+ * you can redistribute it and/or modify it under the terms of the GNU
+ * General Public License (GPL) as published by the Free Software
+ * Foundation, in version 2 as it comes in the "COPYING" file of the
+ * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
+ * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
 #ifndef _CONFIG_H_
@@ -8,15 +20,12 @@
 
 #include <iprt/asm-math.h>
 #include <iprt/cpp/utils.h>
+
+#include <VBox/com/ptr.h>
 #include <VBox/com/string.h>
+#include <VBox/com/VirtualBox.h>
 
 #include "../NetLib/cpp/utils.h"
-
-
-static bool operator > (const RTNETADDRIPV4& a, const RTNETADDRIPV4& b)
-{
-    return (b < a);
-}
 
 
 class RawOption
@@ -24,6 +33,7 @@ class RawOption
 public:
     RawOption()
     {
+        /** @todo r=bird: this is crazy. */
         RT_ZERO(*this);
     }
     uint8_t u8OptId;
@@ -477,7 +487,7 @@ private:
 class NetworkManager
 {
 public:
-    static NetworkManager *getNetworkManager();
+    static NetworkManager *getNetworkManager(ComPtr<IDHCPServer> aDhcpServer = ComPtr<IDHCPServer>());
 
     const RTNETADDRIPV4& getOurAddress() const;
     const RTNETADDRIPV4& getOurNetmask() const;
@@ -504,6 +514,9 @@ private:
     int prepareReplyPacket4Client(const Client& client, uint32_t u32Xid);
     int doReply(const Client& client, const std::vector<RawOption>& extra);
     int processParameterReqList(const Client& client, const uint8_t *pu8ReqList, int cReqList, std::vector<RawOption>& extra);
+
+private:
+    static NetworkManager *g_NetworkManager;
 
 private:
     struct Data;
@@ -746,7 +759,7 @@ public:
     /**
      * Puts an 32-bit integer (network endian).
      *
-     * @param   u32Network  The integer.
+     * @param   u32         The integer.
      */
     void putU32(uint32_t u32)
     {
@@ -759,7 +772,7 @@ public:
      * @returns true/false just like begin().
      *
      * @param   uOption     The option number.
-     * @param   u32Network  The integer.
+     * @param   u32         The integer.
      */
     bool optU32(uint8_t uOption, uint32_t u32)
     {

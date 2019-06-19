@@ -1,3 +1,4 @@
+/* $Id: seamless.cpp $ */
 /** @file
  * X11 Guest client - seamless mode: main logic, communication with the host and
  * wrapper interface for the main code of the VBoxClient deamon.  The
@@ -5,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,14 +17,13 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*****************************************************************************
-*   Header files                                                             *
-*****************************************************************************/
 
+/*********************************************************************************************************************************
+*   Header files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <X11/Xlib.h>
 
 #include <VBox/log.h>
-#include <VBox/VMMDev.h>
 #include <VBox/VBoxGuestLib.h>
 #include <iprt/err.h>
 #include <iprt/mem.h>
@@ -39,7 +39,7 @@ SeamlessMain::SeamlessMain(void)
     mX11MonitorThread = NIL_RTTHREAD;
     mX11MonitorThreadStopping = false;
     mMode = VMMDev_Seamless_Disabled;
-    mfPaused = false;
+    mfPaused = true;
 }
 
 SeamlessMain::~SeamlessMain()
@@ -85,9 +85,12 @@ int SeamlessMain::init(void)
         rc = VbglR3SeamlessSetCap(true);
         if (RT_FAILURE(rc))
             break;
+        rc = startX11MonitorThread();
+        if (RT_FAILURE(rc))
+            break;
     } while(0);
     if (RT_FAILURE(rc))
-        LogRel(("VBoxClient (seamless): failed to start.  Stage: \"%s\"  Error: %Rrc\n",
+        VBClFatalError(("VBoxClient (seamless): failed to start.  Stage: \"%s\"  Error: %Rrc\n",
                 pcszStage, rc));
     return rc;
 }
@@ -168,12 +171,11 @@ int SeamlessMain::nextStateChangeEvent(void)
     }
     if (RT_SUCCESS(rc) || rc == VERR_TRY_AGAIN)
     {
-        if (mMode == VMMDev_Seamless_Visible_Region && !mfPaused)
-            /* This does it's own logging on failure. */
-            rc = startX11MonitorThread();
+        if (mMode == VMMDev_Seamless_Visible_Region)
+            mfPaused = false;
         else
-            /* This does it's own logging on failure. */
-            rc = stopX11MonitorThread();
+            mfPaused = true;
+        mX11Monitor.interruptEventWait();
     }
     else
     {
@@ -183,26 +185,28 @@ int SeamlessMain::nextStateChangeEvent(void)
     return rc;
 }
 
-int SeamlessMain::cancelEvent(void)
-{
-    return VbglR3InterruptEventWaits();
-}
-
 /**
  * The actual X11 window configuration change monitor thread function.
  */
-int SeamlessMain::x11MonitorThread(RTTHREAD self, void *pvUser)
+int SeamlessMain::x11MonitorThread(RTTHREAD hThreadSelf, void *pvUser)
 {
+    RT_NOREF1(hThreadSelf);
     SeamlessMain *pHost = (SeamlessMain *)pvUser;
     int rc = VINF_SUCCESS;
 
     LogRelFlowFunc(("\n"));
-    rc = pHost->mX11Monitor.start();
-    if (RT_SUCCESS(rc))
+    while (!pHost->mX11MonitorThreadStopping)
     {
-        while (!pHost->mX11MonitorThreadStopping)
-            pHost->mX11Monitor.nextConfigurationEvent();
-        pHost->mX11Monitor.stop();
+        if (!pHost->mfPaused)
+        {
+            rc = pHost->mX11Monitor.start();
+            if (RT_FAILURE(rc))
+                VBClFatalError(("Failed to change the X11 seamless service state, mfPaused=%RTbool, rc=%Rrc\n",
+                                pHost->mfPaused, rc));
+        }
+        pHost->mX11Monitor.nextConfigurationEvent();
+        if (pHost->mfPaused || pHost->mX11MonitorThreadStopping)
+            pHost->mX11Monitor.stop();
     }
     LogRelFlowFunc(("returning %Rrc\n", rc));
     return rc;
@@ -243,77 +247,6 @@ int SeamlessMain::stopX11MonitorThread(void)
     else
         LogRelThisFunc(("Failed to stop X11 monitor thread, rc=%Rrc!\n",
                         rc));
-    return rc;
-}
-
-/** Pause the service loop. */
-int SeamlessMain::pause()
-{
-    int rc;
-    const char *pcszStage;
-
-    LogRelFlowFunc(("\n"));
-    mfPaused = true;
-    do {
-        pcszStage = "Reporting end of support for seamless capability";
-        rc = VbglR3SeamlessSetCap(false);
-        if (RT_FAILURE(rc))
-            break;
-        pcszStage = "Interrupting the event loop";
-        rc = cancelEvent();
-        if (RT_FAILURE(rc))
-            break;
-    } while (0);
-    if (RT_FAILURE(rc))
-        LogRelFunc(("Failure.  Stage: \"%s\"  Error: %Rrc (VBoxClient)\n",
-                    pcszStage, rc));
-    return rc;
-}
-
-/** Resume after pausing. */
-int SeamlessMain::resume()
-{
-    int rc;
-    const char *pcszStage;
-
-    LogRelFlowFunc(("\n"));
-    mfPaused = false;
-    do {
-        pcszStage = "Reporting support for seamless capability";
-        rc = VbglR3SeamlessSetCap(true);
-        if (RT_FAILURE(rc))
-            break;
-        pcszStage = "Interrupting the event loop";
-        rc = cancelEvent();
-        if (RT_FAILURE(rc))
-            break;
-    } while (0);
-    if (RT_FAILURE(rc))
-        LogRelFunc(("Failure.  Stage: \"%s\"  Error: %Rrc (VBoxClient)\n",
-                    pcszStage, rc));
-    return rc;
-}
-
-/** @todo Expand this? */
-int SeamlessMain::selfTest()
-{
-    int rc = VERR_INTERNAL_ERROR;
-    const char *pcszStage;
-
-    LogRelFlowFunc(("\n"));
-    do {
-        pcszStage = "Testing event loop cancellation";
-        VbglR3InterruptEventWaits();
-        if (RT_FAILURE(VbglR3WaitEvent(VMMDEV_EVENT_VALID_EVENT_MASK, 0, NULL)))
-            break;
-        if (   VbglR3WaitEvent(VMMDEV_EVENT_VALID_EVENT_MASK, 0, NULL)
-            != VERR_TIMEOUT)
-            break;
-        rc = VINF_SUCCESS;
-    } while(0);
-    if (RT_FAILURE(rc))
-        LogRel(("VBoxClient (seamless): self test failed.  Stage: \"%s\"\n",
-                pcszStage));
     return rc;
 }
 
@@ -363,44 +296,22 @@ static int init(struct VBCLSERVICE **ppInterface)
     rc = pSelf->mSeamless.init();
     if (RT_FAILURE(rc))
         return rc;
-    rc = pSelf->mSeamless.selfTest();
-    if (RT_FAILURE(rc))
-    {
-        pSelf->mSeamless.stop();
-        return rc;
-    }
     pSelf->mIsInitialised = true;
     return VINF_SUCCESS;
 }
 
 static int run(struct VBCLSERVICE **ppInterface, bool fDaemonised)
 {
+    RT_NOREF1(fDaemonised);
     struct SEAMLESSSERVICE *pSelf = getClassFromInterface(ppInterface);
     int rc;
 
     if (!pSelf->mIsInitialised)
         return VERR_INTERNAL_ERROR;
-    rc = VBClStartVTMonitor();
-    if (RT_FAILURE(rc))
-        VBClFatalError(("Failed to start the VT monitor thread: %Rrc\n", rc));
     /* This only exits on error. */
     rc = pSelf->mSeamless.run();
     pSelf->mIsInitialised = false;
     return rc;
-}
-
-static int pause(struct VBCLSERVICE **ppInterface)
-{
-    struct SEAMLESSSERVICE *pSelf = getClassFromInterface(ppInterface);
-
-    return pSelf->mSeamless.pause();
-}
-
-static int resume(struct VBCLSERVICE **ppInterface)
-{
-    struct SEAMLESSSERVICE *pSelf = getClassFromInterface(ppInterface);
-
-    return pSelf->mSeamless.resume();
 }
 
 static void cleanup(struct VBCLSERVICE **ppInterface)
@@ -415,9 +326,7 @@ struct VBCLSERVICE vbclSeamlessInterface =
     getPidFilePath,
     init,
     run,
-    pause,
-    resume,
-    cleanup    
+    cleanup
 };
 
 struct VBCLSERVICE **VBClGetSeamlessService()

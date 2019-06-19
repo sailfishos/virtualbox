@@ -3,8 +3,7 @@
 #
 
 #
-#
-# Copyright (C) 2009-2010 Oracle Corporation
+# Copyright (C) 2009-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -18,14 +17,14 @@
 KBUILD_VERBOSE =
 
 all:
-	@echo "*** Building 'vboxguest' module ***"
+	@echo "=== Building 'vboxguest' module ==="
 	@$(MAKE) KBUILD_VERBOSE=$(KBUILD_VERBOSE) -C vboxguest
 	@if [ -f vboxguest/vboxguest.ko ]; then \
 	    cp vboxguest/vboxguest.ko .; \
 	 fi
 	@echo
 	@if [ -d vboxvfs ]; then \
-	    echo "*** Building 'vboxvfs' module ***"; \
+	    echo "=== Building 'vboxvfs' module ==="; \
 	    $(MAKE) KBUILD_VERBOSE=$(KBUILD_VERBOSE) -C vboxvfs; \
 	    if [ -f vboxvfs/vboxvfs.ko ]; then \
 	        cp vboxvfs/vboxvfs.ko .; \

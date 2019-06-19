@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,6 +26,7 @@ void main()
     io("test", false, 1, "seq", 64K, 255G, 257G, 2G, 100, "none");
     resize("test", 1331200M);
     io("test", false, 1, "seq", 64K, 255G, 257G, 2G,   0, "none");
+    close("test", "single", true /* fDelete */);
     destroydisk("test");
 
     iorngdestroy();

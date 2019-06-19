@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_TM
 #include <VBox/vmm/tm.h>
 #include "TMInternal.h"
@@ -30,7 +30,7 @@
  * Gets the current TMCLOCK_REAL time.
  *
  * @returns Real time.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  */
 VMM_INT_DECL(uint64_t) TMRealGet(PVM pVM)
 {
@@ -43,7 +43,7 @@ VMM_INT_DECL(uint64_t) TMRealGet(PVM pVM)
  * Gets the frequency of the TMCLOCK_REAL clock.
  *
  * @returns frequency.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  */
 VMM_INT_DECL(uint64_t) TMRealGetFreq(PVM pVM)
 {

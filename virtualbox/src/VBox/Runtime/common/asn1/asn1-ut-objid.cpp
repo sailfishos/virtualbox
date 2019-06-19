@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -40,9 +41,9 @@
 #include <iprt/formats/asn1.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static char const       g_szDefault[] = "2.16.840.1.113894";
 static uint32_t const   g_auDefault[] = { 2, 16, 840, 1, 113894 };
 static uint8_t const    g_abDefault[] =
@@ -51,9 +52,9 @@ static uint8_t const    g_abDefault[] =
 };
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 DECLHIDDEN(int) rtAsn1ObjId_InternalFormatComponent(uint32_t uValue, char **ppszObjId, size_t *pcbObjId); /* asn1-ut-objid.cpp */
 /** @todo check if we really need this. */
 
@@ -393,6 +394,7 @@ RT_DECL_DATA_CONST(RTASN1COREVTABLE const) g_RTAsn1ObjId_Vtable =
 
 RTDECL(int) RTAsn1ObjId_Init(PRTASN1OBJID pThis, PCRTASN1ALLOCATORVTABLE pAllocator)
 {
+    RT_NOREF_PV(pAllocator);
     RTAsn1Core_InitEx(&pThis->Asn1Core,
                       ASN1_TAG_OID,
                       ASN1_TAGCLASS_UNIVERSAL | ASN1_TAGFLAG_PRIMITIVE,
@@ -428,8 +430,8 @@ RTDECL(int) RTAsn1ObjId_Clone(PRTASN1OBJID pThis, PCRTASN1OBJID pSrc, PCRTASN1AL
         int rc;
         RTAsn1MemInitAllocation(&pThis->Allocation, pAllocator);
         pThis->cComponents = pSrc->cComponents;
-        size_t cbLeft = sizeof(pThis->szObjId);
 #if 0 /** @todo breaks with arrays of ObjIds or structs containing them. They get resized and repositioned in memory, thus invalidating the pointer. Add recall-pointers callback, or just waste memory? Or maybe make all arrays pointer-arrays? */
+        size_t cbLeft = sizeof(pThis->szObjId);
         if (pSrc->cComponents * sizeof(uint32_t) <= cbLeft)
         {
             pThis->pauComponents = (uint32_t *)&pThis->szObjId[sizeof(pThis->szObjId) - pSrc->cComponents * sizeof(uint32_t)];
@@ -495,6 +497,7 @@ RTDECL(void) RTAsn1ObjId_Delete(PRTASN1OBJID pThis)
 
 RTDECL(int) RTAsn1ObjId_Enum(PRTASN1OBJID pThis, PFNRTASN1ENUMCALLBACK pfnCallback, uint32_t uDepth, void *pvUser)
 {
+    RT_NOREF_PV(pThis); RT_NOREF_PV(pfnCallback); RT_NOREF_PV(uDepth); RT_NOREF_PV(pvUser);
     Assert(pThis && (!RTAsn1ObjId_IsPresent(pThis) || pThis->Asn1Core.pOps == &g_RTAsn1ObjId_Vtable));
 
     /* No children to enumerate. */
@@ -525,6 +528,7 @@ RTDECL(int) RTAsn1ObjId_Compare(PCRTASN1OBJID pLeft, PCRTASN1OBJID pRight)
 
 RTDECL(int) RTAsn1ObjId_CheckSanity(PCRTASN1OBJID pThis, uint32_t fFlags, PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
     if (RT_UNLIKELY(!RTAsn1ObjId_IsPresent(pThis)))
         return RTErrInfoSetF(pErrInfo, VERR_ASN1_NOT_PRESENT, "%s: Missing (OBJID).", pszErrorTag);
     return VINF_SUCCESS;

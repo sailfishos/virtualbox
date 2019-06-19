@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/handle.h>
 
@@ -37,7 +37,7 @@
 #include <iprt/err.h>
 #include <iprt/log.h>
 
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 #include "internal/socket.h"            /* (Needs Windows.h.) */
 

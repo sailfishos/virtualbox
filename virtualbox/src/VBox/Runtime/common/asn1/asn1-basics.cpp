@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -40,9 +41,9 @@
 #include <iprt/formats/asn1.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * ASN.1 content/value allocation.
  *
@@ -73,54 +74,46 @@ typedef RTASN1MEMCONTENT *PRTASN1MEMCONTENT;
 
 
 
-
-RTDECL(int) RTAsn1MemGrowArray(PRTASN1ALLOCATION pAllocation, void **ppvArray, size_t cbEntry,
-                               uint32_t cCurrent, uint32_t cNew)
+RTDECL(int) RTAsn1MemResizeArray(PRTASN1ARRAYALLOCATION pAllocation, void ***ppapvArray, uint32_t cCurrent, uint32_t cNew)
 {
     AssertReturn(pAllocation->pAllocator != NULL, VERR_WRONG_ORDER);
-    AssertReturn(cbEntry > 0, VERR_INVALID_PARAMETER);
-    AssertReturn(cNew > cCurrent, VERR_INVALID_PARAMETER);
+    AssertReturn(pAllocation->cbEntry > 0, VERR_WRONG_ORDER);
+    AssertReturn(cCurrent <= pAllocation->cEntriesAllocated, VERR_INVALID_PARAMETER);
+    AssertReturn(cCurrent <= pAllocation->cPointersAllocated, VERR_INVALID_PARAMETER);
     AssertReturn(cNew < _1M, VERR_OUT_OF_RANGE);
+    Assert(pAllocation->cEntriesAllocated <= pAllocation->cPointersAllocated);
 
-    pAllocation->cReallocs++;
-
-    void *pvOld = *ppvArray;
-
-    /* Initial allocation? */
-    if (cCurrent == 0)
+    /*
+     * Is there sufficent space allocated already?
+     *
+     * We keep unused entires ZEROed, therefore we must always call the allocator
+     * when shrinking (this also helps with the electric fence allocator).
+     */
+    if (cNew <= pAllocation->cEntriesAllocated)
     {
-        AssertReturn(pvOld == NULL, VERR_INVALID_PARAMETER);
-        AssertReturn(cNew != 0, VERR_INVALID_PARAMETER);
-        return pAllocation->pAllocator->pfnAlloc(pAllocation->pAllocator, pAllocation, ppvArray, cNew * cbEntry);
+        if (cCurrent <= cNew)
+            return VINF_SUCCESS;
+        pAllocation->pAllocator->pfnShrinkArray(pAllocation->pAllocator, pAllocation, ppapvArray, cCurrent, cNew);
+        return VINF_SUCCESS;
     }
 
-    /* Do we need to grow the allocation or did we already allocate sufficient memory in a previous call? */
-    size_t cbNew = cNew * cbEntry;
-    if (pAllocation->cbAllocated < cbNew)
+    /*
+     * Must grow (or do initial alloc).
+     */
+    pAllocation->cResizeCalls++;
+    return pAllocation->pAllocator->pfnGrowArray(pAllocation->pAllocator, pAllocation, ppapvArray, cNew);
+}
+
+
+RTDECL(void) RTAsn1MemFreeArray(PRTASN1ARRAYALLOCATION pAllocation, void **papvArray)
+{
+    Assert(pAllocation->pAllocator != NULL);
+    if (papvArray)
     {
-        /* Need to grow.  Adjust the new size according to how many times we've been called. */
-        if (pAllocation->cReallocs > 2)
-        {
-            if (pAllocation->cReallocs > 8)
-                cNew += 8;
-            else if (pAllocation->cReallocs < 4)
-                cNew += 2;
-            else
-                cNew += 4;
-            cbNew += cNew * cbEntry;
-        }
-
-        int rc = pAllocation->pAllocator->pfnRealloc(pAllocation->pAllocator, pAllocation, pvOld, ppvArray, cbNew);
-        if (RT_FAILURE(rc))
-            return rc;
-        Assert(pAllocation->cbAllocated >= cbNew);
-
-        /* Clear the memory. */
-        size_t cbOld = cCurrent * cbEntry;
-        RT_BZERO((uint8_t *)*ppvArray + cbOld, pAllocation->cbAllocated - cbOld);
+        pAllocation->pAllocator->pfnFreeArray(pAllocation->pAllocator, pAllocation, papvArray);
+        Assert(pAllocation->cPointersAllocated == 0);
+        Assert(pAllocation->cEntriesAllocated == 0);
     }
-
-    return VINF_SUCCESS;
 }
 
 
@@ -173,6 +166,22 @@ RTDECL(PRTASN1ALLOCATION) RTAsn1MemInitAllocation(PRTASN1ALLOCATION pAllocation,
 }
 
 
+RTDECL(PRTASN1ARRAYALLOCATION) RTAsn1MemInitArrayAllocation(PRTASN1ARRAYALLOCATION pAllocation,
+                                                            PCRTASN1ALLOCATORVTABLE pAllocator, size_t cbEntry)
+{
+    Assert(cbEntry >= sizeof(RTASN1CORE));
+    Assert(cbEntry < _1M);
+    Assert(RT_ALIGN_Z(cbEntry, sizeof(void *)) == cbEntry);
+    pAllocation->cbEntry            = (uint32_t)cbEntry;
+    pAllocation->cPointersAllocated = 0;
+    pAllocation->cEntriesAllocated  = 0;
+    pAllocation->cResizeCalls       = 0;
+    pAllocation->uReserved0         = 0;
+    pAllocation->pAllocator         = pAllocator;
+    return pAllocation;
+}
+
+
 RTDECL(int) RTAsn1ContentAllocZ(PRTASN1CORE pAsn1Core, size_t cb, PCRTASN1ALLOCATORVTABLE pAllocator)
 {
     AssertReturn(pAllocator != NULL, VERR_WRONG_ORDER);
@@ -188,7 +197,7 @@ RTDECL(int) RTAsn1ContentAllocZ(PRTASN1CORE pAsn1Core, size_t cb, PCRTASN1ALLOCA
     Allocation.pAllocator  = pAllocator;
 
     /* Make the allocation. */
-    uint32_t            cbAlloc = RT_OFFSETOF(RTASN1MEMCONTENT, au64Content) + (uint32_t)cb;
+    uint32_t            cbAlloc = RT_UOFFSETOF(RTASN1MEMCONTENT, au64Content) + (uint32_t)cb;
     PRTASN1MEMCONTENT   pHdr;
     int rc = pAllocator->pfnAlloc(pAllocator, &Allocation, (void **)&pHdr, cbAlloc);
     if (RT_SUCCESS(rc))
@@ -224,7 +233,7 @@ RTDECL(int) RTAsn1ContentReallocZ(PRTASN1CORE pAsn1Core, size_t cb, PCRTASN1ALLO
         /*
          * Case 1 - Initial allocation.
          */
-        uint32_t cbNeeded  = RT_OFFSETOF(RTASN1MEMCONTENT, au64Content) + (uint32_t)cb;
+        uint32_t cbNeeded  = RT_UOFFSETOF(RTASN1MEMCONTENT, au64Content) + (uint32_t)cb;
         if (!(pAsn1Core->fFlags & RTASN1CORE_F_ALLOCATED_CONTENT))
             return RTAsn1ContentAllocZ(pAsn1Core, cb, pAllocator);
 
@@ -332,13 +341,13 @@ RTDECL(void) RTAsn1ContentFree(PRTASN1CORE pAsn1Core)
  * Virtual method table based API.
  */
 
-RTDECL(void) RTAsn1VtDelete(PRTASN1CORE pAsn1Core)
+RTDECL(void) RTAsn1VtDelete(PRTASN1CORE pThisCore)
 {
-    if (pAsn1Core)
+    if (pThisCore)
     {
-        PCRTASN1COREVTABLE pOps = pAsn1Core->pOps;
+        PCRTASN1COREVTABLE pOps = pThisCore->pOps;
         if (pOps)
-            pOps->pfnDtor(pAsn1Core);
+            pOps->pfnDtor(pThisCore);
     }
 }
 
@@ -353,32 +362,32 @@ typedef struct RTASN1DEEPENUMCTX
 } RTASN1DEEPENUMCTX;
 
 
-static DECLCALLBACK(int) rtAsn1VtDeepEnumDepthFirst(PRTASN1CORE pAsn1Core, const char *pszName, uint32_t uDepth, void *pvUser)
+static DECLCALLBACK(int) rtAsn1VtDeepEnumDepthFirst(PRTASN1CORE pThisCore, const char *pszName, uint32_t uDepth, void *pvUser)
 {
-    AssertReturn(pAsn1Core, VINF_SUCCESS);
+    AssertReturn(pThisCore, VINF_SUCCESS);
 
-    if (pAsn1Core->pOps && pAsn1Core->pOps->pfnEnum)
+    if (pThisCore->pOps && pThisCore->pOps->pfnEnum)
     {
-        int rc = pAsn1Core->pOps->pfnEnum(pAsn1Core, rtAsn1VtDeepEnumDepthFirst, uDepth, pvUser);
+        int rc = pThisCore->pOps->pfnEnum(pThisCore, rtAsn1VtDeepEnumDepthFirst, uDepth, pvUser);
         if (rc != VINF_SUCCESS)
             return rc;
     }
 
     RTASN1DEEPENUMCTX *pCtx = (RTASN1DEEPENUMCTX *)pvUser;
-    return pCtx->pfnCallback(pAsn1Core, pszName, uDepth, pCtx->pvUser);
+    return pCtx->pfnCallback(pThisCore, pszName, uDepth, pCtx->pvUser);
 }
 
 
-static DECLCALLBACK(int) rtAsn1VtDeepEnumDepthLast(PRTASN1CORE pAsn1Core, const char *pszName, uint32_t uDepth, void *pvUser)
+static DECLCALLBACK(int) rtAsn1VtDeepEnumDepthLast(PRTASN1CORE pThisCore, const char *pszName, uint32_t uDepth, void *pvUser)
 {
-    AssertReturn(pAsn1Core, VINF_SUCCESS);
+    AssertReturn(pThisCore, VINF_SUCCESS);
 
     RTASN1DEEPENUMCTX *pCtx = (RTASN1DEEPENUMCTX *)pvUser;
-    int rc = pCtx->pfnCallback(pAsn1Core, pszName, uDepth, pCtx->pvUser);
+    int rc = pCtx->pfnCallback(pThisCore, pszName, uDepth, pCtx->pvUser);
     if (rc == VINF_SUCCESS)
     {
-        if (pAsn1Core->pOps && pAsn1Core->pOps->pfnEnum)
-            rc = pAsn1Core->pOps->pfnEnum(pAsn1Core, rtAsn1VtDeepEnumDepthFirst, uDepth, pvUser);
+        if (pThisCore->pOps && pThisCore->pOps->pfnEnum)
+            rc = pThisCore->pOps->pfnEnum(pThisCore, rtAsn1VtDeepEnumDepthFirst, uDepth, pvUser);
     }
     return rc;
 }
@@ -574,19 +583,19 @@ RTDECL(int) RTAsn1SetCore_Clone(PRTASN1SETCORE pThis, PCRTASN1COREVTABLE pVtable
  * ASN.1 Context Tag object.
  */
 
-RTDECL(int) RTAsn1ContextTagN_Init(PRTASN1CONTEXTTAG pThis, uint32_t uTag)
+RTDECL(int) RTAsn1ContextTagN_Init(PRTASN1CONTEXTTAG pThis, uint32_t uTag, PCRTASN1COREVTABLE pVtable)
 {
     return RTAsn1Core_InitEx(&pThis->Asn1Core,
                              uTag,
                              ASN1_TAGCLASS_CONTEXT | ASN1_TAGFLAG_CONSTRUCTED,
-                             NULL,
+                             pVtable,
                              RTASN1CORE_F_PRESENT);
 }
 
 
 RTDECL(int) RTAsn1ContextTagN_Clone(PRTASN1CONTEXTTAG pThis, PCRTASN1CONTEXTTAG pSrc, uint32_t uTag)
 {
-    Assert(pSrc->Asn1Core.uTag == uTag || !RTASN1CORE_IS_PRESENT(&pSrc->Asn1Core));
+    Assert(pSrc->Asn1Core.uTag == uTag || !RTASN1CORE_IS_PRESENT(&pSrc->Asn1Core)); RT_NOREF_PV(uTag);
     return RTAsn1Core_CloneNoContent(&pThis->Asn1Core, &pSrc->Asn1Core);
 }
 

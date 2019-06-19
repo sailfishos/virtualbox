@@ -1,39 +1,43 @@
+/* $Id: vbva.c $ */
 /** @file
  * VirtualBox X11 Additions graphics driver 2D acceleration functions
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
- * This file is part of VirtualBox Open Source Edition (OSE), as
- * available from http://www.virtualbox.org. This file is free software;
- * you can redistribute it and/or modify it under the terms of the GNU
- * General Public License (GPL) as published by the Free Software
- * Foundation, in version 2 as it comes in the "COPYING" file of the
- * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
- * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use,
+ * copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the
+ * Software is furnished to do so, subject to the following
+ * conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <VBox/VMMDev.h>
-#include <VBox/VBoxGuestLib.h>
-
-#ifndef PCIACCESS
-# include <xf86Pci.h>
-# include <Pci.h>
+#if defined(IN_XF86_MODULE) && !defined(NO_ANSIC)
+# include "xf86_ansic.h"
 #endif
-
-#include "xf86.h"
-#define NEED_XF86_TYPES
-#include <iprt/string.h>
 #include "compiler.h"
-
-/* ShadowFB support */
-#include "shadowfb.h"
 
 #include "vboxvideo.h"
 
 #ifdef XORG_7X
 # include <stdlib.h>
+# include <string.h>
 #endif
 
 /**************************************************************************
@@ -44,14 +48,13 @@
  * Callback function called by the X server to tell us about dirty
  * rectangles in the video buffer.
  *
- * @param pScreen pointer to the information structure for the current
+ * @param pScrn   pointer to the information structure for the current
  *                screen
  * @param iRects  Number of dirty rectangles to update
  * @param aRects  Array of structures containing the coordinates of the
  *                rectangles
  */
-static void
-vboxHandleDirtyRect(ScrnInfoPtr pScrn, int iRects, BoxPtr aRects)
+void vbvxHandleDirtyRect(ScrnInfoPtr pScrn, int iRects, BoxPtr aRects)
 {
     VBVACMDHDR cmdHdr;
     VBOXPtr pVBox;
@@ -78,8 +81,8 @@ vboxHandleDirtyRect(ScrnInfoPtr pScrn, int iRects, BoxPtr aRects)
                 || aRects[i].x2 <   pVBox->pScreens[j].aScreenLocation.x
                 || aRects[i].y2 <   pVBox->pScreens[j].aScreenLocation.y)
                 continue;
-            cmdHdr.x = (int16_t)aRects[i].x1;
-            cmdHdr.y = (int16_t)aRects[i].y1;
+            cmdHdr.x = (int16_t)aRects[i].x1 - pVBox->pScreens[0].aScreenLocation.x;
+            cmdHdr.y = (int16_t)aRects[i].y1 - pVBox->pScreens[0].aScreenLocation.y;
             cmdHdr.w = (uint16_t)(aRects[i].x2 - aRects[i].x1);
             cmdHdr.h = (uint16_t)(aRects[i].y2 - aRects[i].y1);
 
@@ -99,9 +102,45 @@ vboxHandleDirtyRect(ScrnInfoPtr pScrn, int iRects, BoxPtr aRects)
     }
 }
 
+static DECLCALLBACK(void *) hgsmiEnvAlloc(void *pvEnv, HGSMISIZE cb)
+{
+    RT_NOREF(pvEnv);
+    return calloc(1, cb);
+}
+
+static DECLCALLBACK(void) hgsmiEnvFree(void *pvEnv, void *pv)
+{
+    RT_NOREF(pvEnv);
+    free(pv);
+}
+
+static HGSMIENV g_hgsmiEnv =
+{
+    NULL,
+    hgsmiEnvAlloc,
+    hgsmiEnvFree
+};
+
+/**
+ * Calculate the location in video RAM of and initialise the heap for guest to
+ * host messages.
+ */
+void vbvxSetUpHGSMIHeapInGuest(VBOXPtr pVBox, uint32_t cbVRAM)
+{
+    int rc;
+    uint32_t offVRAMBaseMapping, offGuestHeapMemory, cbGuestHeapMemory;
+    void *pvGuestHeapMemory;
+
+    VBoxHGSMIGetBaseMappingInfo(cbVRAM, &offVRAMBaseMapping, NULL, &offGuestHeapMemory, &cbGuestHeapMemory, NULL);
+    pvGuestHeapMemory = ((uint8_t *)pVBox->base) + offVRAMBaseMapping + offGuestHeapMemory;
+    rc = VBoxHGSMISetupGuestContext(&pVBox->guestCtx, pvGuestHeapMemory, cbGuestHeapMemory,
+                                    offVRAMBaseMapping + offGuestHeapMemory, &g_hgsmiEnv);
+    AssertMsg(RT_SUCCESS(rc), ("Failed to set up the guest-to-host message buffer heap, rc=%d\n", rc));
+    pVBox->cbView = offVRAMBaseMapping;
+}
+
 /** Callback to fill in the view structures */
-static int
-vboxFillViewInfo(void *pvVBox, struct VBVAINFOVIEW *pViews, uint32_t cViews)
+static DECLCALLBACK(int) vboxFillViewInfo(void *pvVBox, struct VBVAINFOVIEW *pViews, uint32_t cViews)
 {
     VBOXPtr pVBox = (VBOXPtr)pvVBox;
     unsigned i;
@@ -120,76 +159,12 @@ vboxFillViewInfo(void *pvVBox, struct VBVAINFOVIEW *pViews, uint32_t cViews)
  *
  * @returns TRUE on success, FALSE on failure
  */
-static Bool
-vboxInitVbva(int scrnIndex, ScreenPtr pScreen, VBOXPtr pVBox)
-{
-    ScrnInfoPtr pScrn = xf86Screens[scrnIndex];
-    int rc = VINF_SUCCESS;
-
-    /* Why is this here?  In case things break before we have found the real
-     * count? */
-    pVBox->cScreens = 1;
-    if (!VBoxHGSMIIsSupported())
-    {
-        xf86DrvMsg(scrnIndex, X_ERROR, "The graphics device does not seem to support HGSMI.  Disableing video acceleration.\n");
-        return FALSE;
-    }
-
-    /* Set up the dirty rectangle handler.  It will be added into a function
-     * chain and gets removed when the screen is cleaned up. */
-    if (ShadowFBInit2(pScreen, NULL, vboxHandleDirtyRect) != TRUE)
-    {
-        xf86DrvMsg(scrnIndex, X_ERROR,
-                   "Unable to install dirty rectangle handler for VirtualBox graphics acceleration.\n");
-        return FALSE;
-    }
-    return TRUE;
-}
-
-/**
- * Initialise VirtualBox's accelerated video extensions.
- *
- * @returns TRUE on success, FALSE on failure
- */
-static Bool
-vboxSetupVRAMVbva(ScrnInfoPtr pScrn, VBOXPtr pVBox)
+static Bool vboxSetupVRAMVbva(VBOXPtr pVBox)
 {
     int rc = VINF_SUCCESS;
     unsigned i;
-    uint32_t offVRAMBaseMapping, offGuestHeapMemory, cbGuestHeapMemory;
-    void *pvGuestHeapMemory;
 
-    VBoxHGSMIGetBaseMappingInfo(pScrn->videoRam * 1024, &offVRAMBaseMapping,
-                                NULL, &offGuestHeapMemory, &cbGuestHeapMemory,
-                                NULL);
-    pvGuestHeapMemory =   ((uint8_t *)pVBox->base) + offVRAMBaseMapping
-                        + offGuestHeapMemory;
-    TRACE_LOG("video RAM: %u KB, guest heap offset: 0x%x, cbGuestHeapMemory: %u\n",
-              pScrn->videoRam, offVRAMBaseMapping + offGuestHeapMemory,
-              cbGuestHeapMemory);
-    rc = VBoxHGSMISetupGuestContext(&pVBox->guestCtx, pvGuestHeapMemory,
-                                    cbGuestHeapMemory,
-                                    offVRAMBaseMapping + offGuestHeapMemory);
-    if (RT_FAILURE(rc))
-    {
-        xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "Failed to set up the guest-to-host communication context, rc=%d\n", rc);
-        return FALSE;
-    }
-    pVBox->cbView = pVBox->cbFBMax = offVRAMBaseMapping;
-    pVBox->cScreens = VBoxHGSMIGetMonitorCount(&pVBox->guestCtx);
-    if (pVBox->pScreens == NULL)
-        pVBox->pScreens = calloc(pVBox->cScreens, sizeof(*pVBox->pScreens));
-    if (pVBox->pScreens == NULL)
-        FatalError("Failed to allocate memory for screens array.\n");
-#ifdef VBOXVIDEO_13
-    if (pVBox->paVBVAModeHints == NULL)
-        pVBox->paVBVAModeHints = calloc(pVBox->cScreens,
-                                        sizeof(*pVBox->paVBVAModeHints));
-    if (pVBox->paVBVAModeHints == NULL)
-        FatalError("Failed to allocate memory for mode hints array.\n");
-#endif
-    xf86DrvMsg(pScrn->scrnIndex, X_INFO, "Requested monitor count: %u\n",
-               pVBox->cScreens);
+    pVBox->cbFBMax = pVBox->cbView;
     for (i = 0; i < pVBox->cScreens; ++i)
     {
         pVBox->cbFBMax -= VBVA_MIN_BUFFER_SIZE;
@@ -205,21 +180,26 @@ vboxSetupVRAMVbva(ScrnInfoPtr pScrn, VBOXPtr pVBox)
               (unsigned long) pVBox->cbFBMax);
     rc = VBoxHGSMISendViewInfo(&pVBox->guestCtx, pVBox->cScreens,
                                vboxFillViewInfo, (void *)pVBox);
-    if (RT_FAILURE(rc))
-    {
-        xf86DrvMsg(pScrn->scrnIndex, X_ERROR, "Failed to send the view information to the host, rc=%d\n", rc);
-        return FALSE;
-    }
+    AssertMsg(RT_SUCCESS(rc), ("Failed to send the view information to the host, rc=%d\n", rc));
     return TRUE;
 }
 
-void
-vbox_open(ScrnInfoPtr pScrn, ScreenPtr pScreen, VBOXPtr pVBox)
+static Bool haveHGSMIModeHintAndCursorReportingInterface(VBOXPtr pVBox)
 {
-    TRACE_ENTRY();
+    uint32_t fModeHintReporting, fCursorReporting;
 
-    if (!vboxInitVbva(pScrn->scrnIndex, pScreen, pVBox))
-        FatalError("failed to initialise vboxvideo graphics acceleration.\n");
+    return    RT_SUCCESS(VBoxQueryConfHGSMI(&pVBox->guestCtx, VBOX_VBVA_CONF32_MODE_HINT_REPORTING, &fModeHintReporting))
+           && RT_SUCCESS(VBoxQueryConfHGSMI(&pVBox->guestCtx, VBOX_VBVA_CONF32_GUEST_CURSOR_REPORTING, &fCursorReporting))
+           && fModeHintReporting == VINF_SUCCESS
+           && fCursorReporting == VINF_SUCCESS;
+}
+
+static Bool hostHasScreenBlankingFlag(VBOXPtr pVBox)
+{
+    uint32_t fScreenFlags;
+
+    return    RT_SUCCESS(VBoxQueryConfHGSMI(&pVBox->guestCtx, VBOX_VBVA_CONF32_SCREEN_FLAGS, &fScreenFlags))
+           && fScreenFlags & VBVA_SCREEN_F_BLANK;
 }
 
 /**
@@ -232,13 +212,12 @@ vbox_open(ScrnInfoPtr pScrn, ScreenPtr pScreen, VBOXPtr pVBox)
 Bool
 vboxEnableVbva(ScrnInfoPtr pScrn)
 {
-    bool rc = TRUE;
-    int scrnIndex = pScrn->scrnIndex;
+    Bool rc = TRUE;
     unsigned i;
     VBOXPtr pVBox = pScrn->driverPrivate;
 
     TRACE_ENTRY();
-    if (!vboxSetupVRAMVbva(pScrn, pVBox))
+    if (!vboxSetupVRAMVbva(pVBox))
         return FALSE;
     for (i = 0; i < pVBox->cScreens; ++i)
     {
@@ -250,21 +229,9 @@ vboxEnableVbva(ScrnInfoPtr pScrn)
                             pVBVA, i))
             rc = FALSE;
     }
-    if (!rc)
-    {
-        /* Request not accepted - disable for old hosts. */
-        xf86DrvMsg(scrnIndex, X_ERROR,
-                   "Failed to enable screen update reporting for at least one virtual monitor.\n");
-         vboxDisableVbva(pScrn);
-    }
-#ifdef VBOXVIDEO_13
-# ifdef RT_OS_LINUX
-    if (rc && pVBox->hACPIEventHandler != NULL)
-        /* We ignore the return value as the fall-back should be active
-         * anyway. */
-        VBoxHGSMISendCapsInfo(&pVBox->guestCtx, VBVACAPS_VIDEO_MODE_HINTS | VBVACAPS_DISABLE_CURSOR_INTEGRATION);
-# endif
-#endif
+    AssertMsg(rc, ("Failed to enable screen update reporting for at least one virtual monitor.\n"));
+    pVBox->fHaveHGSMIModeHints = haveHGSMIModeHintAndCursorReportingInterface(pVBox);
+    pVBox->fHostHasScreenBlankingFlag = hostHasScreenBlankingFlag(pVBox);
     return rc;
 }
 
@@ -279,8 +246,6 @@ vboxEnableVbva(ScrnInfoPtr pScrn)
 void
 vboxDisableVbva(ScrnInfoPtr pScrn)
 {
-    int rc;
-    int scrnIndex = pScrn->scrnIndex;
     unsigned i;
     VBOXPtr pVBox = pScrn->driverPrivate;
 

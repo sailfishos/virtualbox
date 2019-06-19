@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #if defined(RT_OS_OS2)
 # define INCL_BASE
 # define INCL_ERRORS
@@ -79,11 +80,14 @@
 #endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The max path length acceptable for a trusted path. */
 #define SUPR3HARDENED_MAX_PATH      260U
+
+/** Enable to resolve symlinks using realpath() instead of cooking our own stuff. */
+#define SUP_HARDENED_VERIFY_FOLLOW_SYMLINKS_USE_REALPATH 1
 
 #ifdef RT_OS_SOLARIS
 # define dirfd(d) ((d)->d_fd)
@@ -97,16 +101,19 @@
 #endif
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * The files that gets verified.
  *
  * @todo This needs reviewing against the linux packages.
- * @todo The excessive use of kSupID_SharedLib needs to be reviewed at some point. For
+ * @todo The excessive use of kSupID_AppSharedLib needs to be reviewed at some point. For
  *       the time being we're building the linux packages with SharedLib pointing to
  *       AppPrivArch (lazy bird).
+ *
+ * @remarks If you add executables here, you might need to update
+ *          g_apszSupNtVpAllowedVmExes in SUPHardenedVerifyProcess-win.cpp.
  */
 static SUPINSTFILE const    g_aSupInstallFiles[] =
 {
@@ -114,28 +121,30 @@ static SUPINSTFILE const    g_aSupInstallFiles[] =
     /* ---------------------------------------------------------------------- */
     {   kSupIFT_Dll,  kSupID_AppPrivArch,       false, "VMMR0.r0" },
     {   kSupIFT_Dll,  kSupID_AppPrivArch,       false, "VBoxDDR0.r0" },
-    {   kSupIFT_Dll,  kSupID_AppPrivArch,       false, "VBoxDD2R0.r0" },
 
 #ifdef VBOX_WITH_RAW_MODE
-    {   kSupIFT_Rc,   kSupID_AppPrivArch,       false, "VMMGC.gc" },
-    {   kSupIFT_Rc,   kSupID_AppPrivArch,       false, "VBoxDDGC.gc" },
-    {   kSupIFT_Rc,   kSupID_AppPrivArch,       false, "VBoxDD2GC.gc" },
+    {   kSupIFT_Rc,   kSupID_AppPrivArch,       false, "VMMRC.rc" },
+    {   kSupIFT_Rc,   kSupID_AppPrivArch,       false, "VBoxDDRC.rc" },
 #endif
 
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxRT" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxVMM" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxREM" SUPLIB_DLL_SUFF },
-#if HC_ARCH_BITS == 32
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VBoxREM32" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VBoxREM64" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxRT" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxVMM" SUPLIB_DLL_SUFF },
+#ifdef VBOX_WITH_REM
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxREM" SUPLIB_DLL_SUFF },
 #endif
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxDD" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxDD2" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxDDU" SUPLIB_DLL_SUFF },
+#if HC_ARCH_BITS == 32
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VBoxREM32" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VBoxREM64" SUPLIB_DLL_SUFF },
+#endif
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxDD" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxDD2" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxDDU" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Exe,  kSupID_AppBin,             true, "VBoxVMMPreload" SUPLIB_EXE_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VBoxVMMPreload" SUPLIB_DLL_SUFF },
 
 //#ifdef VBOX_WITH_DEBUGGER_GUI
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VBoxDbg" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VBoxDbg3" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VBoxDbg" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VBoxDbg3" SUPLIB_DLL_SUFF },
 //#endif
 
 //#ifdef VBOX_WITH_SHARED_CLIPBOARD
@@ -164,10 +173,10 @@ static SUPINSTFILE const    g_aSupInstallFiles[] =
 #ifdef VBOX_WITH_MAIN
     {   kSupIFT_Exe,  kSupID_AppBin,            false, "VBoxSVC" SUPLIB_EXE_SUFF },
  #ifdef RT_OS_WINDOWS
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxC" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxC" SUPLIB_DLL_SUFF },
  #else
     {   kSupIFT_Exe,  kSupID_AppPrivArch,       false, "VBoxXPCOMIPCD" SUPLIB_EXE_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,         false, "VBoxXPCOM" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,      false, "VBoxXPCOM" SUPLIB_DLL_SUFF },
     {   kSupIFT_Dll,  kSupID_AppPrivArchComp,   false, "VBoxXPCOMIPCC" SUPLIB_DLL_SUFF },
     {   kSupIFT_Dll,  kSupID_AppPrivArchComp,   false, "VBoxC" SUPLIB_DLL_SUFF },
     {   kSupIFT_Dll,  kSupID_AppPrivArchComp,   false, "VBoxSVCM" SUPLIB_DLL_SUFF },
@@ -175,9 +184,9 @@ static SUPINSTFILE const    g_aSupInstallFiles[] =
  #endif
 #endif
 
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VRDPAuth" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VBoxAuth" SUPLIB_DLL_SUFF },
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VBoxVRDP" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VRDPAuth" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VBoxAuth" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VBoxVRDP" SUPLIB_DLL_SUFF },
 
 //#ifdef VBOX_WITH_HEADLESS
     {   kSupIFT_Exe,  kSupID_AppBin,             true, "VBoxHeadless" SUPLIB_EXE_SUFF },
@@ -188,8 +197,11 @@ static SUPINSTFILE const    g_aSupInstallFiles[] =
 //#ifdef VBOX_WITH_QTGUI
     {   kSupIFT_Exe,  kSupID_AppBin,             true, "VirtualBox" SUPLIB_EXE_SUFF },
     {   kSupIFT_Dll,  kSupID_AppPrivArch,        true, "VirtualBox" SUPLIB_DLL_SUFF },
+# ifdef RT_OS_DARWIN
+    {   kSupIFT_Exe,  kSupID_AppBin,             true, "VirtualBoxVM" SUPLIB_EXE_SUFF },
+# endif
 # if !defined(RT_OS_DARWIN) && !defined(RT_OS_WINDOWS) && !defined(RT_OS_OS2)
-    {   kSupIFT_Dll,  kSupID_SharedLib,          true, "VBoxKeyboard" SUPLIB_DLL_SUFF },
+    {   kSupIFT_Dll,  kSupID_AppSharedLib,       true, "VBoxKeyboard" SUPLIB_DLL_SUFF },
 # endif
 //#endif
 
@@ -228,9 +240,10 @@ static SUPINSTFILE const    g_aSupInstallFiles[] =
         {   kSupIFT_TestExe, kSupID_Testcase, true, a_szName SUPLIB_EXE_SUFF }, \
         {   kSupIFT_TestDll, kSupID_Testcase, true, a_szName SUPLIB_DLL_SUFF }
     HARDENED_TESTCASE_ENTRY("tstCFGM"),
+    HARDENED_TESTCASE_ENTRY("tstGIP-2"),
     HARDENED_TESTCASE_ENTRY("tstIntNet-1"),
     HARDENED_TESTCASE_ENTRY("tstMMHyperHeap"),
-    HARDENED_TESTCASE_ENTRY("tstR0ThreadPreemptionDriver"),
+    HARDENED_TESTCASE_ENTRY("tstRTR0ThreadPreemptionDriver"),
     HARDENED_TESTCASE_ENTRY("tstRTR0MemUserKernelDriver"),
     HARDENED_TESTCASE_ENTRY("tstRTR0SemMutexDriver"),
     HARDENED_TESTCASE_ENTRY("tstRTR0TimerDriver"),
@@ -262,12 +275,11 @@ static int supR3HardenedMakePath(SUPINSTDIR enmDir, char *pszDst, size_t cchDst,
     int rc;
     switch (enmDir)
     {
-        case kSupID_AppBin: /** @todo fix this AppBin crap (uncertain wtf some binaries actually are installed). */
-        case kSupID_Bin:
-            rc = supR3HardenedPathExecDir(pszDst, cchDst);
+        case kSupID_AppBin:
+            rc = supR3HardenedPathAppBin(pszDst, cchDst);
             break;
-        case kSupID_SharedLib:
-            rc = supR3HardenedPathSharedLibs(pszDst, cchDst);
+        case kSupID_AppSharedLib:
+            rc = supR3HardenedPathAppSharedLibs(pszDst, cchDst);
             break;
         case kSupID_AppPrivArch:
             rc = supR3HardenedPathAppPrivateArch(pszDst, cchDst);
@@ -287,7 +299,7 @@ static int supR3HardenedMakePath(SUPINSTDIR enmDir, char *pszDst, size_t cchDst,
             rc = supR3HardenedPathAppPrivateNoArch(pszDst, cchDst);
             break;
         case kSupID_Testcase:
-            rc = supR3HardenedPathExecDir(pszDst, cchDst);
+            rc = supR3HardenedPathAppBin(pszDst, cchDst);
             if (RT_SUCCESS(rc))
             {
                 size_t off = suplibHardenedStrLen(pszDst);
@@ -608,6 +620,7 @@ static int supR3HardenedVerifyFileSignature(PCSUPINSTFILE pFile, PSUPVERIFIEDFIL
     return rc;
 
 # else  /* Not checking signatures. */
+    RT_NOREF4(pFile, pVerified, fFatal, fLeaveFileOpen);
     return VINF_SUCCESS;
 # endif /* Not checking signatures. */
 }
@@ -629,6 +642,9 @@ static int supR3HardenedVerifyFileSignature(PCSUPINSTFILE pFile, PSUPVERIFIEDFIL
  */
 static int supR3HardenedVerifyFileInternal(int iFile, bool fFatal, bool fLeaveFileOpen, bool fVerifyAll)
 {
+#ifndef RT_OS_WINDOWS
+    RT_NOREF1(fVerifyAll);
+#endif
     PCSUPINSTFILE pFile = &g_aSupInstallFiles[iFile];
     PSUPVERIFIEDFILE pVerified = &g_aSupVerifiedFiles[iFile];
 
@@ -849,25 +865,42 @@ DECLHIDDEN(int) supR3HardenedVerifyFixedFile(const char *pszFilename, bool fFata
  *
  * @returns See supR3HardenedVerifyAll.
  * @param   pszProgName         See supR3HardenedVerifyAll.
+ * @param   pszExePath          The path to the executable.
  * @param   fFatal              See supR3HardenedVerifyAll.
  * @param   fLeaveOpen          The leave open setting used by
  *                              supR3HardenedVerifyAll.
+ * @param   fMainFlags          Flags supplied to SUPR3HardenedMain.
  */
-static int supR3HardenedVerifyProgram(const char *pszProgName, bool fFatal, bool fLeaveOpen)
+static int supR3HardenedVerifyProgram(const char *pszProgName, const char *pszExePath, bool fFatal,
+                                      bool fLeaveOpen, uint32_t fMainFlags)
 {
     /*
      * Search the table looking for the executable and the DLL/DYLIB/SO.
+     * Note! On darwin we have a hack in place for VirtualBoxVM helper app
+     *       to share VirtualBox.dylib with the VirtualBox app.  This ASSUMES
+     *       that cchProgNameDll is equal or shorter to the exe name.
      */
     int             rc = VINF_SUCCESS;
     bool            fExe = false;
     bool            fDll = false;
-    size_t const    cchProgName = suplibHardenedStrLen(pszProgName);
+    size_t const    cchProgNameExe = suplibHardenedStrLen(pszProgName);
+#ifndef RT_OS_DARWIN
+    size_t const    cchProgNameDll = cchProgNameExe;
+    NOREF(fMainFlags);
+#else
+    size_t const    cchProgNameDll = fMainFlags & SUPSECMAIN_FLAGS_OSX_VM_APP
+                                   ? sizeof("VirtualBox") - 1
+                                   : cchProgNameExe;
+    if (cchProgNameDll > cchProgNameExe)
+        return supR3HardenedError(VERR_INTERNAL_ERROR, fFatal,
+                                  "supR3HardenedVerifyProgram: SUPSECMAIN_FLAGS_OSX_VM_APP + '%s'", pszProgName);
+#endif
     for (unsigned iFile = 0; iFile < RT_ELEMENTS(g_aSupInstallFiles); iFile++)
-        if (!suplibHardenedStrNCmp(pszProgName, g_aSupInstallFiles[iFile].pszFile, cchProgName))
+        if (!suplibHardenedStrNCmp(pszProgName, g_aSupInstallFiles[iFile].pszFile, cchProgNameDll))
         {
-            if (    (   g_aSupInstallFiles[iFile].enmType == kSupIFT_Dll
-                     || g_aSupInstallFiles[iFile].enmType == kSupIFT_TestDll)
-                &&  !suplibHardenedStrCmp(&g_aSupInstallFiles[iFile].pszFile[cchProgName], SUPLIB_DLL_SUFF))
+            if (   (   g_aSupInstallFiles[iFile].enmType == kSupIFT_Dll
+                    || g_aSupInstallFiles[iFile].enmType == kSupIFT_TestDll)
+                && !suplibHardenedStrCmp(&g_aSupInstallFiles[iFile].pszFile[cchProgNameDll], SUPLIB_DLL_SUFF))
             {
                 /* This only has to be found (once). */
                 if (fDll)
@@ -880,7 +913,9 @@ static int supR3HardenedVerifyProgram(const char *pszProgName, bool fFatal, bool
             }
             else if (   (   g_aSupInstallFiles[iFile].enmType == kSupIFT_Exe
                          || g_aSupInstallFiles[iFile].enmType == kSupIFT_TestExe)
-                     && !suplibHardenedStrCmp(&g_aSupInstallFiles[iFile].pszFile[cchProgName], SUPLIB_EXE_SUFF))
+                     && (   cchProgNameExe == cchProgNameDll
+                         || !suplibHardenedStrNCmp(pszProgName, g_aSupInstallFiles[iFile].pszFile, cchProgNameExe))
+                     && !suplibHardenedStrCmp(&g_aSupInstallFiles[iFile].pszFile[cchProgNameExe], SUPLIB_EXE_SUFF))
             {
                 /* Here we'll have to check that the specific program is the same as the entry. */
                 if (fExe)
@@ -890,17 +925,7 @@ static int supR3HardenedVerifyProgram(const char *pszProgName, bool fFatal, bool
                     rc = supR3HardenedVerifyFileInternal(iFile, fFatal, fLeaveOpen, false /* fVerifyAll */);
                 fExe = true;
 
-                char szFilename[RTPATH_MAX];
-                int rc2 = supR3HardenedPathExecDir(szFilename, sizeof(szFilename) - cchProgName - sizeof(SUPLIB_EXE_SUFF));
-                if (RT_SUCCESS(rc2))
-                {
-                    suplibHardenedStrCat(szFilename, "/");
-                    suplibHardenedStrCat(szFilename, g_aSupInstallFiles[iFile].pszFile);
-                    supR3HardenedVerifySameFile(iFile, szFilename, fFatal);
-                }
-                else
-                    rc = supR3HardenedError(rc2, fFatal,
-                                            "supR3HardenedVerifyProgram: failed to query program path: rc=%d\n", rc2);
+                supR3HardenedVerifySameFile(iFile, pszExePath, fFatal);
             }
         }
 
@@ -935,8 +960,10 @@ static int supR3HardenedVerifyProgram(const char *pszProgName, bool fFatal, bool
  * @param   pszProgName         The program name. This is used to verify that
  *                              both the executable and corresponding
  *                              DLL/DYLIB/SO are valid.
+ * @param   pszExePath          The path to the executable.
+ * @param   fMainFlags          Flags supplied to SUPR3HardenedMain.
  */
-DECLHIDDEN(int) supR3HardenedVerifyAll(bool fFatal, const char *pszProgName)
+DECLHIDDEN(int) supR3HardenedVerifyAll(bool fFatal, const char *pszProgName, const char *pszExePath, uint32_t fMainFlags)
 {
     /*
      * On windows
@@ -963,7 +990,7 @@ DECLHIDDEN(int) supR3HardenedVerifyAll(bool fFatal, const char *pszProgName)
      * (thus verified above) and verify the signature on platforms where we
      * sign things.
      */
-    int rc2 = supR3HardenedVerifyProgram(pszProgName, fFatal, fLeaveOpen);
+    int rc2 = supR3HardenedVerifyProgram(pszProgName, pszExePath, fFatal, fLeaveOpen, fMainFlags);
     if (RT_FAILURE(rc2) && RT_SUCCESS(rc))
         rc2 = rc;
 
@@ -1010,6 +1037,26 @@ static int supR3HardenedSetErrorN(int rc, PRTERRINFO pErrInfo, unsigned cMsgs, .
 }
 
 
+#if defined(RT_OS_DARWIN) || defined(RT_OS_LINUX)
+/**
+ * Copies the four messages into the error buffer and returns @a rc.
+ *
+ * @returns Returns @a rc
+ * @param   rc                  The return code.
+ * @param   pErrInfo            The error info structure.
+ * @param   pszMsg1             The first message part.
+ * @param   pszMsg2             The second message part.
+ * @param   pszMsg3             The third message part.
+ * @param   pszMsg4             The fourth message part.
+ */
+static int supR3HardenedSetError4(int rc, PRTERRINFO pErrInfo, const char *pszMsg1,
+                                  const char *pszMsg2, const char *pszMsg3, const char *pszMsg4)
+{
+    return supR3HardenedSetErrorN(rc, pErrInfo, 4, pszMsg1, pszMsg2, pszMsg3, pszMsg4);
+}
+#endif
+
+
 /**
  * Copies the three messages into the error buffer and returns @a rc.
  *
@@ -1026,8 +1073,8 @@ static int supR3HardenedSetError3(int rc, PRTERRINFO pErrInfo, const char *pszMs
     return supR3HardenedSetErrorN(rc, pErrInfo, 3, pszMsg1, pszMsg2, pszMsg3);
 }
 
-#ifdef SOME_UNUSED_FUNCTION
 
+#ifdef SOME_UNUSED_FUNCTION
 /**
  * Copies the two messages into the error buffer and returns @a rc.
  *
@@ -1042,8 +1089,11 @@ static int supR3HardenedSetError2(int rc, PRTERRINFO pErrInfo, const char *pszMs
 {
     return supR3HardenedSetErrorN(rc, pErrInfo, 2, pszMsg1, pszMsg2);
 }
+#endif
 
 
+#ifndef SUP_HARDENED_VERIFY_FOLLOW_SYMLINKS_USE_REALPATH
+# if defined(RT_OS_DARWIN) || defined(RT_OS_LINUX)
 /**
  * Copies the error message to the error buffer and returns @a rc.
  *
@@ -1056,8 +1106,9 @@ static int supR3HardenedSetError(int rc, PRTERRINFO pErrInfo, const char *pszMsg
 {
     return supR3HardenedSetErrorN(rc, pErrInfo, 1, pszMsg);
 }
+# endif
+#endif
 
-#endif /* SOME_UNUSED_FUNCTION */
 
 /**
  * Output from a successfull supR3HardenedVerifyPathSanity call.
@@ -1137,17 +1188,28 @@ static int supR3HardenedVerifyPathSanity(const char *pszPath, PRTERRINFO pErrInf
         || pszSrc[2] == '\0')
         return supR3HardenedSetError3(VERR_SUPLIB_PATH_TOO_SHORT, pErrInfo, "The path is too short: '", pszPath, "'");
 
+#if RTPATH_STYLE == RTPATH_STR_F_STYLE_UNIX
     /*
-     * Check each component.  No parent references or double slashes.
+     * Skip double slashes.
+     */
+    while (RTPATH_IS_SLASH(*pszSrc))
+        pszSrc++;
+#else
+    /*
+     * The root slash should be alone to avoid UNC confusion.
+     */
+    if (RTPATH_IS_SLASH(pszSrc[0]))
+        return supR3HardenedSetError3(VERR_SUPLIB_PATH_NOT_CLEAN, pErrInfo,
+                                      "The path is not clean of leading double slashes: '", pszPath, "'");
+#endif
+    /*
+     * Check each component.  No parent references.
      */
     pInfo->cComponents = 0;
     pInfo->fDirSlash   = false;
     while (pszSrc[0])
     {
         /* Sanity checks. */
-        if (RTPATH_IS_SLASH(pszSrc[0])) /* can be relaxed if we care. */
-            return supR3HardenedSetError3(VERR_SUPLIB_PATH_NOT_CLEAN, pErrInfo,
-                                          "The path is not clean of double slashes: '", pszPath, "'");
         if (   pszSrc[0] == '.'
             && pszSrc[1] == '.'
             && RTPATH_IS_SLASH(pszSrc[2]))
@@ -1177,6 +1239,10 @@ static int supR3HardenedVerifyPathSanity(const char *pszPath, PRTERRINFO pErrInf
                 return supR3HardenedSetError3(VERR_SUPLIB_PATH_TOO_LONG, pErrInfo,
                                               "The path is too long: '", pszPath, "'");
         }
+
+        /* Skip double slashes. */
+        while (RTPATH_IS_SLASH(*pszSrc))
+            pszSrc++;
     }
 
     /* Terminate the string and enter its length. */
@@ -1225,6 +1291,7 @@ static int supR3HardenedQueryFsObjectByPath(char const *pszPath, PSUPR3HARDENEDF
 #if defined(RT_OS_WINDOWS)
     /** @todo Windows hardening. */
     pFsObjState->chTodo = 0;
+    RT_NOREF2(pszPath, pErrInfo);
     return VINF_SUCCESS;
 
 #else
@@ -1267,6 +1334,7 @@ static int supR3HardenedQueryFsObjectByHandle(RTHCUINTPTR hNative, PSUPR3HARDENE
 #if defined(RT_OS_WINDOWS)
     /** @todo Windows hardening. */
     pFsObjState->chTodo = 0;
+    RT_NOREF3(hNative, pszPath, pErrInfo);
     return VINF_SUCCESS;
 
 #else
@@ -1303,9 +1371,11 @@ static int supR3HardenedIsSameFsObject(PCSUPR3HARDENEDFSOBJSTATE pFsObjState1, P
 {
 #if defined(RT_OS_WINDOWS)
     /** @todo Windows hardening. */
+    RT_NOREF4(pFsObjState1, pFsObjState2, pszPath, pErrInfo);
     return VINF_SUCCESS;
 
 #elif defined(RT_OS_OS2)
+    RT_NOREF4(pFsObjState1, pFsObjState2, pszPath, pErrInfo);
     return VINF_SUCCESS;
 
 #else
@@ -1340,21 +1410,23 @@ static int supR3HardenedIsSameFsObject(PCSUPR3HARDENEDFSOBJSTATE pFsObjState1, P
  * @param   fRelaxed            Whether we can be more relaxed about this
  *                              directory (only used for grand parent
  *                              directories).
+ * @param   fSymlinksAllowed    Flag whether symlinks are allowed or not.
+ *                              If allowed the symlink object is verified not the target.
  * @param   pszPath             The path to the object. For error messages and
  *                              securing a couple of hacks.
  * @param   pErrInfo            The error info structure.
  */
 static int supR3HardenedVerifyFsObject(PCSUPR3HARDENEDFSOBJSTATE pFsObjState, bool fDir, bool fRelaxed,
-                                       const char *pszPath, PRTERRINFO pErrInfo)
+                                       bool fSymlinksAllowed, const char *pszPath, PRTERRINFO pErrInfo)
 {
 #if defined(RT_OS_WINDOWS)
     /** @todo Windows hardening. */
-    NOREF(pFsObjState); NOREF(fDir); NOREF(fRelaxed); NOREF(pszPath); NOREF(pErrInfo);
+    RT_NOREF(pFsObjState, fDir, fRelaxed, fSymlinksAllowed, pszPath, pErrInfo);
     return VINF_SUCCESS;
 
 #elif defined(RT_OS_OS2)
     /* No hardening here - it's a single user system. */
-    NOREF(pFsObjState); NOREF(fDir); NOREF(fRelaxed); NOREF(pszPath); NOREF(pErrInfo);
+    RT_NOREF(pFsObjState, fDir, fRelaxed, fSymlinksAllowed, pszPath, pErrInfo);
     return VINF_SUCCESS;
 
 #else
@@ -1367,25 +1439,31 @@ static int supR3HardenedVerifyFsObject(PCSUPR3HARDENEDFSOBJSTATE pFsObjState, bo
         return supR3HardenedSetError3(VERR_SUPLIB_OWNER_NOT_ROOT, pErrInfo, "The owner is not root: '", pszPath, "'");
 
     /*
-     * The object type must be directory or file, no symbolic links or other
-     * risky stuff (sorry dude, but we're paranoid on purpose here).
+     * The object type must be directory or file. It can be a symbolic link
+     * if explicitely allowed. Otherwise this and other risky stuff is not allowed
+     * (sorry dude, but we're paranoid on purpose here).
      */
-    if (   !S_ISDIR(pFsObjState->Stat.st_mode)
-        && !S_ISREG(pFsObjState->Stat.st_mode))
+    if (   !S_ISLNK(pFsObjState->Stat.st_mode)
+        || !fSymlinksAllowed)
     {
-        if (S_ISLNK(pFsObjState->Stat.st_mode))
-            return supR3HardenedSetError3(VERR_SUPLIB_SYMLINKS_ARE_NOT_PERMITTED, pErrInfo,
-                                          "Symlinks are not permitted: '", pszPath, "'");
-        return supR3HardenedSetError3(VERR_SUPLIB_NOT_DIR_NOT_FILE, pErrInfo,
-                                      "Not regular file or directory: '", pszPath, "'");
-    }
-    if (fDir != !!S_ISDIR(pFsObjState->Stat.st_mode))
-    {
-        if (S_ISDIR(pFsObjState->Stat.st_mode))
-            return supR3HardenedSetError3(VERR_SUPLIB_IS_DIRECTORY, pErrInfo,
-                                          "Expected file but found directory: '", pszPath, "'");
-        return supR3HardenedSetError3(VERR_SUPLIB_IS_FILE, pErrInfo,
-                                      "Expected directory but found file: '", pszPath, "'");
+
+        if (   !S_ISDIR(pFsObjState->Stat.st_mode)
+            && !S_ISREG(pFsObjState->Stat.st_mode))
+        {
+            if (S_ISLNK(pFsObjState->Stat.st_mode))
+                return supR3HardenedSetError3(VERR_SUPLIB_SYMLINKS_ARE_NOT_PERMITTED, pErrInfo,
+                                              "Symlinks are not permitted: '", pszPath, "'");
+            return supR3HardenedSetError3(VERR_SUPLIB_NOT_DIR_NOT_FILE, pErrInfo,
+                                          "Not regular file or directory: '", pszPath, "'");
+        }
+        if (fDir != !!S_ISDIR(pFsObjState->Stat.st_mode))
+        {
+            if (S_ISDIR(pFsObjState->Stat.st_mode))
+                return supR3HardenedSetError3(VERR_SUPLIB_IS_DIRECTORY, pErrInfo,
+                                              "Expected file but found directory: '", pszPath, "'");
+            return supR3HardenedSetError3(VERR_SUPLIB_IS_FILE, pErrInfo,
+                                          "Expected directory but found file: '", pszPath, "'");
+        }
     }
 
     /*
@@ -1398,14 +1476,14 @@ static int supR3HardenedVerifyFsObject(PCSUPR3HARDENEDFSOBJSTATE pFsObjState, bo
     if (   (pFsObjState->Stat.st_mode & S_IWGRP)
         && pFsObjState->Stat.st_gid != 0)
     {
-#ifdef RT_OS_DARWIN
+# ifdef RT_OS_DARWIN
         /* HACK ALERT: On Darwin /Applications is root:admin with admin having
            full access. So, to work around we relax the hardening a bit and
            permit grand parents and beyond to be group writable by admin. */
         /** @todo dynamically resolve the admin group? */
         bool fBad = !fRelaxed || pFsObjState->Stat.st_gid != 80 /*admin*/ || suplibHardenedStrCmp(pszPath, "/Applications");
 
-#elif defined(RT_OS_FREEBSD)
+# elif defined(RT_OS_FREEBSD)
         /* HACK ALERT: PC-BSD 9 has group-writable /usr/pib directory which is
            similar to /Applications on OS X (see above).
            On FreeBSD root is normally the only member of this group, on
@@ -1413,10 +1491,17 @@ static int supR3HardenedVerifyFsObject(PCSUPR3HARDENEDFSOBJSTATE pFsObjState, bo
         /** @todo dynamically resolve the operator group? */
         bool fBad = !fRelaxed || pFsObjState->Stat.st_gid != 5 /*operator*/ || suplibHardenedStrCmp(pszPath, "/usr/pbi");
         NOREF(fRelaxed);
-#else
+# elif defined(RT_OS_SOLARIS)
+        /* HACK ALERT: Solaris has group-writable /usr/lib/iconv directory from
+           which the appropriate module is loaded.
+           By default only root and daemon are part of that group.
+           . */
+        /** @todo dynamically resolve the bin group? */
+        bool fBad = !fRelaxed || pFsObjState->Stat.st_gid != 2 /*bin*/ || suplibHardenedStrCmp(pszPath, "/usr/lib/iconv");
+# else
         NOREF(fRelaxed);
         bool fBad = true;
-#endif
+# endif
         if (fBad)
             return supR3HardenedSetError3(VERR_SUPLIB_WRITE_NON_SYS_GROUP, pErrInfo,
                                           "An unknown (and thus untrusted) group has write access to '", pszPath,
@@ -1425,8 +1510,18 @@ static int supR3HardenedVerifyFsObject(PCSUPR3HARDENEDFSOBJSTATE pFsObjState, bo
 
     /*
      * World must not have write access.  There is no relaxing this rule.
+     * Linux exception: Symbolic links are always give permission 0777, there
+     *                  is no lchmod or lchown APIs.  The permissions on parent
+     *                  directory that contains the symbolic link is what is
+     *                  decising wrt to modifying it.  (Caller is expected not
+     *                  to allow symbolic links in the first path component.)
      */
-    if (pFsObjState->Stat.st_mode & S_IWOTH)
+    if (   (pFsObjState->Stat.st_mode & S_IWOTH)
+# ifdef RT_OS_LINUX
+        && (   !S_ISLNK(pFsObjState->Stat.st_mode)
+            || !fSymlinksAllowed /* paranoia */)
+# endif
+       )
         return supR3HardenedSetError3(VERR_SUPLIB_WORLD_WRITABLE, pErrInfo,
                                       "World writable: '", pszPath, "'");
 
@@ -1488,10 +1583,12 @@ static int supR3HardenedVerifyDirRecursive(char *pszDirPath, size_t cchDirPath, 
 {
 #if defined(RT_OS_WINDOWS)
     /** @todo Windows hardening. */
+    RT_NOREF5(pszDirPath, cchDirPath, pFsObjState, fRecursive, pErrInfo);
     return VINF_SUCCESS;
 
 #elif defined(RT_OS_OS2)
     /* No hardening here - it's a single user system. */
+    RT_NOREF5(pszDirPath, cchDirPath, pFsObjState, fRecursive, pErrInfo);
     return VINF_SUCCESS;
 
 #else
@@ -1529,7 +1626,14 @@ static int supR3HardenedVerifyDirRecursive(char *pszDirPath, size_t cchDirPath, 
 
         struct dirent Entry;
         struct dirent *pEntry;
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
         int iErr = readdir_r(pDir, &Entry, &pEntry);
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic pop
+#endif
         if (iErr)
         {
             rc = supR3HardenedSetErrorN(VERR_SUPLIB_DIR_ENUM_FAILED, pErrInfo,
@@ -1561,7 +1665,7 @@ static int supR3HardenedVerifyDirRecursive(char *pszDirPath, size_t cchDirPath, 
         if (RT_SUCCESS(rc))
             break;
         rc = supR3HardenedVerifyFsObject(pFsObjState, S_ISDIR(pFsObjState->Stat.st_mode), false /*fRelaxed*/,
-                                         pszDirPath, pErrInfo);
+                                         false /*fSymlinksAllowed*/, pszDirPath, pErrInfo);
         if (RT_FAILURE(rc))
             break;
 
@@ -1619,7 +1723,8 @@ DECLHIDDEN(int) supR3HardenedVerifyDir(const char *pszDirPath, bool fRecursive, 
         Info.szPath[Info.aoffComponents[iComponent + 1] - 1] = '\0';
         rc = supR3HardenedQueryFsObjectByPath(Info.szPath, &FsObjState, pErrInfo);
         if (RT_SUCCESS(rc))
-            rc = supR3HardenedVerifyFsObject(&FsObjState, true /*fDir*/, fRelaxed, Info.szPath, pErrInfo);
+            rc = supR3HardenedVerifyFsObject(&FsObjState, true /*fDir*/, fRelaxed,
+                                             false /*fSymlinksAllowed*/, Info.szPath, pErrInfo);
         if (RT_FAILURE(rc))
             return rc;
         Info.szPath[Info.aoffComponents[iComponent + 1] - 1] = iComponent + 1 != cComponents ? RTPATH_SLASH : '\0';
@@ -1680,7 +1785,8 @@ DECLHIDDEN(int) supR3HardenedVerifyFile(const char *pszFilename, RTHCUINTPTR hNa
         Info.szPath[Info.aoffComponents[iComponent + 1] - 1] = '\0';
         rc = supR3HardenedQueryFsObjectByPath(Info.szPath, &FsObjState, pErrInfo);
         if (RT_SUCCESS(rc))
-            rc = supR3HardenedVerifyFsObject(&FsObjState, !fFinal /*fDir*/, fRelaxed, Info.szPath, pErrInfo);
+            rc = supR3HardenedVerifyFsObject(&FsObjState, !fFinal /*fDir*/, fRelaxed,
+                                             false /*fSymlinksAllowed*/, Info.szPath, pErrInfo);
         if (RT_FAILURE(rc))
             return rc;
         Info.szPath[Info.aoffComponents[iComponent + 1] - 1] = !fFinal ? RTPATH_SLASH : '\0';
@@ -1712,7 +1818,10 @@ DECLHIDDEN(int) supR3HardenedVerifyFile(const char *pszFilename, RTHCUINTPTR hNa
             RTUtf16Free(pwszPath);
         }
         else
+        {
             rc = RTErrInfoSetF(pErrInfo, rc, "Error converting '%s' to UTF-16: %Rrc", pszFilename, rc);
+            hVerify = INVALID_HANDLE_VALUE;
+        }
     }
     else
     {
@@ -1727,7 +1836,7 @@ DECLHIDDEN(int) supR3HardenedVerifyFile(const char *pszFilename, RTHCUINTPTR hNa
         uint32_t fFlags = SUPHNTVI_F_REQUIRE_KERNEL_CODE_SIGNING;
         if (!fMaybe3rdParty)
             fFlags = SUPHNTVI_F_REQUIRE_BUILD_CERT;
-        const char *pszSuffix = RTPathExt(pszFilename);
+        const char *pszSuffix = RTPathSuffix(pszFilename);
         if (   pszSuffix
             &&                   pszSuffix[0]  == '.'
             && (   RT_C_TO_LOWER(pszSuffix[1]) == 'r'
@@ -1738,6 +1847,8 @@ DECLHIDDEN(int) supR3HardenedVerifyFile(const char *pszFilename, RTHCUINTPTR hNa
 #  ifndef IN_SUP_R3_STATIC /* Not in VBoxCpuReport and friends. */
         rc = supHardenedWinVerifyImageByHandleNoName(hVerify, fFlags, pErrInfo);
 #  endif
+# else
+        RT_NOREF1(fMaybe3rdParty);
 # endif
         NtClose(hVerify);
     }
@@ -1746,10 +1857,191 @@ DECLHIDDEN(int) supR3HardenedVerifyFile(const char *pszFilename, RTHCUINTPTR hNa
                            "Error %u trying to open (or duplicate handle for) '%s'", RtlGetLastWin32Error(), pszFilename);
     if (RT_FAILURE(rc))
         return rc;
+#else
+    RT_NOREF1(fMaybe3rdParty);
 #endif
 
     return VINF_SUCCESS;
 }
+
+
+#if defined(RT_OS_DARWIN) || defined(RT_OS_LINUX)
+/**
+ * Verfies a file following symlinks.
+ *
+ * @returns VBox status code, error buffer filled on failure.
+ * @param   pszFilename         The file to verify.
+ * @param   hNativeFile         Handle to the file, verify that it's the same
+ *                              as we ended up with when verifying the path.
+ *                              RTHCUINTPTR_MAX means NIL here.
+ * @param   fMaybe3rdParty      Set if the file is could be a supplied by a
+ *                              third party.  Different validation rules may
+ *                              apply to 3rd party code on some platforms.
+ * @param   pErrInfo            Where to return extended error information.
+ *                              Optional.
+ *
+ * @note    This is only used on OS X for libraries loaded with dlopen() because
+ *          the frameworks use symbolic links to point to the relevant library.
+ *
+ * @sa      supR3HardenedVerifyFile
+ */
+DECLHIDDEN(int) supR3HardenedVerifyFileFollowSymlinks(const char *pszFilename, RTHCUINTPTR hNativeFile, bool fMaybe3rdParty,
+                                                      PRTERRINFO pErrInfo)
+{
+    RT_NOREF1(fMaybe3rdParty);
+
+    /*
+     * Validate the input path and parse it.
+     */
+    SUPR3HARDENEDPATHINFO Info;
+    int rc = supR3HardenedVerifyPathSanity(pszFilename, pErrInfo, &Info);
+    if (RT_FAILURE(rc))
+        return rc;
+    if (Info.fDirSlash)
+        return supR3HardenedSetError3(VERR_SUPLIB_IS_DIRECTORY, pErrInfo,
+                                      "The file path specifies a directory: '", pszFilename, "'");
+
+    /*
+     * Verify each component from the root up.
+     */
+#ifndef SUP_HARDENED_VERIFY_FOLLOW_SYMLINKS_USE_REALPATH
+    uint32_t                iLoops = 0;
+#endif
+    SUPR3HARDENEDFSOBJSTATE FsObjState;
+    uint32_t                iComponent = 0;
+    while (iComponent < Info.cComponents)
+    {
+        bool fFinal   = iComponent + 1 == Info.cComponents;
+        bool fRelaxed = iComponent + 2 < Info.cComponents;
+        Info.szPath[Info.aoffComponents[iComponent + 1] - 1] = '\0';
+        rc = supR3HardenedQueryFsObjectByPath(Info.szPath, &FsObjState, pErrInfo);
+        if (RT_SUCCESS(rc))
+        {
+            /*
+             * In case the component is a symlink expand it and start from the beginning after
+             * verifying it has the proper access rights.
+             * Furthermore only allow symlinks which don't contain any .. or . in the target
+             * (enforced by supR3HardenedVerifyPathSanity).
+             */
+            rc = supR3HardenedVerifyFsObject(&FsObjState, !fFinal /*fDir*/, fRelaxed,
+                                             true /*fSymlinksAllowed*/, Info.szPath, pErrInfo);
+            if (   RT_SUCCESS(rc)
+                && S_ISLNK(FsObjState.Stat.st_mode))
+            {
+#if SUP_HARDENED_VERIFY_FOLLOW_SYMLINKS_USE_REALPATH /* Another approach using realpath() and verifying the result when encountering a symlink. */
+                char *pszFilenameResolved = realpath(pszFilename, NULL);
+                if (pszFilenameResolved)
+                {
+                    rc = supR3HardenedVerifyFile(pszFilenameResolved, hNativeFile, fMaybe3rdParty, pErrInfo);
+                    free(pszFilenameResolved);
+                    return rc;
+                }
+                else
+                {
+                    int iErr = errno;
+                    supR3HardenedError(VERR_ACCESS_DENIED, false /*fFatal*/,
+                                       "supR3HardenedVerifyFileFollowSymlinks: Failed to resolve the real path '%s': %s (%d)\n",
+                                       pszFilename, strerror(iErr), iErr);
+                    return supR3HardenedSetError4(VERR_ACCESS_DENIED, pErrInfo,
+                                                  "realpath failed for '", pszFilename, "': ", strerror(iErr));
+                }
+#else
+                /* Don't loop forever. */
+                iLoops++;
+                if (iLoops < 8)
+                {
+                    /*
+                     * Construct new path by replacing the current component by the symlink value.
+                     * Note! readlink() is a weird API that doesn't necessarily indicates if the
+                     *       buffer is too small.
+                     */
+                    char   szPath[RTPATH_MAX];
+                    size_t const cchBefore = Info.aoffComponents[iComponent]; /* includes slash */
+                    size_t const cchAfter  = fFinal ? 0 : 1 /*slash*/ + Info.cch - Info.aoffComponents[iComponent + 1];
+                    if (sizeof(szPath) > cchBefore + cchAfter + 2)
+                    {
+                        ssize_t cchTarget = readlink(Info.szPath, szPath, sizeof(szPath) - 1);
+                        if (cchTarget > 0)
+                        {
+                            /* Some serious paranoia against embedded zero terminator and weird return values. */
+                            szPath[cchTarget] = '\0';
+                            size_t cchLink = strlen(szPath);
+
+                            /* Strip trailing dirslashes of non-final link. */
+                            if (!fFinal)
+                                while (cchLink > 1 and szPath[cchLink - 1] == '/')
+                                    cchLink--;
+
+                            /* Check link value sanity and buffer size. */
+                            if (cchLink == 0)
+                                return supR3HardenedSetError3(VERR_ACCESS_DENIED, pErrInfo,
+                                                              "Bad readlink return for '", Info.szPath, "'");
+                            if (szPath[0] == '/')
+                                return supR3HardenedSetError3(VERR_ACCESS_DENIED, pErrInfo,
+                                                              "Absolute symbolic link not allowed: '", szPath, "'");
+                            if (cchBefore + cchLink + cchAfter + 1 /*terminator*/ > sizeof(szPath))
+                                return supR3HardenedSetError(VERR_SUPLIB_PATH_TOO_LONG, pErrInfo,
+                                                             "Symlinks causing too long path!");
+
+                            /* Construct the new path. */
+                            if (cchBefore)
+                                memmove(&szPath[cchBefore], &szPath[0], cchLink);
+                            memcpy(&szPath[0], Info.szPath, cchBefore);
+                            if (!cchAfter)
+                                szPath[cchBefore + cchLink] = '\0';
+                            else
+                            {
+                                szPath[cchBefore + cchLink] = RTPATH_SLASH;
+                                memcpy(&szPath[cchBefore + cchLink + 1],
+                                       &Info.szPath[Info.aoffComponents[iComponent + 1]],
+                                       cchAfter); /* cchAfter includes a zero terminator */
+                            }
+
+                            /* Parse, copy and check the sanity (no '..' or '.') of the altered path. */
+                            rc = supR3HardenedVerifyPathSanity(szPath, pErrInfo, &Info);
+                            if (RT_FAILURE(rc))
+                                return rc;
+                            if (Info.fDirSlash)
+                                return supR3HardenedSetError3(VERR_SUPLIB_IS_DIRECTORY, pErrInfo,
+                                                              "The file path specifies a directory: '", szPath, "'");
+
+                            /* Restart from the current component. */
+                            continue;
+                        }
+                        int iErr = errno;
+                        supR3HardenedError(VERR_ACCESS_DENIED, false /*fFatal*/,
+                                           "supR3HardenedVerifyFileFollowSymlinks: Failed to readlink '%s': %s (%d)\n",
+                                           Info.szPath, strerror(iErr), iErr);
+                        return supR3HardenedSetError4(VERR_ACCESS_DENIED, pErrInfo,
+                                                      "readlink failed for '", Info.szPath, "': ", strerror(iErr));
+                    }
+                    return supR3HardenedSetError(VERR_SUPLIB_PATH_TOO_LONG, pErrInfo, "Path too long for symlink replacing!");
+                }
+                else
+                    return supR3HardenedSetError3(VERR_TOO_MANY_SYMLINKS, pErrInfo,
+                                                  "Too many symbolic links: '", pszFilename, "'");
+#endif
+            }
+        }
+        if (RT_FAILURE(rc))
+            return rc;
+        Info.szPath[Info.aoffComponents[iComponent + 1] - 1] = !fFinal ? RTPATH_SLASH : '\0';
+        iComponent++;
+    }
+
+    /*
+     * Verify the file handle against the last component, if specified.
+     */
+    if (hNativeFile != RTHCUINTPTR_MAX)
+    {
+        rc = supR3HardenedVerifySameFsObject(hNativeFile, &FsObjState, Info.szPath, pErrInfo);
+        if (RT_FAILURE(rc))
+            return rc;
+    }
+
+    return VINF_SUCCESS;
+}
+#endif /* RT_OS_DARWIN || RT_OS_LINUX */
 
 
 /**
@@ -1803,8 +2095,8 @@ DECLHIDDEN(int) supR3HardenedRecvPreInitData(PCSUPPREINITDATA pPreInitData)
      * Check that we're not called out of order.
      * If dynamic linking it screwed up, we may end up here.
      */
-    if (    ASMMemIsAll8(&g_aSupVerifiedFiles[0], sizeof(g_aSupVerifiedFiles), 0) != NULL
-        ||  ASMMemIsAll8(&g_aSupVerifiedDirs[0], sizeof(g_aSupVerifiedDirs), 0) != NULL)
+    if (   !ASMMemIsZero(&g_aSupVerifiedFiles[0], sizeof(g_aSupVerifiedFiles))
+        || !ASMMemIsZero(&g_aSupVerifiedDirs[0], sizeof(g_aSupVerifiedDirs)))
         return VERR_WRONG_ORDER;
 
     /*

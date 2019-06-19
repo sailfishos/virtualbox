@@ -1,12 +1,10 @@
 /* $Id: tstMediumLock.cpp $ */
-
 /** @file
- *
  * Medium lock test cases.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,7 +17,6 @@
 
 #define LOG_ENABLED
 #define LOG_GROUP LOG_GROUP_MAIN
-#define LOG_INSTANCE NULL
 #include <VBox/log.h>
 
 #include <VBox/com/com.h>
@@ -75,6 +72,7 @@ int main(int argc, char *argv[])
     RTTestBanner(hTest);
 
     bool fComInit = false;
+    ComPtr<IVirtualBoxClient> pVirtualBoxClient;
     ComPtr<IVirtualBox> pVirtualBox;
     char szPathTemp[RTPATH_MAX] = "";
     ComPtr<IMedium> pMedium;
@@ -101,13 +99,14 @@ int main(int argc, char *argv[])
         fComInit = true;
 
         RTTestSub(hTest, "Getting VirtualBox reference");
-        TEST_COM_SUCCESS(hTest, pVirtualBox.createLocalObject(CLSID_VirtualBox), "vbox reference");
+        TEST_COM_SUCCESS(hTest, pVirtualBoxClient.createInprocObject(CLSID_VirtualBoxClient), "vboxclient reference");
+        TEST_COM_SUCCESS(hTest, pVirtualBoxClient->COMGETTER(VirtualBox)(pVirtualBox.asOutParam()), "vbox reference");
     }
 
     if (!RTTestSubErrorCount(hTest))
     {
         RTTestSub(hTest, "Creating temp hard disk medium");
-        TEST_COM_SUCCESS(hTest, pVirtualBox->CreateHardDisk(Bstr("VDI").raw(), Bstr(szPathTemp).raw(), pMedium.asOutParam()), "create medium");
+        TEST_COM_SUCCESS(hTest, pVirtualBox->CreateMedium(Bstr("VDI").raw(), Bstr(szPathTemp).raw(), AccessMode_ReadWrite, DeviceType_HardDisk, pMedium.asOutParam()), "create medium");
         if (!pMedium.isNull())
         {
             ComPtr<IProgress> pProgress;
@@ -281,6 +280,7 @@ int main(int argc, char *argv[])
     }
 
     pVirtualBox.setNull();
+    pVirtualBoxClient.setNull();
 
     /* Make sure that there are no object references alive here, XPCOM does
      * a very bad job at cleaning up such leftovers, spitting out warning

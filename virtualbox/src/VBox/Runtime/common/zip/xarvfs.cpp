@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/******************************************************************************
- *   Header Files                                                             *
- ******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/zip.h>
 
@@ -46,9 +46,9 @@
 #include <iprt/cpp/xml.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @name Hash state
  * @{ */
 #define RTZIPXAR_HASH_PENDING           0
@@ -58,9 +58,9 @@
 /** @} */
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Hash digest value union for the supported XAR hash functions.
  * @todo This could be generalized in iprt/checksum.h or somewhere.
@@ -1032,6 +1032,20 @@ static const RTVFSIOSTREAMOPS g_rtZipXarFssIosOps =
 
 
 /**
+ * @interface_method_impl{RTVFSOBJOPS,pfnClose}
+ */
+static DECLCALLBACK(int) rtZipXarFssFile_Close(void *pvThis)
+{
+    PRTZIPXARFILE pThis = (PRTZIPXARFILE)pvThis;
+
+    RTVfsFileRelease(pThis->hVfsFile);
+    pThis->hVfsFile = NIL_RTVFSFILE;
+
+    return rtZipXarFssIos_Close(&pThis->Ios);
+}
+
+
+/**
  * @interface_method_impl{RTVFSOBJSETOPS,pfnMode}
  */
 static DECLCALLBACK(int) rtZipXarFssFile_SetMode(void *pvThis, RTFMODE fMode, RTFMODE fMask)
@@ -1129,7 +1143,7 @@ static const RTVFSFILEOPS g_rtZipXarFssFileOps =
             RTVFSOBJOPS_VERSION,
             RTVFSOBJTYPE_FILE,
             "XarFsStream::File",
-            rtZipXarFssIos_Close,
+            rtZipXarFssFile_Close,
             rtZipXarFssIos_QueryInfo,
             RTVFSOBJOPS_VERSION
         },
@@ -1148,7 +1162,7 @@ static const RTVFSFILEOPS g_rtZipXarFssFileOps =
     0,
     { /* ObjSet */
         RTVFSOBJSETOPS_VERSION,
-        RT_OFFSETOF(RTVFSFILEOPS, Stream.Obj) - RT_OFFSETOF(RTVFSFILEOPS, ObjSet),
+        RT_UOFFSETOF(RTVFSFILEOPS, ObjSet) - RT_UOFFSETOF(RTVFSFILEOPS, Stream.Obj),
         rtZipXarFssFile_SetMode,
         rtZipXarFssFile_SetTimes,
         rtZipXarFssFile_SetOwner,
@@ -1172,11 +1186,11 @@ static DECLCALLBACK(int) rtZipXarFssDecompIos_Close(void *pvThis)
     RTVfsIoStrmRelease(pThis->hVfsIosDecompressor);
     pThis->hVfsIosDecompressor = NIL_RTVFSIOSTREAM;
 
-    int rc = RTVfsIoStrmRelease(pThis->hVfsIosRaw);
+    RTVfsIoStrmRelease(pThis->hVfsIosRaw);
     pThis->hVfsIosRaw = NIL_RTVFSIOSTREAM;
     pThis->pIosRaw = NULL;
 
-    return rc;
+    return VINF_SUCCESS;
 }
 
 
@@ -1387,12 +1401,13 @@ static DECLCALLBACK(int) rtZipXarFssSym_SetOwner(void *pvThis, RTUID uid, RTGID 
 /**
  * @interface_method_impl{RTVFSSYMLINKOPS,pfnRead}
  */
-static DECLCALLBACK(int) rtZipXarFssSym_Read(void *pvThis, char *pszTarget, size_t cbXarget)
+static DECLCALLBACK(int) rtZipXarFssSym_Read(void *pvThis, char *pszTarget, size_t cbTarget)
 {
     PRTZIPXARBASEOBJ pThis = (PRTZIPXARBASEOBJ)pvThis;
 #if 0
     return RTStrCopy(pszTarget, cbXarget, pThis->pXarReader->szTarget);
 #else
+    RT_NOREF_PV(pThis); RT_NOREF_PV(pszTarget); RT_NOREF_PV(cbTarget);
     return VERR_NOT_IMPLEMENTED;
 #endif
 }
@@ -1415,7 +1430,7 @@ static const RTVFSSYMLINKOPS g_rtZipXarFssSymOps =
     0,
     { /* ObjSet */
         RTVFSOBJSETOPS_VERSION,
-        RT_OFFSETOF(RTVFSSYMLINKOPS, Obj) - RT_OFFSETOF(RTVFSSYMLINKOPS, ObjSet),
+        RT_UOFFSETOF(RTVFSSYMLINKOPS, ObjSet) - RT_UOFFSETOF(RTVFSSYMLINKOPS, Obj),
         rtZipXarFssSym_SetMode,
         rtZipXarFssSym_SetTimes,
         rtZipXarFssSym_SetOwner,
@@ -1438,6 +1453,14 @@ static DECLCALLBACK(int) rtZipXarFss_Close(void *pvThis)
 
     RTVfsFileRelease(pThis->hVfsFile);
     pThis->hVfsFile = NIL_RTVFSFILE;
+
+    if (pThis->XarReader.pDoc)
+        delete pThis->XarReader.pDoc;
+    pThis->XarReader.pDoc = NULL;
+    /* The other XarReader fields only point to elements within pDoc. */
+    pThis->XarReader.pToc = NULL;
+    pThis->XarReader.cCurDepth = 0;
+    pThis->XarReader.pCurFile = NULL;
 
     return VINF_SUCCESS;
 }
@@ -1750,10 +1773,9 @@ static DECLCALLBACK(int) rtZipXarFss_Next(void *pvThis, char **ppszName, RTVFSOB
     }
 
     if (phVfsObj)
-    {
-        RTVfsObjRetain(hVfsObj);
         *phVfsObj = hVfsObj;
-    }
+    else
+        RTVfsObjRelease(hVfsObj);
 
     if (penmType)
         *penmType = enmType;
@@ -1779,6 +1801,9 @@ static const RTVFSFSSTREAMOPS rtZipXarFssOps =
     RTVFSFSSTREAMOPS_VERSION,
     0,
     rtZipXarFss_Next,
+    NULL,
+    NULL,
+    NULL,
     RTVFSFSSTREAMOPS_VERSION
 };
 
@@ -1797,6 +1822,7 @@ static const RTVFSFSSTREAMOPS rtZipXarFssOps =
 static int rtZipXarValidateTocPart2(PRTZIPXARFSSTREAM pThis, PCXARHEADER pXarHdr, PCRTZIPXARHASHDIGEST pTocDigest)
 {
     int rc;
+    RT_NOREF_PV(pXarHdr);
 
     /*
      * Check that the hash function in the TOC matches the one in the XAR header.
@@ -1912,7 +1938,7 @@ static int rtZipXarReadAndValidateToc(RTVFSIOSTREAM hVfsIosIn, PCXARHEADER pXarH
                 {
                     Parser.read(pszOutput, cchToc, RTCString("xar-toc.xml"), *pDoc);
                 }
-                catch (xml::XmlError Err)
+                catch (xml::XmlError &)
                 {
                     rc = VERR_XAR_TOC_XML_PARSE_ERROR;
                 }
@@ -2061,7 +2087,8 @@ RTDECL(int) RTZipXarFsStreamFromIoStream(RTVFSIOSTREAM hVfsIosIn, uint32_t fFlag
                      */
                     PRTZIPXARFSSTREAM pThis;
                     RTVFSFSSTREAM     hVfsFss;
-                    rc = RTVfsNewFsStream(&rtZipXarFssOps, sizeof(*pThis), NIL_RTVFS, NIL_RTVFSLOCK, &hVfsFss, (void **)&pThis);
+                    rc = RTVfsNewFsStream(&rtZipXarFssOps, sizeof(*pThis), NIL_RTVFS, NIL_RTVFSLOCK, true /*fReadOnly*/,
+                                          &hVfsFss, (void **)&pThis);
                     if (RT_SUCCESS(rc))
                     {
                         pThis->hVfsIos              = hVfsIosIn;

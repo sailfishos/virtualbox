@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 /*
@@ -20,7 +29,7 @@
  *
  * VirtualBox Guest Additions for Haiku.
  * Copyright (c) 2011 Mike Smith <mike@scgtrp.net>
- *                    François Revol <revol@free.fr>
+ *                    FranÃ§ois Revol <revol@free.fr>
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -44,9 +53,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define IN_VBOXGUEST
 #include <sys/param.h>
 #include <sys/types.h>
@@ -68,25 +78,27 @@
 #include <iprt/timer.h>
 #include <iprt/heap.h>
 
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define MODULE_NAME VBOXGUEST_MODULE_NAME
 
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 /*
  * IRQ related functions.
  */
-static void  VBoxGuestHaikuRemoveIRQ(void *pvState);
-static int   VBoxGuestHaikuAddIRQ(void *pvState);
-static int32 VBoxGuestHaikuISR(void *pvState);
+static void  vgdrvHaikuRemoveIRQ(void *pvState);
+static int   vgdrvHaikuAddIRQ(void *pvState);
+static int32 vgdrvHaikuISR(void *pvState);
 
-/*
- * Available functions for kernel drivers.
- */
-DECLVBGL(int)    VBoxGuestHaikuServiceCall(void *pvSession, unsigned uCmd, void *pvData, size_t cbData, size_t *pcbDataReturned);
-DECLVBGL(void *) VBoxGuestHaikuServiceOpen(uint32_t *pu32Version);
-DECLVBGL(int)    VBoxGuestHaikuServiceClose(void *pvSession);
-DECLVBGL(void *) VBoxGuestIDCOpen(uint32_t *pu32Version);
-DECLVBGL(int)    VBoxGuestIDCClose(void *pvSession);
-DECLVBGL(int)    VBoxGuestIDCCall(void *pvSession, unsigned iCmd, void *pvData, size_t cbData, size_t *pcbDataReturned);
 
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static status_t std_ops(int32 op, ...);
 
 static RTSPINLOCK g_Spinlock = NIL_RTSPINLOCK;
@@ -94,9 +106,9 @@ static RTSPINLOCK g_Spinlock = NIL_RTSPINLOCK;
 int32    api_version = B_CUR_DRIVER_API_VERSION;
 
 /** List of cloned device. Managed by the kernel. */
-//static struct clonedevs    *g_pVBoxGuestHaikuClones;
+//static struct clonedevs    *g_pvgdrvHaikuClones;
 /** The dev_clone event handler tag. */
-//static eventhandler_tag     g_VBoxGuestHaikuEHTag;
+//static eventhandler_tag     g_vgdrvHaikuEHTag;
 /** selinfo structure used for polling. */
 //static struct selinfo       g_SelInfo;
 /** PCI Bus Manager Module */
@@ -173,15 +185,16 @@ static struct vboxguest_module_info g_VBoxGuest =
     RTTimerRequestSystemGranularity,
     RTSpinlockAcquire,
     RTSpinlockRelease,
-    RTSpinlockReleaseNoInts,
     RTMemTmpAllocTag,
     RTMemTmpFree,
     RTLogDefaultInstance,
-    RTLogRelDefaultInstance,
+    RTLogDefaultInstanceEx,
+    RTLogRelGetDefaultInstance,
+    RTLogRelGetDefaultInstanceEx,
     RTErrConvertToErrno,
-    VBoxGuestCommonIOCtl,
-    VBoxGuestCreateUserSession,
-    VBoxGuestCloseSession,
+    VGDrvCommonIoCtl,
+    VGDrvCommonCreateUserSession,
+    VGDrvCommonCloseSession,
     VBoxGuestIDCOpen,
     VBoxGuestIDCClose,
     VBoxGuestIDCCall,
@@ -210,12 +223,12 @@ static struct vboxguest_module_info g_VBoxGuest =
 /**
  * DEVFS event handler.
  */
-static void VBoxGuestHaikuClone(void *pvArg, struct ucred *pCred, char *pszName, int cchName, struct cdev **ppDev)
+static void vgdrvHaikuClone(void *pvArg, struct ucred *pCred, char *pszName, int cchName, struct cdev **ppDev)
 {
     int iUnit;
     int rc;
 
-    Log(("VBoxGuestHaikuClone: pszName=%s ppDev=%p\n", pszName, ppDev));
+    Log(("vgdrvHaikuClone: pszName=%s ppDev=%p\n", pszName, ppDev));
 
     /*
      * One device node per user, si_drv1 points to the session.
@@ -229,17 +242,17 @@ static void VBoxGuestHaikuClone(void *pvArg, struct ucred *pCred, char *pszName,
     return;
     if (iUnit >= 256)
     {
-        Log(("VBoxGuestHaikuClone: iUnit=%d >= 256 - rejected\n", iUnit));
+        Log(("vgdrvHaikuClone: iUnit=%d >= 256 - rejected\n", iUnit));
         return;
     }
 
-    Log(("VBoxGuestHaikuClone: pszName=%s iUnit=%d\n", pszName, iUnit));
+    Log(("vgdrvHaikuClone: pszName=%s iUnit=%d\n", pszName, iUnit));
 
-    rc = clone_create(&g_pVBoxGuestHaikuClones, &g_VBoxGuestHaikuDeviceHooks, &iUnit, ppDev, 0);
-    Log(("VBoxGuestHaikuClone: clone_create -> %d; iUnit=%d\n", rc, iUnit));
+    rc = clone_create(&g_pvgdrvHaikuClones, &g_vgdrvHaikuDeviceHooks, &iUnit, ppDev, 0);
+    Log(("vgdrvHaikuClone: clone_create -> %d; iUnit=%d\n", rc, iUnit));
     if (rc)
     {
-        *ppDev = make_dev(&g_VBoxGuestHaikuDeviceHooks,
+        *ppDev = make_dev(&g_vgdrvHaikuDeviceHooks,
                           iUnit,
                           UID_ROOT,
                           GID_WHEEL,
@@ -249,21 +262,21 @@ static void VBoxGuestHaikuClone(void *pvArg, struct ucred *pCred, char *pszName,
         {
             dev_ref(*ppDev);
             (*ppDev)->si_flags |= SI_CHEAPCLONE;
-            Log(("VBoxGuestHaikuClone: Created *ppDev=%p iUnit=%d si_drv1=%p si_drv2=%p\n",
+            Log(("vgdrvHaikuClone: Created *ppDev=%p iUnit=%d si_drv1=%p si_drv2=%p\n",
                  *ppDev, iUnit, (*ppDev)->si_drv1, (*ppDev)->si_drv2));
             (*ppDev)->si_drv1 = (*ppDev)->si_drv2 = NULL;
         }
         else
-        Log(("VBoxGuestHaikuClone: make_dev iUnit=%d failed\n", iUnit));
+        Log(("vgdrvHaikuClone: make_dev iUnit=%d failed\n", iUnit));
     }
     else
-    Log(("VBoxGuestHaikuClone: Existing *ppDev=%p iUnit=%d si_drv1=%p si_drv2=%p\n",
+    Log(("vgdrvHaikuClone: Existing *ppDev=%p iUnit=%d si_drv1=%p si_drv2=%p\n",
          *ppDev, iUnit, (*ppDev)->si_drv1, (*ppDev)->si_drv2));
 }
 #endif
 
 
-static status_t VBoxGuestHaikuDetach(void)
+static status_t vgdrvHaikuDetach(void)
 {
     struct VBoxGuestDeviceState *pState = &sState;
 
@@ -271,14 +284,14 @@ static status_t VBoxGuestHaikuDetach(void)
         return EBUSY;
 
     /*
-     * Reverse what we did in VBoxGuestHaikuAttach.
+     * Reverse what we did in vgdrvHaikuAttach.
      */
-    VBoxGuestHaikuRemoveIRQ(pState);
+    vgdrvHaikuRemoveIRQ(pState);
 
     if (pState->iVMMDevMemAreaId)
         delete_area(pState->iVMMDevMemAreaId);
 
-    VBoxGuestDeleteDevExt(&g_DevExt);
+    VGDrvCommonDeleteDevExt(&g_DevExt);
 
 #ifdef DO_LOG
     RTLogDestroy(RTLogRelSetDefaultInstance(NULL));
@@ -300,20 +313,20 @@ static status_t VBoxGuestHaikuDetach(void)
  * @returns Whether the interrupt was from VMMDev.
  * @param   pvState Opaque pointer to the device state.
  */
-static int32 VBoxGuestHaikuISR(void *pvState)
+static int32 vgdrvHaikuISR(void *pvState)
 {
-    LogFlow((MODULE_NAME ":VBoxGuestHaikuISR pvState=%p\n", pvState));
+    LogFlow((MODULE_NAME ":vgdrvHaikuISR pvState=%p\n", pvState));
 
-    bool fOurIRQ = VBoxGuestCommonISR(&g_DevExt);
+    bool fOurIRQ = VGDrvCommonISR(&g_DevExt);
     if (fOurIRQ)
         return B_HANDLED_INTERRUPT;
     return B_UNHANDLED_INTERRUPT;
 }
 
 
-void VBoxGuestNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
+void VGDrvNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
 {
-    LogFlow((MODULE_NAME "::NativeISRMousePollEvent:\n"));
+    LogFlow(("VGDrvNativeISRMousePollEvent:\n"));
 
     status_t err = B_OK;
     //dprintf(MODULE_NAME ": isr mouse\n");
@@ -346,14 +359,14 @@ void VBoxGuestNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
  * @returns Haiku error code.
  * @param   pvState  Pointer to the state info structure.
  */
-static int VBoxGuestHaikuAddIRQ(void *pvState)
+static int vgdrvHaikuAddIRQ(void *pvState)
 {
     status_t err;
     struct VBoxGuestDeviceState *pState = (struct VBoxGuestDeviceState *)pvState;
 
     AssertReturn(pState, VERR_INVALID_PARAMETER);
 
-    err = install_io_interrupt_handler(pState->iIrqResId, VBoxGuestHaikuISR, pState,  0);
+    err = install_io_interrupt_handler(pState->iIrqResId, vgdrvHaikuISR, pState,  0);
     if (err == B_OK)
         return VINF_SUCCESS;
     return VERR_DEV_IO_ERROR;
@@ -365,20 +378,20 @@ static int VBoxGuestHaikuAddIRQ(void *pvState)
  *
  * @param   pvState  Opaque pointer to the state info structure.
  */
-static void VBoxGuestHaikuRemoveIRQ(void *pvState)
+static void vgdrvHaikuRemoveIRQ(void *pvState)
 {
     struct VBoxGuestDeviceState *pState = (struct VBoxGuestDeviceState *)pvState;
     AssertPtr(pState);
 
-    remove_io_interrupt_handler(pState->iIrqResId, VBoxGuestHaikuISR, pState);
+    remove_io_interrupt_handler(pState->iIrqResId, vgdrvHaikuISR, pState);
 }
 
 
-static status_t VBoxGuestHaikuAttach(const pci_info *pDevice)
+static status_t vgdrvHaikuAttach(const pci_info *pDevice)
 {
     status_t status;
-    int rc = VINF_SUCCESS;
-    int iResId = 0;
+    int rc;
+    int iResId;
     struct VBoxGuestDeviceState *pState = &sState;
     static const char *const     s_apszGroups[] = VBOX_LOGGROUP_NAMES;
     PRTLOGGER                    pRelLogger;
@@ -393,15 +406,14 @@ static status_t VBoxGuestHaikuAttach(const pci_info *pDevice)
     rc = RTR0Init(0);
     if (RT_FAILURE(rc))
     {
-        /** @todo r=ramshankar: use dprintf here. */
-        LogFunc(("RTR0Init failed.\n"));
+        dprintf(MODULE_NAME ": RTR0Init failed: %d\n", rc);
         return ENXIO;
     }
 
-    rc = RTSpinlockCreate(&g_Spinlock, RTSPINLOCK_FLAGS_INTERRUPT_SAFE, "VBoxGuestHaiku");
+    rc = RTSpinlockCreate(&g_Spinlock, RTSPINLOCK_FLAGS_INTERRUPT_SAFE, "vgdrvHaiku");
     if (RT_FAILURE(rc))
     {
-        LogRel(("VBoxGuestHaikuAttach: RTSpinlock create failed. rc=%Rrc\n", rc));
+        LogRel(("vgdrvHaikuAttach: RTSpinlock create failed. rc=%Rrc\n", rc));
         return ENXIO;
     }
 
@@ -429,14 +441,14 @@ static status_t VBoxGuestHaikuAttach(const pci_info *pDevice)
      * Allocate I/O port resource.
      */
     pState->uIOPortBase = pDevice->u.h0.base_registers[0];
-    /* @todo check flags for IO? */
+    /** @todo check flags for IO? */
     if (pState->uIOPortBase)
     {
         /*
          * Map the MMIO region.
          */
         uint32 phys = pDevice->u.h0.base_registers[1];
-        /* @todo Check flags for mem? */
+        /** @todo Check flags for mem? */
         pState->VMMDevMemSize    = pDevice->u.h0.base_register_sizes[1];
         pState->iVMMDevMemAreaId = map_physical_memory("VirtualBox Guest MMIO", phys, pState->VMMDevMemSize,
                                                        B_ANY_KERNEL_BLOCK_ADDRESS, B_KERNEL_READ_AREA | B_KERNEL_WRITE_AREA,
@@ -446,46 +458,47 @@ static status_t VBoxGuestHaikuAttach(const pci_info *pDevice)
             /*
              * Call the common device extension initializer.
              */
-            rc = VBoxGuestInitDevExt(&g_DevExt, pState->uIOPortBase, pState->pMMIOBase, pState->VMMDevMemSize,
+            rc = VGDrvCommonInitDevExt(&g_DevExt, pState->uIOPortBase, pState->pMMIOBase, pState->VMMDevMemSize,
 #if ARCH_BITS == 64
-                                     VBOXOSTYPE_Haiku_x64,
+                                       VBOXOSTYPE_Haiku_x64,
 #else
-                                     VBOXOSTYPE_Haiku,
+                                       VBOXOSTYPE_Haiku,
 #endif
-                                     VMMDEV_EVENT_MOUSE_POSITION_CHANGED);
+                                       VMMDEV_EVENT_MOUSE_POSITION_CHANGED);
             if (RT_SUCCESS(rc))
             {
                 /*
                  * Add IRQ of VMMDev.
                  */
                 pState->iIrqResId = pDevice->u.h0.interrupt_line;
-                rc = VBoxGuestHaikuAddIRQ(pState);
+                rc = vgdrvHaikuAddIRQ(pState);
                 if (RT_SUCCESS(rc))
                 {
                     LogRel((MODULE_NAME ": loaded successfully\n"));
                     return B_OK;
                 }
 
-                LogRel((MODULE_NAME ":VBoxGuestInitDevExt failed.\n"));
-                VBoxGuestDeleteDevExt(&g_DevExt);
+                LogRel((MODULE_NAME ": VGDrvCommonInitDevExt failed.\n"));
+                VGDrvCommonDeleteDevExt(&g_DevExt);
             }
             else
-                LogRel((MODULE_NAME ":VBoxGuestHaikuAddIRQ failed.\n"));
+                LogRel((MODULE_NAME ": vgdrvHaikuAddIRQ failed.\n"));
         }
         else
-            LogRel((MODULE_NAME ":MMIO region setup failed.\n"));
+            LogRel((MODULE_NAME ": MMIO region setup failed.\n"));
     }
     else
-        LogRel((MODULE_NAME ":IOport setup failed.\n"));
+        LogRel((MODULE_NAME ": IOport setup failed.\n"));
 
     RTR0Term();
     return ENXIO;
 }
 
 
-static status_t VBoxGuestHaikuProbe(pci_info *pDevice)
+static status_t vgdrvHaikuProbe(pci_info *pDevice)
 {
-    if ((pDevice->vendor_id == VMMDEV_VENDORID) && (pDevice->device_id == VMMDEV_DEVICEID))
+    if (   pDevice->vendor_id == VMMDEV_VENDORID
+        && pDevice->device_id == VMMDEV_DEVICEID)
         return B_OK;
 
     return ENXIO;
@@ -504,10 +517,10 @@ status_t init_module(void)
 
     while ((*gPCI->get_nth_pci_info)(ix++, &info) == B_OK)
     {
-        if (VBoxGuestHaikuProbe(&info) == 0)
+        if (vgdrvHaikuProbe(&info) == 0)
         {
             /* We found it */
-            err = VBoxGuestHaikuAttach(&info);
+            err = vgdrvHaikuAttach(&info);
             return err;
         }
     }
@@ -518,7 +531,7 @@ status_t init_module(void)
 
 void uninit_module(void)
 {
-    VBoxGuestHaikuDetach();
+    vgdrvHaikuDetach();
     put_module(B_PCI_MODULE_NAME);
 }
 

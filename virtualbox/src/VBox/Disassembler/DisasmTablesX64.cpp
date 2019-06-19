@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,17 +16,17 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/dis.h>
 #include <VBox/disopcode.h>
 #include "DisasmInternal.h"
 
 
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-//TODO: Verify tables for correctness
-//TODO: opcode type (harmless, potentially dangerous, dangerous)
+/// @todo Verify tables for correctness
+/// @todo opcode type (harmless, potentially dangerous, dangerous)
 //!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
 #ifndef DIS_CORE_ONLY
@@ -206,10 +206,10 @@ const DISOPCODE g_aOneByteMapX64[256] =
     OP("jnle %Jb",           IDX_ParseImmBRel,   0,          0,          OP_JNLE,    OP_PARM_Jb  ,       OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_CONTROLFLOW | DISOPTYPE_RELATIVE_CONTROLFLOW | DISOPTYPE_COND_CONTROLFLOW | DISOPTYPE_FORCED_64_OP_SIZE),
 
     /* 8 */
-    OP("Imm Grp1 %Eb,%Ib",   IDX_ParseImmGrpl,   0,             0,          OP_IMM_GRP1,OP_PARM_Eb,         OP_PARM_Ib,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
-    OP("Imm Grp1 %Ev,%Iz",   IDX_ParseImmGrpl,   0,             0,          OP_IMM_GRP1,OP_PARM_Ev,         OP_PARM_Iz,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
+    OP("Imm Grp1 %Eb,%Ib",   IDX_ParseGrp1,      0,             0,          OP_IMM_GRP1,OP_PARM_Eb,         OP_PARM_Ib,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
+    OP("Imm Grp1 %Ev,%Iz",   IDX_ParseGrp1,      0,             0,          OP_IMM_GRP1,OP_PARM_Ev,         OP_PARM_Iz,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     INVALID_OPCODE,
-    OP("Imm Grp1 %Ev,%Ib",   IDX_ParseImmGrpl,   0,             0,          OP_IMM_GRP1,OP_PARM_Ev,         OP_PARM_Ib,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
+    OP("Imm Grp1 %Ev,%Ib",   IDX_ParseGrp1,      0,             0,          OP_IMM_GRP1,OP_PARM_Ev,         OP_PARM_Ib,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     OP("test %Eb,%Gb",       IDX_ParseModRM,     IDX_UseModRM,  0,          OP_TEST,    OP_PARM_Eb,         OP_PARM_Gb,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     OP("test %Ev,%Gv",       IDX_ParseModRM,     IDX_UseModRM,  0,          OP_TEST,    OP_PARM_Ev,         OP_PARM_Gv,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     OP("xchg %Eb,%Gb",       IDX_ParseModRM,     IDX_UseModRM,  0,          OP_XCHG,    OP_PARM_Eb,         OP_PARM_Gb,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
@@ -221,6 +221,7 @@ const DISOPCODE g_aOneByteMapX64[256] =
     OP("mov %Ev,%Sw",        IDX_ParseModRM,     IDX_UseModRM,  0,          OP_MOV,     OP_PARM_Ev,         OP_PARM_Sw,     OP_PARM_NONE,   DISOPTYPE_POTENTIALLY_DANGEROUS),
     OP("lea %Gv,%M",         IDX_ParseModRM,     IDX_UseModRM,  0,          OP_LEA,     OP_PARM_Gv,         OP_PARM_M,      OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     OP("mov %Sw,%Ev",        IDX_ParseModRM,     IDX_UseModRM,  0,          OP_MOV,     OP_PARM_Sw,         OP_PARM_Ev,     OP_PARM_NONE,   DISOPTYPE_POTENTIALLY_DANGEROUS | DISOPTYPE_INHIBIT_IRQS),
+    /** @todo this is grp 1a, actually */
     OP("pop %Ev",            IDX_ParseModRM,     0,             0,          OP_POP,     OP_PARM_Ev,         OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_HARMLESS),
 
     /* 9 */
@@ -284,9 +285,9 @@ const DISOPCODE g_aOneByteMapX64[256] =
     OP("Shift Grp2 %Ev,%Ib", IDX_ParseShiftGrp2, 0,                 0,          OP_SHIFT_GRP2,  OP_PARM_Ev,      OP_PARM_Ib,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     OP("retn %Iw",           IDX_ParseImmUshort, 0,                 0,          OP_RETN,        OP_PARM_Iw,      OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_CONTROLFLOW | DISOPTYPE_UNCOND_CONTROLFLOW | DISOPTYPE_FORCED_64_OP_SIZE),
     OP("retn",               0,                  0,                 0,          OP_RETN,        OP_PARM_NONE,    OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_CONTROLFLOW | DISOPTYPE_UNCOND_CONTROLFLOW | DISOPTYPE_FORCED_64_OP_SIZE),
-    INVALID_OPCODE,
-    INVALID_OPCODE,
-    /* @todo these two are actually group11 */
+    OP("VEX 3-byte",         IDX_ParseVex3b,     0,                 0,          OP_VEX3B,       OP_PARM_NONE,    OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_HARMLESS),
+    OP("VEX 2-byte",         IDX_ParseVex2b,     0,                 0,          OP_VEX2B,       OP_PARM_NONE,    OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_HARMLESS),
+    /** @todo these two are actually group11 */
     OP("mov %Eb,%Ib",        IDX_ParseModRM,     IDX_ParseImmByte,  0,          OP_MOV,         OP_PARM_Eb,      OP_PARM_Ib,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     OP("mov %Ev,%Iz",        IDX_ParseModRM,     IDX_ParseImmZ,     0,          OP_MOV,         OP_PARM_Ev,      OP_PARM_Iz,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
     OP("enter %Iw,%Ib",      IDX_ParseImmUshort, IDX_ParseImmByte,  0,          OP_ENTER,       OP_PARM_Iw,      OP_PARM_Ib,     OP_PARM_NONE,   DISOPTYPE_HARMLESS),
@@ -328,7 +329,7 @@ const DISOPCODE g_aOneByteMapX64[256] =
     OP("out %Ib,AL",         IDX_ParseImmByte,   IDX_ParseFixedReg, 0,          OP_OUT,     OP_PARM_Ib,         OP_PARM_REG_AL, OP_PARM_NONE,   DISOPTYPE_PORTIO | DISOPTYPE_PRIVILEGED | DISOPTYPE_PORTIO_WRITE),
     OP("out %Ib,%eAX",       IDX_ParseImmByte,   IDX_ParseFixedReg, 0,          OP_OUT,     OP_PARM_Ib,         OP_PARM_REG_EAX,OP_PARM_NONE,   DISOPTYPE_PORTIO | DISOPTYPE_PRIVILEGED | DISOPTYPE_PORTIO_WRITE),
     OP("call %Jv",           IDX_ParseImmVRel,   0,                 0,          OP_CALL,    OP_PARM_Jv,         OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_CONTROLFLOW | DISOPTYPE_RELATIVE_CONTROLFLOW | DISOPTYPE_FORCED_64_OP_SIZE),
-    OP("jmp %Jv",            IDX_ParseImmVRel,   0,                 0,          OP_JMP,     OP_PARM_Jv,         OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_CONTROLFLOW | DISOPTYPE_UNCOND_CONTROLFLOW | DISOPTYPE_FORCED_64_OP_SIZE),
+    OP("jmp %Jv",            IDX_ParseImmVRel,   0,                 0,          OP_JMP,     OP_PARM_Jv,         OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_CONTROLFLOW | DISOPTYPE_UNCOND_CONTROLFLOW | DISOPTYPE_RELATIVE_CONTROLFLOW | DISOPTYPE_FORCED_64_OP_SIZE),
     INVALID_OPCODE,
     OP("jmp %Jb",            IDX_ParseImmBRel,   0,                 0,          OP_JMP,     OP_PARM_Jb,         OP_PARM_NONE,   OP_PARM_NONE,   DISOPTYPE_CONTROLFLOW | DISOPTYPE_UNCOND_CONTROLFLOW | DISOPTYPE_RELATIVE_CONTROLFLOW | DISOPTYPE_FORCED_64_OP_SIZE),
     OP("in AL,DX",           IDX_ParseFixedReg,  IDX_ParseFixedReg, 0,          OP_IN,      OP_PARM_REG_AL,     OP_PARM_REG_DX, OP_PARM_NONE,   DISOPTYPE_PORTIO | DISOPTYPE_PRIVILEGED | DISOPTYPE_PORTIO_READ),

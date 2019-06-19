@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/semaphore.h>
 #include "internal/iprt.h"
 
@@ -45,9 +46,9 @@
 #include <sys/time.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** @def IPRT_HAVE_PTHREAD_CONDATTR_SETCLOCK
  * Set if the platform implements pthread_condattr_setclock().
  * Enables the use of the monotonic clock for waiting on condition variables. */
@@ -63,9 +64,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Posix internal representation of a Mutex Multi semaphore.
  * The POSIX implementation uses a mutex and a condition variable to implement
  * the automatic reset event semaphore semantics. */
@@ -140,44 +141,39 @@ RTDECL(int)  RTSemEventMultiCreateEx(PRTSEMEVENTMULTI phEventMultiSem, uint32_t 
                 /*
                  * Create the semaphore.
                  */
-                pthread_mutexattr_t MutexAttr;
-                rc = pthread_mutexattr_init(&MutexAttr);
+                rc = pthread_mutex_init(&pThis->Mutex, NULL);
                 if (!rc)
                 {
-                    rc = pthread_mutex_init(&pThis->Mutex, &MutexAttr);
-                    if (!rc)
-                    {
-                        pthread_mutexattr_destroy(&MutexAttr);
-                        pthread_condattr_destroy(&CondAttr);
+                    pthread_condattr_destroy(&CondAttr);
 
-                        ASMAtomicXchgU32(&pThis->u32State, EVENTMULTI_STATE_NOT_SIGNALED);
-                        ASMAtomicXchgU32(&pThis->cWaiters, 0);
+                    ASMAtomicXchgU32(&pThis->u32State, EVENTMULTI_STATE_NOT_SIGNALED);
+                    ASMAtomicXchgU32(&pThis->cWaiters, 0);
 #ifdef RTSEMEVENTMULTI_STRICT
-                        if (!pszNameFmt)
-                        {
-                            static uint32_t volatile s_iSemEventMultiAnon = 0;
-                            RTLockValidatorRecSharedInit(&pThis->Signallers, hClass, RTLOCKVAL_SUB_CLASS_ANY, pThis,
-                                                         true /*fSignaller*/, !(fFlags & RTSEMEVENTMULTI_FLAGS_NO_LOCK_VAL),
-                                                         "RTSemEventMulti-%u", ASMAtomicIncU32(&s_iSemEventMultiAnon) - 1);
-                        }
-                        else
-                        {
-                            va_list va;
-                            va_start(va, pszNameFmt);
-                            RTLockValidatorRecSharedInitV(&pThis->Signallers, hClass, RTLOCKVAL_SUB_CLASS_ANY, pThis,
-                                                          true /*fSignaller*/, !(fFlags & RTSEMEVENTMULTI_FLAGS_NO_LOCK_VAL),
-                                                          pszNameFmt, va);
-                            va_end(va);
-                        }
-                        pThis->fEverHadSignallers = false;
+                    if (!pszNameFmt)
+                    {
+                        static uint32_t volatile s_iSemEventMultiAnon = 0;
+                        RTLockValidatorRecSharedInit(&pThis->Signallers, hClass, RTLOCKVAL_SUB_CLASS_ANY, pThis,
+                                                     true /*fSignaller*/, !(fFlags & RTSEMEVENTMULTI_FLAGS_NO_LOCK_VAL),
+                                                     "RTSemEventMulti-%u", ASMAtomicIncU32(&s_iSemEventMultiAnon) - 1);
+                    }
+                    else
+                    {
+                        va_list va;
+                        va_start(va, pszNameFmt);
+                        RTLockValidatorRecSharedInitV(&pThis->Signallers, hClass, RTLOCKVAL_SUB_CLASS_ANY, pThis,
+                                                      true /*fSignaller*/, !(fFlags & RTSEMEVENTMULTI_FLAGS_NO_LOCK_VAL),
+                                                      pszNameFmt, va);
+                        va_end(va);
+                    }
+                    pThis->fEverHadSignallers = false;
+#else
+                    RT_NOREF_PV(hClass); RT_NOREF_PV(pszNameFmt);
 #endif
 
-                        *phEventMultiSem = pThis;
-                        return VINF_SUCCESS;
-                    }
-
-                    pthread_mutexattr_destroy(&MutexAttr);
+                    *phEventMultiSem = pThis;
+                    return VINF_SUCCESS;
                 }
+
                 pthread_cond_destroy(&pThis->Cond);
             }
             pthread_condattr_destroy(&CondAttr);
@@ -426,6 +422,7 @@ static int rtSemEventMultiPosixWaitIndefinite(struct RTSEMEVENTMULTIINTERNAL *pT
         }
 #else
         RTTHREAD hThreadSelf = RTThreadSelf();
+        RT_NOREF_PV(pSrcPos);
 #endif
         RTThreadBlocking(hThreadSelf, RTTHREADSTATE_EVENT_MULTI, true);
         /** @todo interruptible wait is not implementable... */ NOREF(fFlags);
@@ -637,6 +634,8 @@ RTDECL(void) RTSemEventMultiSetSignaller(RTSEMEVENTMULTI hEventMultiSem, RTTHREA
 
     ASMAtomicWriteBool(&pThis->fEverHadSignallers, true);
     RTLockValidatorRecSharedResetOwner(&pThis->Signallers, hThread, NULL);
+#else
+    RT_NOREF_PV(hEventMultiSem); RT_NOREF_PV(hThread);
 #endif
 }
 
@@ -651,6 +650,8 @@ RTDECL(void) RTSemEventMultiAddSignaller(RTSEMEVENTMULTI hEventMultiSem, RTTHREA
 
     ASMAtomicWriteBool(&pThis->fEverHadSignallers, true);
     RTLockValidatorRecSharedAddOwner(&pThis->Signallers, hThread, NULL);
+#else
+    RT_NOREF_PV(hEventMultiSem); RT_NOREF_PV(hThread);
 #endif
 }
 
@@ -664,6 +665,8 @@ RTDECL(void) RTSemEventMultiRemoveSignaller(RTSEMEVENTMULTI hEventMultiSem, RTTH
     AssertReturnVoid(u32 == EVENTMULTI_STATE_NOT_SIGNALED || u32 == EVENTMULTI_STATE_SIGNALED);
 
     RTLockValidatorRecSharedRemoveOwner(&pThis->Signallers, hThread);
+#else
+    RT_NOREF_PV(hEventMultiSem); RT_NOREF_PV(hThread);
 #endif
 }
 

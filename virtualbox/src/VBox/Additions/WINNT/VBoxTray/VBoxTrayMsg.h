@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,9 +18,9 @@
 #ifndef ___VBOXTRAY_MSG_H
 #define ___VBOXTRAY_MSG_H
 
-/** The IPC pipe's prefix. Will be followed by the
- *  username VBoxTray runs under. */
-#define VBOXTRAY_IPC_PIPE_PREFIX      "VBoxTrayIPC-"
+/** The IPC pipe's prefix (native).
+ * Will be followed by the username VBoxTray runs under. */
+#define VBOXTRAY_IPC_PIPE_PREFIX      "\\\\.\\pipe\\VBoxTrayIPC-"
 /** The IPC header's magic. */
 #define VBOXTRAY_IPC_HDR_MAGIC        0x19840804
 

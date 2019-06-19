@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -44,6 +44,12 @@
 
 #include <iprt/mem.h>
 #include <iprt/cpp/ministring.h>
+
+
+/** @defgroup grp_com_str   Smart String Classes
+ * @ingroup grp_com
+ * @{
+ */
 
 namespace com
 {
@@ -221,6 +227,55 @@ public:
     bool operator>=(const Bstr &that) const { return compare(that.m_bstr) >= 0; }
     bool operator>=(CBSTR that) const       { return compare(that)        >= 0; }
     bool operator>=(BSTR that) const        { return compare(that)        >= 0; }
+
+    /**
+     * Compares this string to an UTF-8 C style string.
+     *
+     * @retval  0 if equal
+     * @retval -1 if this string is smaller than the UTF-8 one.
+     * @retval  1 if the UTF-8 string is smaller than this.
+     *
+     * @param   a_pszRight  The string to compare with.
+     * @param   a_enmCase   Whether comparison should be case-sensitive.
+     */
+    int compareUtf8(const char *a_pszRight, CaseSensitivity a_enmCase = CaseSensitive) const;
+
+    /** Java style compare method.
+     * @returns true if @a a_pszRight equals this string.
+     * @param   a_pszRight The (UTF-8) string to compare with. */
+    bool equals(const char *a_pszRight) const           { return compareUtf8(a_pszRight, CaseSensitive) == 0; }
+
+    /** Java style case-insensitive compare method.
+     * @returns true if @a a_pszRight equals this string.
+     * @param   a_pszRight The (UTF-8) string to compare with. */
+    bool equalsIgnoreCase(const char *a_pszRight) const { return compareUtf8(a_pszRight, CaseInsensitive) == 0; }
+
+    /** Java style compare method.
+     * @returns true if @a a_rThat equals this string.
+     * @param   a_rThat     The other Bstr instance to compare with. */
+    bool equals(const Bstr &a_rThat) const              { return compare(a_rThat.m_bstr, CaseSensitive) == 0; }
+    /** Java style case-insensitive compare method.
+     * @returns true if @a a_rThat equals this string.
+     * @param   a_rThat     The other Bstr instance to compare with. */
+    bool equalsIgnoreCase(const Bstr &a_rThat) const    { return compare(a_rThat.m_bstr, CaseInsensitive) == 0; }
+
+    /** Java style compare method.
+     * @returns true if @a a_pThat equals this string.
+     * @param   a_pThat    The native const BSTR to compare with. */
+    bool equals(CBSTR a_pThat) const                    { return compare(a_pThat, CaseSensitive) == 0; }
+    /** Java style case-insensitive compare method.
+     * @returns true if @a a_pThat equals this string.
+     * @param   a_pThat    The native const BSTR to compare with. */
+    bool equalsIgnoreCase(CBSTR a_pThat) const          { return compare(a_pThat, CaseInsensitive) == 0; }
+
+    /** Java style compare method.
+     * @returns true if @a a_pThat equals this string.
+     * @param   a_pThat    The native BSTR to compare with. */
+    bool equals(BSTR a_pThat) const                     { return compare(a_pThat, CaseSensitive) == 0; }
+    /** Java style case-insensitive compare method.
+     * @returns true if @a a_pThat equals this string.
+     * @param   a_pThat    The native BSTR to compare with. */
+    bool equalsIgnoreCase(BSTR a_pThat) const           { return compare(a_pThat, CaseInsensitive) == 0; }
 
     /**
      * Returns true if the member string has no length.
@@ -455,9 +510,9 @@ protected:
      *
      * @param   a_pszSrc            The source string.  The caller guarantees
      *                              that this is valid UTF-8.
-     * @param   a_cchMax            The maximum number of chars (not
-     *                              codepoints) to copy.  If you pass RTSTR_MAX
-     *                              it'll be exactly like copyFrom().
+     * @param   a_cchSrc            The maximum number of chars (not codepoints) to
+     *                              copy.  If you pass RTSTR_MAX it'll be exactly
+     *                              like copyFrom().
      *
      * @throws  std::bad_alloc - the object is representing an empty string.
      */
@@ -513,9 +568,9 @@ public:
         copyFrom(that.raw());
     }
 
-    Utf8Str(CBSTR that)
+    Utf8Str(CBSTR that, size_t a_cwcSize = RTSTR_MAX)
     {
-        copyFrom(that);
+        copyFrom(that, a_cwcSize);
     }
 
     Utf8Str(const char *a_pszSrc, size_t a_cchSrc)
@@ -533,7 +588,7 @@ public:
      *                          specified by the format string.
      * @sa      RTCString::printfV
      */
-    Utf8Str(const char *a_pszFormat, va_list a_va)
+    Utf8Str(const char *a_pszFormat, va_list a_va) RT_IPRT_FORMAT_ATTR(1, 0)
         : RTCString(a_pszFormat, a_va)
     {
     }
@@ -564,8 +619,6 @@ public:
         return *this;
     }
 
-    bool operator<(const RTCString &that) const { return RTCString::operator<(that); }
-
     /**
      * Extended assignment method that returns a COM status code instead of an
      * exception on failure.
@@ -583,7 +636,7 @@ public:
      * exception on failure.
      *
      * @returns S_OK, E_OUTOFMEMORY or E_INVALIDARG.
-     * @param   a_pcszSrc   The source string
+     * @param   a_rSrcStr   The source string
      * @param   a_offSrc    The character (byte) offset of the substring.
      * @param   a_cchSrc    The number of characters (bytes) to copy from the source
      *                      string.
@@ -705,10 +758,36 @@ public:
     Utf8Str& stripPath();
 
     /**
-     * Removes a trailing file name extension from the member string, if present.
-     * Calls RTPathStripExt() without having to mess with mutableRaw().
+     * Removes a trailing file name suffix from the member string, if present.
+     * Calls RTPathStripSuffix() without having to mess with mutableRaw().
      */
-    Utf8Str& stripExt();
+    Utf8Str& stripSuffix();
+
+    /**
+     * Parses key=value pairs.
+     *
+     * @returns offset of the @a a_rPairSeparator following the returned value.
+     * @retval  npos is returned if there are no more key/value pairs.
+     *
+     * @param   a_rKey                  Reference to variable that should receive
+     *                                  the key substring.  This is set to null if
+     *                                  no key/value found.  (It's also possible the
+     *                                  key is an empty string, so be careful.)
+     * @param   a_rValue                Reference to variable that should receive
+     *                                  the value substring.  This is set to null if
+     *                                  no key/value found.  (It's also possible the
+     *                                  value is an empty string, so be careful.)
+     * @param   a_offStart              The offset to start searching from.  This is
+     *                                  typically 0 for the first call, and the
+     *                                  return value of the previous call for the
+     *                                  subsequent ones.
+     * @param   a_rPairSeparator        The pair separator string.  If this is an
+     *                                  empty string, the whole string will be
+     *                                  considered as a single key/value pair.
+     * @param   a_rKeyValueSeparator    The key/value separator string.
+     */
+    size_t parseKeyValue(Utf8Str &a_rKey, Utf8Str &a_rValue, size_t a_offStart = 0,
+                         const Utf8Str &a_rPairSeparator = ",", const Utf8Str &a_rKeyValueSeparator = "=") const;
 
     /**
      *  Static immutable empty-string object. May be used for comparison purposes.
@@ -716,7 +795,7 @@ public:
     static const Utf8Str Empty;
 protected:
 
-    void copyFrom(CBSTR a_pbstr);
+    void copyFrom(CBSTR a_pbstr, size_t a_cwcMax = RTSTR_MAX);
     HRESULT copyFromEx(CBSTR a_pbstr);
     HRESULT copyFromExNComRC(const char *a_pcszSrc, size_t a_offSrc, size_t a_cchSrc);
 
@@ -748,7 +827,7 @@ public:
      * @param   ...             Ellipsis containing the arguments specified by
      *                          the format string.
      */
-    explicit Utf8StrFmt(const char *a_pszFormat, ...)
+    explicit Utf8StrFmt(const char *a_pszFormat, ...) RT_IPRT_FORMAT_ATTR(1, 2)
     {
         va_list va;
         va_start(va, a_pszFormat);
@@ -779,7 +858,7 @@ public:
      * @param aFormat   printf-like format string (in UTF-8 encoding).
      * @param ...       List of the arguments for the format string.
      */
-    explicit BstrFmt(const char *aFormat, ...)
+    explicit BstrFmt(const char *aFormat, ...) RT_IPRT_FORMAT_ATTR(1, 2)
     {
         va_list args;
         va_start(args, aFormat);
@@ -804,7 +883,7 @@ public:
      * @param aFormat   printf-like format string (in UTF-8 encoding).
      * @param aArgs     List of arguments for the format string
      */
-    BstrFmtVA(const char *aFormat, va_list aArgs)
+    BstrFmtVA(const char *aFormat, va_list aArgs) RT_IPRT_FORMAT_ATTR(1, 0)
     {
         copyFrom(Utf8Str(aFormat, aArgs).c_str());
     }
@@ -813,6 +892,8 @@ public:
 };
 
 } /* namespace com */
+
+/** @} */
 
 #endif /* !___VBox_com_string_h */
 

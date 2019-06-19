@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DIR
 #include <errno.h>
 #include <unistd.h>
@@ -78,6 +78,8 @@ RTDECL(bool) RTDirExists(const char *pszPath)
 
 RTDECL(int) RTDirCreate(const char *pszPath, RTFMODE fMode, uint32_t fCreate)
 {
+    RT_NOREF_PV(fCreate);
+
     int rc;
     fMode = rtFsModeNormalize(fMode, pszPath, 0);
     if (rtFsModeIsValidPermissions(fMode))
@@ -183,7 +185,16 @@ RTDECL(int) RTDirFlush(const char *pszPath)
         if (fsync(fd) == 0)
             rc = VINF_SUCCESS;
         else
-            rc = RTErrConvertFromErrno(errno);
+        {
+            /* Linux fsync(2) man page documents both errors as an indication
+             * that the file descriptor can't be flushed (seen EINVAL for usual
+             * directories on CIFS). BSD (OS X) fsync(2) documents only the
+             * latter, and Solaris fsync(3C) pretends there is no problem. */
+            if (errno == EROFS || errno == EINVAL)
+                rc = VERR_NOT_SUPPORTED;
+            else
+                rc = RTErrConvertFromErrno(errno);
+        }
         close(fd);
     }
     else
@@ -203,18 +214,20 @@ size_t rtDirNativeGetStructSize(const char *pszPath)
     if (cbNameMax < _XOPEN_NAME_MAX)    /* Ditto. */
         cbNameMax = _XOPEN_NAME_MAX;
 # endif
-    size_t cbDir = RT_OFFSETOF(RTDIR, Data.d_name[cbNameMax + 1]);
-    if (cbDir < sizeof(RTDIR))          /* Ditto. */
-        cbDir = sizeof(RTDIR);
+    size_t cbDir = RT_UOFFSETOF_DYN(RTDIRINTERNAL, Data.d_name[cbNameMax + 1]);
+    if (cbDir < sizeof(RTDIRINTERNAL))  /* Ditto. */
+        cbDir = sizeof(RTDIRINTERNAL);
     cbDir = RT_ALIGN_Z(cbDir, 8);
 
     return cbDir;
 }
 
 
-int rtDirNativeOpen(PRTDIR pDir, char *pszPathBuf)
+int rtDirNativeOpen(PRTDIRINTERNAL pDir, char *pszPathBuf, uintptr_t hRelativeDir, void *pvNativeRelative)
 {
     NOREF(pszPathBuf); /* only used on windows */
+    NOREF(hRelativeDir);
+    NOREF(pvNativeRelative);
 
     /*
      * Convert to a native path and try opendir.
@@ -241,8 +254,10 @@ int rtDirNativeOpen(PRTDIR pDir, char *pszPathBuf)
 }
 
 
-RTDECL(int) RTDirClose(PRTDIR pDir)
+RTDECL(int) RTDirClose(RTDIR hDir)
 {
+    PRTDIRINTERNAL pDir = hDir;
+
     /*
      * Validate input.
      */
@@ -277,7 +292,7 @@ RTDECL(int) RTDirClose(PRTDIR pDir)
  * @returns IPRT status code.
  * @param   pDir        the open directory. Fully validated.
  */
-static int rtDirReadMore(PRTDIR pDir)
+static int rtDirReadMore(PRTDIRINTERNAL pDir)
 {
     /** @todo try avoid the rematching on buffer overflow errors. */
     for (;;)
@@ -288,7 +303,14 @@ static int rtDirReadMore(PRTDIR pDir)
         if (!pDir->fDataUnread)
         {
             struct dirent *pResult = NULL;
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic push
+# pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
             int rc = readdir_r(pDir->pDir, &pDir->Data, &pResult);
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic pop
+#endif
             if (rc)
             {
                 rc = RTErrConvertFromErrno(rc);
@@ -356,8 +378,10 @@ static RTDIRENTRYTYPE rtDirType(int iType)
 #endif /*HAVE_DIRENT_D_TYPE */
 
 
-RTDECL(int) RTDirRead(PRTDIR pDir, PRTDIRENTRY pDirEntry, size_t *pcbDirEntry)
+RTDECL(int) RTDirRead(RTDIR hDir, PRTDIRENTRY pDirEntry, size_t *pcbDirEntry)
 {
+    PRTDIRINTERNAL pDir = hDir;
+
     /*
      * Validate and digest input.
      */
@@ -371,7 +395,7 @@ RTDECL(int) RTDirRead(PRTDIR pDir, PRTDIRENTRY pDirEntry, size_t *pcbDirEntry)
         AssertMsgReturn(VALID_PTR(pcbDirEntry), ("%p\n", pcbDirEntry), VERR_INVALID_POINTER);
         cbDirEntry = *pcbDirEntry;
         AssertMsgReturn(cbDirEntry >= RT_UOFFSETOF(RTDIRENTRY, szName[2]),
-                        ("Invalid *pcbDirEntry=%d (min %d)\n", *pcbDirEntry, RT_OFFSETOF(RTDIRENTRYEX, szName[2])),
+                        ("Invalid *pcbDirEntry=%d (min %zu)\n", *pcbDirEntry, RT_UOFFSETOF(RTDIRENTRYEX, szName[2])),
                         VERR_INVALID_PARAMETER);
     }
 
@@ -386,7 +410,7 @@ RTDECL(int) RTDirRead(PRTDIR pDir, PRTDIRENTRY pDirEntry, size_t *pcbDirEntry)
          */
         const char  *pszName    = pDir->pszName;
         const size_t cchName    = pDir->cchName;
-        const size_t cbRequired = RT_OFFSETOF(RTDIRENTRY, szName[1]) + cchName;
+        const size_t cbRequired = RT_UOFFSETOF(RTDIRENTRY, szName[1]) + cchName;
         if (pcbDirEntry)
             *pcbDirEntry = cbRequired;
         if (cbRequired <= cbDirEntry)
@@ -440,21 +464,24 @@ static void rtDirSetDummyInfo(PRTFSOBJINFO pInfo, RTDIRENTRYTYPE enmType)
     switch (enmType)
     {
         default:
-        case RTDIRENTRYTYPE_UNKNOWN:    pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL;
-        case RTDIRENTRYTYPE_FIFO:       pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_FIFO;
-        case RTDIRENTRYTYPE_DEV_CHAR:   pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_DEV_CHAR;
-        case RTDIRENTRYTYPE_DIRECTORY:  pInfo->Attr.fMode = RTFS_DOS_DIRECTORY | RTFS_TYPE_DIRECTORY;
-        case RTDIRENTRYTYPE_DEV_BLOCK:  pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_DEV_BLOCK;
-        case RTDIRENTRYTYPE_FILE:       pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_FILE;
-        case RTDIRENTRYTYPE_SYMLINK:    pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_SYMLINK;
-        case RTDIRENTRYTYPE_SOCKET:     pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_SOCKET;
-        case RTDIRENTRYTYPE_WHITEOUT:   pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_WHITEOUT;
+        case RTDIRENTRYTYPE_UNKNOWN:    pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL;                       break;
+        case RTDIRENTRYTYPE_FIFO:       pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_FIFO;      break;
+        case RTDIRENTRYTYPE_DEV_CHAR:   pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_DEV_CHAR;  break;
+        case RTDIRENTRYTYPE_DIRECTORY:  pInfo->Attr.fMode = RTFS_DOS_DIRECTORY | RTFS_TYPE_DIRECTORY; break;
+        case RTDIRENTRYTYPE_DEV_BLOCK:  pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_DEV_BLOCK; break;
+        case RTDIRENTRYTYPE_FILE:       pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_FILE;      break;
+        case RTDIRENTRYTYPE_SYMLINK:    pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_SYMLINK;   break;
+        case RTDIRENTRYTYPE_SOCKET:     pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_SOCKET;    break;
+        case RTDIRENTRYTYPE_WHITEOUT:   pInfo->Attr.fMode = RTFS_DOS_NT_NORMAL | RTFS_TYPE_WHITEOUT;  break;
     }
 }
 
 
-RTDECL(int) RTDirReadEx(PRTDIR pDir, PRTDIRENTRYEX pDirEntry, size_t *pcbDirEntry, RTFSOBJATTRADD enmAdditionalAttribs, uint32_t fFlags)
+RTDECL(int) RTDirReadEx(RTDIR hDir, PRTDIRENTRYEX pDirEntry, size_t *pcbDirEntry,
+                        RTFSOBJATTRADD enmAdditionalAttribs, uint32_t fFlags)
 {
+    PRTDIRINTERNAL pDir = hDir;
+
     /*
      * Validate and digest input.
      */
@@ -471,8 +498,8 @@ RTDECL(int) RTDirReadEx(PRTDIR pDir, PRTDIRENTRYEX pDirEntry, size_t *pcbDirEntr
     {
         AssertMsgReturn(VALID_PTR(pcbDirEntry), ("%p\n", pcbDirEntry), VERR_INVALID_POINTER);
         cbDirEntry = *pcbDirEntry;
-        AssertMsgReturn(cbDirEntry >= (unsigned)RT_OFFSETOF(RTDIRENTRYEX, szName[2]),
-                        ("Invalid *pcbDirEntry=%d (min %d)\n", *pcbDirEntry, RT_OFFSETOF(RTDIRENTRYEX, szName[2])),
+        AssertMsgReturn(cbDirEntry >= RT_UOFFSETOF(RTDIRENTRYEX, szName[2]),
+                        ("Invalid *pcbDirEntry=%zu (min %zu)\n", *pcbDirEntry, RT_UOFFSETOF(RTDIRENTRYEX, szName[2])),
                         VERR_INVALID_PARAMETER);
     }
 
@@ -487,7 +514,7 @@ RTDECL(int) RTDirReadEx(PRTDIR pDir, PRTDIRENTRYEX pDirEntry, size_t *pcbDirEntr
          */
         const char  *pszName    = pDir->pszName;
         const size_t cchName    = pDir->cchName;
-        const size_t cbRequired = RT_OFFSETOF(RTDIRENTRYEX, szName[1]) + cchName;
+        const size_t cbRequired = RT_UOFFSETOF(RTDIRENTRYEX, szName[1]) + cchName;
         if (pcbDirEntry)
             *pcbDirEntry = cbRequired;
         if (cbRequired <= cbDirEntry)

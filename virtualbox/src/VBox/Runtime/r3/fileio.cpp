@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,20 +24,24 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include "internal/iprt.h"
 #include <iprt/file.h>
-#include <iprt/alloc.h>
+
+#include <iprt/mem.h>
 #include <iprt/assert.h>
 #include <iprt/alloca.h>
+#include <iprt/string.h>
 #include <iprt/err.h>
 #include "internal/file.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Set of forced set open flags for files opened read-only. */
 static unsigned g_fOpenReadSet = 0;
 
@@ -126,15 +130,25 @@ int rtFileRecalcAndValidateFlags(uint64_t *pfOpen)
             fOpen |= g_fOpenReadWriteSet;
             fOpen &= ~g_fOpenReadWriteMask;
             break;
+#ifdef RT_OS_WINDOWS
+        case RTFILE_O_ATTR_ONLY:
+            if (fOpen & RTFILE_O_ACCESS_ATTR_MASK)
+                break;
+#endif
         default:
-            AssertMsgFailed(("Invalid RW value, fOpen=%#llx\n", fOpen));
+            AssertMsgFailed(("Invalid access mode value, fOpen=%#llx\n", fOpen));
             return VERR_INVALID_PARAMETER;
     }
 
     /*
      * Validate                                                                                                                                       .
      */
+#ifdef RT_OS_WINDOWS
+    AssertMsgReturn((fOpen & RTFILE_O_ACCESS_MASK) || (fOpen & RTFILE_O_ACCESS_ATTR_MASK),
+                    ("Missing RTFILE_O_READ/WRITE/ACCESS_ATTR: fOpen=%#llx\n", fOpen), VERR_INVALID_PARAMETER);
+#else
     AssertMsgReturn(fOpen & RTFILE_O_ACCESS_MASK, ("Missing RTFILE_O_READ/WRITE: fOpen=%#llx\n", fOpen), VERR_INVALID_PARAMETER);
+#endif
 #if defined(RT_OS_WINDOWS) || defined(RT_OS_OS2)
     AssertMsgReturn(!(fOpen & (~(uint64_t)RTFILE_O_VALID_MASK | RTFILE_O_NON_BLOCK)), ("%#llx\n", fOpen), VERR_INVALID_PARAMETER);
 #else
@@ -351,35 +365,12 @@ RTR3DECL(RTFOFF) RTFileGetMaxSize(RTFILE File)
 }
 
 
-/**
- * Copies a file given the handles to both files.
- *
- * @returns VBox Status code.
- *
- * @param   FileSrc     The source file. The file position is unaltered.
- * @param   FileDst     The destination file.
- *                      On successful returns the file position is at the end of the file.
- *                      On failures the file position and size is undefined.
- */
 RTDECL(int) RTFileCopyByHandles(RTFILE FileSrc, RTFILE FileDst)
 {
     return RTFileCopyByHandlesEx(FileSrc, FileDst, NULL, NULL);
 }
 
 
-/**
- * Copies a file.
- *
- * @returns VERR_ALREADY_EXISTS if the destination file exists.
- * @returns VBox Status code.
- *
- * @param   pszSrc      The path to the source file.
- * @param   pszDst      The path to the destination file.
- *                      This file will be created.
- * @param   fFlags      Flags, any of the RTFILECOPY_FLAGS_ \#defines.
- * @param   pfnProgress Pointer to callback function for reporting progress.
- * @param   pvUser      User argument to pass to pfnProgress along with the completion percentage.
- */
 RTDECL(int) RTFileCopyEx(const char *pszSrc, const char *pszDst, uint32_t fFlags, PFNRTPROGRESS pfnProgress, void *pvUser)
 {
     /*
@@ -431,19 +422,6 @@ RTDECL(int) RTFileCopyEx(const char *pszSrc, const char *pszDst, uint32_t fFlags
 }
 
 
-/**
- * Copies a file given the handles to both files and
- * provide progress callbacks.
- *
- * @returns VBox Status code.
- *
- * @param   FileSrc     The source file. The file position is unaltered.
- * @param   FileDst     The destination file.
- *                      On successful returns the file position is at the end of the file.
- *                      On failures the file position and size is undefined.
- * @param   pfnProgress Pointer to callback function for reporting progress.
- * @param   pvUser      User argument to pass to pfnProgress along with the completion percentage.
- */
 RTDECL(int) RTFileCopyByHandlesEx(RTFILE FileSrc, RTFILE FileDst, PFNRTPROGRESS pfnProgress, void *pvUser)
 {
     /*
@@ -522,13 +500,13 @@ RTDECL(int) RTFileCopyByHandlesEx(RTFILE FileSrc, RTFILE FileDst, PFNRTPROGRESS 
 
                     /* advance */
                     off += cbBlock;
-                    if (pfnProgress && offNextPercent < off)
+                    if (pfnProgress && offNextPercent < off && uPercentage < 100)
                     {
-                        while (offNextPercent < off)
+                        do
                         {
                             uPercentage++;
                             offNextPercent += cbPercent;
-                        }
+                        } while (offNextPercent < off && uPercentage < 100);
                         rc = pfnProgress(uPercentage, pvUser);
                         if (RT_FAILURE(rc))
                             break;
@@ -556,6 +534,191 @@ RTDECL(int) RTFileCopyByHandlesEx(RTFILE FileSrc, RTFILE FileDst, PFNRTPROGRESS 
      * Restore source position.
      */
     RTFileSeek(FileSrc, offSrcSaved, RTFILE_SEEK_BEGIN, NULL);
+
+    return rc;
+}
+
+
+RTDECL(int) RTFileCompare(const char *pszFile1, const char *pszFile2)
+{
+    return RTFileCompareEx(pszFile1, pszFile2, 0 /*fFlags*/, NULL, NULL);
+}
+
+
+RTDECL(int) RTFileCompareByHandles(RTFILE hFile1, RTFILE hFile2)
+{
+    return RTFileCompareByHandlesEx(hFile1, hFile2, 0 /*fFlags*/, NULL, NULL);
+}
+
+
+RTDECL(int) RTFileCompareEx(const char *pszFile1, const char *pszFile2, uint32_t fFlags, PFNRTPROGRESS pfnProgress, void *pvUser)
+{
+    /*
+     * Validate input.
+     */
+    AssertPtrReturn(pszFile1, VERR_INVALID_POINTER);
+    AssertReturn(*pszFile1, VERR_INVALID_PARAMETER);
+    AssertPtrReturn(pszFile2, VERR_INVALID_POINTER);
+    AssertReturn(*pszFile2, VERR_INVALID_PARAMETER);
+    AssertMsgReturn(!pfnProgress || VALID_PTR(pfnProgress), ("pfnProgress=%p\n", pfnProgress), VERR_INVALID_PARAMETER);
+    AssertMsgReturn(!(fFlags & ~RTFILECOMP_FLAGS_MASK), ("%#x\n", fFlags), VERR_INVALID_PARAMETER);
+
+    /*
+     * Open the files.
+     */
+    RTFILE hFile1;
+    int rc = RTFileOpen(&hFile1, pszFile1,
+                        RTFILE_O_READ | RTFILE_O_OPEN
+                        | (fFlags & RTFILECOMP_FLAGS_NO_DENY_WRITE_FILE1 ? RTFILE_O_DENY_NONE : RTFILE_O_DENY_WRITE));
+    if (RT_SUCCESS(rc))
+    {
+        RTFILE hFile2;
+        rc = RTFileOpen(&hFile2, pszFile2,
+                        RTFILE_O_READ | RTFILE_O_OPEN
+                        | (fFlags & RTFILECOMP_FLAGS_NO_DENY_WRITE_FILE2 ? RTFILE_O_DENY_NONE : RTFILE_O_DENY_WRITE));
+        if (RT_SUCCESS(rc))
+        {
+            /*
+             * Call the ByHandles version and let it do the job.
+             */
+            rc = RTFileCompareByHandlesEx(hFile1, hFile2, fFlags,  pfnProgress, pvUser);
+
+            /* Clean up */
+            int rc2 = RTFileClose(hFile2);
+            AssertRC(rc2);
+            if (RT_FAILURE(rc2) && RT_SUCCESS(rc))
+                rc = rc2;
+        }
+
+        int rc2 = RTFileClose(hFile1);
+        AssertRC(rc2);
+        if (RT_FAILURE(rc2) && RT_SUCCESS(rc))
+            rc = rc2;
+    }
+    return rc;
+}
+
+
+RTDECL(int) RTFileCompareByHandlesEx(RTFILE hFile1, RTFILE hFile2, uint32_t fFlags, PFNRTPROGRESS pfnProgress, void *pvUser)
+{
+    /*
+     * Validate input.
+     */
+    AssertReturn(RTFileIsValid(hFile1), VERR_INVALID_HANDLE);
+    AssertReturn(RTFileIsValid(hFile1), VERR_INVALID_HANDLE);
+    AssertMsgReturn(!pfnProgress || VALID_PTR(pfnProgress), ("pfnProgress=%p\n", pfnProgress), VERR_INVALID_PARAMETER);
+    AssertMsgReturn(!(fFlags & ~RTFILECOMP_FLAGS_MASK), ("%#x\n", fFlags), VERR_INVALID_PARAMETER);
+
+    /*
+     * Compare the file sizes first.
+     */
+    uint64_t cbFile1;
+    int rc = RTFileGetSize(hFile1, &cbFile1);
+    if (RT_FAILURE(rc))
+        return rc;
+
+    uint64_t cbFile2;
+    rc = RTFileGetSize(hFile1, &cbFile2);
+    if (RT_FAILURE(rc))
+        return rc;
+
+    if (cbFile1 != cbFile2)
+        return VERR_NOT_EQUAL;
+
+
+    /*
+     * Allocate buffer.
+     */
+    size_t      cbBuf;
+    uint8_t    *pbBuf1Free = NULL;
+    uint8_t    *pbBuf1;
+    uint8_t    *pbBuf2Free = NULL;
+    uint8_t    *pbBuf2;
+    if (cbFile1 < _512K)
+    {
+        cbBuf  = 8*_1K;
+        pbBuf1 = (uint8_t *)alloca(cbBuf);
+        pbBuf2 = (uint8_t *)alloca(cbBuf);
+    }
+    else
+    {
+        cbBuf = _128K;
+        pbBuf1 = pbBuf1Free = (uint8_t *)RTMemTmpAlloc(cbBuf);
+        pbBuf2 = pbBuf2Free = (uint8_t *)RTMemTmpAlloc(cbBuf);
+    }
+    if (pbBuf1 && pbBuf2)
+    {
+        /*
+         * Seek to the start of each file
+         * and set the size of the destination file.
+         */
+        rc = RTFileSeek(hFile1, 0, RTFILE_SEEK_BEGIN, NULL);
+        if (RT_SUCCESS(rc))
+        {
+            rc = RTFileSeek(hFile2, 0, RTFILE_SEEK_BEGIN, NULL);
+            if (RT_SUCCESS(rc) && pfnProgress)
+                rc = pfnProgress(0, pvUser);
+            if (RT_SUCCESS(rc))
+            {
+                /*
+                 * Compare loop.
+                 */
+                unsigned    uPercentage    = 0;
+                RTFOFF      off            = 0;
+                RTFOFF      cbPercent      = cbFile1 / 100;
+                RTFOFF      offNextPercent = cbPercent;
+                while (off < (RTFOFF)cbFile1)
+                {
+                    /* read the blocks */
+                    RTFOFF cbLeft = cbFile1 - off;
+                    size_t cbBlock = cbLeft >= (RTFOFF)cbBuf ? cbBuf : (size_t)cbLeft;
+                    rc = RTFileRead(hFile1, pbBuf1, cbBlock, NULL);
+                    if (RT_FAILURE(rc))
+                        break;
+                    rc = RTFileRead(hFile2, pbBuf2, cbBlock, NULL);
+                    if (RT_FAILURE(rc))
+                        break;
+
+                    /* compare */
+                    if (memcmp(pbBuf1, pbBuf2, cbBlock))
+                    {
+                        rc = VERR_NOT_EQUAL;
+                        break;
+                    }
+
+                    /* advance */
+                    off += cbBlock;
+                    if (pfnProgress && offNextPercent < off)
+                    {
+                        while (offNextPercent < off)
+                        {
+                            uPercentage++;
+                            offNextPercent += cbPercent;
+                        }
+                        rc = pfnProgress(uPercentage, pvUser);
+                        if (RT_FAILURE(rc))
+                            break;
+                    }
+                }
+
+#if 0
+                /*
+                 * Compare OS specific data (EAs and stuff).
+                 */
+                if (RT_SUCCESS(rc))
+                    rc = rtFileCompareOSStuff(hFile1, hFile2);
+#endif
+
+                /* 100% */
+                if (pfnProgress && uPercentage < 100 && RT_SUCCESS(rc))
+                    rc = pfnProgress(100, pvUser);
+            }
+        }
+    }
+    else
+        rc = VERR_NO_MEMORY;
+    RTMemTmpFree(pbBuf2Free);
+    RTMemTmpFree(pbBuf1Free);
 
     return rc;
 }

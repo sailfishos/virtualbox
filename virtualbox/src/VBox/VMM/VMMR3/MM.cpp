@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -52,13 +52,13 @@ Hypervisor Memory Area (HMA) Layout: Base 00000000a0000000, 0x00800000 bytes
 00000000a0536000-00000000a05b6000                  MMIO2   0000000000000000 VGA VRam
 00000000a0523000-00000000a0536000 00002aaab3d0c000 LOCKED  autofree         alloc once (PDM_DEVICE)
 00000000a0522000-00000000a0523000                  DYNAMIC                  fence
-00000000a051e000-00000000a0522000 00002aaab36f5000 LOCKED  autofree         VBoxDD2GC.gc
+00000000a051e000-00000000a0522000 00002aaab36f5000 LOCKED  autofree         VBoxDD2RC.rc
 00000000a051d000-00000000a051e000                  DYNAMIC                  fence
-00000000a04eb000-00000000a051d000 00002aaab36c3000 LOCKED  autofree         VBoxDDGC.gc
+00000000a04eb000-00000000a051d000 00002aaab36c3000 LOCKED  autofree         VBoxDDRC.rc
 00000000a04ea000-00000000a04eb000                  DYNAMIC                  fence
 00000000a04e9000-00000000a04ea000 00002aaab36c2000 LOCKED  autofree         ram range (High ROM Region)
 00000000a04e8000-00000000a04e9000                  DYNAMIC                  fence
-00000000a040e000-00000000a04e8000 00002aaab2e6d000 LOCKED  autofree         VMMGC.gc
+00000000a040e000-00000000a04e8000 00002aaab2e6d000 LOCKED  autofree         VMMRC.rc
 00000000a0208000-00000000a040e000 00002aaab2c67000 LOCKED  autofree         alloc once (PATM)
 00000000a01f7000-00000000a0208000 00002aaaab92d000 LOCKED  autofree         alloc once (SELM)
 00000000a01e7000-00000000a01f7000 00002aaaab5e8000 LOCKED  autofree         alloc once (SELM)
@@ -140,9 +140,9 @@ Hypervisor Memory Area (HMA) Layout: Base 00000000a0000000, 0x00800000 bytes
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_MM
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/pgm.h>
@@ -161,16 +161,16 @@ Hypervisor Memory Area (HMA) Layout: Base 00000000a0000000, 0x00800000 bytes
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The current saved state version of MM. */
 #define MM_SAVED_STATE_VERSION      2
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int) mmR3Save(PVM pVM, PSSMHANDLE pSSM);
 static DECLCALLBACK(int) mmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass);
 
@@ -226,7 +226,7 @@ VMMR3DECL(int) MMR3InitUVM(PUVM pUVM)
  * it will choose a default starting location, currently 0xa0000000.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) MMR3Init(PVM pVM)
 {
@@ -235,14 +235,14 @@ VMMR3DECL(int) MMR3Init(PVM pVM)
     /*
      * Assert alignment, sizes and order.
      */
-    AssertRelease(!(RT_OFFSETOF(VM, mm.s) & 31));
+    AssertRelease(!(RT_UOFFSETOF(VM, mm.s) & 31));
     AssertRelease(sizeof(pVM->mm.s) <= sizeof(pVM->mm.padding));
     AssertMsg(pVM->mm.s.offVM == 0, ("Already initialized!\n"));
 
     /*
      * Init the structure.
      */
-    pVM->mm.s.offVM = RT_OFFSETOF(VM, mm);
+    pVM->mm.s.offVM = RT_UOFFSETOF(VM, mm);
     pVM->mm.s.offLookupHyper = NIL_OFFSET;
 
     /*
@@ -290,7 +290,7 @@ VMMR3DECL(int) MMR3Init(PVM pVM)
  * Initializes the MM parts which depends on PGM being initialized.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @remark  No cleanup necessary since MMR3Term() will be called on failure.
  */
 VMMR3DECL(int) MMR3InitPaging(PVM pVM)
@@ -308,7 +308,7 @@ VMMR3DECL(int) MMR3InitPaging(PVM pVM)
         AssertRCReturn(rc, rc);
     }
 
-    /** @cfgm{RamSize, uint64_t, 0, 16TB, 0}
+    /** @cfgm{/RamSize, uint64_t, 0, 16TB, 0}
      * Specifies the size of the base RAM that is to be set up during
      * VM initialization.
      */
@@ -323,7 +323,7 @@ VMMR3DECL(int) MMR3InitPaging(PVM pVM)
     cbRam &= X86_PTE_PAE_PG_MASK;
     pVM->mm.s.cbRamBase = cbRam;
 
-    /** @cfgm{RamHoleSize, uint32_t, 0, 4032MB, 512MB}
+    /** @cfgm{/RamHoleSize, uint32_t, 0, 4032MB, 512MB}
      * Specifies the size of the memory hole. The memory hole is used
      * to avoid mapping RAM to the range normally used for PCI memory regions.
      * Must be aligned on a 4MB boundary. */
@@ -342,7 +342,7 @@ VMMR3DECL(int) MMR3InitPaging(PVM pVM)
     else
         Log(("MM: %RU64 bytes of RAM with a hole at %RU64 up to 4GB.\n", cbRam, offRamHole));
 
-    /** @cfgm{MM/Policy, string, no overcommitment}
+    /** @cfgm{/MM/Policy, string, no overcommitment}
      * Specifies the policy to use when reserving memory for this VM. The recognized
      * value is 'no overcommitment' (default). See GMMPOLICY.
      */
@@ -362,7 +362,7 @@ VMMR3DECL(int) MMR3InitPaging(PVM pVM)
     else
         AssertMsgFailedReturn(("Configuration error: Failed to query string \"MM/Policy\", rc=%Rrc.\n", rc), rc);
 
-    /** @cfgm{MM/Priority, string, normal}
+    /** @cfgm{/MM/Priority, string, normal}
      * Specifies the memory priority of this VM. The priority comes into play when the
      * system is overcommitted and the VMs needs to be milked for memory. The recognized
      * values are 'low', 'normal' (default) and 'high'. See GMMPRIORITY.
@@ -417,14 +417,23 @@ VMMR3DECL(int) MMR3InitPaging(PVM pVM)
     /*
      * Setup the base ram (PGM).
      */
+    pVM->mm.s.cbRamHole = cbRamHole;
     if (cbRam > offRamHole)
     {
+        pVM->mm.s.cbRamBelow4GB = offRamHole;
         rc = PGMR3PhysRegisterRam(pVM, 0, offRamHole, "Base RAM");
         if (RT_SUCCESS(rc))
+        {
+            pVM->mm.s.cbRamAbove4GB = cbRam - offRamHole;
             rc = PGMR3PhysRegisterRam(pVM, _4G, cbRam - offRamHole, "Above 4GB Base RAM");
+        }
     }
     else
-        rc = PGMR3PhysRegisterRam(pVM, 0, RT_MIN(cbRam, offRamHole), "Base RAM");
+    {
+        pVM->mm.s.cbRamBelow4GB = cbRam;
+        pVM->mm.s.cbRamAbove4GB = 0;
+        rc = PGMR3PhysRegisterRam(pVM, 0, cbRam, "Base RAM");
+    }
 
     /*
      * Enabled mmR3UpdateReservation here since we don't want the
@@ -445,7 +454,7 @@ VMMR3DECL(int) MMR3InitPaging(PVM pVM)
  * the VM it self is at this point powered off or suspended.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) MMR3Term(PVM pVM)
 {
@@ -502,10 +511,22 @@ VMMR3DECL(void) MMR3TermUVM(PUVM pUVM)
 
 
 /**
+ * Checks if the both VM and UVM parts of MM have been initialized.
+ *
+ * @returns true if initialized, false if not.
+ * @param   pVM         The cross context VM structure.
+ */
+VMMR3_INT_DECL(bool) MMR3IsInitialized(PVM pVM)
+{
+    return pVM->mm.s.pHyperHeapR3 != NULL;
+}
+
+
+/**
  * Execute state save operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  */
 static DECLCALLBACK(int) mmR3Save(PVM pVM, PSSMHANDLE pSSM)
@@ -522,7 +543,7 @@ static DECLCALLBACK(int) mmR3Save(PVM pVM, PSSMHANDLE pSSM)
  * Execute state load operation.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pSSM            SSM operation handle.
  * @param   uVersion       Data layout version.
  * @param   uPass           The data pass.
@@ -586,7 +607,7 @@ static DECLCALLBACK(int) mmR3Load(PVM pVM, PSSMHANDLE pSSM, uint32_t uVersion, u
  * Called when MM::cbRamRegistered, MM::cShadowPages or MM::cFixedPages changes.
  *
  * @returns VBox status code - see GMMR0UpdateReservation.
- * @param   pVM             The shared VM structure.
+ * @param   pVM             The cross context VM structure.
  */
 int mmR3UpdateReservation(PVM pVM)
 {
@@ -606,7 +627,7 @@ int mmR3UpdateReservation(PVM pVM)
  * This can be called before MMR3InitPaging.
  *
  * @returns VBox status code. Will set VM error on failure.
- * @param   pVM             The shared VM structure.
+ * @param   pVM             The cross context VM structure.
  * @param   cAddBasePages   The number of pages to add.
  */
 VMMR3DECL(int) MMR3IncreaseBaseReservation(PVM pVM, uint64_t cAddBasePages)
@@ -632,7 +653,7 @@ VMMR3DECL(int) MMR3IncreaseBaseReservation(PVM pVM, uint64_t cAddBasePages)
  * This can be called before MMR3InitPaging.
  *
  * @returns VBox status code. Will set VM error on failure.
- * @param   pVM             The shared VM structure.
+ * @param   pVM             The cross context VM structure.
  * @param   cHandyPages     The number of handy pages.
  */
 VMMR3DECL(int) MMR3ReserveHandyPages(PVM pVM, uint32_t cHandyPages)
@@ -658,7 +679,7 @@ VMMR3DECL(int) MMR3ReserveHandyPages(PVM pVM, uint32_t cHandyPages)
  * This can be called before MMR3InitPaging.
  *
  * @returns VBox status code. Will set VM error on failure.
- * @param   pVM                 The shared VM structure.
+ * @param   pVM                 The cross context VM structure.
  * @param   cDeltaFixedPages    The number of pages to add (positive) or subtract (negative).
  * @param   pszDesc             Some description associated with the reservation.
  */
@@ -684,7 +705,7 @@ VMMR3DECL(int) MMR3AdjustFixedReservation(PVM pVM, int32_t cDeltaFixedPages, con
  * This can be called before MMR3InitPaging.
  *
  * @returns VBox status code. Will set VM error on failure.
- * @param   pVM             The shared VM structure.
+ * @param   pVM             The cross context VM structure.
  * @param   cShadowPages    The new page count.
  */
 VMMR3DECL(int) MMR3UpdateShadowReservation(PVM pVM, uint32_t cShadowPages)
@@ -705,8 +726,8 @@ VMMR3DECL(int) MMR3UpdateShadowReservation(PVM pVM, uint32_t cShadowPages)
 /**
  * Convert HC Physical address to HC Virtual address.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   HCPhys      The host context virtual address.
  * @param   ppv         Where to store the resulting address.
  * @thread  The Emulation Thread.
@@ -781,7 +802,7 @@ VMMR3DECL(int) MMR3HCPhys2HCVirt(PVM pVM, RTHCPHYS HCPhys, void **ppv)
  * This usually means the size of the first contiguous block of physical memory.
  *
  * @returns The guest base RAM size.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @thread  Any.
  *
  * @deprecated
@@ -789,5 +810,47 @@ VMMR3DECL(int) MMR3HCPhys2HCVirt(PVM pVM, RTHCPHYS HCPhys, void **ppv)
 VMMR3DECL(uint64_t) MMR3PhysGetRamSize(PVM pVM)
 {
     return pVM->mm.s.cbRamBase;
+}
+
+
+/**
+ * Get the size of RAM below 4GB (starts at address 0x00000000).
+ *
+ * @returns The amount of RAM below 4GB in bytes.
+ * @param   pVM         The cross context VM structure.
+ * @thread  Any.
+ */
+VMMR3DECL(uint32_t) MMR3PhysGetRamSizeBelow4GB(PVM pVM)
+{
+    VM_ASSERT_VALID_EXT_RETURN(pVM, UINT32_MAX);
+    return pVM->mm.s.cbRamBelow4GB;
+}
+
+
+/**
+ * Get the size of RAM above 4GB (starts at address 0x000100000000).
+ *
+ * @returns The amount of RAM above 4GB in bytes.
+ * @param   pVM         The cross context VM structure.
+ * @thread  Any.
+ */
+VMMR3DECL(uint64_t) MMR3PhysGetRamSizeAbove4GB(PVM pVM)
+{
+    VM_ASSERT_VALID_EXT_RETURN(pVM, UINT64_MAX);
+    return pVM->mm.s.cbRamAbove4GB;
+}
+
+
+/**
+ * Get the size of the RAM hole below 4GB.
+ *
+ * @returns Size in bytes.
+ * @param   pVM         The cross context VM structure.
+ * @thread  Any.
+ */
+VMMR3DECL(uint32_t) MMR3PhysGet4GBRamHoleSize(PVM pVM)
+{
+    VM_ASSERT_VALID_EXT_RETURN(pVM, UINT32_MAX);
+    return pVM->mm.s.cbRamHole;
 }
 

@@ -31,10 +31,10 @@
 
 #include <VBox/vmm/ssm.h>
 
-#include <VBox/VBoxVideo.h>
-#include <VBox/Hardware/VBoxVideoVBE.h>
-#include <VBox/VBoxVideo3D.h>
-#include <VBox/VBoxVideoHost3D.h>
+#include <VBoxVideo.h>
+#include <VBoxVideoVBE.h>
+#include <VBoxVideo3D.h>
+#include <VBoxVideoHost3D.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -43,7 +43,7 @@ extern "C" {
 #define CR_MAX_WINDOWS 100
 #define CR_MAX_CLIENTS 64
 
-/*@todo must match MaxGuestMonitors from SchemaDefs.h*/
+/** @todo must match MaxGuestMonitors from SchemaDefs.h*/
 #define CR_MAX_GUEST_MONITORS VBOX_VIDEO_MAX_SCREENS
 
 typedef DECLCALLBACKPTR(void, PFNCRSERVERPRESENTFBO) (void *data, int32_t screenId, int32_t x, int32_t y, uint32_t w, uint32_t h);
@@ -131,7 +131,7 @@ struct CR_SERVER_RPW_ENTRY;
 
 typedef DECLCALLBACKPTR(void, PFNCR_SERVER_RPW_DATA) (const struct CR_SERVER_RPW_ENTRY* pEntry, void *pvEntryTexData);
 
-typedef DECLCALLBACKPTR(void, PFNCRSERVERNOTIFYEVENT) (int32_t screenId, uint32_t uEvent, void*pvData);
+typedef DECLCALLBACKPTR(void, PFNCRSERVERNOTIFYEVENT) (int32_t screenId, uint32_t uEvent, void* pvData, uint32_t cbData);
 
 typedef struct CR_SERVER_RPW_ENTRY
 {
@@ -475,8 +475,6 @@ typedef struct {
 
     GLuint currentSerialNo;
 
-    PFNCRSERVERPRESENTFBO pfnPresentFBO;
-
     GLuint                fVisualBitsDefault;
     GLboolean             bUsePBOForReadback;       /*Use PBO's for data readback*/
 
@@ -552,8 +550,6 @@ struct VBVAINFOSCREEN;
 extern DECLEXPORT(int) crVBoxServerNotifyResize(const struct VBVAINFOSCREEN *pScreen, void *pvVRAM);
 extern DECLEXPORT(int32_t) crVBoxServerSetRootVisibleRegion(GLint cRects, const RTRECT *pRects);
 
-extern DECLEXPORT(void) crVBoxServerSetPresentFBOCB(PFNCRSERVERPRESENTFBO pfnPresentFBO);
-
 extern DECLEXPORT(int32_t) crVBoxServerSetOffscreenRendering(GLboolean value);
 
 extern DECLEXPORT(int32_t) crVBoxServerOutputRedirectSet(const CROutputRedirect *pCallbacks);
@@ -563,7 +559,8 @@ extern DECLEXPORT(int32_t) crVBoxServerSetScreenViewport(int sIndex, int32_t x, 
 extern DECLEXPORT(void) crServerVBoxSetNotifyEventCB(PFNCRSERVERNOTIFYEVENT pfnCb);
 
 extern DECLEXPORT(void) crVBoxServerCalloutEnable(VBOXCRCMDCTL *pCtl);
-extern DECLEXPORT(void) crVBoxServerCalloutDisable();
+extern DECLEXPORT(void) crVBoxServerCalloutDisable(void);
+extern DECLEXPORT(void) crServerSetUnscaledHiDPI(bool fEnable);
 
 #ifdef VBOX_WITH_CRHGSMI
 /* We moved all CrHgsmi command processing to crserverlib to keep the logic of dealing with CrHgsmi commands in one place.

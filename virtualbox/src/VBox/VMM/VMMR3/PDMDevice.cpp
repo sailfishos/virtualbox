@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM_DEVICE
 #include "PDMInternal.h"
 #include <VBox/vmm/pdm.h>
@@ -27,6 +27,7 @@
 #include <VBox/vmm/iom.h>
 #include <VBox/vmm/hm.h>
 #include <VBox/vmm/cfgm.h>
+#include <VBox/vmm/apic.h>
 #ifdef VBOX_WITH_REM
 # include <VBox/vmm/rem.h>
 #endif
@@ -48,9 +49,9 @@
 #include <iprt/thread.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Internal callback structure pointer.
  * The main purpose is to define the extra data we associate
@@ -74,9 +75,9 @@ typedef PDMDEVREGCBINT *PPDMDEVREGCBINT;
 typedef const PDMDEVREGCBINT *PCPDMDEVREGCBINT;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int)    pdmR3DevReg_Register(PPDMDEVREGCB pCallbacks, PCPDMDEVREG pReg);
 static int                  pdmR3DevLoadModules(PVM pVM);
 static int                  pdmR3DevLoad(PVM pVM, PPDMDEVREGCBINT pRegCB, const char *pszFilename, const char *pszName);
@@ -104,13 +105,13 @@ static int                  pdmR3DevLoad(PVM pVM, PPDMDEVREGCBINT pRegCB, const 
  * are called.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 int pdmR3DevInit(PVM pVM)
 {
     LogFlow(("pdmR3DevInit:\n"));
 
-    AssertRelease(!(RT_OFFSETOF(PDMDEVINS, achInstanceData) & 15));
+    AssertRelease(!(RT_UOFFSETOF(PDMDEVINS, achInstanceData) & 15));
     AssertRelease(sizeof(pVM->pdm.s.pDevInstances->Internal.s) <= sizeof(pVM->pdm.s.pDevInstances->Internal.padding));
 
     /*
@@ -171,7 +172,7 @@ int pdmR3DevInit(PVM pVM)
         Log(("PDM: No devices were configured!\n"));
         return VINF_SUCCESS;
     }
-    Log2(("PDM: cDevs=%d!\n", cDevs));
+    Log2(("PDM: cDevs=%u\n", cDevs));
 
     /*
      * Collect info on each device instance.
@@ -242,14 +243,18 @@ int pdmR3DevInit(PVM pVM)
     Assert(i == cDevs);
 
     /*
-     * Sort the device array ascending on u32Order. (bubble)
+     * Sort (bubble) the device array ascending on u32Order and instance number
+     * for a device.
      */
     unsigned c = cDevs - 1;
     while (c)
     {
         unsigned j = 0;
         for (i = 0; i < c; i++)
-            if (paDevs[i].u32Order > paDevs[i + 1].u32Order)
+            if (   paDevs[i].u32Order > paDevs[i + 1].u32Order
+                || (   paDevs[i].u32Order  == paDevs[i + 1].u32Order
+                    && paDevs[i].iInstance >  paDevs[i + 1].iInstance
+                    && paDevs[i].pDev      == paDevs[i + 1].pDev) )
             {
                 paDevs[cDevs] = paDevs[i + 1];
                 paDevs[i + 1] = paDevs[i];
@@ -297,7 +302,7 @@ int pdmR3DevInit(PVM pVM)
          * Allocate the device instance and critical section.
          */
         AssertReturn(paDevs[i].pDev->cInstances < paDevs[i].pDev->pReg->cMaxInstances, VERR_PDM_TOO_MANY_DEVICE_INSTANCES);
-        size_t cb = RT_OFFSETOF(PDMDEVINS, achInstanceData[paDevs[i].pDev->pReg->cbInstance]);
+        size_t cb = RT_UOFFSETOF_DYN(PDMDEVINS, achInstanceData[paDevs[i].pDev->pReg->cbInstance]);
         cb = RT_ALIGN_Z(cb, 16);
         PPDMDEVINS pDevIns;
         if (paDevs[i].pDev->pReg->fFlags & (PDM_DEVREG_FLAGS_RC | PDM_DEVREG_FLAGS_R0))
@@ -313,7 +318,7 @@ int pdmR3DevInit(PVM pVM)
             rc = MMHyperAlloc(pVM, sizeof(*pCritSect), 0, MM_TAG_PDM_DEVICE, (void **)&pCritSect);
         else
             rc = MMR3HeapAllocZEx(pVM, MM_TAG_PDM_DEVICE, sizeof(*pCritSect), (void **)&pCritSect);
-        AssertLogRelMsgRCReturn(rc, ("Failed to allocate a critical section for the device\n",  rc), rc);
+        AssertLogRelMsgRCReturn(rc, ("Failed to allocate a critical section for the device (%Rrc)\n",  rc), rc);
 
         /*
          * Initialize it.
@@ -328,12 +333,9 @@ int pdmR3DevInit(PVM pVM)
         pDevIns->Internal.s.pVMRC               = pVM->pVMRC;
         //pDevIns->Internal.s.pLunsR3             = NULL;
         pDevIns->Internal.s.pCfgHandle          = paDevs[i].pNode;
-        //pDevIns->Internal.s.pPciDeviceR3        = NULL;
-        //pDevIns->Internal.s.pPciBusR3           = NULL;
-        //pDevIns->Internal.s.pPciDeviceR0        = 0;
-        //pDevIns->Internal.s.pPciBusR0           = 0;
-        //pDevIns->Internal.s.pPciDeviceRC        = 0;
-        //pDevIns->Internal.s.pPciBusRC           = 0;
+        //pDevIns->Internal.s.pHeadPciDevR3       = NULL;
+        //pDevIns->Internal.s.pHeadPciDevR0       = 0;
+        //pDevIns->Internal.s.pHeadPciDevRC       = 0;
         pDevIns->Internal.s.fIntFlags           = PDMDEVINSINT_FLAGS_SUSPENDED;
         //pDevIns->Internal.s.uLastIrqTag         = 0;
         pDevIns->pHlpR3                         = fTrusted ? &g_pdmR3DevHlpTrusted : &g_pdmR3DevHlpUnTrusted;
@@ -408,24 +410,25 @@ int pdmR3DevInit(PVM pVM)
         return rc;
 #endif
 
+    LogFlow(("pdmR3DevInit: returns %Rrc\n", VINF_SUCCESS));
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * Performs the init complete callback after ring-0 and raw-mode has been
+ * initialized.
+ *
+ * @returns VBox status code.
+ * @param   pVM     The cross context VM structure.
+ */
+int pdmR3DevInitComplete(PVM pVM)
+{
+    int rc;
 
     /*
-     *
-     * PCI BIOS Fake and Init Complete.
-     *
+     * Iterate thru the device instances and work the callback.
      */
-    if (pVM->pdm.s.aPciBuses[0].pDevInsR3)
-    {
-        pdmLock(pVM);
-        rc = pVM->pdm.s.aPciBuses[0].pfnFakePCIBIOSR3(pVM->pdm.s.aPciBuses[0].pDevInsR3);
-        pdmUnlock(pVM);
-        if (RT_FAILURE(rc))
-        {
-            AssertMsgFailed(("PCI BIOS fake failed rc=%Rrc\n", rc));
-            return rc;
-        }
-    }
-
     for (PPDMDEVINS pDevIns = pVM->pdm.s.pDevInstances; pDevIns; pDevIns = pDevIns->Internal.s.pNextR3)
     {
         if (pDevIns->pReg->pfnInitComplete)
@@ -443,10 +446,12 @@ int pdmR3DevInit(PVM pVM)
     }
 
 #ifdef VBOX_WITH_USB
-    /* ditto for USB Devices. */
     rc = pdmR3UsbVMInitComplete(pVM);
     if (RT_FAILURE(rc))
+    {
+        Log(("pdmR3DevInit: returns %Rrc\n", rc));
         return rc;
+    }
 #endif
 
     LogFlow(("pdmR3DevInit: returns %Rrc\n", VINF_SUCCESS));
@@ -473,7 +478,7 @@ PPDMDEV pdmR3DevLookup(PVM pVM, const char *pszName)
  * Loads the device modules.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  */
 static int pdmR3DevLoadModules(PVM pVM)
 {
@@ -487,7 +492,13 @@ static int pdmR3DevLoadModules(PVM pVM)
     RegCB.pCfgNode         = NULL;
 
     /*
-     * Load the builtin module
+     * Load the internal VMM APIC device.
+     */
+    int rc2 = pdmR3DevReg_Register(&RegCB.Core, &g_DeviceAPIC);
+    AssertRCReturn(rc2, rc2);
+
+    /*
+     * Load the builtin module.
      */
     PCFGMNODE pDevicesNode = CFGMR3GetChild(CFGMR3GetRoot(pVM), "PDM/Devices");
     bool fLoadBuiltin;
@@ -587,7 +598,7 @@ static int pdmR3DevLoadModules(PVM pVM)
  * Loads one device module and call the registration entry point.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pRegCB          The registration callback stuff.
  * @param   pszFilename     Module filename.
  * @param   pszName         Module name.
@@ -643,7 +654,7 @@ static DECLCALLBACK(int) pdmR3DevReg_Register(PPDMDEVREGCB pCallbacks, PCPDMDEVR
     AssertMsgReturn(    pReg->szName[0]
                     &&  strlen(pReg->szName) < sizeof(pReg->szName)
                     &&  pdmR3IsValidName(pReg->szName),
-                    ("Invalid name '%.s'\n", sizeof(pReg->szName), pReg->szName),
+                    ("Invalid name '%.*s'\n", sizeof(pReg->szName), pReg->szName),
                     VERR_PDM_INVALID_DEVICE_REGISTRATION);
     AssertMsgReturn(   !(pReg->fFlags & PDM_DEVREG_FLAGS_RC)
                     || (   pReg->szRCMod[0]
@@ -728,7 +739,7 @@ static DECLCALLBACK(int) pdmR3DevReg_Register(PPDMDEVREGCB pCallbacks, PCPDMDEVR
  * Locates a LUN.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pszDevice       Device name.
  * @param   iInstance       Device instance.
  * @param   iLun            The Logical Unit to obtain the interface of.
@@ -860,14 +871,14 @@ VMMR3DECL(int) PDMR3DeviceDetach(PUVM pUVM, const char *pszDevice, unsigned iIns
  * timer or similar created by the device.
  *
  * @returns Pointer to the critical section.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pDevIns         The device instance in question.
  *
  * @internal
  */
 VMMR3_INT_DECL(PPDMCRITSECT) PDMR3DevGetCritSect(PVM pVM, PPDMDEVINS pDevIns)
 {
-    VM_ASSERT_EMT(pVM);
+    VM_ASSERT_EMT(pVM); RT_NOREF_PV(pVM);
     VM_ASSERT_STATE(pVM, VMSTATE_CREATING);
     AssertPtr(pDevIns);
 

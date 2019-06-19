@@ -1,10 +1,10 @@
+/* $Id: USBTest.cpp $ */
 /** @file
- *
  * VBox host drivers - USB drivers - Filter & driver installation
- *
- * Installation code
- *
- * Copyright (C) 2006-2011 Oracle Corporation
+ */
+
+/*
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,14 +13,23 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <windows.h>
-#include <setupapi.h>
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
+#include <iprt/win/setupapi.h>
 #include <newdev.h>
 #include <iprt/assert.h>
 #include <iprt/err.h>
@@ -188,7 +197,7 @@ int usbMonRemoveFilter (void *aID)
 
     Assert(g_hUSBMonitor);
 
-    printf("usblibRemoveFilter %x\n", aID);
+    printf("usblibRemoveFilter %p\n", aID);
 
     uId = (uintptr_t)aID;
     if (!DeviceIoControl(g_hUSBMonitor, SUPUSBFLT_IOCTL_REMOVE_FILTER, &uId, sizeof(uId),  NULL, 0,&cbReturned, NULL))
@@ -252,8 +261,11 @@ int usbMonitorInit()
         goto failure;
     }
 
-    if (version.u32Major != USBMON_MAJOR_VERSION ||
-        version.u32Minor <  USBMON_MINOR_VERSION)
+    if (   version.u32Major != USBMON_MAJOR_VERSION
+#if USBMON_MINOR_VERSION != 0
+        || version.u32Minor < USBMON_MINOR_VERSION
+#endif
+        )
     {
         printf("usbproxy: Filter driver version mismatch!!\n");
         rc = VERR_VERSION_MISMATCH;
@@ -304,6 +316,7 @@ int usbMonitorTerm()
 int __cdecl main(int argc, char **argv)
 {
     int rc;
+    RT_NOREF2(argc, argv);
 
     printf("USB test\n");
 

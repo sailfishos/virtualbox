@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/s3.h>
 #include <iprt/stream.h>
 #include <iprt/initterm.h>
@@ -35,9 +35,9 @@
 #include <iprt/test.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /* Manual configuration of this testcase */
 #define TSTS3_CREATEBUCKET
 #define TSTS3_PUTGETKEY
@@ -55,11 +55,13 @@
 # define TSTS3_PUTGETKEY_GETFILE "tstS3_fetched"
 #endif /* TSTS3_PUTGETKEY */
 
-static int progress(unsigned uPercent, void *pvUser)
+static DECLCALLBACK(int) progress(unsigned uPercent, void *pvUser)
 {
 #ifdef TSTS3_SHOWPROGRESS
     RTTestIPrintf(RTTESTLVL_ALWAYS, " Progress for %s - %d%% done.\n", (char*)pvUser, (int)uPercent);
-#endif /* TSTS3_SHOWPROGRESS */
+#else
+    RT_NOREF2(uPercent, pvUser);
+#endif
     return VINF_SUCCESS;
 }
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -38,9 +39,9 @@
 #include <iprt/formats/asn1.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static uint8_t const g_acbStringTags[] =
 {
     /* [ASN1_TAG_EOC]               = */ 0,
@@ -205,6 +206,7 @@ static const RTISO2022MAP g_IsoIr102Map =
 };
 
 
+#if 0 /* unused */
 /** GL mappings for ISO-IR-87 (Japanese),  with space and delete. */
 static const RTISO2022MAP g_IsoIr87Map =
 {
@@ -215,6 +217,7 @@ static const RTISO2022MAP g_IsoIr87Map =
     { 0x24, 0x2a, 0x42, 0xff, 0xff, 0xff } /* Esc into G2 */,
     { 0x24, 0x2b, 0x42, 0xff, 0xff, 0xff } /* Esc into G3 */,
 };
+#endif
 
 
 /**
@@ -516,7 +519,7 @@ static int rtIso2022Decoder_FindEscAndSet(PRTISO2022DECODERSTATE pThis,
     uint32_t i = cMaps;
     while (i-- > 0)
     {
-        uint32_t cchMatch;
+        uint32_t cchMatch = 0; /* (MSC maybe used uninitialized) */
         PCRTISO2022MAP pMap = papMaps[i];
         /** @todo skip non-Teletex codesets if we ever add more than we need for it. */
         if (   pMap->abEscLoadXX[0] == b0
@@ -528,7 +531,8 @@ static int rtIso2022Decoder_FindEscAndSet(PRTISO2022DECODERSTATE pThis,
                 pThis->apMapGn[0] = pMap;
             return cchMatch + 1;
         }
-        else if (!ppMapRet) /* ppMapRet is NULL if Gn. */
+
+        if (!ppMapRet) /* ppMapRet is NULL if Gn. */
         {
             uint32_t iGn;
             if (   pMap->abEscLoadG1[0] == b0
@@ -762,12 +766,12 @@ static int rtIso2022Decoder_GetNextUniCpSlow(PRTISO2022DECODERSTATE pThis, PRTUN
                         }
                         *pUniCp = RTUNICP_INVALID;
                         return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                             "@%u: GL b=%#x is marked unused in map #u range %u.",
+                                             "@%u: GL b=%#x is marked unused in map #%u range %u.",
                                              pThis->offString, b + 0x20, pMap->uRegistration, pMap->cToUni);
                     }
                     *pUniCp = RTUNICP_INVALID;
                     return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                         "@%u: GL b=%#x is outside map #u range %u.",
+                                         "@%u: GL b=%#x is outside map #%u range %u.",
                                          pThis->offString, b + 0x20, pMap->uRegistration, pMap->cToUni);
                 }
 
@@ -791,7 +795,7 @@ static int rtIso2022Decoder_GetNextUniCpSlow(PRTISO2022DECODERSTATE pThis, PRTUN
                             }
                             *pUniCp = RTUNICP_INVALID;
                             return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                                 "@%u: GL b=%#x is marked unused in map #u.",
+                                                 "@%u: GL b=%#x is marked unused in map #%u.",
                                                  pThis->offString, b + 0x20, pMap->uRegistration);
                         }
                         if (u16 >= 0x7f00)
@@ -802,16 +806,16 @@ static int rtIso2022Decoder_GetNextUniCpSlow(PRTISO2022DECODERSTATE pThis, PRTUN
                         }
                         *pUniCp = RTUNICP_INVALID;
                         return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                             "@%u: GL u16=%#x (b0=%#x b1=%#x) is outside map #u range %u.",
+                                             "@%u: GL u16=%#x (b0=%#x b1=%#x) is outside map #%u range %u.",
                                              pThis->offString, u16, b + 0x20, b2 + 0x20, pMap->uRegistration, pMap->cToUni);
                     }
                     return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                         "@%u: 2nd GL byte outside GL range: b0=%#x b1=%#x (map #u)",
+                                         "@%u: 2nd GL byte outside GL range: b0=%#x b1=%#x (map #%u)",
                                          pThis->offString, b + 0x20, b2 + 0x20, pMap->uRegistration);
 
                 }
                 return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                     "@%u: EOS reading 2nd byte for GL b=%#x (map #u).",
+                                     "@%u: EOS reading 2nd byte for GL b=%#x (map #%u).",
                                      pThis->offString, b + 0x20, pMap->uRegistration);
             }
             else
@@ -843,7 +847,7 @@ static int rtIso2022Decoder_GetNextUniCpSlow(PRTISO2022DECODERSTATE pThis, PRTUN
                 }
                 else
                     return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                         "@%u: C0 b=%#x is marked unused in map #u.",
+                                         "@%u: C0 b=%#x is marked unused in map #%u.",
                                          pThis->offString, b, pThis->pMapC0->uRegistration);
             }
         }
@@ -873,12 +877,12 @@ static int rtIso2022Decoder_GetNextUniCpSlow(PRTISO2022DECODERSTATE pThis, PRTUN
 
                         *pUniCp = RTUNICP_INVALID;
                         return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                             "@%u: GR b=%#x is marked unused in map #u.",
+                                             "@%u: GR b=%#x is marked unused in map #%u.",
                                              pThis->offString, b + 0xa0, pMap->uRegistration);
                     }
                     *pUniCp = RTUNICP_INVALID;
                     return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                         "@%u: GR b=%#x is outside map #u range %u",
+                                         "@%u: GR b=%#x is outside map #%u range %u",
                                          pThis->offString, b + 0xa0, pMap->uRegistration, pMap->cToUni);
                 }
 
@@ -903,21 +907,21 @@ static int rtIso2022Decoder_GetNextUniCpSlow(PRTISO2022DECODERSTATE pThis, PRTUN
 
                             *pUniCp = RTUNICP_INVALID;
                             return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                                 "@%u: GR b=%#x is marked unused in map #u.",
+                                                 "@%u: GR b=%#x is marked unused in map #%u.",
                                                  pThis->offString, b + 0xa0, pMap->uRegistration);
                         }
                         *pUniCp = RTUNICP_INVALID;
                         return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                             "@%u: GR u16=%#x (b0=%#x b1=%#x) is outside map #u range %u.",
+                                             "@%u: GR u16=%#x (b0=%#x b1=%#x) is outside map #%u range %u.",
                                              pThis->offString, u16, b + 0xa0, b2 + 0xa0, pMap->uRegistration, pMap->cToUni);
                     }
                     return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                         "@%u: 2nd GR byte outside GR range: b0=%#x b1=%#x (map #u).",
+                                         "@%u: 2nd GR byte outside GR range: b0=%#x b1=%#x (map #%u).",
                                          pThis->offString, b + 0xa0, b2 + 0xa0, pMap->uRegistration);
 
                 }
                 return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                     "@%u: EOS reading 2nd byte for GR b=%#x (map #u).",
+                                     "@%u: EOS reading 2nd byte for GR b=%#x (map #%u).",
                                      pThis->offString, b + 0xa0, pMap->uRegistration);
             }
             else
@@ -946,7 +950,7 @@ static int rtIso2022Decoder_GetNextUniCpSlow(PRTISO2022DECODERSTATE pThis, PRTUN
                 }
                 else
                     return RTErrInfoSetF(pThis->pErrInfo, VERR_ASN1_INVALID_T61_STRING_ENCODING,
-                                         "@%u: C1 b=%#x is marked unused in map #u.",
+                                         "@%u: C1 b=%#x is marked unused in map #%u.",
                                          pThis->offString, b + 0x80, pThis->pMapC1->uRegistration);
             }
         }
@@ -1031,7 +1035,6 @@ static int rtIso2022RecodeAsUtf8(uint32_t uProfile, const char *pchSrc, uint32_t
     int rc = rtIso2022Decoder_Init(&Decoder, pchSrc, cchSrc, 102, 106, 107, 102, NULL /*pErrInfo*/);
     if (RT_SUCCESS(rc))
     {
-        size_t cchUtf8 = 0;
         for (;;)
         {
             RTUNICP uc;
@@ -1734,6 +1737,7 @@ RTDECL(void) RTAsn1String_Delete(PRTASN1STRING pThis)
 
 RTDECL(int) RTAsn1String_Enum(PRTASN1STRING pThis, PFNRTASN1ENUMCALLBACK pfnCallback, uint32_t uDepth, void *pvUser)
 {
+    RT_NOREF_PV(pThis); RT_NOREF_PV(pfnCallback); RT_NOREF_PV(uDepth); RT_NOREF_PV(pvUser);
     Assert(pThis && (!RTAsn1String_IsPresent(pThis) || pThis->Asn1Core.pOps == &g_RTAsn1String_Vtable));
 
     /* No children to enumerate. */
@@ -1750,6 +1754,7 @@ RTDECL(int) RTAsn1String_Compare(PCRTASN1STRING pLeft, PCRTASN1STRING pRight)
 
 RTDECL(int) RTAsn1String_CheckSanity(PCRTASN1STRING pThis, uint32_t fFlags, PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
     if (RT_UNLIKELY(!RTAsn1String_IsPresent(pThis)))
         return RTErrInfoSetF(pErrInfo, VERR_ASN1_NOT_PRESENT, "%s: Missing (STRING).", pszErrorTag);
     return rtAsn1String_CheckSanity(pThis, pErrInfo, pszErrorTag, NULL /*pcchUtf8*/);
@@ -1785,6 +1790,7 @@ RTDECL(int) RTAsn1String_CheckSanity(PCRTASN1STRING pThis, uint32_t fFlags, PRTE
     \
     RTDECL(int) RT_CONCAT(a_Api,_Enum)(PRTASN1STRING pThis, PFNRTASN1ENUMCALLBACK pfnCallback, uint32_t uDepth, void *pvUser) \
     { \
+        RT_NOREF_PV(pThis); RT_NOREF_PV(pfnCallback); RT_NOREF_PV(uDepth); RT_NOREF_PV(pvUser); \
         Assert(   pThis \
                && (   !RTAsn1String_IsPresent(pThis) \
                    || (   pThis->Asn1Core.pOps == &g_RTAsn1String_Vtable \

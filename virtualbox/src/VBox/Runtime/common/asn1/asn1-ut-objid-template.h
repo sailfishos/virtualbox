@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -39,6 +39,15 @@ RTASN1TMPL_SEQ_OF(RTASN1OBJID, RTAsn1ObjId);
 #define RTASN1TMPL_EXT_NAME     RTAsn1SetOfObjIds
 #define RTASN1TMPL_INT_NAME     rtAsn1SetOfObjIds
 RTASN1TMPL_SET_OF(RTASN1OBJID, RTAsn1ObjId);
+#undef RTASN1TMPL_TYPE
+#undef RTASN1TMPL_EXT_NAME
+#undef RTASN1TMPL_INT_NAME
+
+
+#define RTASN1TMPL_TYPE         RTASN1SETOFOBJIDSEQS
+#define RTASN1TMPL_EXT_NAME     RTAsn1SetOfObjIdSeqs
+#define RTASN1TMPL_INT_NAME     rtAsn1SetOfObjIdSeqs
+RTASN1TMPL_SET_OF(RTASN1SEQOFOBJIDS, RTAsn1SeqOfObjIds);
 #undef RTASN1TMPL_TYPE
 #undef RTASN1TMPL_EXT_NAME
 #undef RTASN1TMPL_INT_NAME

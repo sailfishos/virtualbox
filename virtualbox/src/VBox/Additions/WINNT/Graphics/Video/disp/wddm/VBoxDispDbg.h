@@ -1,11 +1,10 @@
 /* $Id: VBoxDispDbg.h $ */
-
 /** @file
  * VBoxVideo Display D3D User mode dll
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -170,7 +169,7 @@ BOOL vboxVDbgDoCheckExe(const char * pszName);
 #define VBOXVDBG_STRCASE_UNKNOWN() \
         default: Assert(0); return "Unknown";
 
-static DECLINLINE(const char*) vboxDispLogD3DRcType(D3DRESOURCETYPE enmType)
+DECLINLINE(const char*) vboxDispLogD3DRcType(D3DRESOURCETYPE enmType)
 {
     switch (enmType)
     {
@@ -185,7 +184,7 @@ static DECLINLINE(const char*) vboxDispLogD3DRcType(D3DRESOURCETYPE enmType)
     }
 }
 
-#include "VBoxDispMpLogger.h"
+#include <VBoxDispMpLogger.h>
 
 VBOXDISPMPLOGGER_DECL(void) VBoxDispMpLoggerDumpD3DCAPS9(struct _D3DCAPS9 *pCaps);
 
@@ -312,7 +311,7 @@ HRESULT vboxVDbgTimerStop(HANDLE hTimerQueue, HANDLE hTimer);
         } \
     } while (0)
 
-#define VBOXVDBG_DUMP_RECTS_INIT(_d) DWORD vboxVDbgDumpRects = _d;
+#define VBOXVDBG_DUMP_RECTS_INIT(_d) DWORD vboxVDbgDumpRects = _d; NOREF(vboxVDbgDumpRects)
 #define VBOXVDBG_DUMP_RECTS_FORCE() vboxVDbgDumpRects = 1;
 #define VBOXVDBG_DUMP_RECTS_FORCED() (!!vboxVDbgDumpRects)
 
@@ -338,7 +337,7 @@ HRESULT vboxVDbgTimerStop(HANDLE hTimerQueue, HANDLE hTimer);
         *(_pIsShared) = FALSE; \
         for (UINT i = 0; i < (_pDevice)->cRTs; ++i) { \
             PVBOXWDDMDISP_ALLOCATION pRtVar = (_pDevice)->apRTs[i]; \
-            if (pRtVar->pRc->RcDesc.fFlags.SharedResource) { *(_pIsShared) = TRUE; break; } \
+            if (pRtVar && pRtVar->pRc->RcDesc.fFlags.SharedResource) { *(_pIsShared) = TRUE; break; } \
         } \
         if (!*(_pIsShared)) { \
             for (UINT i = 0, iSampler = 0; iSampler < (_pDevice)->cSamplerTextures; ++i) { \

@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_UDPTUNNEL
 #include <VBox/log.h>
 #include <VBox/vmm/pdmdrv.h>
@@ -39,9 +40,9 @@
 #include "VBoxDD.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * UDP tunnel driver instance data.
  *
@@ -99,17 +100,19 @@ typedef struct DRVUDPTUNNEL
 
 
 /** Converts a pointer to UDPTUNNEL::INetworkUp to a PRDVUDPTUNNEL. */
-#define PDMINETWORKUP_2_DRVUDPTUNNEL(pInterface) ( (PDRVUDPTUNNEL)((uintptr_t)pInterface - RT_OFFSETOF(DRVUDPTUNNEL, INetworkUp)) )
+#define PDMINETWORKUP_2_DRVUDPTUNNEL(pInterface) ( (PDRVUDPTUNNEL)((uintptr_t)pInterface - RT_UOFFSETOF(DRVUDPTUNNEL, INetworkUp)) )
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 
 /**
  * @interface_method_impl{PDMINETWORKUP,pfnBeginXmit}
  */
 static DECLCALLBACK(int) drvUDPTunnelUp_BeginXmit(PPDMINETWORKUP pInterface, bool fOnWorkerThread)
 {
+    RT_NOREF(fOnWorkerThread);
     PDRVUDPTUNNEL pThis = PDMINETWORKUP_2_DRVUDPTUNNEL(pInterface);
     int rc = RTCritSectTryEnter(&pThis->XmitLock);
     if (RT_FAILURE(rc))
@@ -124,10 +127,10 @@ static DECLCALLBACK(int) drvUDPTunnelUp_BeginXmit(PPDMINETWORKUP pInterface, boo
  * @interface_method_impl{PDMINETWORKUP,pfnAllocBuf}
  */
 static DECLCALLBACK(int) drvUDPTunnelUp_AllocBuf(PPDMINETWORKUP pInterface, size_t cbMin,
-                                                  PCPDMNETWORKGSO pGso, PPPDMSCATTERGATHER ppSgBuf)
+                                                 PCPDMNETWORKGSO pGso, PPPDMSCATTERGATHER ppSgBuf)
 {
     PDRVUDPTUNNEL pThis = PDMINETWORKUP_2_DRVUDPTUNNEL(pInterface);
-    Assert(RTCritSectIsOwner(&pThis->XmitLock));
+    Assert(RTCritSectIsOwner(&pThis->XmitLock)); NOREF(pThis);
 
     /*
      * Allocate a scatter / gather buffer descriptor that is immediately
@@ -172,7 +175,7 @@ static DECLCALLBACK(int) drvUDPTunnelUp_AllocBuf(PPDMINETWORKUP pInterface, size
 static DECLCALLBACK(int) drvUDPTunnelUp_FreeBuf(PPDMINETWORKUP pInterface, PPDMSCATTERGATHER pSgBuf)
 {
     PDRVUDPTUNNEL pThis = PDMINETWORKUP_2_DRVUDPTUNNEL(pInterface);
-    Assert(RTCritSectIsOwner(&pThis->XmitLock));
+    Assert(RTCritSectIsOwner(&pThis->XmitLock)); NOREF(pThis);
     if (pSgBuf)
     {
         Assert((pSgBuf->fFlags & PDMSCATTERGATHER_FLAGS_MAGIC_MASK) == PDMSCATTERGATHER_FLAGS_MAGIC);
@@ -188,6 +191,7 @@ static DECLCALLBACK(int) drvUDPTunnelUp_FreeBuf(PPDMINETWORKUP pInterface, PPDMS
  */
 static DECLCALLBACK(int) drvUDPTunnelUp_SendBuf(PPDMINETWORKUP pInterface, PPDMSCATTERGATHER pSgBuf, bool fOnWorkerThread)
 {
+    RT_NOREF(fOnWorkerThread);
     PDRVUDPTUNNEL pThis = PDMINETWORKUP_2_DRVUDPTUNNEL(pInterface);
     STAM_COUNTER_INC(&pThis->StatPktSent);
     STAM_COUNTER_ADD(&pThis->StatPktSentBytes, pSgBuf->cbUsed);
@@ -221,7 +225,7 @@ static DECLCALLBACK(int) drvUDPTunnelUp_SendBuf(PPDMINETWORKUP pInterface, PPDMS
         PCPDMNETWORKGSO pGso    = (PCPDMNETWORKGSO)pSgBuf->pvUser;
         uint32_t const  cSegs   = PDMNetGsoCalcSegmentCount(pGso, pSgBuf->cbUsed);  Assert(cSegs > 1);
         rc = VINF_SUCCESS;
-        for (size_t iSeg = 0; iSeg < cSegs; iSeg++)
+        for (uint32_t iSeg = 0; iSeg < cSegs; iSeg++)
         {
             uint32_t cbSegFrame;
             void *pvSegFrame = PDMNetGsoCarveSegmentQD(pGso, (uint8_t *)pbFrame, pSgBuf->cbUsed, abHdrScratch,
@@ -261,6 +265,7 @@ static DECLCALLBACK(void) drvUDPTunnelUp_EndXmit(PPDMINETWORKUP pInterface)
  */
 static DECLCALLBACK(void) drvUDPTunnelUp_SetPromiscuousMode(PPDMINETWORKUP pInterface, bool fPromiscuous)
 {
+    RT_NOREF(pInterface, fPromiscuous);
     LogFlowFunc(("fPromiscuous=%d\n", fPromiscuous));
     /* nothing to do */
 }
@@ -287,6 +292,7 @@ static DECLCALLBACK(void) drvUDPTunnelUp_NotifyLinkChanged(PPDMINETWORKUP pInter
             break;
         default:
             AssertMsgFailed(("enmLinkState=%d\n", enmLinkState));
+            RT_FALL_THRU();
         case PDMNETWORKLINKSTATE_UP:
             fLinkDown = false;
             break;
@@ -447,8 +453,9 @@ static DECLCALLBACK(void) drvUDPTunnelDestruct(PPDMDRVINS pDrvIns)
  */
 static DECLCALLBACK(int) drvUDPTunnelConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfg, uint32_t fFlags)
 {
-    PDRVUDPTUNNEL pThis = PDMINS_2_DATA(pDrvIns, PDRVUDPTUNNEL);
+    RT_NOREF(fFlags);
     PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
+    PDRVUDPTUNNEL pThis = PDMINS_2_DATA(pDrvIns, PDRVUDPTUNNEL);
 
     /*
      * Init the static parts.

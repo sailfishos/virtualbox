@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/log.h>
 #include "internal/iprt.h"
 #include <iprt/asm-amd64-x86.h>
@@ -36,9 +37,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(size_t) rtLogBackdoorOutput(void *pv, const char *pachChars, size_t cbChars);
 
 
@@ -67,10 +68,11 @@ RT_EXPORT_SYMBOL(RTLogBackdoorPrintfV);
 
 /**
  * Callback for RTLogFormatV which writes to the backdoor.
- * See PFNLOGOUTPUT() for details.
+ * See PFNRTSTROUTPUT() for details.
  */
-static DECLCALLBACK(size_t) rtLogBackdoorOutput(void *pv, const char *pachChars, size_t cbChars)
+static DECLCALLBACK(size_t) rtLogBackdoorOutput(void *pvArg, const char *pachChars, size_t cbChars)
 {
+    RT_NOREF_PV(pvArg);
     RTLogWriteUser(pachChars, cbChars);
     return cbChars;
 }

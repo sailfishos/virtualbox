@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -33,9 +33,10 @@
  *
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGF
 #include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/hm.h>
@@ -59,9 +60,9 @@
 #include <iprt/param.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Address space database node.
  */
@@ -90,6 +91,7 @@ typedef struct DBGFR3ASLOADOPENDATA
     RTDBGMOD        hMod;
 } DBGFR3ASLOADOPENDATA;
 
+#if 0 /* unused */
 /**
  * Callback for dbgfR3AsSearchPath and dbgfR3AsSearchEnvPath.
  *
@@ -100,11 +102,12 @@ typedef struct DBGFR3ASLOADOPENDATA
 typedef int FNDBGFR3ASSEARCHOPEN(const char *pszFilename, void *pvUser);
 /** Pointer to a FNDBGFR3ASSEARCHOPEN. */
 typedef FNDBGFR3ASSEARCHOPEN *PFNDBGFR3ASSEARCHOPEN;
+#endif
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Locks the address space database for writing. */
 #define DBGF_AS_DB_LOCK_WRITE(pUVM) \
     do { \
@@ -229,7 +232,6 @@ int dbgfR3AsInit(PUVM pUVM)
     AssertRCReturn(rc, rc);
     rc = DBGFR3AsAdd(pUVM, hDbgAs, NIL_RTPROCESS);
     AssertRCReturn(rc, rc);
-    RTDbgAsRetain(hDbgAs);
     pUVM->dbgf.s.ahAsAliases[DBGF_AS_ALIAS_2_INDEX(DBGF_AS_GLOBAL)] = hDbgAs;
 
     RTDbgAsRetain(hDbgAs);
@@ -239,14 +241,12 @@ int dbgfR3AsInit(PUVM pUVM)
     AssertRCReturn(rc, rc);
     rc = DBGFR3AsAdd(pUVM, hDbgAs, NIL_RTPROCESS);
     AssertRCReturn(rc, rc);
-    RTDbgAsRetain(hDbgAs);
     pUVM->dbgf.s.ahAsAliases[DBGF_AS_ALIAS_2_INDEX(DBGF_AS_PHYS)] = hDbgAs;
 
     rc = RTDbgAsCreate(&hDbgAs, 0, RTRCPTR_MAX, "HyperRawMode");
     AssertRCReturn(rc, rc);
     rc = DBGFR3AsAdd(pUVM, hDbgAs, NIL_RTPROCESS);
     AssertRCReturn(rc, rc);
-    RTDbgAsRetain(hDbgAs);
     pUVM->dbgf.s.ahAsAliases[DBGF_AS_ALIAS_2_INDEX(DBGF_AS_RC)] = hDbgAs;
     RTDbgAsRetain(hDbgAs);
     pUVM->dbgf.s.ahAsAliases[DBGF_AS_ALIAS_2_INDEX(DBGF_AS_RC_AND_GC_GLOBAL)] = hDbgAs;
@@ -255,7 +255,6 @@ int dbgfR3AsInit(PUVM pUVM)
     AssertRCReturn(rc, rc);
     rc = DBGFR3AsAdd(pUVM, hDbgAs, NIL_RTPROCESS);
     AssertRCReturn(rc, rc);
-    RTDbgAsRetain(hDbgAs);
     pUVM->dbgf.s.ahAsAliases[DBGF_AS_ALIAS_2_INDEX(DBGF_AS_R0)] = hDbgAs;
 
     return VINF_SUCCESS;
@@ -304,6 +303,12 @@ void dbgfR3AsTerm(PUVM pUVM)
         RTDbgAsRelease(pUVM->dbgf.s.ahAsAliases[i]);
         pUVM->dbgf.s.ahAsAliases[i] = NIL_RTDBGAS;
     }
+
+    /*
+     * Release the reference to the debugging config.
+     */
+    rc = RTDbgCfgRelease(pUVM->dbgf.s.hDbgCfg);
+    AssertRC(rc);
 }
 
 
@@ -317,7 +322,7 @@ void dbgfR3AsRelocate(PUVM pUVM, RTGCUINTPTR offDelta)
 {
     /*
      * We will relocate the raw-mode context modules by offDelta if they have
-     * been injected into the the DBGF_AS_RC map.
+     * been injected into the DBGF_AS_RC map.
      */
     if (   pUVM->dbgf.s.afAsAliasPopuplated[DBGF_AS_ALIAS_2_INDEX(DBGF_AS_RC)]
         && offDelta != 0)
@@ -790,6 +795,7 @@ VMMR3DECL(RTDBGAS) DBGFR3AsQueryByPid(PUVM pUVM, RTPROCESS ProcId)
     return hDbgAs;
 }
 
+#if 0 /* unused */
 
 /**
  * Searches for the file in the path.
@@ -928,6 +934,8 @@ static int dbgfR3AsSearchCfgPath(PUVM pUVM, const char *pszFilename, const char 
     MMR3HeapFree(pszPath);
     return rc;
 }
+
+#endif /* unused */
 
 
 /**
@@ -1139,18 +1147,6 @@ static void dbgfR3AsSymbolJoinNames(PRTDBGSYMBOL pSymbol, RTDBGMOD hMod)
     memmove(&pSymbol->szName[cchModName + 1], &pSymbol->szName[0], cchSymbol + 1);
     memcpy(&pSymbol->szName[0], pszModName, cchModName);
     pSymbol->szName[cchModName] = '!';
-}
-
-
-/** Temporary symbol conversion function. */
-static void dbgfR3AsSymbolConvert(PRTDBGSYMBOL pSymbol, PCDBGFSYMBOL pDbgfSym)
-{
-    pSymbol->offSeg = pSymbol->Value = pDbgfSym->Value;
-    pSymbol->cb = pDbgfSym->cb;
-    pSymbol->iSeg = 0;
-    pSymbol->fFlags = 0;
-    pSymbol->iOrdinal = UINT32_MAX;
-    strcpy(pSymbol->szName, pDbgfSym->szName);
 }
 
 

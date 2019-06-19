@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_OS_WINDOWS
 # include <Windows.h>
 #else
@@ -146,7 +147,7 @@ int main(int argc, char **argv)
             if (   !strcmp(argv[i], "--version")
                 || !strcmp(argv[i], "-V"))
             {
-                printf("$Revision: 83575 $\n");
+                printf("$Revision: 118839 $\n");
                 return 0;
             }
             fprintf(stderr, "syntax error: unknown option '%s'\n", argv[i]);
@@ -189,7 +190,7 @@ int main(int argc, char **argv)
                 fclose(pFile);
             }
             else
-                fprintf(stderr, "error: fopen('%s','r'): %d\n", argv[i][1], errno);
+                fprintf(stderr, "error: fopen('%s','r'): %d\n", &argv[i][1], errno);
         }
         else
             load(argv[i]);

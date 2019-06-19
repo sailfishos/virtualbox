@@ -1,12 +1,10 @@
 /* $Id: UIGDetails.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetails class implementation
+ * VBox Qt GUI - UIGDetails class implementation.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QApplication>
-#include <QVBoxLayout>
+# include <QApplication>
+# include <QStyle>
+# include <QVBoxLayout>
 
 /* GUI includes: */
-#include "UIGDetails.h"
-#include "UIGDetailsModel.h"
-#include "UIGDetailsView.h"
+# include "UIGDetails.h"
+# include "UIGDetailsModel.h"
+# include "UIGDetailsView.h"
 
-UIGDetails::UIGDetails(QWidget *pParent)
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+
+UIGDetails::UIGDetails(QWidget *pParent /* = 0 */)
     : QWidget(pParent)
     , m_pMainLayout(0)
     , m_pDetailsModel(0)
@@ -67,7 +73,8 @@ void UIGDetails::prepareLayout()
 {
     /* Setup main-layout: */
     m_pMainLayout = new QVBoxLayout(this);
-    m_pMainLayout->setContentsMargins(2, 0, 0, 0);
+    const int iL = qApp->style()->pixelMetric(QStyle::PM_LayoutLeftMargin) / 9;
+    m_pMainLayout->setContentsMargins(iL, 0, 0, 0);
     m_pMainLayout->setSpacing(0);
 }
 

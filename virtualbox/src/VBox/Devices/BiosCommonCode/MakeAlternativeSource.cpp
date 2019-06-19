@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 #include <iprt/buildconfig.h>
 #include <iprt/ctype.h>
@@ -36,9 +36,9 @@
 #include <VBox/dis.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * A BIOS segment.
  */
@@ -92,9 +92,9 @@ typedef struct BIOSMAP
 typedef BIOSMAP *PBIOSMAP;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The verbosity level.*/
 static unsigned         g_cVerbose = 1 /*0*/;
 /** Pointer to the BIOS image. */
@@ -337,6 +337,7 @@ static bool disIsString(uint32_t uFlatAddr, uint32_t cb)
 }
 
 
+#if 0 /* unused */
 /**
  * Checks if a dword could be a far 16:16 BIOS address.
  *
@@ -355,6 +356,7 @@ static bool disIsFarBiosAddr(uint32_t uFlatAddr)
         return false;
     return true;
 }
+#endif
 
 
 static bool disByteData(uint32_t uFlatAddr, uint32_t cb)
@@ -611,7 +613,7 @@ static bool disCopySegmentGap(uint32_t uFlatAddr, uint32_t cbPadding)
         outputPrintf("\n"
                      "  ; Padding %#x bytes at %#x\n", cbPadding, uFlatAddr);
     uint8_t const  *pb = &g_pbImg[uFlatAddr - g_uBiosFlatBase];
-    if (!ASMMemIsAll8(pb, cbPadding, 0))
+    if (ASMMemIsZero(pb, cbPadding))
         return outputPrintf("  times %u db 0\n", cbPadding);
 
     return disByteData(uFlatAddr, cbPadding);
@@ -810,6 +812,8 @@ static bool disDataSegment(uint32_t iSeg)
 
 static bool disIsCodeAndAdjustSize(uint32_t uFlatAddr, PRTDBGSYMBOL pSym, PBIOSSEG pSeg)
 {
+    RT_NOREF_PV(uFlatAddr);
+
     switch (g_enmBiosType)
     {
         /*
@@ -851,6 +855,7 @@ static bool disIsCodeAndAdjustSize(uint32_t uFlatAddr, PRTDBGSYMBOL pSym, PBIOSS
 
 static bool disIs16BitCode(const char *pszSymbol)
 {
+    RT_NOREF_PV(pszSymbol);
     return true;
 }
 
@@ -923,6 +928,8 @@ static size_t disHandleYasmDifferences(PDISCPUSTATE pCpuState, uint32_t uFlatAdd
  */
 static DECLCALLBACK(int) disReadOpcodeBytes(PDISCPUSTATE pDis, uint8_t offInstr, uint8_t cbMinRead, uint8_t cbMaxRead)
 {
+    RT_NOREF_PV(cbMinRead);
+
     RTUINTPTR   offBios  = pDis->uInstrAddr + offInstr - g_uBiosFlatBase;
     size_t      cbToRead = cbMaxRead;
     if (offBios + cbToRead > g_cbImg)
@@ -954,9 +961,9 @@ static bool disCode(uint32_t uFlatAddr, uint32_t cb, bool fIs16Bit)
     {
         /* Trailing zero padding detection. */
         if (   *pb == '\0'
-            && ASMMemIsAll8(pb, RT_MIN(cb, 8), 0) == NULL)
+            && ASMMemIsZero(pb, RT_MIN(cb, 8)))
         {
-            void    *pv      = ASMMemIsAll8(pb, cb, 0);
+            void    *pv      = ASMMemFirstNonZero(pb, cb);
             uint32_t cbZeros = pv ? (uint32_t)((uint8_t const *)pv - pb) : cb;
             if (!outputPrintf("    times %#x db 0\n", cbZeros))
                 return false;
@@ -970,40 +977,31 @@ static bool disCode(uint32_t uFlatAddr, uint32_t cb, bool fIs16Bit)
         }
         /* Work arounds for switch tables and such (disas assertions). */
         else if (    0
-#if 0
-                 || (   pb[0] == 0x11   /* int13_cdemu switch */
-                     && pb[1] == 0xda
-                     && pb[2] == 0x05
-                     && pb[3] == 0xff
-                     && pb[4] == 0xff
-                    )
-#endif
-                 || (   pb[0] == 0xb0
-                     && pb[1] == 0x58
-                     && pb[2] == 0xc8
-                     && pb[3] == 0x58
-                     && pb[4] == 0xc8
-                     && pb[5] == 0x58
-                    )
-                 || (   pb[0] == 0x50
+                 || (   pb[0] == 0x50   /* int13_cdemu switch */
                      && pb[1] == 0x4e
                      && pb[2] == 0x49
                      && pb[3] == 0x48
                      && pb[4] == 0x47
-                     && pb[5] == 0x46
                     )
-                 || (   pb[0] == 0x29
-                     && pb[1] == 0x65
-                     && pb[2] == 0x4b
-                     && pb[3] == 0x65
-                     && pb[4] == 0x6e
-                     && pb[5] == 0x65
+                 || (   pb[0] == 0x8b   /* _int13_harddisk_ext switch */
+                     && pb[1] == 0x46
+                     && pb[2] == 0x16
+                     && pb[3] == 0x30
+                     && pb[4] == 0xe8
+                     && pb[5] == 0x80
                     )
-                 || (   pb[0] == 0xff   /* _pci16_function switch */
-                     && pb[1] == 0x91
-                     && pb[2] == 0x19
+                 || (   pb[0] == 0xd8
+                     && pb[1] == 0x5f
+                     && pb[2] == 0x0b
+                     && pb[3] == 0x60
+                     && pb[4] == 0x0b
+                     && pb[5] == 0x60
+                    )
+                 || (   pb[0] == 0x67   /* _pci16_function switch */
+                     && pb[1] == 0x92
+                     && pb[2] == 0x81
                      && pb[3] == 0x92
-                     && pb[4] == 0x2c
+                     && pb[4] == 0x94
                      && pb[5] == 0x92
                      )
                  || (   pb[0] == 0xa3   /* _int1a_function switch */
@@ -1020,29 +1018,58 @@ static bool disCode(uint32_t uFlatAddr, uint32_t cb, bool fIs16Bit)
                      && pb[4] == 0x02
                      && pb[5] == 0x01
                     )
-                 || (   pb[0] == 0x8c   /* bytes after apm_out_str_ */
-                     && pb[1] == 0x2f
-                     && pb[2] == 0x8d
-                     && pb[3] == 0xbb
-                     && pb[4] == 0x8c
-                     && pb[5] == 0x2f
-                     )
+                 || (   pb[0] == 0x00   /* bytes after apm_out_str_ */
+                     && pb[1] == 0x00
+                     && pb[2] == 0x00
+                     && pb[3] == 0x00
+                     && pb[4] == 0x00
+                     && pb[5] == 0x00
+                     && pb[6] == 0xe0
+                     && pb[7] == 0xa0
+                     && pb[8] == 0xe2
+                     && pb[9] == 0xa0
+                    )
+                 || (   pb[0] == 0xf0   /* switch for apm_worker */
+                     && pb[1] == 0xa0
+                     && pb[2] == 0xf2
+                     && pb[3] == 0xa0
+                     && pb[4] == 0xf6
+                     && pb[5] == 0xa0
+                    )
+                 || (   pb[0] == 0xd4
+                     && pb[1] == 0xc6
+                     && pb[2] == 0xc5
+                     && pb[3] == 0xba
+                     && pb[4] == 0xb8
+                     && pb[5] == 0xb6
+                    )
                  || (   pb[0] == 0xec   /* _int15_function switch */
                      && pb[1] == 0xe9
                      && pb[2] == 0xd8
                      && pb[3] == 0xc1
                      && pb[4] == 0xc0
                      && pb[5] == 0xbf
-                     && pb[6] == 0x91
                     )
-                 || (   pb[0] == 0x00
-                     && pb[1] == 0xe0
-                     && pb[2] == 0x94
-                     && pb[3] == 0xe2
-                     && pb[4] == 0x94
-                     && pb[5] == 0xe6
-                     && pb[6] == 0x94
-                     && pb[7] == 0xe6
+                 || (   pb[0] == 0x21   /* _int15_function32 switch */
+                     && pb[1] == 0x66
+                     && pb[2] == 0x43
+                     && pb[3] == 0x66
+                     && pb[4] == 0x66
+                     && pb[5] == 0x66
+                    )
+                 || (   pb[0] == 0xf0   /* int15_function_mouse switch */
+                     && pb[1] == 0x75
+                     && pb[2] == 0x66
+                     && pb[3] == 0x76
+                     && pb[4] == 0xe9
+                     && pb[5] == 0x76
+                    )
+                 || (   pb[0] == 0x60
+                     && pb[1] == 0xa0
+                     && pb[2] == 0x62
+                     && pb[3] == 0xa0
+                     && pb[4] == 0x66
+                     && pb[5] == 0xa0
                     )
                  || 0
                  )
@@ -2049,7 +2076,15 @@ int main(int argc, char **argv)
             case 'V':
             {
                 /* The following is assuming that svn does it's job here. */
-                RTPrintf("r%u\n", RTBldCfgRevision());
+                char szRev[] = "$Revision: 118422 $";
+                char *psz = szRev;
+                while (*psz && !RT_C_IS_DIGIT(*psz))
+                    psz++;
+                size_t i = strlen(psz);
+                while (i > 0 && !RT_C_IS_DIGIT(psz[i - 1]))
+                    psz[--i] = '\0';
+
+                RTPrintf("r%s\n", psz);
                 return RTEXITCODE_SUCCESS;
             }
 

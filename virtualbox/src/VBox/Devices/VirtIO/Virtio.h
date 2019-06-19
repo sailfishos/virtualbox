@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2013 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -32,8 +32,9 @@
 /** @} */
 
 #define DEVICE_PCI_VENDOR_ID                0x1AF4
-#define DEVICE_PCI_DEVICE_ID                0x1000
+#define DEVICE_PCI_BASE_ID                  0x1000
 #define DEVICE_PCI_SUBSYSTEM_VENDOR_ID      0x1AF4
+#define DEVICE_PCI_SUBSYSTEM_BASE_ID       1
 
 #define VIRTIO_MAX_NQUEUES                  3
 
@@ -56,11 +57,15 @@
 #define VPCI_STATUS_FAILED                  0x80
 
 #define VPCI_F_NOTIFY_ON_EMPTY              0x01000000
+#define VPCI_F_ANY_LAYOUT                   0x08000000
+#define VPCI_F_RING_INDIRECT_DESC           0x10000000
+#define VPCI_F_RING_EVENT_IDX               0x20000000
 #define VPCI_F_BAD_FEATURE                  0x40000000
 
 #define VRINGDESC_MAX_SIZE                  (2 * 1024 * 1024)
 #define VRINGDESC_F_NEXT                    0x01
 #define VRINGDESC_F_WRITE                   0x02
+#define VRINGDESC_F_INDIRECT                0x04
 
 typedef struct VRingDesc
 {
@@ -186,7 +191,7 @@ typedef struct VPCIState_st
 #endif
 
     /** TODO */
-    PCIDEVICE              pciDevice;
+    PDMPCIDEV              pciDevice;
     /** Base port of I/O space region. */
     RTIOPORT               IOPortBase;
 
@@ -259,7 +264,7 @@ void  vpciSetReadLed(PVPCISTATE pState, bool fOn);
 int   vpciSaveExec(PVPCISTATE pState, PSSMHANDLE pSSM);
 int   vpciLoadExec(PVPCISTATE pState, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass, uint32_t nQueues);
 int   vpciConstruct(PPDMDEVINS pDevIns, VPCISTATE *pState, int iInstance, const char *pcszNameFmt,
-                    uint16_t uSubsystemId, uint16_t uClass, uint32_t nQueues);
+                    uint16_t uDeviceId, uint16_t uClass, uint32_t nQueues);
 int   vpciDestruct(VPCISTATE* pState);
 void  vpciRelocate(PPDMDEVINS pDevIns, RTGCINTPTR offDelta);
 void  vpciReset(PVPCISTATE pState);
@@ -293,7 +298,7 @@ DECLINLINE(uint16_t) vringReadAvailIndex(PVPCISTATE pState, PVRING pVRing)
     uint16_t tmp;
 
     PDMDevHlpPhysRead(pState->CTX_SUFF(pDevIns),
-                      pVRing->addrAvail + RT_OFFSETOF(VRINGAVAIL, uNextFreeIndex),
+                      pVRing->addrAvail + RT_UOFFSETOF(VRINGAVAIL, uNextFreeIndex),
                       &tmp, sizeof(tmp));
     return tmp;
 }

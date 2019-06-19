@@ -1,11 +1,10 @@
 /* $Id: VBoxServiceControlSession.cpp $ */
 /** @file
- * VBoxServiceControlSession - Guest session handling. Also handles
- *                             the forked session processes.
+ * VBoxServiceControlSession - Guest session handling. Also handles the spawned session processes.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 #include <iprt/assert.h>
 #include <iprt/dir.h>
@@ -40,42 +39,15 @@
 
 using namespace guestControl;
 
-/*******************************************************************************
-*   Externals                                                                  *
-*******************************************************************************/
-extern RTLISTANCHOR                g_lstControlSessionThreads;
-extern VBOXSERVICECTRLSESSION      g_Session;
 
-extern int                  VBoxServiceLogCreate(const char *pszLogFile);
-extern void                 VBoxServiceLogDestroy(void);
-
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-static int                  gstcntlSessionFileDestroy(PVBOXSERVICECTRLFILE pFile);
-static int                  gstcntlSessionFileAdd(PVBOXSERVICECTRLSESSION pSession, PVBOXSERVICECTRLFILE pFile);
-static PVBOXSERVICECTRLFILE gstcntlSessionFileGetLocked(const PVBOXSERVICECTRLSESSION pSession, uint32_t uHandle);
-static DECLCALLBACK(int)    gstcntlSessionThread(RTTHREAD ThreadSelf, void *pvUser);
-/* Host -> Guest handlers. */
-static int                  gstcntlSessionHandleDirRemove(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleFileClose(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleFileRead(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleFileWrite(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx, void *pvScratchBuf, size_t cbScratchBuf);
-static int                  gstcntlSessionHandleFileSeek(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleFileTell(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandlePathRename(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleProcExec(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleProcInput(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx, void *pvScratchBuf, size_t cbScratchBuf);
-static int                  gstcntlSessionHandleProcOutput(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleProcTerminate(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-static int                  gstcntlSessionHandleProcWaitFor(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx);
-
-
-/** Generic option indices for session fork arguments. */
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
+/** Generic option indices for session spawn arguments. */
 enum
 {
     VBOXSERVICESESSIONOPT_FIRST = 1000, /* For initialization. */
+    VBOXSERVICESESSIONOPT_DOMAIN,
 #ifdef DEBUG
     VBOXSERVICESESSIONOPT_DUMP_STDOUT,
     VBOXSERVICESESSIONOPT_DUMP_STDERR,
@@ -88,7 +60,8 @@ enum
 };
 
 
-static int gstcntlSessionFileDestroy(PVBOXSERVICECTRLFILE pFile)
+
+static int vgsvcGstCtrlSessionFileDestroy(PVBOXSERVICECTRLFILE pFile)
 {
     AssertPtrReturn(pFile, VERR_INVALID_POINTER);
 
@@ -106,13 +79,12 @@ static int gstcntlSessionFileDestroy(PVBOXSERVICECTRLFILE pFile)
 
 
 /** @todo No locking done yet! */
-static PVBOXSERVICECTRLFILE gstcntlSessionFileGetLocked(const PVBOXSERVICECTRLSESSION pSession,
-                                                        uint32_t uHandle)
+static PVBOXSERVICECTRLFILE vgsvcGstCtrlSessionFileGetLocked(const PVBOXSERVICECTRLSESSION pSession, uint32_t uHandle)
 {
     AssertPtrReturn(pSession, NULL);
 
-    PVBOXSERVICECTRLFILE pFileCur = NULL;
     /** @todo Use a map later! */
+    PVBOXSERVICECTRLFILE pFileCur;
     RTListForEach(&pSession->lstFiles, pFileCur, VBOXSERVICECTRLFILE, Node)
     {
         if (pFileCur->uHandle == uHandle)
@@ -123,81 +95,56 @@ static PVBOXSERVICECTRLFILE gstcntlSessionFileGetLocked(const PVBOXSERVICECTRLSE
 }
 
 
-static int gstcntlSessionHandleDirRemove(PVBOXSERVICECTRLSESSION pSession,
-                                         PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleDirRemove(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
 
     char szDir[RTPATH_MAX];
-    uint32_t uFlags = 0;
+    uint32_t fFlags = 0;
 
     int rc = VbglR3GuestCtrlDirGetRemove(pHostCtx,
                                          /* Directory to remove. */
                                          szDir, sizeof(szDir),
                                          /* Flags of type DIRREMOVE_FLAG_. */
-                                         &uFlags);
+                                         &fFlags);
     if (RT_SUCCESS(rc))
     {
-        uint32_t uFlagsRemRec = 0;
-        bool fRecursive = false;
-
-        if (!(uFlags & ~DIRREMOVE_FLAG_VALID_MASK))
+        AssertReturn(!(fFlags & ~DIRREMOVE_FLAG_VALID_MASK), VERR_INVALID_PARAMETER);
+        if (!(fFlags & ~DIRREMOVE_FLAG_VALID_MASK))
         {
-            if (uFlags & DIRREMOVE_FLAG_RECURSIVE)
+            if (fFlags & DIRREMOVE_FLAG_RECURSIVE)
             {
-                /* Note: DIRREMOVE_FLAG_RECURSIVE must be set explicitly.
-                 *       Play safe here. */
-                fRecursive = true;
-            }
+                uint32_t fFlagsRemRec = RTDIRRMREC_F_CONTENT_AND_DIR; /* Set default. */
+                if (fFlags & DIRREMOVE_FLAG_CONTENT_ONLY)
+                    fFlagsRemRec |= RTDIRRMREC_F_CONTENT_ONLY;
 
-            if (uFlags & DIRREMOVE_FLAG_CONTENT_AND_DIR)
-            {
-                /* Setting direct value is intentional. */
-                uFlagsRemRec = RTDIRRMREC_F_CONTENT_AND_DIR;
+                rc = RTDirRemoveRecursive(szDir, fFlagsRemRec);
             }
-
-            if (uFlags & DIRREMOVE_FLAG_CONTENT_ONLY)
-            {
-                /* Setting direct value is intentional. */
-                uFlagsRemRec |= RTDIRRMREC_F_CONTENT_ONLY;
-            }
+            else /* Only delete directory if not empty. */
+                rc = RTDirRemove(szDir);
         }
         else
             rc = VERR_NOT_SUPPORTED;
 
-        VBoxServiceVerbose(4, "[Dir %s]: Removing with uFlags=0x%x, fRecursive=%RTbool\n",
-                           szDir, uFlags, fRecursive);
-
-        if (RT_SUCCESS(rc))
-        {
-            /** @todo Add own recursive function (or a new IPRT function w/ callback?) to
-             *        provide guest-to-host progress reporting. */
-            if (fRecursive)
-                rc = RTDirRemoveRecursive(szDir, uFlagsRemRec);
-            else
-                rc = RTDirRemove(szDir);
-        }
+        VGSvcVerbose(4, "[Dir %s]: Removing with fFlags=0x%x, rc=%Rrc\n", szDir, fFlags, rc);
 
         /* Report back in any case. */
         int rc2 = VbglR3GuestCtrlMsgReply(pHostCtx, rc);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("[Dir %s]: Failed to report removing status, rc=%Rrc\n",
-                             szDir, rc2);
+            VGSvcError("[Dir %s]: Failed to report removing status, rc=%Rrc\n", szDir, rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Removing directory \"%s\" returned rc=%Rrc\n",
-                       szDir, rc);
+    VGSvcVerbose(4, "Removing directory '%s' returned rc=%Rrc\n", szDir, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession,
-                                        PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -207,7 +154,7 @@ static int gstcntlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession,
     char szDisposition[64];
     char szSharing[64];
     uint32_t uCreationMode = 0;
-    uint64_t uOffset = 0;
+    uint64_t offOpen = 0;
     uint32_t uHandle = 0;
 
     int rc = VbglR3GuestCtrlFileGetOpen(pHostCtx,
@@ -222,10 +169,9 @@ static int gstcntlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession,
                                         /* Creation mode. */
                                         &uCreationMode,
                                         /* Offset. */
-                                        &uOffset);
-    VBoxServiceVerbose(4, "[File %s]: szAccess=%s, szDisposition=%s, szSharing=%s, uOffset=%RU64, rc=%Rrc\n",
-                       szFile, szAccess, szDisposition, szSharing, uOffset, rc);
-
+                                        &offOpen);
+    VGSvcVerbose(4, "[File %s]: szAccess=%s, szDisposition=%s, szSharing=%s, offOpen=%RU64, rc=%Rrc\n",
+                 szFile, szAccess, szDisposition, szSharing, offOpen, rc);
     if (RT_SUCCESS(rc))
     {
         PVBOXSERVICECTRLFILE pFile = (PVBOXSERVICECTRLFILE)RTMemAllocZ(sizeof(VBOXSERVICECTRLFILE));
@@ -234,32 +180,28 @@ static int gstcntlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession,
             if (!strlen(szFile))
                 rc = VERR_INVALID_PARAMETER;
 
-            if (   RT_SUCCESS(rc)
-                && !RTStrPrintf(pFile->szName, sizeof(pFile->szName), "%s", szFile))
-                rc = VERR_NO_MEMORY;
-
             if (RT_SUCCESS(rc))
             {
+                /** @todo r=bird: Plase, use RTStrCopy for stuff like this! */
+                RTStrPrintf(pFile->szName, sizeof(pFile->szName), "%s", szFile);
+
                 uint64_t fFlags;
-                rc = RTFileModeToFlagsEx(szAccess, szDisposition,
-                                         NULL /* pszSharing, not used yet */, &fFlags);
-                VBoxServiceVerbose(4, "[File %s]: Opening flags=0x%x, rc=%Rrc\n",
-                                   pFile->szName, fFlags, rc);
+                rc = RTFileModeToFlagsEx(szAccess, szDisposition, NULL /* pszSharing, not used yet */, &fFlags);
+                VGSvcVerbose(4, "[File %s]: Opening with fFlags=0x%x, rc=%Rrc\n", pFile->szName, fFlags, rc);
+
                 if (RT_SUCCESS(rc))
                     rc = RTFileOpen(&pFile->hFile, pFile->szName, fFlags);
                 if (   RT_SUCCESS(rc)
-                    && uOffset)
+                    && offOpen)
                 {
                     /* Seeking is optional. However, the whole operation
                      * will fail if we don't succeed seeking to the wanted position. */
-                    rc = RTFileSeek(pFile->hFile, (int64_t)uOffset, RTFILE_SEEK_BEGIN, NULL /* Current offset */);
+                    rc = RTFileSeek(pFile->hFile, (int64_t)offOpen, RTFILE_SEEK_BEGIN, NULL /* Current offset */);
                     if (RT_FAILURE(rc))
-                        VBoxServiceError("[File %s]: Seeking to offset %RU64 failed; rc=%Rrc\n",
-                                         pFile->szName, uOffset, rc);
+                        VGSvcError("[File %s]: Seeking to offset %RU64 failed; rc=%Rrc\n", pFile->szName, offOpen, rc);
                 }
                 else if (RT_FAILURE(rc))
-                    VBoxServiceError("[File %s]: Opening failed; rc=%Rrc\n",
-                                     pFile->szName, rc);
+                    VGSvcError("[File %s]: Opening failed with rc=%Rrc\n", pFile->szName, rc);
             }
 
             if (RT_SUCCESS(rc))
@@ -267,10 +209,9 @@ static int gstcntlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession,
                 uHandle = VBOX_GUESTCTRL_CONTEXTID_GET_OBJECT(pHostCtx->uContextID);
                 pFile->uHandle = uHandle;
 
-                /* rc = */ RTListAppend(&pSession->lstFiles, &pFile->Node);
+                RTListAppend(&pSession->lstFiles, &pFile->Node);
 
-                VBoxServiceVerbose(3, "[File %s]: Opened (ID=%RU32)\n",
-                                   pFile->szName, pFile->uHandle);
+                VGSvcVerbose(3, "[File %s]: Opened (ID=%RU32)\n", pFile->szName, pFile->uHandle);
             }
 
             if (RT_FAILURE(rc))
@@ -286,22 +227,20 @@ static int gstcntlSessionHandleFileOpen(PVBOXSERVICECTRLSESSION pSession,
         /* Report back in any case. */
         int rc2 = VbglR3GuestCtrlFileCbOpen(pHostCtx, rc, uHandle);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("[File %s]: Failed to report file open status, rc=%Rrc\n",
-                             szFile, rc2);
+            VGSvcError("[File %s]: Failed to report file open status, rc=%Rrc\n", szFile, rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Opening file \"%s\" (open mode=\"%s\", disposition=\"%s\", creation mode=0x%x returned rc=%Rrc\n",
-                       szFile, szAccess, szDisposition, uCreationMode, rc);
+    VGSvcVerbose(4, "Opening file '%s' (open mode='%s', disposition='%s', creation mode=0x%x returned rc=%Rrc\n",
+                 szFile, szAccess, szDisposition, uCreationMode, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileClose(const PVBOXSERVICECTRLSESSION pSession,
-                                         PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleFileClose(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -312,33 +251,29 @@ static int gstcntlSessionHandleFileClose(const PVBOXSERVICECTRLSESSION pSession,
     int rc = VbglR3GuestCtrlFileGetClose(pHostCtx, &uHandle /* File handle to close */);
     if (RT_SUCCESS(rc))
     {
-        pFile = gstcntlSessionFileGetLocked(pSession, uHandle);
+        pFile = vgsvcGstCtrlSessionFileGetLocked(pSession, uHandle);
         if (pFile)
-        {
-            rc = gstcntlSessionFileDestroy(pFile);
-        }
+            rc = vgsvcGstCtrlSessionFileDestroy(pFile);
         else
             rc = VERR_NOT_FOUND;
 
         /* Report back in any case. */
         int rc2 = VbglR3GuestCtrlFileCbClose(pHostCtx, rc);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report file close status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report file close status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Closing file \"%s\" (handle=%RU32) returned rc=%Rrc\n",
-                       pFile ? pFile->szName : "<Not found>", uHandle, rc);
+    VGSvcVerbose(4, "Closing file '%s' (handle=%RU32) returned rc=%Rrc\n", pFile ? pFile->szName : "<Not found>", uHandle, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileRead(const PVBOXSERVICECTRLSESSION pSession,
-                                        PVBGLR3GUESTCTRLCMDCTX pHostCtx,
-                                        void *pvScratchBuf, size_t cbScratchBuf)
+static int vgsvcGstCtrlSessionHandleFileRead(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx,
+                                             void *pvScratchBuf, size_t cbScratchBuf)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -353,7 +288,7 @@ static int gstcntlSessionHandleFileRead(const PVBOXSERVICECTRLSESSION pSession,
         void *pvDataRead = pvScratchBuf;
         size_t cbRead = 0;
 
-        pFile = gstcntlSessionFileGetLocked(pSession, uHandle);
+        pFile = vgsvcGstCtrlSessionFileGetLocked(pSession, uHandle);
         if (pFile)
         {
             if (cbToRead)
@@ -381,22 +316,20 @@ static int gstcntlSessionHandleFileRead(const PVBOXSERVICECTRLSESSION pSession,
             RTMemFree(pvDataRead);
 
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report file read status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report file read status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Reading file \"%s\" (handle=%RU32) returned rc=%Rrc\n",
-                       pFile ? pFile->szName : "<Not found>", uHandle, rc);
+    VGSvcVerbose(4, "Reading file '%s' (handle=%RU32) returned rc=%Rrc\n", pFile ? pFile->szName : "<Not found>", uHandle, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileReadAt(const PVBOXSERVICECTRLSESSION pSession,
-                                          PVBGLR3GUESTCTRLCMDCTX pHostCtx,
-                                          void *pvScratchBuf, size_t cbScratchBuf)
+static int vgsvcGstCtrlSessionHandleFileReadAt(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx,
+                                               void *pvScratchBuf, size_t cbScratchBuf)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -404,16 +337,15 @@ static int gstcntlSessionHandleFileReadAt(const PVBOXSERVICECTRLSESSION pSession
     PVBOXSERVICECTRLFILE pFile = NULL;
 
     uint32_t uHandle = 0;
-    uint32_t cbToRead; int64_t iOffset;
-
-    int rc = VbglR3GuestCtrlFileGetReadAt(pHostCtx,
-                                          &uHandle, &cbToRead, (uint64_t *)&iOffset);
+    uint32_t cbToRead;
+    uint64_t offReadAt;
+    int rc = VbglR3GuestCtrlFileGetReadAt(pHostCtx, &uHandle, &cbToRead, &offReadAt);
     if (RT_SUCCESS(rc))
     {
         void *pvDataRead = pvScratchBuf;
         size_t cbRead = 0;
 
-        pFile = gstcntlSessionFileGetLocked(pSession, uHandle);
+        pFile = vgsvcGstCtrlSessionFileGetLocked(pSession, uHandle);
         if (pFile)
         {
             if (cbToRead)
@@ -425,8 +357,8 @@ static int gstcntlSessionHandleFileReadAt(const PVBOXSERVICECTRLSESSION pSession
                         rc = VERR_NO_MEMORY;
                 }
 
-                if (RT_LIKELY(RT_SUCCESS(rc)))
-                    rc = RTFileReadAt(pFile->hFile, iOffset, pvDataRead, cbToRead, &cbRead);
+                if (RT_SUCCESS(rc))
+                    rc = RTFileReadAt(pFile->hFile, (RTFOFF)offReadAt, pvDataRead, cbToRead, &cbRead);
             }
             else
                 rc = VERR_BUFFER_UNDERFLOW;
@@ -441,22 +373,21 @@ static int gstcntlSessionHandleFileReadAt(const PVBOXSERVICECTRLSESSION pSession
             RTMemFree(pvDataRead);
 
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report file read status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report file read status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Reading file \"%s\" at offset (handle=%RU32) returned rc=%Rrc\n",
-                       pFile ? pFile->szName : "<Not found>", uHandle, rc);
+    VGSvcVerbose(4, "Reading file '%s' at offset (handle=%RU32) returned rc=%Rrc\n",
+                 pFile ? pFile->szName : "<Not found>", uHandle, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileWrite(const PVBOXSERVICECTRLSESSION pSession,
-                                         PVBGLR3GUESTCTRLCMDCTX pHostCtx,
-                                         void *pvScratchBuf, size_t cbScratchBuf)
+static int vgsvcGstCtrlSessionHandleFileWrite(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx,
+                                              void *pvScratchBuf, size_t cbScratchBuf)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -467,20 +398,21 @@ static int gstcntlSessionHandleFileWrite(const PVBOXSERVICECTRLSESSION pSession,
 
     uint32_t uHandle = 0;
     uint32_t cbToWrite;
-
-    int rc = VbglR3GuestCtrlFileGetWrite(pHostCtx, &uHandle,
-                                         pvScratchBuf, cbScratchBuf,
-                                         &cbToWrite);
+    int rc = VbglR3GuestCtrlFileGetWrite(pHostCtx, &uHandle, pvScratchBuf, (uint32_t)cbScratchBuf, &cbToWrite);
     if (RT_SUCCESS(rc))
     {
+        /* Make sure that we only write up to cbScratchBuf bytes. */
+        if (cbToWrite > (uint32_t)cbScratchBuf)
+            cbToWrite = (uint32_t)cbScratchBuf;
+
         size_t cbWritten = 0;
-        pFile = gstcntlSessionFileGetLocked(pSession, uHandle);
+        pFile = vgsvcGstCtrlSessionFileGetLocked(pSession, uHandle);
         if (pFile)
         {
             rc = RTFileWrite(pFile->hFile, pvScratchBuf, cbToWrite, &cbWritten);
 #ifdef DEBUG
-            VBoxServiceVerbose(4, "[File %s]: Writing pvScratchBuf=%p, cbToWrite=%RU32, cbWritten=%zu, rc=%Rrc\n",
-                               pFile->szName, pvScratchBuf, cbToWrite, cbWritten, rc);
+            VGSvcVerbose(4, "[File %s]: Writing pvScratchBuf=%p, cbToWrite=%RU32, cbWritten=%zu, rc=%Rrc\n",
+                         pFile->szName, pvScratchBuf, cbToWrite, cbWritten, rc);
 #endif
         }
         else
@@ -489,22 +421,20 @@ static int gstcntlSessionHandleFileWrite(const PVBOXSERVICECTRLSESSION pSession,
         /* Report back in any case. */
         int rc2 = VbglR3GuestCtrlFileCbWrite(pHostCtx, rc, (uint32_t)cbWritten);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report file write status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report file write status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Writing file \"%s\" (handle=%RU32) returned rc=%Rrc\n",
-                       pFile ? pFile->szName : "<Not found>", uHandle, rc);
+    VGSvcVerbose(4, "Writing file '%s' (handle=%RU32) returned rc=%Rrc\n", pFile ? pFile->szName : "<Not found>", uHandle, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileWriteAt(const PVBOXSERVICECTRLSESSION pSession,
-                                           PVBGLR3GUESTCTRLCMDCTX pHostCtx,
-                                           void *pvScratchBuf, size_t cbScratchBuf)
+static int vgsvcGstCtrlSessionHandleFileWriteAt(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx,
+                                                void *pvScratchBuf, size_t cbScratchBuf)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -514,22 +444,20 @@ static int gstcntlSessionHandleFileWriteAt(const PVBOXSERVICECTRLSESSION pSessio
     PVBOXSERVICECTRLFILE pFile = NULL;
 
     uint32_t uHandle = 0;
-    uint32_t cbToWrite; int64_t iOffset;
+    uint32_t cbToWrite;
+    uint64_t offWriteAt;
 
-    int rc = VbglR3GuestCtrlFileGetWriteAt(pHostCtx, &uHandle,
-                                           pvScratchBuf, cbScratchBuf,
-                                           &cbToWrite, (uint64_t *)&iOffset);
+    int rc = VbglR3GuestCtrlFileGetWriteAt(pHostCtx, &uHandle, pvScratchBuf, (uint32_t)cbScratchBuf, &cbToWrite, &offWriteAt);
     if (RT_SUCCESS(rc))
     {
         size_t cbWritten = 0;
-        pFile = gstcntlSessionFileGetLocked(pSession, uHandle);
+        pFile = vgsvcGstCtrlSessionFileGetLocked(pSession, uHandle);
         if (pFile)
         {
-            rc = RTFileWriteAt(pFile->hFile, iOffset,
-                               pvScratchBuf, cbToWrite, &cbWritten);
+            rc = RTFileWriteAt(pFile->hFile, (RTFOFF)offWriteAt, pvScratchBuf, cbToWrite, &cbWritten);
 #ifdef DEBUG
-            VBoxServiceVerbose(4, "[File %s]: Writing iOffset=%RI64, pvScratchBuf=%p, cbToWrite=%RU32, cbWritten=%zu, rc=%Rrc\n",
-                               pFile->szName, iOffset, pvScratchBuf, cbToWrite, cbWritten, rc);
+            VGSvcVerbose(4, "[File %s]: Writing offWriteAt=%RI64, pvScratchBuf=%p, cbToWrite=%RU32, cbWritten=%zu, rc=%Rrc\n",
+                         pFile->szName, offWriteAt, pvScratchBuf, cbToWrite, cbWritten, rc);
 #endif
         }
         else
@@ -538,21 +466,20 @@ static int gstcntlSessionHandleFileWriteAt(const PVBOXSERVICECTRLSESSION pSessio
         /* Report back in any case. */
         int rc2 = VbglR3GuestCtrlFileCbWrite(pHostCtx, rc, (uint32_t)cbWritten);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report file write status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report file write status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Writing file \"%s\" at offset (handle=%RU32) returned rc=%Rrc\n",
-                       pFile ? pFile->szName : "<Not found>", uHandle, rc);
+    VGSvcVerbose(4, "Writing file '%s' at offset (handle=%RU32) returned rc=%Rrc\n",
+                 pFile ? pFile->szName : "<Not found>", uHandle, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileSeek(const PVBOXSERVICECTRLSESSION pSession,
-                                        PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleFileSeek(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -561,44 +488,41 @@ static int gstcntlSessionHandleFileSeek(const PVBOXSERVICECTRLSESSION pSession,
 
     uint32_t uHandle = 0;
     uint32_t uSeekMethod;
-    uint64_t uOffset; /* Will be converted to int64_t. */
-
-    uint64_t uOffsetActual = 0;
-
-    int rc = VbglR3GuestCtrlFileGetSeek(pHostCtx, &uHandle,
-                                        &uSeekMethod, &uOffset);
+    uint64_t offSeek; /* Will be converted to int64_t. */
+    int rc = VbglR3GuestCtrlFileGetSeek(pHostCtx, &uHandle, &uSeekMethod, &offSeek);
     if (RT_SUCCESS(rc))
     {
-        pFile = gstcntlSessionFileGetLocked(pSession, uHandle);
+        uint64_t offActual = 0;
+        pFile = vgsvcGstCtrlSessionFileGetLocked(pSession, uHandle);
         if (pFile)
         {
-            unsigned uSeekMethodIPRT;
+            unsigned uSeekMethodIprt;
             switch (uSeekMethod)
             {
                 case GUEST_FILE_SEEKTYPE_BEGIN:
-                    uSeekMethodIPRT = RTFILE_SEEK_BEGIN;
+                    uSeekMethodIprt = RTFILE_SEEK_BEGIN;
                     break;
 
                 case GUEST_FILE_SEEKTYPE_CURRENT:
-                    uSeekMethodIPRT = RTFILE_SEEK_CURRENT;
+                    uSeekMethodIprt = RTFILE_SEEK_CURRENT;
                     break;
 
                 case GUEST_FILE_SEEKTYPE_END:
-                    uSeekMethodIPRT = RTFILE_SEEK_END;
+                    uSeekMethodIprt = RTFILE_SEEK_END;
                     break;
 
                 default:
                     rc = VERR_NOT_SUPPORTED;
+                    uSeekMethodIprt = RTFILE_SEEK_BEGIN; /* Shut up MSC */
                     break;
             }
 
             if (RT_SUCCESS(rc))
             {
-                rc = RTFileSeek(pFile->hFile, (int64_t)uOffset,
-                                uSeekMethodIPRT, &uOffsetActual);
+                rc = RTFileSeek(pFile->hFile, (int64_t)offSeek, uSeekMethodIprt, &offActual);
 #ifdef DEBUG
-                VBoxServiceVerbose(4, "[File %s]: Seeking to iOffset=%RI64, uSeekMethodIPRT=%RU16, rc=%Rrc\n",
-                                   pFile->szName, (int64_t)uOffset, uSeekMethodIPRT, rc);
+                VGSvcVerbose(4, "[File %s]: Seeking to offSeek=%RI64, uSeekMethodIPRT=%RU16, rc=%Rrc\n",
+                             pFile->szName, offSeek, uSeekMethodIprt, rc);
 #endif
             }
         }
@@ -606,23 +530,21 @@ static int gstcntlSessionHandleFileSeek(const PVBOXSERVICECTRLSESSION pSession,
             rc = VERR_NOT_FOUND;
 
         /* Report back in any case. */
-        int rc2 = VbglR3GuestCtrlFileCbSeek(pHostCtx, rc, uOffsetActual);
+        int rc2 = VbglR3GuestCtrlFileCbSeek(pHostCtx, rc, offActual);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report file seek status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report file seek status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Seeking file \"%s\" (handle=%RU32) returned rc=%Rrc\n",
-                       pFile ? pFile->szName : "<Not found>", uHandle, rc);
+    VGSvcVerbose(4, "Seeking file '%s' (handle=%RU32) returned rc=%Rrc\n", pFile ? pFile->szName : "<Not found>", uHandle, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandleFileTell(const PVBOXSERVICECTRLSESSION pSession,
-                                        PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleFileTell(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -630,87 +552,83 @@ static int gstcntlSessionHandleFileTell(const PVBOXSERVICECTRLSESSION pSession,
     PVBOXSERVICECTRLFILE pFile = NULL;
 
     uint32_t uHandle = 0;
-    uint64_t uOffsetActual = 0;
-
     int rc = VbglR3GuestCtrlFileGetTell(pHostCtx, &uHandle);
     if (RT_SUCCESS(rc))
     {
-        pFile = gstcntlSessionFileGetLocked(pSession, uHandle);
+        uint64_t off = 0;
+        pFile = vgsvcGstCtrlSessionFileGetLocked(pSession, uHandle);
         if (pFile)
         {
-            uOffsetActual = RTFileTell(pFile->hFile);
+            off = RTFileTell(pFile->hFile);
 #ifdef DEBUG
-            VBoxServiceVerbose(4, "[File %s]: Telling uOffsetActual=%RU64\n",
-                               pFile->szName, uOffsetActual);
+            VGSvcVerbose(4, "[File %s]: Telling off=%RU64\n", pFile->szName, off);
 #endif
         }
         else
             rc = VERR_NOT_FOUND;
 
         /* Report back in any case. */
-        int rc2 = VbglR3GuestCtrlFileCbTell(pHostCtx, rc, uOffsetActual);
+        int rc2 = VbglR3GuestCtrlFileCbTell(pHostCtx, rc, off);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report file tell status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report file tell status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Telling file \"%s\" (handle=%RU32) returned rc=%Rrc\n",
-                       pFile ? pFile->szName : "<Not found>", uHandle, rc);
+    VGSvcVerbose(4, "Telling file '%s' (handle=%RU32) returned rc=%Rrc\n", pFile ? pFile->szName : "<Not found>", uHandle, rc);
 #endif
     return rc;
 }
 
 
-static int gstcntlSessionHandlePathRename(PVBOXSERVICECTRLSESSION pSession,
-                                          PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandlePathRename(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
 
     char szSource[RTPATH_MAX];
     char szDest[RTPATH_MAX];
-    uint32_t uFlags = 0;
+    uint32_t fFlags = 0;
 
     int rc = VbglR3GuestCtrlPathGetRename(pHostCtx,
                                           szSource, sizeof(szSource),
                                           szDest, sizeof(szDest),
                                           /* Flags of type PATHRENAME_FLAG_. */
-                                          &uFlags);
+                                          &fFlags);
     if (RT_SUCCESS(rc))
     {
-        if (uFlags & ~PATHRENAME_FLAG_VALID_MASK)
+        if (fFlags & ~PATHRENAME_FLAG_VALID_MASK)
             rc = VERR_NOT_SUPPORTED;
 
-        VBoxServiceVerbose(4, "Renaming \"%s\" to \"%s\", uFlags=0x%x, rc=%Rrc\n",
-                           szSource, szDest, uFlags, rc);
+        VGSvcVerbose(4, "Renaming '%s' to '%s', fFlags=0x%x, rc=%Rrc\n", szSource, szDest, fFlags, rc);
 
         if (RT_SUCCESS(rc))
         {
-            if (uFlags & PATHRENAME_FLAG_NO_REPLACE)
-                uFlags |= RTPATHRENAME_FLAGS_NO_REPLACE;
+            unsigned fPathRenameFlags = 0;
 
-            if (uFlags & PATHRENAME_FLAG_REPLACE)
-                uFlags |= RTPATHRENAME_FLAGS_REPLACE;
+            if (fFlags & PATHRENAME_FLAG_NO_REPLACE)
+                fPathRenameFlags |= RTPATHRENAME_FLAGS_NO_REPLACE;
 
-            if (uFlags & PATHRENAME_FLAG_NO_SYMLINKS)
-                uFlags |= RTPATHRENAME_FLAGS_NO_SYMLINKS;
+            if (fFlags & PATHRENAME_FLAG_REPLACE)
+                fPathRenameFlags |= RTPATHRENAME_FLAGS_REPLACE;
 
-            rc = RTPathRename(szSource, szDest, uFlags);
+            if (fFlags & PATHRENAME_FLAG_NO_SYMLINKS)
+                fPathRenameFlags |= RTPATHRENAME_FLAGS_NO_SYMLINKS;
+
+            rc = RTPathRename(szSource, szDest, fPathRenameFlags);
         }
 
         /* Report back in any case. */
         int rc2 = VbglR3GuestCtrlMsgReply(pHostCtx, rc);
         if (RT_FAILURE(rc2))
-            VBoxServiceError("Failed to report renaming status, rc=%Rrc\n", rc2);
+            VGSvcError("Failed to report renaming status, rc=%Rrc\n", rc2);
         if (RT_SUCCESS(rc))
             rc = rc2;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Renaming \"%s\" to \"%s\" returned rc=%Rrc\n",
-                       szSource, szDest, rc);
+    VGSvcVerbose(4, "Renaming '%s' to '%s' returned rc=%Rrc\n", szSource, szDest, rc);
 #endif
     return rc;
 }
@@ -719,12 +637,11 @@ static int gstcntlSessionHandlePathRename(PVBOXSERVICECTRLSESSION pSession,
 /**
  * Handles starting a guest processes.
  *
- * @returns IPRT status code.
+ * @returns VBox status code.
  * @param   pSession        Guest session.
  * @param   pHostCtx        Host context.
  */
-int gstcntlSessionHandleProcExec(PVBOXSERVICECTRLSESSION pSession,
-                                 PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleProcExec(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -781,19 +698,17 @@ int gstcntlSessionHandleProcExec(PVBOXSERVICECTRLSESSION pSession,
                                          startupInfo.uAffinity,  sizeof(startupInfo.uAffinity), &startupInfo.uNumAffinity);
         if (RT_SUCCESS(rc))
         {
-            VBoxServiceVerbose(3, "Request to start process szCmd=%s, uFlags=0x%x, szArgs=%s, szEnv=%s, uTimeout=%RU32\n",
-                               startupInfo.szCmd, startupInfo.uFlags,
-                               startupInfo.uNumArgs ? startupInfo.szArgs : "<None>",
-                               startupInfo.uNumEnvVars ? startupInfo.szEnv : "<None>",
-                               startupInfo.uTimeLimitMS);
+            VGSvcVerbose(3, "Request to start process szCmd=%s, fFlags=0x%x, szArgs=%s, szEnv=%s, uTimeout=%RU32\n",
+                         startupInfo.szCmd, startupInfo.uFlags,
+                         startupInfo.uNumArgs ? startupInfo.szArgs : "<None>",
+                         startupInfo.uNumEnvVars ? startupInfo.szEnv : "<None>",
+                         startupInfo.uTimeLimitMS);
 
-            rc = GstCntlSessionProcessStartAllowed(pSession, &fStartAllowed);
+            rc = VGSvcGstCtrlSessionProcessStartAllowed(pSession, &fStartAllowed);
             if (RT_SUCCESS(rc))
             {
                 if (fStartAllowed)
-                {
-                    rc = GstCntlProcessStart(pSession, &startupInfo, pHostCtx->uContextID);
-                }
+                    rc = VGSvcGstCtrlProcessStart(pSession, &startupInfo, pHostCtx->uContextID);
                 else
                     rc = VERR_MAX_PROCS_REACHED; /* Maximum number of processes reached. */
             }
@@ -803,8 +718,8 @@ int gstcntlSessionHandleProcExec(PVBOXSERVICECTRLSESSION pSession,
     /* In case of an error we need to notify the host to not wait forever for our response. */
     if (RT_FAILURE(rc))
     {
-        VBoxServiceError("Starting process failed with rc=%Rrc, protocol=%RU32, parameters=%RU32\n",
-                         rc, pHostCtx->uProtocol, pHostCtx->uNumParms);
+        VGSvcError("Starting process failed with rc=%Rrc, protocol=%RU32, parameters=%RU32\n",
+                   rc, pHostCtx->uProtocol, pHostCtx->uNumParms);
 
         /* Don't report back if we didn't supply sufficient buffer for getting
          * the actual command -- we don't have the matching context ID. */
@@ -818,7 +733,7 @@ int gstcntlSessionHandleProcExec(PVBOXSERVICECTRLSESSION pSession,
                                                   PROC_STS_ERROR, rc,
                                                   NULL /* pvData */, 0 /* cbData */);
             if (RT_FAILURE(rc2))
-                VBoxServiceError("Error sending start process status to host, rc=%Rrc\n", rc2);
+                VGSvcError("Error sending start process status to host, rc=%Rrc\n", rc2);
         }
     }
 
@@ -829,15 +744,15 @@ int gstcntlSessionHandleProcExec(PVBOXSERVICECTRLSESSION pSession,
 /**
  * Sends stdin input to a specific guest process.
  *
- * @returns IPRT status code.
- * @param pSession            The session which is in charge.
- * @param pHostCtx            The host context to use.
- * @param pvScratchBuf        The scratch buffer.
- * @param cbScratchBuf        The scratch buffer size for retrieving the input data.
+ * @returns VBox status code.
+ * @param   pSession            The session which is in charge.
+ * @param   pHostCtx            The host context to use.
+ * @param   pvScratchBuf        The scratch buffer.
+ * @param   cbScratchBuf        The scratch buffer size for retrieving the input
+ *                              data.
  */
-int gstcntlSessionHandleProcInput(PVBOXSERVICECTRLSESSION pSession,
-                                  PVBGLR3GUESTCTRLCMDCTX pHostCtx,
-                                  void *pvScratchBuf, size_t cbScratchBuf)
+static int vgsvcGstCtrlSessionHandleProcInput(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx,
+                                              void *pvScratchBuf, size_t cbScratchBuf)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -845,26 +760,25 @@ int gstcntlSessionHandleProcInput(PVBOXSERVICECTRLSESSION pSession,
     AssertPtrReturn(pvScratchBuf, VERR_INVALID_POINTER);
 
     uint32_t uPID;
-    uint32_t uFlags;
+    uint32_t fFlags;
     uint32_t cbSize;
 
+#if 0 /* unused */
     uint32_t uStatus = INPUT_STS_UNDEFINED; /* Status sent back to the host. */
     uint32_t cbWritten = 0; /* Number of bytes written to the guest. */
+#endif
 
     /*
      * Ask the host for the input data.
      */
-    int rc = VbglR3GuestCtrlProcGetInput(pHostCtx, &uPID, &uFlags,
-                                         pvScratchBuf, cbScratchBuf, &cbSize);
+    int rc = VbglR3GuestCtrlProcGetInput(pHostCtx, &uPID, &fFlags,
+                                         pvScratchBuf, (uint32_t)cbScratchBuf, &cbSize);
     if (RT_FAILURE(rc))
-    {
-        VBoxServiceError("Failed to retrieve process input command for PID=%RU32, rc=%Rrc\n",
-                         uPID, rc);
-    }
+        VGSvcError("Failed to retrieve process input command for PID=%RU32, rc=%Rrc\n", uPID, rc);
     else if (cbSize > cbScratchBuf)
     {
-        VBoxServiceError("Too much process input received, rejecting: uPID=%RU32, cbSize=%RU32, cbScratchBuf=%RU32\n",
-                         uPID, cbSize, cbScratchBuf);
+        VGSvcError("Too much process input received, rejecting: uPID=%RU32, cbSize=%RU32, cbScratchBuf=%RU32\n",
+                   uPID, cbSize, cbScratchBuf);
         rc = VERR_TOO_MUCH_DATA;
     }
     else
@@ -873,32 +787,28 @@ int gstcntlSessionHandleProcInput(PVBOXSERVICECTRLSESSION pSession,
          * Is this the last input block we need to deliver? Then let the pipe know ...
          */
         bool fPendingClose = false;
-        if (uFlags & INPUT_FLAG_EOF)
+        if (fFlags & INPUT_FLAG_EOF)
         {
             fPendingClose = true;
 #ifdef DEBUG
-            VBoxServiceVerbose(4, "Got last process input block for PID=%RU32 (%RU32 bytes) ...\n",
-                               uPID, cbSize);
+            VGSvcVerbose(4, "Got last process input block for PID=%RU32 (%RU32 bytes) ...\n", uPID, cbSize);
 #endif
         }
 
-        PVBOXSERVICECTRLPROCESS pProcess = GstCntlSessionRetainProcess(pSession, uPID);
+        PVBOXSERVICECTRLPROCESS pProcess = VGSvcGstCtrlSessionRetainProcess(pSession, uPID);
         if (pProcess)
         {
-            rc = GstCntlProcessHandleInput(pProcess, pHostCtx, fPendingClose,
-                                           pvScratchBuf, cbSize);
+            rc = VGSvcGstCtrlProcessHandleInput(pProcess, pHostCtx, fPendingClose, pvScratchBuf, cbSize);
             if (RT_FAILURE(rc))
-                VBoxServiceError("Error handling input command for PID=%RU32, rc=%Rrc\n",
-                                 uPID, rc);
-            GstCntlProcessRelease(pProcess);
+                VGSvcError("Error handling input command for PID=%RU32, rc=%Rrc\n", uPID, rc);
+            VGSvcGstCtrlProcessRelease(pProcess);
         }
         else
             rc = VERR_NOT_FOUND;
     }
 
 #ifdef DEBUG
-    VBoxServiceVerbose(4, "Setting input for PID=%RU32 resulted in rc=%Rrc\n",
-                       uPID, rc);
+    VGSvcVerbose(4, "Setting input for PID=%RU32 resulted in rc=%Rrc\n", uPID, rc);
 #endif
     return rc;
 }
@@ -907,44 +817,40 @@ int gstcntlSessionHandleProcInput(PVBOXSERVICECTRLSESSION pSession,
 /**
  * Gets stdout/stderr output of a specific guest process.
  *
- * @return IPRT status code.
- * @param pSession            The session which is in charge.
- * @param pHostCtx            The host context to use.
+ * @returns VBox status code.
+ * @param   pSession            The session which is in charge.
+ * @param   pHostCtx            The host context to use.
  */
-int gstcntlSessionHandleProcOutput(PVBOXSERVICECTRLSESSION pSession,
-                                   PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleProcOutput(PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
 
     uint32_t uPID;
     uint32_t uHandleID;
-    uint32_t uFlags;
+    uint32_t fFlags;
 
-    int rc = VbglR3GuestCtrlProcGetOutput(pHostCtx, &uPID, &uHandleID, &uFlags);
+    int rc = VbglR3GuestCtrlProcGetOutput(pHostCtx, &uPID, &uHandleID, &fFlags);
 #ifdef DEBUG_andy
-    VBoxServiceVerbose(4, "Getting output for PID=%RU32, CID=%RU32, uHandleID=%RU32, uFlags=%RU32\n",
-                       uPID, pHostCtx->uContextID, uHandleID, uFlags);
+    VGSvcVerbose(4, "Getting output for PID=%RU32, CID=%RU32, uHandleID=%RU32, fFlags=%RU32\n",
+                 uPID, pHostCtx->uContextID, uHandleID, fFlags);
 #endif
     if (RT_SUCCESS(rc))
     {
-        PVBOXSERVICECTRLPROCESS pProcess = GstCntlSessionRetainProcess(pSession, uPID);
+        PVBOXSERVICECTRLPROCESS pProcess = VGSvcGstCtrlSessionRetainProcess(pSession, uPID);
         if (pProcess)
         {
-            rc = GstCntlProcessHandleOutput(pProcess, pHostCtx,
-                                            uHandleID, _64K /* cbToRead */, uFlags);
+            rc = VGSvcGstCtrlProcessHandleOutput(pProcess, pHostCtx, uHandleID, _64K /* cbToRead */, fFlags);
             if (RT_FAILURE(rc))
-                VBoxServiceError("Error getting output for PID=%RU32, rc=%Rrc\n",
-                                 uPID, rc);
-            GstCntlProcessRelease(pProcess);
+                VGSvcError("Error getting output for PID=%RU32, rc=%Rrc\n", uPID, rc);
+            VGSvcGstCtrlProcessRelease(pProcess);
         }
         else
             rc = VERR_NOT_FOUND;
     }
 
 #ifdef DEBUG_andy
-    VBoxServiceVerbose(4, "Getting output for PID=%RU32 resulted in rc=%Rrc\n",
-                       uPID, rc);
+    VGSvcVerbose(4, "Getting output for PID=%RU32 resulted in rc=%Rrc\n", uPID, rc);
 #endif
     return rc;
 }
@@ -953,12 +859,11 @@ int gstcntlSessionHandleProcOutput(PVBOXSERVICECTRLSESSION pSession,
 /**
  * Tells a guest process to terminate.
  *
- * @return  IPRT status code.
- * @param pSession            The session which is in charge.
- * @param pHostCtx            The host context to use.
+ * @returns VBox status code.
+ * @param   pSession            The session which is in charge.
+ * @param   pHostCtx            The host context to use.
  */
-int gstcntlSessionHandleProcTerminate(const PVBOXSERVICECTRLSESSION pSession,
-                                      PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleProcTerminate(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -967,27 +872,25 @@ int gstcntlSessionHandleProcTerminate(const PVBOXSERVICECTRLSESSION pSession,
     int rc = VbglR3GuestCtrlProcGetTerminate(pHostCtx, &uPID);
     if (RT_SUCCESS(rc))
     {
-        PVBOXSERVICECTRLPROCESS pProcess = GstCntlSessionRetainProcess(pSession, uPID);
+        PVBOXSERVICECTRLPROCESS pProcess = VGSvcGstCtrlSessionRetainProcess(pSession, uPID);
         if (pProcess)
         {
-            rc = GstCntlProcessHandleTerm(pProcess);
+            rc = VGSvcGstCtrlProcessHandleTerm(pProcess);
 
-            GstCntlProcessRelease(pProcess);
+            VGSvcGstCtrlProcessRelease(pProcess);
         }
         else
             rc = VERR_NOT_FOUND;
     }
 
 #ifdef DEBUG_andy
-    VBoxServiceVerbose(4, "Terminating PID=%RU32 resulted in rc=%Rrc\n",
-                       uPID, rc);
+    VGSvcVerbose(4, "Terminating PID=%RU32 resulted in rc=%Rrc\n", uPID, rc);
 #endif
     return rc;
 }
 
 
-int gstcntlSessionHandleProcWaitFor(const PVBOXSERVICECTRLSESSION pSession,
-                                    PVBGLR3GUESTCTRLCMDCTX pHostCtx)
+static int vgsvcGstCtrlSessionHandleProcWaitFor(const PVBOXSERVICECTRLSESSION pSession, PVBGLR3GUESTCTRLCMDCTX pHostCtx)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
@@ -998,11 +901,11 @@ int gstcntlSessionHandleProcWaitFor(const PVBOXSERVICECTRLSESSION pSession,
     int rc = VbglR3GuestCtrlProcGetWaitFor(pHostCtx, &uPID, &uWaitFlags, &uTimeoutMS);
     if (RT_SUCCESS(rc))
     {
-        PVBOXSERVICECTRLPROCESS pProcess = GstCntlSessionRetainProcess(pSession, uPID);
+        PVBOXSERVICECTRLPROCESS pProcess = VGSvcGstCtrlSessionRetainProcess(pSession, uPID);
         if (pProcess)
         {
             rc = VERR_NOT_IMPLEMENTED; /** @todo */
-            GstCntlProcessRelease(pProcess);
+            VGSvcGstCtrlProcessRelease(pProcess);
         }
         else
             rc = VERR_NOT_FOUND;
@@ -1012,144 +915,144 @@ int gstcntlSessionHandleProcWaitFor(const PVBOXSERVICECTRLSESSION pSession,
 }
 
 
-int GstCntlSessionHandler(PVBOXSERVICECTRLSESSION pSession,
-                          uint32_t uMsg, PVBGLR3GUESTCTRLCMDCTX pHostCtx,
-                          void *pvScratchBuf, size_t cbScratchBuf,
-                          volatile bool *pfShutdown)
+int VGSvcGstCtrlSessionHandler(PVBOXSERVICECTRLSESSION pSession, uint32_t uMsg, PVBGLR3GUESTCTRLCMDCTX pHostCtx,
+                               void *pvScratchBuf, size_t cbScratchBuf, volatile bool *pfShutdown)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pHostCtx, VERR_INVALID_POINTER);
     AssertPtrReturn(pvScratchBuf, VERR_INVALID_POINTER);
     AssertPtrReturn(pfShutdown, VERR_INVALID_POINTER);
 
-    int rc = VINF_SUCCESS;
-    /**
+
+    /*
      * Only anonymous sessions (that is, sessions which run with local
-     * service privileges) or forked session processes can do certain
+     * service privileges) or spawned session processes can do certain
      * operations.
      */
-    bool fImpersonated = (   pSession->uFlags & VBOXSERVICECTRLSESSION_FLAG_FORK
-                          || pSession->uFlags & VBOXSERVICECTRLSESSION_FLAG_ANONYMOUS);
-
+    bool const fImpersonated = RT_BOOL(pSession->fFlags & (  VBOXSERVICECTRLSESSION_FLAG_SPAWN
+                                                           | VBOXSERVICECTRLSESSION_FLAG_ANONYMOUS));
+    int rc;
     switch (uMsg)
     {
         case HOST_SESSION_CLOSE:
-            /* Shutdown (this fork). */
-            rc = GstCntlSessionClose(pSession);
+            /* Shutdown (this spawn). */
+            rc = VGSvcGstCtrlSessionClose(pSession);
             *pfShutdown = true; /* Shutdown in any case. */
             break;
 
         case HOST_DIR_REMOVE:
-            rc = fImpersonated
-               ? gstcntlSessionHandleDirRemove(pSession, pHostCtx)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleDirRemove(pSession, pHostCtx);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_EXEC_CMD:
-            rc = gstcntlSessionHandleProcExec(pSession, pHostCtx);
+            rc = vgsvcGstCtrlSessionHandleProcExec(pSession, pHostCtx);
             break;
 
         case HOST_EXEC_SET_INPUT:
-            rc = gstcntlSessionHandleProcInput(pSession, pHostCtx,
-                                               pvScratchBuf, cbScratchBuf);
+            rc = vgsvcGstCtrlSessionHandleProcInput(pSession, pHostCtx, pvScratchBuf, cbScratchBuf);
             break;
 
         case HOST_EXEC_GET_OUTPUT:
-            rc = gstcntlSessionHandleProcOutput(pSession, pHostCtx);
+            rc = vgsvcGstCtrlSessionHandleProcOutput(pSession, pHostCtx);
             break;
 
         case HOST_EXEC_TERMINATE:
-            rc = gstcntlSessionHandleProcTerminate(pSession, pHostCtx);
+            rc = vgsvcGstCtrlSessionHandleProcTerminate(pSession, pHostCtx);
             break;
 
         case HOST_EXEC_WAIT_FOR:
-            rc = gstcntlSessionHandleProcWaitFor(pSession, pHostCtx);
+            rc = vgsvcGstCtrlSessionHandleProcWaitFor(pSession, pHostCtx);
             break;
 
         case HOST_FILE_OPEN:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileOpen(pSession, pHostCtx)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileOpen(pSession, pHostCtx);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_FILE_CLOSE:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileClose(pSession, pHostCtx)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileClose(pSession, pHostCtx);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_FILE_READ:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileRead(pSession, pHostCtx,
-                                              pvScratchBuf, cbScratchBuf)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileRead(pSession, pHostCtx, pvScratchBuf, cbScratchBuf);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_FILE_READ_AT:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileReadAt(pSession, pHostCtx,
-                                                pvScratchBuf, cbScratchBuf)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileReadAt(pSession, pHostCtx, pvScratchBuf, cbScratchBuf);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_FILE_WRITE:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileWrite(pSession, pHostCtx,
-                                               pvScratchBuf, cbScratchBuf)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileWrite(pSession, pHostCtx, pvScratchBuf, cbScratchBuf);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_FILE_WRITE_AT:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileWriteAt(pSession, pHostCtx,
-                                                 pvScratchBuf, cbScratchBuf)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileWriteAt(pSession, pHostCtx, pvScratchBuf, cbScratchBuf);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_FILE_SEEK:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileSeek(pSession, pHostCtx)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileSeek(pSession, pHostCtx);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_FILE_TELL:
-            rc = fImpersonated
-               ? gstcntlSessionHandleFileTell(pSession, pHostCtx)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandleFileTell(pSession, pHostCtx);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         case HOST_PATH_RENAME:
-            rc = fImpersonated
-               ? gstcntlSessionHandlePathRename(pSession, pHostCtx)
-               : VERR_NOT_SUPPORTED;
+            if (fImpersonated)
+                rc = vgsvcGstCtrlSessionHandlePathRename(pSession, pHostCtx);
+            else
+                rc = VERR_NOT_SUPPORTED;
             break;
 
         default:
             rc = VbglR3GuestCtrlMsgSkip(pHostCtx->uClientID);
-            VBoxServiceVerbose(3, "Unsupported message (uMsg=%RU32, cParms=%RU32) from host, skipping\n",
-                               uMsg, pHostCtx->uNumParms);
+            VGSvcVerbose(3, "Unsupported message (uMsg=%RU32, cParms=%RU32) from host, skipping\n", uMsg, pHostCtx->uNumParms);
             break;
     }
 
     if (RT_FAILURE(rc))
-        VBoxServiceError("Error while handling message (uMsg=%RU32, cParms=%RU32), rc=%Rrc\n",
-                         uMsg, pHostCtx->uNumParms, rc);
+        VGSvcError("Error while handling message (uMsg=%RU32, cParms=%RU32), rc=%Rrc\n", uMsg, pHostCtx->uNumParms, rc);
 
     return rc;
 }
 
 
 /**
- * Thread main routine for a forked guest session process.
- * This thread runs in the main executable to control the forked
- * session process.
+ * Thread main routine for a spawned guest session process.
+ * This thread runs in the main executable to control the spawned session process.
  *
- * @return IPRT status code.
- * @param  RTTHREAD             Pointer to the thread's data.
- * @param  void*                User-supplied argument pointer.
+ * @returns VBox status code.
+ * @param   hThreadSelf     Thread handle.
+ * @param   pvUser          Pointer to a VBOXSERVICECTRLSESSIONTHREAD structure.
  *
  */
-static DECLCALLBACK(int) gstcntlSessionThread(RTTHREAD ThreadSelf, void *pvUser)
+static DECLCALLBACK(int) vgsvcGstCtrlSessionThread(RTTHREAD hThreadSelf, void *pvUser)
 {
     PVBOXSERVICECTRLSESSIONTHREAD pThread = (PVBOXSERVICECTRLSESSIONTHREAD)pvUser;
     AssertPtrReturn(pThread, VERR_INVALID_POINTER);
@@ -1160,28 +1063,26 @@ static DECLCALLBACK(int) gstcntlSessionThread(RTTHREAD ThreadSelf, void *pvUser)
     int rc = VbglR3GuestCtrlConnect(&uClientID);
     if (RT_SUCCESS(rc))
     {
-        VBoxServiceVerbose(3, "Session ID=%RU32 thread running, client ID=%RU32\n",
-                           uSessionID, uClientID);
+        VGSvcVerbose(3, "Session ID=%RU32 thread running, client ID=%RU32\n", uSessionID, uClientID);
 
         /* The session thread is not interested in receiving any commands;
          * tell the host service. */
-        rc = VbglR3GuestCtrlMsgFilterSet(uClientID, 0 /* Skip all */,
-                                         0 /* Filter mask to add */, 0 /* Filter mask to remove */);
+        rc = VbglR3GuestCtrlMsgFilterSet(uClientID, 0 /* Skip all */, 0 /* Filter mask to add */, 0 /* Filter mask to remove */);
         if (RT_FAILURE(rc))
         {
-            VBoxServiceError("Unable to set message filter, rc=%Rrc\n", rc);
+            VGSvcError("Unable to set message filter, rc=%Rrc\n", rc);
             /* Non-critical. */
             rc = VINF_SUCCESS;
         }
     }
     else
-        VBoxServiceError("Error connecting to guest control service, rc=%Rrc\n", rc);
+        VGSvcError("Error connecting to guest control service, rc=%Rrc\n", rc);
 
     if (RT_FAILURE(rc))
         pThread->fShutdown = true;
 
     /* Let caller know that we're done initializing, regardless of the result. */
-    int rc2 = RTThreadUserSignal(RTThreadSelf());
+    int rc2 = RTThreadUserSignal(hThreadSelf);
     AssertRC(rc2);
 
     if (RT_FAILURE(rc))
@@ -1192,75 +1093,78 @@ static DECLCALLBACK(int) gstcntlSessionThread(RTTHREAD ThreadSelf, void *pvUser)
     RT_ZERO(ProcessStatus);
 
     int rcWait;
-    if (RT_SUCCESS(rc))
+    uint32_t uTimeoutsMS = 30 * 1000; /** @todo Make this configurable. Later. */
+    uint64_t u64TimeoutStart = 0;
+
+    for (;;)
     {
-        uint32_t uTimeoutsMS = 30 * 1000; /** @todo Make this configurable. Later. */
-        uint64_t u64TimeoutStart = 0;
+        rcWait = RTProcWaitNoResume(pThread->hProcess, RTPROCWAIT_FLAGS_NOBLOCK, &ProcessStatus);
+        if (RT_UNLIKELY(rcWait == VERR_INTERRUPTED))
+            continue;
 
-        for (;;)
+        if (   rcWait == VINF_SUCCESS
+            || rcWait == VERR_PROCESS_NOT_FOUND)
         {
-            rcWait = RTProcWaitNoResume(pThread->hProcess, RTPROCWAIT_FLAGS_NOBLOCK,
-                                        &ProcessStatus);
-            if (RT_UNLIKELY(rcWait == VERR_INTERRUPTED))
-                continue;
-            else if (   rcWait == VINF_SUCCESS
-                     || rcWait == VERR_PROCESS_NOT_FOUND)
-            {
-                fProcessAlive = false;
-                break;
-            }
-            else
-                AssertMsgBreak(rcWait == VERR_PROCESS_RUNNING,
-                               ("Got unexpected rc=%Rrc while waiting for session process termination\n", rcWait));
+            fProcessAlive = false;
+            break;
+        }
+        AssertMsgBreak(rcWait == VERR_PROCESS_RUNNING,
+                       ("Got unexpected rc=%Rrc while waiting for session process termination\n", rcWait));
 
-            if (ASMAtomicReadBool(&pThread->fShutdown))
+        if (ASMAtomicReadBool(&pThread->fShutdown))
+        {
+            if (!u64TimeoutStart)
             {
-                if (!u64TimeoutStart)
+                VGSvcVerbose(3, "Notifying guest session process (PID=%RU32, session ID=%RU32) ...\n",
+                             pThread->hProcess, uSessionID);
+
+                VBGLR3GUESTCTRLCMDCTX hostCtx =
                 {
-                    VBoxServiceVerbose(3, "Notifying guest session process (PID=%RU32, session ID=%RU32) ...\n",
-                                       pThread->hProcess, uSessionID);
+                    /* .idClient  = */  uClientID,
+                    /* .idContext = */  VBOX_GUESTCTRL_CONTEXTID_MAKE_SESSION(uSessionID),
+                    /* .uProtocol = */  pThread->StartupInfo.uProtocol,
+                    /* .cParams   = */  2
+                };
+                rc = VbglR3GuestCtrlSessionClose(&hostCtx, 0 /* fFlags */);
+                if (RT_FAILURE(rc))
+                {
+                    VGSvcError("Unable to notify guest session process (PID=%RU32, session ID=%RU32), rc=%Rrc\n",
+                               pThread->hProcess, uSessionID, rc);
 
-                    VBGLR3GUESTCTRLCMDCTX hostCtx = { uClientID,
-                                                      VBOX_GUESTCTRL_CONTEXTID_MAKE_SESSION(uSessionID),
-                                                      pThread->StartupInfo.uProtocol, 2 /* uNumParms */ };
-                    rc = VbglR3GuestCtrlSessionClose(&hostCtx, 0 /* uFlags */);
-                    if (RT_FAILURE(rc))
+                    if (rc == VERR_NOT_SUPPORTED)
                     {
-                        VBoxServiceError("Unable to notify guest session process (PID=%RU32, session ID=%RU32), rc=%Rrc\n",
-                                         pThread->hProcess, uSessionID, rc);
-
-                        if (rc == VERR_NOT_SUPPORTED)
-                        {
-                            /* Terminate guest session process in case it's not supported by a too old host. */
-                            rc = RTProcTerminate(pThread->hProcess);
-                            VBoxServiceVerbose(3, "Terminating guest session process (PID=%RU32) ended with rc=%Rrc\n",
-                                               pThread->hProcess, rc);
-                        }
-                        break;
+                        /* Terminate guest session process in case it's not supported by a too old host. */
+                        rc = RTProcTerminate(pThread->hProcess);
+                        VGSvcVerbose(3, "Terminating guest session process (PID=%RU32) ended with rc=%Rrc\n",
+                                     pThread->hProcess, rc);
                     }
-
-                    VBoxServiceVerbose(3, "Guest session ID=%RU32 thread was asked to terminate, waiting for session process to exit (%RU32ms timeout) ...\n",
-                                       uSessionID, uTimeoutsMS);
-                    u64TimeoutStart = RTTimeMilliTS();
-
-                    continue; /* Don't waste time on waiting. */
+                    break;
                 }
-                if (RTTimeMilliTS() - u64TimeoutStart > uTimeoutsMS)
-                {
-                     VBoxServiceVerbose(3, "Guest session ID=%RU32 process did not shut down within time\n",
-                                        uSessionID);
-                     break;
-                }
+
+                VGSvcVerbose(3, "Guest session ID=%RU32 thread was asked to terminate, waiting for session process to exit (%RU32ms timeout) ...\n",
+                             uSessionID, uTimeoutsMS);
+                u64TimeoutStart = RTTimeMilliTS();
+                continue; /* Don't waste time on waiting. */
             }
-
-            RTThreadSleep(100); /* Wait a bit. */
+            if (RTTimeMilliTS() - u64TimeoutStart > uTimeoutsMS)
+            {
+                 VGSvcVerbose(3, "Guest session ID=%RU32 process did not shut down within time\n", uSessionID);
+                 break;
+            }
         }
 
-        if (!fProcessAlive)
+        RTThreadSleep(100); /* Wait a bit. */
+    }
+
+    if (!fProcessAlive)
+    {
+        VGSvcVerbose(2, "Guest session process (ID=%RU32) terminated with rc=%Rrc, reason=%d, status=%d\n",
+                     uSessionID, rcWait, ProcessStatus.enmReason, ProcessStatus.iStatus);
+        if (ProcessStatus.iStatus == RTEXITCODE_INIT)
         {
-            VBoxServiceVerbose(2, "Guest session ID=%RU32 process terminated with rc=%Rrc, reason=%ld, status=%d\n",
-                               uSessionID, rcWait,
-                               ProcessStatus.enmReason, ProcessStatus.iStatus);
+            VGSvcError("Guest session process (ID=%RU32) failed to initialize. Here some hints:\n", uSessionID);
+            VGSvcError("- Is logging enabled and the output directory is read-only by the guest session user?\n");
+            /** @todo Add more here. */
         }
     }
 
@@ -1271,82 +1175,72 @@ static DECLCALLBACK(int) gstcntlSessionThread(RTTHREAD ThreadSelf, void *pvUser)
     {
         for (int i = 0; i < 3; i++)
         {
-            VBoxServiceVerbose(2, "Guest session ID=%RU32 process still alive, killing attempt %d/3\n",
-                               uSessionID, i + 1);
+            VGSvcVerbose(2, "Guest session ID=%RU32 process still alive, killing attempt %d/3\n", uSessionID, i + 1);
 
             rc = RTProcTerminate(pThread->hProcess);
             if (RT_SUCCESS(rc))
                 break;
+            /** @todo r=bird: What's the point of sleeping 3 second after the last attempt? */
             RTThreadSleep(3000);
         }
 
-        VBoxServiceVerbose(2, "Guest session ID=%RU32 process termination resulted in rc=%Rrc\n",
-                           uSessionID, rc);
+        VGSvcVerbose(2, "Guest session ID=%RU32 process termination resulted in rc=%Rrc\n", uSessionID, rc);
 
-        uSessionStatus = RT_SUCCESS(rc)
-                       ? GUEST_SESSION_NOTIFYTYPE_TOK : GUEST_SESSION_NOTIFYTYPE_TOA;
+        uSessionStatus = RT_SUCCESS(rc) ? GUEST_SESSION_NOTIFYTYPE_TOK : GUEST_SESSION_NOTIFYTYPE_TOA;
+    }
+    else if (RT_SUCCESS(rcWait))
+    {
+        switch (ProcessStatus.enmReason)
+        {
+            case RTPROCEXITREASON_NORMAL:
+                uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEN;
+                break;
+
+            case RTPROCEXITREASON_ABEND:
+                uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEA;
+                break;
+
+            case RTPROCEXITREASON_SIGNAL:
+                uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TES;
+                break;
+
+            default:
+                AssertMsgFailed(("Unhandled process termination reason (%d)\n", ProcessStatus.enmReason));
+                uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEA;
+                break;
+        }
     }
     else
     {
-        if (RT_SUCCESS(rcWait))
-        {
-            switch (ProcessStatus.enmReason)
-            {
-                case RTPROCEXITREASON_NORMAL:
-                    uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEN;
-                    break;
-
-                case RTPROCEXITREASON_ABEND:
-                    uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEA;
-                    break;
-
-                case RTPROCEXITREASON_SIGNAL:
-                    uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TES;
-                    break;
-
-                default:
-                    AssertMsgFailed(("Unhandled process termination reason (%ld)\n",
-                                     ProcessStatus.enmReason));
-                    uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEA;
-                    break;
-            }
-        }
-        else
-        {
-            /* If we didn't find the guest process anymore, just assume it
-             * terminated normally. */
-            uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEN;
-        }
+        /* If we didn't find the guest process anymore, just assume it
+         * terminated normally. */
+        uSessionStatus = GUEST_SESSION_NOTIFYTYPE_TEN;
     }
 
-    VBoxServiceVerbose(3, "Guest session ID=%RU32 thread ended with sessionStatus=%RU32, sessionRc=%Rrc\n",
-                       uSessionID, uSessionStatus, uSessionRc);
+    VGSvcVerbose(3, "Guest session ID=%RU32 thread ended with sessionStatus=%RU32, sessionRc=%Rrc\n",
+                 uSessionID, uSessionStatus, uSessionRc);
 
     /* Report final status. */
     Assert(uSessionStatus != GUEST_SESSION_NOTIFYTYPE_UNDEFINED);
     VBGLR3GUESTCTRLCMDCTX ctx = { uClientID, VBOX_GUESTCTRL_CONTEXTID_MAKE_SESSION(uSessionID) };
-    rc2 = VbglR3GuestCtrlSessionNotify(&ctx,
-                                       uSessionStatus, uSessionRc);
+    rc2 = VbglR3GuestCtrlSessionNotify(&ctx, uSessionStatus, uSessionRc);
     if (RT_FAILURE(rc2))
-        VBoxServiceError("Reporting session ID=%RU32 final status failed with rc=%Rrc\n",
-                         uSessionID, rc2);
+        VGSvcError("Reporting session ID=%RU32 final status failed with rc=%Rrc\n", uSessionID, rc2);
 
     VbglR3GuestCtrlDisconnect(uClientID);
 
-    VBoxServiceVerbose(3, "Session ID=%RU32 thread ended with rc=%Rrc\n",
-                       uSessionID, rc);
+    VGSvcVerbose(3, "Session ID=%RU32 thread ended with rc=%Rrc\n", uSessionID, rc);
     return rc;
 }
 
 
-RTEXITCODE gstcntlSessionForkWorker(PVBOXSERVICECTRLSESSION pSession)
+static RTEXITCODE vgsvcGstCtrlSessionSpawnWorker(PVBOXSERVICECTRLSESSION pSession)
 {
     AssertPtrReturn(pSession, RTEXITCODE_FAILURE);
 
     bool fSessionFilter = true;
 
-    VBoxServiceVerbose(0, "Hi, this is guest session ID=%RU32\n",
-                       pSession->StartupInfo.uSessionID);
+    VGSvcVerbose(0, "Hi, this is guest session ID=%RU32\n", pSession->StartupInfo.uSessionID);
 
     uint32_t uClientID;
     int rc = VbglR3GuestCtrlConnect(&uClientID);
@@ -1355,13 +1249,11 @@ RTEXITCODE gstcntlSessionForkWorker(PVBOXSERVICECTRLSESSION pSession)
         /* Set session filter. This prevents the guest control
          * host service to send messages which belong to another
          * session we don't want to handle. */
-        uint32_t uFilterAdd =
-            VBOX_GUESTCTRL_FILTER_BY_SESSION(pSession->StartupInfo.uSessionID);
+        uint32_t uFilterAdd = VBOX_GUESTCTRL_FILTER_BY_SESSION(pSession->StartupInfo.uSessionID);
         rc = VbglR3GuestCtrlMsgFilterSet(uClientID,
                                          VBOX_GUESTCTRL_CONTEXTID_MAKE_SESSION(pSession->StartupInfo.uSessionID),
                                          uFilterAdd, 0 /* Filter remove */);
-        VBoxServiceVerbose(3, "Setting message filterAdd=0x%x returned %Rrc\n",
-                           uFilterAdd, rc);
+        VGSvcVerbose(3, "Setting message filterAdd=0x%x returned %Rrc\n", uFilterAdd, rc);
 
         if (   RT_FAILURE(rc)
             && rc == VERR_NOT_SUPPORTED)
@@ -1372,19 +1264,17 @@ RTEXITCODE gstcntlSessionForkWorker(PVBOXSERVICECTRLSESSION pSession)
             rc = VINF_SUCCESS;
         }
 
-        VBoxServiceVerbose(1, "Using client ID=%RU32\n", uClientID);
+        VGSvcVerbose(1, "Using client ID=%RU32\n", uClientID);
     }
     else
-        VBoxServiceError("Error connecting to guest control service, rc=%Rrc\n", rc);
+        VGSvcError("Error connecting to guest control service, rc=%Rrc\n", rc);
 
     /* Report started status. */
     VBGLR3GUESTCTRLCMDCTX ctx = { uClientID, VBOX_GUESTCTRL_CONTEXTID_MAKE_SESSION(pSession->StartupInfo.uSessionID) };
-    int rc2 = VbglR3GuestCtrlSessionNotify(&ctx,
-                                           GUEST_SESSION_NOTIFYTYPE_STARTED, VINF_SUCCESS);
+    int rc2 = VbglR3GuestCtrlSessionNotify(&ctx, GUEST_SESSION_NOTIFYTYPE_STARTED, VINF_SUCCESS);
     if (RT_FAILURE(rc2))
     {
-        VBoxServiceError("Reporting session ID=%RU32 started status failed with rc=%Rrc\n",
-                         pSession->StartupInfo.uSessionID, rc2);
+        VGSvcError("Reporting session ID=%RU32 started status failed with rc=%Rrc\n", pSession->StartupInfo.uSessionID, rc2);
 
         /*
          * If session status cannot be posted to the host for
@@ -1411,69 +1301,71 @@ RTEXITCODE gstcntlSessionForkWorker(PVBOXSERVICECTRLSESSION pSession)
     {
         bool fShutdown = false;
 
-        VBGLR3GUESTCTRLCMDCTX ctxHost = { uClientID, 0 /* Context ID, zeroed */,
-                                          pSession->StartupInfo.uProtocol };
+        VBGLR3GUESTCTRLCMDCTX ctxHost = { uClientID, 0 /* Context ID */, pSession->StartupInfo.uProtocol };
         for (;;)
         {
-            VBoxServiceVerbose(3, "Waiting for host msg ...\n");
+            VGSvcVerbose(3, "Waiting for host msg ...\n");
             uint32_t uMsg = 0;
             uint32_t cParms = 0;
             rc = VbglR3GuestCtrlMsgWaitFor(uClientID, &uMsg, &cParms);
             if (rc == VERR_TOO_MUCH_DATA)
             {
 #ifdef DEBUG
-                VBoxServiceVerbose(4, "Message requires %RU32 parameters, but only 2 supplied -- retrying request (no error!)...\n", cParms);
+                VGSvcVerbose(4, "Message requires %RU32 parameters, but only 2 supplied -- retrying request (no error!)...\n",
+                             cParms);
 #endif
                 rc = VINF_SUCCESS; /* Try to get "real" message in next block below. */
             }
             else if (RT_FAILURE(rc))
-                VBoxServiceVerbose(3, "Getting host message failed with %Rrc\n", rc); /* VERR_GEN_IO_FAILURE seems to be normal if ran into timeout. */
+                VGSvcVerbose(3, "Getting host message failed with %Rrc\n", rc); /* VERR_GEN_IO_FAILURE seems to be normal if ran into timeout. */
             if (RT_SUCCESS(rc))
             {
-                VBoxServiceVerbose(4, "Msg=%RU32 (%RU32 parms) retrieved\n", uMsg, cParms);
+                VGSvcVerbose(4, "Msg=%RU32 (%RU32 parms) retrieved\n", uMsg, cParms);
 
                 /* Set number of parameters for current host context. */
                 ctxHost.uNumParms = cParms;
 
                 /* ... and pass it on to the session handler. */
-                rc = GstCntlSessionHandler(pSession, uMsg, &ctxHost,
-                                           pvScratchBuf, cbScratchBuf, &fShutdown);
+                rc = VGSvcGstCtrlSessionHandler(pSession, uMsg, &ctxHost, pvScratchBuf, cbScratchBuf, &fShutdown);
             }
 
             if (fShutdown)
                 break;
 
-            /* Let's sleep for a bit and let others run ... */
+            /* Let others run ... */
             RTThreadYield();
         }
     }
 
-    VBoxServiceVerbose(0, "Session %RU32 ended\n", pSession->StartupInfo.uSessionID);
+    VGSvcVerbose(0, "Session %RU32 ended\n", pSession->StartupInfo.uSessionID);
 
     if (pvScratchBuf)
         RTMemFree(pvScratchBuf);
 
     if (uClientID)
     {
-        VBoxServiceVerbose(3, "Disconnecting client ID=%RU32 ...\n", uClientID);
+        VGSvcVerbose(3, "Disconnecting client ID=%RU32 ...\n", uClientID);
         VbglR3GuestCtrlDisconnect(uClientID);
     }
 
-    VBoxServiceVerbose(3, "Session worker returned with rc=%Rrc\n", rc);
+    VGSvcVerbose(3, "Session worker returned with rc=%Rrc\n", rc);
     return RT_SUCCESS(rc) ? RTEXITCODE_SUCCESS : RTEXITCODE_FAILURE;
 }
 
 
 /**
- * Finds a (formerly) started guest process given by its PID and increases
- * its reference count. Must be decreased by the caller with GstCntlProcessRelease().
- * Note: This does *not lock the process!
+ * Finds a (formerly) started guest process given by its PID and increases its
+ * reference count.
  *
- * @return  PVBOXSERVICECTRLTHREAD      Guest process if found, otherwise NULL.
- * @param   PVBOXSERVICECTRLSESSION     Pointer to guest session where to search process in.
- * @param   uPID                        PID to search for.
+ * Must be decreased by the caller with VGSvcGstCtrlProcessRelease().
+ *
+ * @returns Guest process if found, otherwise NULL.
+ * @param   pSession    Pointer to guest session where to search process in.
+ * @param   uPID        PID to search for.
+ *
+ * @note    This does *not lock the process!
  */
-PVBOXSERVICECTRLPROCESS GstCntlSessionRetainProcess(PVBOXSERVICECTRLSESSION pSession, uint32_t uPID)
+PVBOXSERVICECTRLPROCESS VGSvcGstCtrlSessionRetainProcess(PVBOXSERVICECTRLSESSION pSession, uint32_t uPID)
 {
     AssertPtrReturn(pSession, NULL);
 
@@ -1508,12 +1400,11 @@ PVBOXSERVICECTRLPROCESS GstCntlSessionRetainProcess(PVBOXSERVICECTRLSESSION pSes
 }
 
 
-int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
+int VGSvcGstCtrlSessionClose(PVBOXSERVICECTRLSESSION pSession)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
 
-    VBoxServiceVerbose(0, "Session %RU32 is about to close ...\n",
-                       pSession->StartupInfo.uSessionID);
+    VGSvcVerbose(0, "Session %RU32 is about to close ...\n", pSession->StartupInfo.uSessionID);
 
     int rc = RTCritSectEnter(&pSession->CritSect);
     if (RT_SUCCESS(rc))
@@ -1521,18 +1412,18 @@ int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
         /*
          * Close all guest processes.
          */
-        VBoxServiceVerbose(0, "Stopping all guest processes ...\n");
+        VGSvcVerbose(0, "Stopping all guest processes ...\n");
 
         /* Signal all guest processes in the active list that we want to shutdown. */
         size_t cProcesses = 0;
         PVBOXSERVICECTRLPROCESS pProcess;
         RTListForEach(&pSession->lstProcesses, pProcess, VBOXSERVICECTRLPROCESS, Node)
         {
-            GstCntlProcessStop(pProcess);
+            VGSvcGstCtrlProcessStop(pProcess);
             cProcesses++;
         }
 
-        VBoxServiceVerbose(1, "%zu guest processes were signalled to stop\n", cProcesses);
+        VGSvcVerbose(1, "%zu guest processes were signalled to stop\n", cProcesses);
 
         /* Wait for all active threads to shutdown and destroy the active thread list. */
         pProcess = RTListGetFirst(&pSession->lstProcesses, VBOXSERVICECTRLPROCESS, Node);
@@ -1544,15 +1435,13 @@ int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
             int rc2 = RTCritSectLeave(&pSession->CritSect);
             AssertRC(rc2);
 
-            rc2 = GstCntlProcessWait(pProcess,
-                                     30 * 1000 /* Wait 30 seconds max. */,
-                                     NULL /* rc */);
+            rc2 = VGSvcGstCtrlProcessWait(pProcess, 30 * 1000 /* Wait 30 seconds max. */, NULL /* rc */);
 
             int rc3 = RTCritSectEnter(&pSession->CritSect);
             AssertRC(rc3);
 
             if (RT_SUCCESS(rc2))
-                GstCntlProcessFree(pProcess);
+                VGSvcGstCtrlProcessFree(pProcess);
 
             if (fLast)
                 break;
@@ -1567,8 +1456,7 @@ int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
             PVBOXSERVICECTRLPROCESS pNext = RTListNodeGetNext(&pProcess->Node, VBOXSERVICECTRLPROCESS, Node);
             bool fLast = RTListNodeIsLast(&pSession->lstProcesses, &pProcess->Node);
 
-            VBoxServiceVerbose(1, "Process %p (PID %RU32) still in list\n",
-                               pProcess, pProcess->uPID);
+            VGSvcVerbose(1, "Process %p (PID %RU32) still in list\n", pProcess, pProcess->uPID);
             if (fLast)
                 break;
 
@@ -1581,7 +1469,7 @@ int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
         /*
          * Close all left guest files.
          */
-        VBoxServiceVerbose(0, "Closing all guest files ...\n");
+        VGSvcVerbose(0, "Closing all guest files ...\n");
 
         PVBOXSERVICECTRLFILE pFile;
         pFile = RTListGetFirst(&pSession->lstFiles, VBOXSERVICECTRLFILE, Node);
@@ -1590,11 +1478,10 @@ int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
             PVBOXSERVICECTRLFILE pNext = RTListNodeGetNext(&pFile->Node, VBOXSERVICECTRLFILE, Node);
             bool fLast = RTListNodeIsLast(&pSession->lstFiles, &pFile->Node);
 
-            int rc2 = gstcntlSessionFileDestroy(pFile);
+            int rc2 = vgsvcGstCtrlSessionFileDestroy(pFile);
             if (RT_FAILURE(rc2))
             {
-                VBoxServiceError("Unable to close file \"%s\"; rc=%Rrc\n",
-                                 pFile->szName, rc2);
+                VGSvcError("Unable to close file '%s'; rc=%Rrc\n", pFile->szName, rc2);
                 if (RT_SUCCESS(rc))
                     rc = rc2;
                 /* Keep going. */
@@ -1606,8 +1493,7 @@ int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
             pFile = pNext;
         }
 
-        AssertMsg(RTListIsEmpty(&pSession->lstFiles),
-                  ("Guest file list still contains entries when it should not\n"));
+        AssertMsg(RTListIsEmpty(&pSession->lstFiles), ("Guest file list still contains entries when it should not\n"));
 
         int rc2 = RTCritSectLeave(&pSession->CritSect);
         if (RT_SUCCESS(rc))
@@ -1618,11 +1504,11 @@ int GstCntlSessionClose(PVBOXSERVICECTRLSESSION pSession)
 }
 
 
-int GstCntlSessionDestroy(PVBOXSERVICECTRLSESSION pSession)
+int VGSvcGstCtrlSessionDestroy(PVBOXSERVICECTRLSESSION pSession)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
 
-    int rc = GstCntlSessionClose(pSession);
+    int rc = VGSvcGstCtrlSessionClose(pSession);
 
     /* Destroy critical section. */
     RTCritSectDelete(&pSession->CritSect);
@@ -1631,14 +1517,14 @@ int GstCntlSessionDestroy(PVBOXSERVICECTRLSESSION pSession)
 }
 
 
-int GstCntlSessionInit(PVBOXSERVICECTRLSESSION pSession, uint32_t uFlags)
+int VGSvcGstCtrlSessionInit(PVBOXSERVICECTRLSESSION pSession, uint32_t fFlags)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
 
     RTListInit(&pSession->lstProcesses);
     RTListInit(&pSession->lstFiles);
 
-    pSession->uFlags = uFlags;
+    pSession->fFlags = fFlags;
 
     /* Init critical section for protecting the thread lists. */
     int rc = RTCritSectInit(&pSession->CritSect);
@@ -1651,12 +1537,11 @@ int GstCntlSessionInit(PVBOXSERVICECTRLSESSION pSession, uint32_t uFlags)
 /**
  * Adds a guest process to a session's process list.
  *
- * @return  IPRT status code.
+ * @return  VBox status code.
  * @param   pSession                Guest session to add process to.
  * @param   pProcess                Guest process to add.
  */
-int GstCntlSessionProcessAdd(PVBOXSERVICECTRLSESSION pSession,
-                             PVBOXSERVICECTRLPROCESS pProcess)
+int VGSvcGstCtrlSessionProcessAdd(PVBOXSERVICECTRLSESSION pSession, PVBOXSERVICECTRLPROCESS pProcess)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pProcess, VERR_INVALID_POINTER);
@@ -1664,11 +1549,10 @@ int GstCntlSessionProcessAdd(PVBOXSERVICECTRLSESSION pSession,
     int rc = RTCritSectEnter(&pSession->CritSect);
     if (RT_SUCCESS(rc))
     {
-        VBoxServiceVerbose(3, "Adding process (PID %RU32) to session ID=%RU32\n",
-                           pProcess->uPID, pSession->StartupInfo.uSessionID);
+        VGSvcVerbose( 3, "Adding process (PID %RU32) to session ID=%RU32\n", pProcess->uPID, pSession->StartupInfo.uSessionID);
 
         /* Add process to session list. */
-        /* rc = */ RTListAppend(&pSession->lstProcesses, &pProcess->Node);
+        RTListAppend(&pSession->lstProcesses, &pProcess->Node);
 
         int rc2 = RTCritSectLeave(&pSession->CritSect);
         if (RT_SUCCESS(rc))
@@ -1682,12 +1566,11 @@ int GstCntlSessionProcessAdd(PVBOXSERVICECTRLSESSION pSession,
 /**
  * Removes a guest process from a session's process list.
  *
- * @return  IPRT status code.
+ * @return  VBox status code.
  * @param   pSession                Guest session to remove process from.
  * @param   pProcess                Guest process to remove.
  */
-int GstCntlSessionProcessRemove(PVBOXSERVICECTRLSESSION pSession,
-                                PVBOXSERVICECTRLPROCESS pProcess)
+int VGSvcGstCtrlSessionProcessRemove(PVBOXSERVICECTRLSESSION pSession, PVBOXSERVICECTRLPROCESS pProcess)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pProcess, VERR_INVALID_POINTER);
@@ -1695,8 +1578,7 @@ int GstCntlSessionProcessRemove(PVBOXSERVICECTRLSESSION pSession,
     int rc = RTCritSectEnter(&pSession->CritSect);
     if (RT_SUCCESS(rc))
     {
-        VBoxServiceVerbose(3, "Removing process (PID %RU32) from session ID=%RU32\n",
-                           pProcess->uPID, pSession->StartupInfo.uSessionID);
+        VGSvcVerbose(3, "Removing process (PID %RU32) from session ID=%RU32\n", pProcess->uPID, pSession->StartupInfo.uSessionID);
         Assert(pProcess->cRefs == 0);
 
         RTListNodeRemove(&pProcess->Node);
@@ -1714,12 +1596,12 @@ int GstCntlSessionProcessRemove(PVBOXSERVICECTRLSESSION pSession,
  * Determines whether starting a new guest process according to the
  * maximum number of concurrent guest processes defined is allowed or not.
  *
- * @return  IPRT status code.
+ * @return  VBox status code.
+ * @param   pSession            The guest session.
  * @param   pbAllowed           True if starting (another) guest process
  *                              is allowed, false if not.
  */
-int GstCntlSessionProcessStartAllowed(const PVBOXSERVICECTRLSESSION pSession,
-                                      bool *pbAllowed)
+int VGSvcGstCtrlSessionProcessStartAllowed(const PVBOXSERVICECTRLSESSION pSession, bool *pbAllowed)
 {
     AssertPtrReturn(pSession, VERR_INVALID_POINTER);
     AssertPtrReturn(pbAllowed, VERR_INVALID_POINTER);
@@ -1739,14 +1621,12 @@ int GstCntlSessionProcessStartAllowed(const PVBOXSERVICECTRLSESSION pSession,
             RTListForEach(&pSession->lstProcesses, pProcess, VBOXSERVICECTRLPROCESS, Node)
                 uProcsRunning++;
 
-            VBoxServiceVerbose(3, "Maximum served guest processes set to %u, running=%u\n",
-                               pSession->uProcsMaxKept, uProcsRunning);
+            VGSvcVerbose(3, "Maximum served guest processes set to %u, running=%u\n", pSession->uProcsMaxKept, uProcsRunning);
 
             int32_t iProcsLeft = (pSession->uProcsMaxKept - uProcsRunning - 1);
             if (iProcsLeft < 0)
             {
-                VBoxServiceVerbose(3, "Maximum running guest processes reached (%u)\n",
-                                   pSession->uProcsMaxKept);
+                VGSvcVerbose(3, "Maximum running guest processes reached (%u)\n", pSession->uProcsMaxKept);
                 fLimitReached = true;
             }
         }
@@ -1763,36 +1643,283 @@ int GstCntlSessionProcessStartAllowed(const PVBOXSERVICECTRLSESSION pSession,
 
 
 /**
- * Creates a guest session. This will spawn a new VBoxService.exe instance under
- * behalf of the given user which then will act as a session host. On successful
- * open, the session will be added to the given session thread list.
+ * Creates the process for a guest session.
  *
- * @return  IPRT status code.
+ *
+ * @return  VBox status code.
+ * @param   pSessionStartupInfo     Session startup info.
+ * @param   pSessionThread          The session thread under construction.
+ * @param   uCtrlSessionThread      The session thread debug ordinal.
+ */
+static int vgsvcVGSvcGstCtrlSessionThreadCreateProcess(const PVBOXSERVICECTRLSESSIONSTARTUPINFO pSessionStartupInfo,
+                                                       PVBOXSERVICECTRLSESSIONTHREAD pSessionThread, uint32_t uCtrlSessionThread)
+{
+    RT_NOREF1(uCtrlSessionThread);
+
+    /*
+     * Is this an anonymous session?  Anonymous sessions run with the same
+     * privileges as the main VBoxService executable.
+     */
+    bool const fAnonymous = pSessionThread->StartupInfo.szUser[0] == '\0';
+    if (fAnonymous)
+    {
+        Assert(!strlen(pSessionThread->StartupInfo.szPassword));
+        Assert(!strlen(pSessionThread->StartupInfo.szDomain));
+
+        VGSvcVerbose(3, "New anonymous guest session ID=%RU32 created, fFlags=%x, using protocol %RU32\n",
+                     pSessionStartupInfo->uSessionID,
+                     pSessionStartupInfo->fFlags,
+                     pSessionStartupInfo->uProtocol);
+    }
+    else
+    {
+        VGSvcVerbose(3, "Spawning new guest session ID=%RU32, szUser=%s, szPassword=%s, szDomain=%s, fFlags=%x, using protocol %RU32\n",
+                     pSessionStartupInfo->uSessionID,
+                     pSessionStartupInfo->szUser,
+#ifdef DEBUG
+                     pSessionStartupInfo->szPassword,
+#else
+                     "XXX", /* Never show passwords in release mode. */
+#endif
+                     pSessionStartupInfo->szDomain,
+                     pSessionStartupInfo->fFlags,
+                     pSessionStartupInfo->uProtocol);
+    }
+
+    /*
+     * Spawn a child process for doing the actual session handling.
+     * Start by assembling the argument list.
+     */
+    int  rc = VINF_SUCCESS;
+    char szExeName[RTPATH_MAX];
+    char *pszExeName = RTProcGetExecutablePath(szExeName, sizeof(szExeName));
+    if (pszExeName)
+    {
+        char szParmSessionID[32];
+        RTStrPrintf(szParmSessionID, sizeof(szParmSessionID), "--session-id=%RU32", pSessionThread->StartupInfo.uSessionID);
+
+        char szParmSessionProto[32];
+        RTStrPrintf(szParmSessionProto, sizeof(szParmSessionProto), "--session-proto=%RU32",
+                    pSessionThread->StartupInfo.uProtocol);
+#ifdef DEBUG
+        char szParmThreadId[32];
+        RTStrPrintf(szParmThreadId, sizeof(szParmThreadId), "--thread-id=%RU32", uCtrlSessionThread);
+#endif
+        unsigned    idxArg = 0; /* Next index in argument vector. */
+        char const *apszArgs[24];
+
+        apszArgs[idxArg++] = pszExeName;
+        apszArgs[idxArg++] = "guestsession";
+        apszArgs[idxArg++] = szParmSessionID;
+        apszArgs[idxArg++] = szParmSessionProto;
+#ifdef DEBUG
+        apszArgs[idxArg++] = szParmThreadId;
+#endif
+        if (!fAnonymous) /* Do we need to pass a user name? */
+        {
+            apszArgs[idxArg++] = "--user";
+            apszArgs[idxArg++] = pSessionThread->StartupInfo.szUser;
+
+            if (strlen(pSessionThread->StartupInfo.szDomain))
+            {
+                apszArgs[idxArg++] = "--domain";
+                apszArgs[idxArg++] = pSessionThread->StartupInfo.szDomain;
+            }
+        }
+
+        /* Add same verbose flags as parent process. */
+        char szParmVerbose[32];
+        if (g_cVerbosity > 0)
+        {
+            unsigned cVs = RT_MIN(g_cVerbosity, RT_ELEMENTS(szParmVerbose) - 2);
+            szParmVerbose[0] = '-';
+            memset(&szParmVerbose[1], 'v', cVs);
+            szParmVerbose[1 + cVs] = '\0';
+            apszArgs[idxArg++] = szParmVerbose;
+        }
+
+        /* Add log file handling. Each session will have an own
+         * log file, naming based on the parent log file. */
+        char szParmLogFile[sizeof(g_szLogFile) + 128];
+        if (g_szLogFile[0])
+        {
+            const char *pszSuffix = RTPathSuffix(g_szLogFile);
+            if (!pszSuffix)
+                pszSuffix = strchr(g_szLogFile, '\0');
+            size_t cchBase = pszSuffix - g_szLogFile;
+#ifndef DEBUG
+            RTStrPrintf(szParmLogFile, sizeof(szParmLogFile), "%.*s-%RU32-%s%s",
+                        cchBase, g_szLogFile, pSessionStartupInfo->uSessionID, pSessionStartupInfo->szUser, pszSuffix);
+#else
+            RTStrPrintf(szParmLogFile, sizeof(szParmLogFile), "%.*s-%RU32-%RU32-%s%s",
+                        cchBase, g_szLogFile, pSessionStartupInfo->uSessionID, uCtrlSessionThread,
+                        pSessionStartupInfo->szUser, pszSuffix);
+#endif
+            apszArgs[idxArg++] = "--logfile";
+            apszArgs[idxArg++] = szParmLogFile;
+        }
+
+#ifdef DEBUG
+        VGSvcVerbose(4, "Argv building rc=%Rrc, session flags=%x\n", rc, g_Session.fFlags);
+        if (RT_SUCCESS(rc))
+        {
+            if (g_Session.fFlags & VBOXSERVICECTRLSESSION_FLAG_DUMPSTDOUT)
+                apszArgs[idxArg++] = "--dump-stdout";
+            if (g_Session.fFlags & VBOXSERVICECTRLSESSION_FLAG_DUMPSTDERR)
+                apszArgs[idxArg++] = "--dump-stderr";
+        }
+#endif
+        apszArgs[idxArg] = NULL;
+        Assert(idxArg < RT_ELEMENTS(apszArgs));
+
+        if (g_cVerbosity > 3)
+        {
+            VGSvcVerbose(4, "Spawning parameters:\n");
+            for (idxArg = 0; apszArgs[idxArg]; idxArg++)
+                VGSvcVerbose(4, "\t%s\n", apszArgs[idxArg]);
+        }
+
+        /*
+         * Configure standard handles and finally create the process.
+         */
+        uint32_t fProcCreate = RTPROC_FLAGS_PROFILE;
+#ifdef RT_OS_WINDOWS /* Windows only flags: */
+        fProcCreate         |= RTPROC_FLAGS_SERVICE
+                            |  RTPROC_FLAGS_HIDDEN;       /** @todo More flags from startup info? */
+#endif
+
+#if 0 /* Pipe handling not needed (yet). */
+        /* Setup pipes. */
+        rc = GstcntlProcessSetupPipe("|", 0 /*STDIN_FILENO*/,
+                                     &pSession->StdIn.hChild, &pSession->StdIn.phChild, &pSession->hStdInW);
+        if (RT_SUCCESS(rc))
+        {
+            rc = GstcntlProcessSetupPipe("|", 1 /*STDOUT_FILENO*/,
+                                         &pSession->StdOut.hChild, &pSession->StdOut.phChild, &pSession->hStdOutR);
+            if (RT_SUCCESS(rc))
+            {
+                rc = GstcntlProcessSetupPipe("|", 2 /*STDERR_FILENO*/,
+                                             &pSession->StdErr.hChild, &pSession->StdErr.phChild, &pSession->hStdErrR);
+                if (RT_SUCCESS(rc))
+                {
+                    rc = RTPollSetCreate(&pSession->hPollSet);
+                    if (RT_SUCCESS(rc))
+                        rc = RTPollSetAddPipe(pSession->hPollSet, pSession->hStdInW, RTPOLL_EVT_ERROR,
+                                              VBOXSERVICECTRLPIPEID_STDIN);
+                    if (RT_SUCCESS(rc))
+                        rc = RTPollSetAddPipe(pSession->hPollSet, pSession->hStdOutR, RTPOLL_EVT_READ | RTPOLL_EVT_ERROR,
+                                              VBOXSERVICECTRLPIPEID_STDOUT);
+                    if (RT_SUCCESS(rc))
+                        rc = RTPollSetAddPipe(pSession->hPollSet, pSession->hStdErrR, RTPOLL_EVT_READ | RTPOLL_EVT_ERROR,
+                                              VBOXSERVICECTRLPIPEID_STDERR);
+                }
+
+                if (RT_SUCCESS(rc))
+                    rc = RTProcCreateEx(pszExeName, apszArgs, hEnv, fProcCreate,
+                                        pSession->StdIn.phChild, pSession->StdOut.phChild, pSession->StdErr.phChild,
+                                        !fAnonymous ? pSession->StartupInfo.szUser : NULL,
+                                        !fAnonymous ? pSession->StartupInfo.szPassword : NULL,
+                                        &pSession->hProcess);
+
+                if (RT_SUCCESS(rc))
+                {
+                    /*
+                     * Close the child ends of any pipes and redirected files.
+                     */
+                    int rc2 = RTHandleClose(pSession->StdIn.phChild); AssertRC(rc2);
+                    pSession->StdIn.phChild     = NULL;
+                    rc2 = RTHandleClose(pSession->StdOut.phChild);    AssertRC(rc2);
+                    pSession->StdOut.phChild    = NULL;
+                    rc2 = RTHandleClose(pSession->StdErr.phChild);    AssertRC(rc2);
+                    pSession->StdErr.phChild    = NULL;
+                }
+            }
+        }
+#else
+        if (RT_SUCCESS(rc))
+        {
+            RTHANDLE hStdIn;
+            rc = RTFileOpenBitBucket(&hStdIn.u.hFile, RTFILE_O_READ);
+            if (RT_SUCCESS(rc))
+            {
+                hStdIn.enmType = RTHANDLETYPE_FILE;
+
+                RTHANDLE hStdOutAndErr;
+                rc = RTFileOpenBitBucket(&hStdOutAndErr.u.hFile, RTFILE_O_WRITE);
+                if (RT_SUCCESS(rc))
+                {
+                    hStdOutAndErr.enmType = RTHANDLETYPE_FILE;
+
+                    const char *pszUser = pSessionThread->StartupInfo.szUser;
+# ifdef RT_OS_WINDOWS
+                    /* If a domain name is given, construct an UPN (User Principle Name) with
+                     * the domain name built-in, e.g. "joedoe@example.com". */
+                    char *pszUserUPN = NULL;
+                    if (strlen(pSessionThread->StartupInfo.szDomain))
+                    {
+                        int cbUserUPN = RTStrAPrintf(&pszUserUPN, "%s@%s",
+                                                     pSessionThread->StartupInfo.szUser,
+                                                     pSessionThread->StartupInfo.szDomain);
+                        if (cbUserUPN > 0)
+                        {
+                            pszUser = pszUserUPN;
+                            VGSvcVerbose(3, "Using UPN: %s\n", pszUserUPN);
+                        }
+                    }
+# endif
+
+                    rc = RTProcCreateEx(pszExeName, apszArgs, RTENV_DEFAULT, fProcCreate,
+                                        &hStdIn, &hStdOutAndErr, &hStdOutAndErr,
+                                        !fAnonymous ? pszUser : NULL,
+                                        !fAnonymous ? pSessionThread->StartupInfo.szPassword : NULL,
+                                        &pSessionThread->hProcess);
+# ifdef RT_OS_WINDOWS
+                    if (pszUserUPN)
+                        RTStrFree(pszUserUPN);
+# endif
+                    RTFileClose(hStdOutAndErr.u.hFile);
+                }
+
+                RTFileClose(hStdIn.u.hFile);
+            }
+        }
+#endif
+    }
+    else
+        rc = VERR_FILE_NOT_FOUND;
+    return rc;
+}
+
+
+/**
+ * Creates a guest session.
+ *
+ * This will spawn a new VBoxService.exe instance under behalf of the given user
+ * which then will act as a session host. On successful open, the session will
+ * be added to the given session thread list.
+ *
+ * @return  VBox status code.
  * @param   pList                   Which list to use to store the session thread in.
  * @param   pSessionStartupInfo     Session startup info.
  * @param   ppSessionThread         Returns newly created session thread on success.
  *                                  Optional.
  */
-int GstCntlSessionThreadCreate(PRTLISTANCHOR pList,
-                               const PVBOXSERVICECTRLSESSIONSTARTUPINFO pSessionStartupInfo,
-                               PVBOXSERVICECTRLSESSIONTHREAD *ppSessionThread)
+int VGSvcGstCtrlSessionThreadCreate(PRTLISTANCHOR pList, const PVBOXSERVICECTRLSESSIONSTARTUPINFO pSessionStartupInfo,
+                                    PVBOXSERVICECTRLSESSIONTHREAD *ppSessionThread)
 {
     AssertPtrReturn(pList, VERR_INVALID_POINTER);
     AssertPtrReturn(pSessionStartupInfo, VERR_INVALID_POINTER);
     /* ppSessionThread is optional. */
 
-#ifdef DEBUG
-    PVBOXSERVICECTRLSESSIONTHREAD pSessionCur;
+#ifdef VBOX_STRICT
     /* Check for existing session in debug mode. Should never happen because of
      * Main consistency. */
+    PVBOXSERVICECTRLSESSIONTHREAD pSessionCur;
     RTListForEach(pList, pSessionCur, VBOXSERVICECTRLSESSIONTHREAD, Node)
     {
-        if (pSessionCur->StartupInfo.uSessionID == pSessionStartupInfo->uSessionID)
-        {
-            AssertMsgFailed(("Guest session thread ID=%RU32 (%p) already exists when it should not\n",
-                             pSessionCur->StartupInfo.uSessionID, pSessionCur));
-            return VERR_ALREADY_EXISTS;
-        }
+        AssertMsgReturn(pSessionCur->StartupInfo.uSessionID != pSessionStartupInfo->uSessionID,
+                        ("Guest session thread ID=%RU32 (%p) already exists when it should not\n",
+                         pSessionCur->StartupInfo.uSessionID, pSessionCur), VERR_ALREADY_EXISTS);
     }
 #endif
     int rc = VINF_SUCCESS;
@@ -1802,333 +1929,81 @@ int GstCntlSessionThreadCreate(PRTLISTANCHOR pList,
     if (s_uCtrlSessionThread++ == UINT32_MAX)
         s_uCtrlSessionThread = 0; /* Wrap around to not let IPRT freak out. */
 
-    PVBOXSERVICECTRLSESSIONTHREAD pSessionThread =
-        (PVBOXSERVICECTRLSESSIONTHREAD)RTMemAllocZ(sizeof(VBOXSERVICECTRLSESSIONTHREAD));
+    /*
+     * Allocate and initialize the session thread structure.
+     */
+    PVBOXSERVICECTRLSESSIONTHREAD pSessionThread = (PVBOXSERVICECTRLSESSIONTHREAD)RTMemAllocZ(sizeof(*pSessionThread));
     if (pSessionThread)
     {
         /* Copy over session startup info. */
-        memcpy(&pSessionThread->StartupInfo, pSessionStartupInfo,
-               sizeof(VBOXSERVICECTRLSESSIONSTARTUPINFO));
+        memcpy(&pSessionThread->StartupInfo, pSessionStartupInfo, sizeof(VBOXSERVICECTRLSESSIONSTARTUPINFO));
 
         pSessionThread->fShutdown = false;
         pSessionThread->fStarted  = false;
         pSessionThread->fStopped  = false;
 
-        /* Is this an anonymous session? */
-        /* Anonymous sessions run with the same privileges as the main VBoxService executable. */
-        bool fAnonymous = !RT_BOOL(strlen(pSessionThread->StartupInfo.szUser));
-        if (fAnonymous)
-        {
-            Assert(!strlen(pSessionThread->StartupInfo.szPassword));
-            Assert(!strlen(pSessionThread->StartupInfo.szDomain));
-
-            VBoxServiceVerbose(3, "New anonymous guest session ID=%RU32 created, uFlags=%x, using protocol %RU32\n",
-                               pSessionStartupInfo->uSessionID,
-                               pSessionStartupInfo->uFlags,
-                               pSessionStartupInfo->uProtocol);
-        }
-        else
-        {
-            VBoxServiceVerbose(3, "Forking new guest session ID=%RU32, szUser=%s, szPassword=%s, szDomain=%s, uFlags=%x, using protocol %RU32\n",
-                               pSessionStartupInfo->uSessionID,
-                               pSessionStartupInfo->szUser,
-#ifdef DEBUG
-                               pSessionStartupInfo->szPassword,
-#else
-                               "XXX", /* Never show passwords in release mode. */
-#endif
-                               pSessionStartupInfo->szDomain,
-                               pSessionStartupInfo->uFlags,
-                               pSessionStartupInfo->uProtocol);
-        }
-
         rc = RTCritSectInit(&pSessionThread->CritSect);
         AssertRC(rc);
-
-        /* Fork child doing the actual session handling. */
-        char szExeName[RTPATH_MAX];
-        char *pszExeName = RTProcGetExecutablePath(szExeName, sizeof(szExeName));
-        if (pszExeName)
-        {
-            char szParmUserName[GUESTPROCESS_MAX_USER_LEN + 32];
-            if (!fAnonymous)
-            {
-                if (!RTStrPrintf(szParmUserName, sizeof(szParmUserName), "--user=%s", pSessionThread->StartupInfo.szUser))
-                    rc = VERR_BUFFER_OVERFLOW;
-            }
-            char szParmSessionID[32];
-            if (RT_SUCCESS(rc) && !RTStrPrintf(szParmSessionID, sizeof(szParmSessionID), "--session-id=%RU32",
-                                               pSessionThread->StartupInfo.uSessionID))
-            {
-                rc = VERR_BUFFER_OVERFLOW;
-            }
-            char szParmSessionProto[32];
-            if (RT_SUCCESS(rc) && !RTStrPrintf(szParmSessionProto, sizeof(szParmSessionProto), "--session-proto=%RU32",
-                                               pSessionThread->StartupInfo.uProtocol))
-            {
-                rc = VERR_BUFFER_OVERFLOW;
-            }
-#ifdef DEBUG
-            char szParmThreadId[32];
-            if (RT_SUCCESS(rc) && !RTStrPrintf(szParmThreadId, sizeof(szParmThreadId), "--thread-id=%RU32",
-                                               s_uCtrlSessionThread))
-            {
-                rc = VERR_BUFFER_OVERFLOW;
-            }
-#endif /* DEBUG */
-            if (RT_SUCCESS(rc))
-            {
-                int iOptIdx = 0; /* Current index in argument vector. */
-
-                char const *papszArgs[16];
-                papszArgs[iOptIdx++] = pszExeName;
-                papszArgs[iOptIdx++] = "guestsession";
-                papszArgs[iOptIdx++] = szParmSessionID;
-                papszArgs[iOptIdx++] = szParmSessionProto;
-#ifdef DEBUG
-                papszArgs[iOptIdx++] = szParmThreadId;
-#endif /* DEBUG */
-                if (!fAnonymous)
-                    papszArgs[iOptIdx++] = szParmUserName;
-
-                /* Add same verbose flags as parent process. */
-                int rc2 = VINF_SUCCESS;
-                char szParmVerbose[32] = { 0 };
-                for (int i = 0; i < g_cVerbosity && RT_SUCCESS(rc2); i++)
-                {
-                    if (i == 0)
-                        rc2 = RTStrCat(szParmVerbose, sizeof(szParmVerbose), "-");
-                    if (RT_FAILURE(rc2))
-                        break;
-                    rc2 = RTStrCat(szParmVerbose, sizeof(szParmVerbose), "v");
-                }
-                if (RT_SUCCESS(rc2))
-                    papszArgs[iOptIdx++] = szParmVerbose;
-
-                /* Add log file handling. Each session will have an own
-                 * log file, naming based on the parent log file. */
-                char szParmLogFile[RTPATH_MAX];
-                if (   RT_SUCCESS(rc2)
-                    && strlen(g_szLogFile))
-                {
-                    char *pszLogFile = RTStrDup(g_szLogFile);
-                    if (pszLogFile)
-                    {
-                        char *pszLogExt = NULL;
-                        if (RTPathHasExt(pszLogFile))
-                            pszLogExt = RTStrDup(RTPathExt(pszLogFile));
-                        RTPathStripExt(pszLogFile);
-                        char *pszLogSuffix;
-#ifndef DEBUG
-                        if (RTStrAPrintf(&pszLogSuffix, "-%RU32-%s",
-                                         pSessionStartupInfo->uSessionID,
-                                         pSessionStartupInfo->szUser) < 0)
-                        {
-                            rc2 = VERR_NO_MEMORY;
-                        }
-#else
-                        if (RTStrAPrintf(&pszLogSuffix, "-%RU32-%RU32-%s",
-                                         pSessionStartupInfo->uSessionID,
-                                         s_uCtrlSessionThread,
-                                         pSessionStartupInfo->szUser) < 0)
-                        {
-                            rc2 = VERR_NO_MEMORY;
-                        }
-#endif /* DEBUG */
-                        else
-                        {
-                            rc2 = RTStrAAppend(&pszLogFile, pszLogSuffix);
-                            if (RT_SUCCESS(rc2) && pszLogExt)
-                                rc2 = RTStrAAppend(&pszLogFile, pszLogExt);
-                            if (RT_SUCCESS(rc2))
-                            {
-                                if (!RTStrPrintf(szParmLogFile, sizeof(szParmLogFile),
-                                                 "--logfile=%s", pszLogFile))
-                                {
-                                    rc2 = VERR_BUFFER_OVERFLOW;
-                                }
-                            }
-                            RTStrFree(pszLogSuffix);
-                        }
-                        if (RT_FAILURE(rc2))
-                            VBoxServiceError("Error building session logfile string for session %RU32 (user %s), rc=%Rrc\n",
-                                             pSessionStartupInfo->uSessionID, pSessionStartupInfo->szUser, rc2);
-                        if (pszLogExt)
-                            RTStrFree(pszLogExt);
-                        RTStrFree(pszLogFile);
-                    }
-                    if (RT_SUCCESS(rc2))
-                        papszArgs[iOptIdx++] = szParmLogFile;
-
-                    rc = rc2;
-                }
-                else if (RT_FAILURE(rc2))
-                    rc = rc2;
-#ifdef DEBUG
-                VBoxServiceVerbose(4, "Argv building rc=%Rrc, session flags=%x\n",
-                                   rc, g_Session.uFlags);
-                char szParmDumpStdOut[32];
-                if (   RT_SUCCESS(rc)
-                    && g_Session.uFlags & VBOXSERVICECTRLSESSION_FLAG_DUMPSTDOUT)
-                {
-                    if (!RTStrPrintf(szParmDumpStdOut, sizeof(szParmDumpStdOut), "--dump-stdout"))
-                        rc = VERR_BUFFER_OVERFLOW;
-                    if (RT_SUCCESS(rc))
-                        papszArgs[iOptIdx++] = szParmDumpStdOut;
-                }
-                char szParmDumpStdErr[32];
-                if (   RT_SUCCESS(rc)
-                    && g_Session.uFlags & VBOXSERVICECTRLSESSION_FLAG_DUMPSTDERR)
-                {
-                    if (!RTStrPrintf(szParmDumpStdErr, sizeof(szParmDumpStdErr), "--dump-stderr"))
-                        rc = VERR_BUFFER_OVERFLOW;
-                    if (RT_SUCCESS(rc))
-                        papszArgs[iOptIdx++] = szParmDumpStdErr;
-                }
-#endif
-                papszArgs[iOptIdx++] = NULL;
-
-                if (g_cVerbosity > 3)
-                {
-                    VBoxServiceVerbose(4, "Forking parameters:\n");
-
-                    iOptIdx = 0;
-                    while (papszArgs[iOptIdx])
-                        VBoxServiceVerbose(4, "\t%s\n", papszArgs[iOptIdx++]);
-                }
-
-                uint32_t uProcFlags = RTPROC_FLAGS_SERVICE
-                                    | RTPROC_FLAGS_HIDDEN; /** @todo More flags from startup info? */
-
-#if 0 /* Pipe handling not needed (yet). */
-                /* Setup pipes. */
-                rc = GstcntlProcessSetupPipe("|", 0 /*STDIN_FILENO*/,
-                                             &pSession->StdIn.hChild, &pSession->StdIn.phChild, &pSession->hStdInW);
-                if (RT_SUCCESS(rc))
-                {
-                    rc = GstcntlProcessSetupPipe("|", 1 /*STDOUT_FILENO*/,
-                                                 &pSession->StdOut.hChild, &pSession->StdOut.phChild, &pSession->hStdOutR);
-                    if (RT_SUCCESS(rc))
-                    {
-                        rc = GstcntlProcessSetupPipe("|", 2 /*STDERR_FILENO*/,
-                                                     &pSession->StdErr.hChild, &pSession->StdErr.phChild, &pSession->hStdErrR);
-                        if (RT_SUCCESS(rc))
-                        {
-                            rc = RTPollSetCreate(&pSession->hPollSet);
-                            if (RT_SUCCESS(rc))
-                                rc = RTPollSetAddPipe(pSession->hPollSet, pSession->hStdInW, RTPOLL_EVT_ERROR,
-                                                      VBOXSERVICECTRLPIPEID_STDIN);
-                            if (RT_SUCCESS(rc))
-                                rc = RTPollSetAddPipe(pSession->hPollSet, pSession->hStdOutR, RTPOLL_EVT_READ | RTPOLL_EVT_ERROR,
-                                                      VBOXSERVICECTRLPIPEID_STDOUT);
-                            if (RT_SUCCESS(rc))
-                                rc = RTPollSetAddPipe(pSession->hPollSet, pSession->hStdErrR, RTPOLL_EVT_READ | RTPOLL_EVT_ERROR,
-                                                      VBOXSERVICECTRLPIPEID_STDERR);
-                        }
-
-                        if (RT_SUCCESS(rc))
-                        {
-                            /* Fork the thing. */
-                            /** @todo Do we need a custom environment block? */
-                            rc = RTProcCreateEx(pszExeName, papszArgs, RTENV_DEFAULT, uProcFlags,
-                                                pSession->StdIn.phChild, pSession->StdOut.phChild, pSession->StdErr.phChild,
-                                                !fAnonymous ? pSession->StartupInfo.szUser : NULL,
-                                                !fAnonymous ? pSession->StartupInfo.szPassword : NULL,
-                                                &pSession->hProcess);
-                        }
-
-                        if (RT_SUCCESS(rc))
-                        {
-                            /*
-                             * Close the child ends of any pipes and redirected files.
-                             */
-                            int rc2 = RTHandleClose(pSession->StdIn.phChild); AssertRC(rc2);
-                            pSession->StdIn.phChild     = NULL;
-                            rc2 = RTHandleClose(pSession->StdOut.phChild);    AssertRC(rc2);
-                            pSession->StdOut.phChild    = NULL;
-                            rc2 = RTHandleClose(pSession->StdErr.phChild);    AssertRC(rc2);
-                            pSession->StdErr.phChild    = NULL;
-                        }
-                    }
-                }
-#else
-                RTHANDLE hStdIn;
-                if (RT_SUCCESS(rc))
-                    rc = RTFileOpenBitBucket(&hStdIn.u.hFile, RTFILE_O_READ);
-                if (RT_SUCCESS(rc))
-                {
-                    hStdIn.enmType = RTHANDLETYPE_FILE;
-
-                    RTHANDLE hStdOutAndErr;
-                    rc = RTFileOpenBitBucket(&hStdOutAndErr.u.hFile, RTFILE_O_WRITE);
-                    if (RT_SUCCESS(rc))
-                    {
-                        hStdOutAndErr.enmType = RTHANDLETYPE_FILE;
-
-                        /** @todo Set custom/cloned guest session environment block. */
-                        rc = RTProcCreateEx(pszExeName, papszArgs, RTENV_DEFAULT, uProcFlags,
-                                            &hStdIn, &hStdOutAndErr, &hStdOutAndErr,
-                                            !fAnonymous ? pSessionThread->StartupInfo.szUser : NULL,
-                                            !fAnonymous ? pSessionThread->StartupInfo.szPassword : NULL,
-                                            &pSessionThread->hProcess);
-
-                        RTFileClose(hStdOutAndErr.u.hFile);
-                    }
-
-                    RTFileClose(hStdIn.u.hFile);
-                }
-#endif
-            }
-        }
-        else
-            rc = VERR_FILE_NOT_FOUND;
-
         if (RT_SUCCESS(rc))
         {
-            /* Start session thread. */
-            rc = RTThreadCreateF(&pSessionThread->Thread, gstcntlSessionThread,
-                                 pSessionThread /*pvUser*/, 0 /*cbStack*/,
-                                 RTTHREADTYPE_DEFAULT, RTTHREADFLAGS_WAITABLE, "sess%u", s_uCtrlSessionThread);
-            if (RT_FAILURE(rc))
+            /*
+             * Start the session thread.
+             */
+            rc = vgsvcVGSvcGstCtrlSessionThreadCreateProcess(pSessionStartupInfo, pSessionThread, s_uCtrlSessionThread);
+            if (RT_SUCCESS(rc))
             {
-                VBoxServiceError("Creating session thread failed, rc=%Rrc\n", rc);
-            }
-            else
-            {
-                /* Wait for the thread to initialize. */
-                rc = RTThreadUserWait(pSessionThread->Thread, 60 * 1000 /* 60s timeout */);
-                if (   ASMAtomicReadBool(&pSessionThread->fShutdown)
-                    || RT_FAILURE(rc))
+                /*
+                 * Start the session thread.
+                 */
+                rc = RTThreadCreateF(&pSessionThread->Thread, vgsvcGstCtrlSessionThread,
+                                     pSessionThread /*pvUser*/, 0 /*cbStack*/,
+                                     RTTHREADTYPE_DEFAULT, RTTHREADFLAGS_WAITABLE, "sess%u", s_uCtrlSessionThread);
+                if (RT_SUCCESS(rc))
                 {
-                    VBoxServiceError("Thread for session ID=%RU32 failed to start, rc=%Rrc\n",
-                                     pSessionThread->StartupInfo.uSessionID, rc);
-                    if (RT_SUCCESS(rc))
+                    /* Wait for the thread to initialize. */
+                    rc = RTThreadUserWait(pSessionThread->Thread, RT_MS_1MIN);
+                    if (   RT_SUCCESS(rc)
+                        && !ASMAtomicReadBool(&pSessionThread->fShutdown))
+                    {
+                        VGSvcVerbose(2, "Thread for session ID=%RU32 started\n", pSessionThread->StartupInfo.uSessionID);
+
+                        ASMAtomicXchgBool(&pSessionThread->fStarted, true);
+
+                        /* Add session to list. */
+                        RTListAppend(pList, &pSessionThread->Node);
+                        if (ppSessionThread) /* Return session if wanted. */
+                            *ppSessionThread = pSessionThread;
+                        return VINF_SUCCESS;
+                    }
+
+                    /*
+                     * Bail out.
+                     */
+                    VGSvcError("Thread for session ID=%RU32 failed to start, rc=%Rrc\n",
+                               pSessionThread->StartupInfo.uSessionID, rc);
+                    if (RT_SUCCESS_NP(rc))
                         rc = VERR_CANT_CREATE; /** @todo Find a better rc. */
                 }
                 else
+                    VGSvcError("Creating session thread failed, rc=%Rrc\n", rc);
+
+                RTProcTerminate(pSessionThread->hProcess);
+                uint32_t cMsWait = 1;
+                while (   RTProcWait(pSessionThread->hProcess, RTPROCWAIT_FLAGS_NOBLOCK, NULL) == VERR_PROCESS_RUNNING
+                       && cMsWait <= 9) /* 1023 ms */
                 {
-                    VBoxServiceVerbose(2, "Thread for session ID=%RU32 started\n",
-                                       pSessionThread->StartupInfo.uSessionID);
-
-                    ASMAtomicXchgBool(&pSessionThread->fStarted, true);
-
-                    /* Add session to list. */
-                    /* rc = */ RTListAppend(pList, &pSessionThread->Node);
-                    if (ppSessionThread) /* Return session if wanted. */
-                        *ppSessionThread = pSessionThread;
+                    RTThreadSleep(cMsWait);
+                    cMsWait <<= 1;
                 }
             }
+            RTCritSectDelete(&pSessionThread->CritSect);
         }
-
-        if (RT_FAILURE(rc))
-        {
-            RTMemFree(pSessionThread);
-        }
+        RTMemFree(pSessionThread);
     }
     else
         rc = VERR_NO_MEMORY;
 
-    VBoxServiceVerbose(3, "Forking session thread returned returned rc=%Rrc\n", rc);
+    VGSvcVerbose(3, "Spawning session thread returned returned rc=%Rrc\n", rc);
     return rc;
 }
 
@@ -2136,28 +2011,25 @@ int GstCntlSessionThreadCreate(PRTLISTANCHOR pList,
 /**
  * Waits for a formerly opened guest session process to close.
  *
- * @return  IPRT status code.
+ * @return  VBox status code.
  * @param   pThread                 Guest session thread to wait for.
  * @param   uTimeoutMS              Waiting timeout (in ms).
- * @param   uFlags                  Closing flags.
+ * @param   fFlags                  Closing flags.
  */
-int GstCntlSessionThreadWait(PVBOXSERVICECTRLSESSIONTHREAD pThread,
-                             uint32_t uTimeoutMS, uint32_t uFlags)
+int VGSvcGstCtrlSessionThreadWait(PVBOXSERVICECTRLSESSIONTHREAD pThread, uint32_t uTimeoutMS, uint32_t fFlags)
 {
+    RT_NOREF1(fFlags);
     AssertPtrReturn(pThread, VERR_INVALID_POINTER);
     /** @todo Validate closing flags. */
 
-    if (pThread->Thread == NIL_RTTHREAD)
-    {
-        AssertMsgFailed(("Guest session thread of session %p does not exist when it should\n",
-                         pThread));
-        return VERR_NOT_FOUND;
-    }
+    AssertMsgReturn(pThread->Thread != NIL_RTTHREAD,
+                    ("Guest session thread of session %p does not exist when it should\n", pThread),
+                    VERR_NOT_FOUND);
 
     int rc = VINF_SUCCESS;
 
     /*
-     * The fork should have received the same closing request,
+     * The spawned session process should have received the same closing request,
      * so just wait for the process to close.
      */
     if (ASMAtomicReadBool(&pThread->fStarted))
@@ -2165,19 +2037,15 @@ int GstCntlSessionThreadWait(PVBOXSERVICECTRLSESSIONTHREAD pThread,
         /* Ask the thread to shutdown. */
         ASMAtomicXchgBool(&pThread->fShutdown, true);
 
-        VBoxServiceVerbose(3, "Waiting for session thread ID=%RU32 to close (%RU32ms) ...\n",
-                           pThread->StartupInfo.uSessionID, uTimeoutMS);
+        VGSvcVerbose(3, "Waiting for session thread ID=%RU32 to close (%RU32ms) ...\n",
+                     pThread->StartupInfo.uSessionID, uTimeoutMS);
 
         int rcThread;
         rc = RTThreadWait(pThread->Thread, uTimeoutMS, &rcThread);
-        if (RT_FAILURE(rc))
-        {
-            VBoxServiceError("Waiting for session thread ID=%RU32 to close failed with rc=%Rrc\n",
-                             pThread->StartupInfo.uSessionID, rc);
-        }
+        if (RT_SUCCESS(rc))
+            VGSvcVerbose(3, "Session thread ID=%RU32 ended with rc=%Rrc\n", pThread->StartupInfo.uSessionID, rcThread);
         else
-            VBoxServiceVerbose(3, "Session thread ID=%RU32 ended with rc=%Rrc\n",
-                               pThread->StartupInfo.uSessionID, rcThread);
+            VGSvcError("Waiting for session thread ID=%RU32 to close failed with rc=%Rrc\n", pThread->StartupInfo.uSessionID, rc);
     }
 
     return rc;
@@ -2187,16 +2055,15 @@ int GstCntlSessionThreadWait(PVBOXSERVICECTRLSESSIONTHREAD pThread,
  * Waits for the specified session thread to end and remove
  * it from the session thread list.
  *
- * @return  IPRT status code.
+ * @return  VBox status code.
  * @param   pThread                 Session thread to destroy.
- * @param   uFlags                  Closing flags.
+ * @param   fFlags                  Closing flags.
  */
-int GstCntlSessionThreadDestroy(PVBOXSERVICECTRLSESSIONTHREAD pThread, uint32_t uFlags)
+int VGSvcGstCtrlSessionThreadDestroy(PVBOXSERVICECTRLSESSIONTHREAD pThread, uint32_t fFlags)
 {
     AssertPtrReturn(pThread, VERR_INVALID_POINTER);
 
-    int rc = GstCntlSessionThreadWait(pThread,
-                                      5 * 60 * 1000 /* 5 minutes timeout */, uFlags);
+    int rc = VGSvcGstCtrlSessionThreadWait(pThread, 5 * 60 * 1000 /* 5 minutes timeout */, fFlags);
 
     /* Remove session from list and destroy object. */
     RTListNodeRemove(&pThread->Node);
@@ -2208,14 +2075,15 @@ int GstCntlSessionThreadDestroy(PVBOXSERVICECTRLSESSIONTHREAD pThread, uint32_t 
 }
 
 /**
- * Close all formerly opened guest session threads.
- * Note: Caller is responsible for locking!
+ * Close all open guest session threads.
  *
- * @return  IPRT status code.
+ * @note    Caller is responsible for locking!
+ *
+ * @return  VBox status code.
  * @param   pList                   Which list to close the session threads for.
- * @param   uFlags                  Closing flags.
+ * @param   fFlags                  Closing flags.
  */
-int GstCntlSessionThreadDestroyAll(PRTLISTANCHOR pList, uint32_t uFlags)
+int VGSvcGstCtrlSessionThreadDestroyAll(PRTLISTANCHOR pList, uint32_t fFlags)
 {
     AssertPtrReturn(pList, VERR_INVALID_POINTER);
 
@@ -2223,38 +2091,39 @@ int GstCntlSessionThreadDestroyAll(PRTLISTANCHOR pList, uint32_t uFlags)
 
     /*int rc = VbglR3GuestCtrlClose
         if (RT_FAILURE(rc))
-            VBoxServiceError("Cancelling pending waits failed; rc=%Rrc\n", rc);*/
+            VGSvcError("Cancelling pending waits failed; rc=%Rrc\n", rc);*/
 
-    PVBOXSERVICECTRLSESSIONTHREAD pSessionThread
-         = RTListGetFirst(pList, VBOXSERVICECTRLSESSIONTHREAD, Node);
-    while (pSessionThread)
+    PVBOXSERVICECTRLSESSIONTHREAD pSessIt;
+    PVBOXSERVICECTRLSESSIONTHREAD pSessItNext;
+    RTListForEachSafe(pList, pSessIt, pSessItNext, VBOXSERVICECTRLSESSIONTHREAD, Node)
     {
-        PVBOXSERVICECTRLSESSIONTHREAD pSessionThreadNext =
-            RTListGetNext(pList, pSessionThread, VBOXSERVICECTRLSESSIONTHREAD, Node);
-        bool fLast = RTListNodeIsLast(pList, &pSessionThread->Node);
-
-        int rc2 = GstCntlSessionThreadDestroy(pSessionThread, uFlags);
+        int rc2 = VGSvcGstCtrlSessionThreadDestroy(pSessIt, fFlags);
         if (RT_FAILURE(rc2))
         {
-            VBoxServiceError("Closing session thread failed with rc=%Rrc\n", rc2);
+            VGSvcError("Closing session thread '%s' failed with rc=%Rrc\n", RTThreadGetName(pSessIt->Thread), rc2);
             if (RT_SUCCESS(rc))
                 rc = rc2;
             /* Keep going. */
         }
-
-        if (fLast)
-            break;
-
-        pSessionThread = pSessionThreadNext;
     }
 
+    VGSvcVerbose(4, "Destroying guest session threads ended with %Rrc\n", rc);
     return rc;
 }
 
-RTEXITCODE VBoxServiceControlSessionForkInit(int argc, char **argv)
+
+/**
+ * Main function for the session process.
+ *
+ * @returns exit code.
+ * @param   argc        Argument count.
+ * @param   argv        Argument vector (UTF-8).
+ */
+RTEXITCODE VGSvcGstCtrlSessionSpawnInit(int argc, char **argv)
 {
     static const RTGETOPTDEF s_aOptions[] =
     {
+        { "--domain",          VBOXSERVICESESSIONOPT_DOMAIN,          RTGETOPT_REQ_STRING },
 #ifdef DEBUG
         { "--dump-stdout",     VBOXSERVICESESSIONOPT_DUMP_STDOUT,     RTGETOPT_REQ_NOTHING },
         { "--dump-stderr",     VBOXSERVICESESSIONOPT_DUMP_STDERR,     RTGETOPT_REQ_NOTHING },
@@ -2276,38 +2145,29 @@ RTEXITCODE VBoxServiceControlSessionForkInit(int argc, char **argv)
                  s_aOptions, RT_ELEMENTS(s_aOptions),
                  1 /*iFirst*/, RTGETOPTINIT_FLAGS_OPTS_FIRST);
 
-    uint32_t uSessionFlags = VBOXSERVICECTRLSESSION_FLAG_FORK;
+    uint32_t fSession = VBOXSERVICECTRLSESSION_FLAG_SPAWN;
 
     /* Protocol and session ID must be specified explicitly. */
     g_Session.StartupInfo.uProtocol  = UINT32_MAX;
     g_Session.StartupInfo.uSessionID = UINT32_MAX;
 
-    int rc = VINF_SUCCESS;
-
-    while (   (ch = RTGetOpt(&GetState, &ValueUnion))
-           && RT_SUCCESS(rc))
+    while ((ch = RTGetOpt(&GetState, &ValueUnion)) != 0)
     {
         /* For options that require an argument, ValueUnion has received the value. */
         switch (ch)
         {
-            case VBOXSERVICESESSIONOPT_LOG_FILE:
-                if (!RTStrPrintf(g_szLogFile, sizeof(g_szLogFile), "%s", ValueUnion.psz))
-                    return RTMsgErrorExit(RTEXITCODE_FAILURE, "Unable to set logfile name to '%s'",
-                                          ValueUnion.psz);
+            case VBOXSERVICESESSIONOPT_DOMAIN:
+                /* Information not needed right now, skip. */
                 break;
 #ifdef DEBUG
             case VBOXSERVICESESSIONOPT_DUMP_STDOUT:
-                uSessionFlags |= VBOXSERVICECTRLSESSION_FLAG_DUMPSTDOUT;
+                fSession |= VBOXSERVICECTRLSESSION_FLAG_DUMPSTDOUT;
                 break;
 
             case VBOXSERVICESESSIONOPT_DUMP_STDERR:
-                uSessionFlags |= VBOXSERVICECTRLSESSION_FLAG_DUMPSTDERR;
+                fSession |= VBOXSERVICECTRLSESSION_FLAG_DUMPSTDERR;
                 break;
 #endif
-            case VBOXSERVICESESSIONOPT_USERNAME:
-                /** @todo Information not needed right now, skip. */
-                break;
-
             case VBOXSERVICESESSIONOPT_SESSION_ID:
                 g_Session.StartupInfo.uSessionID = ValueUnion.u32;
                 break;
@@ -2315,12 +2175,23 @@ RTEXITCODE VBoxServiceControlSessionForkInit(int argc, char **argv)
             case VBOXSERVICESESSIONOPT_SESSION_PROTO:
                 g_Session.StartupInfo.uProtocol = ValueUnion.u32;
                 break;
-
 #ifdef DEBUG
             case VBOXSERVICESESSIONOPT_THREAD_ID:
-                /* Not handled. */
+                /* Not handled. Mainly for processs listing. */
                 break;
 #endif
+            case VBOXSERVICESESSIONOPT_LOG_FILE:
+            {
+                int rc = RTStrCopy(g_szLogFile, sizeof(g_szLogFile), ValueUnion.psz);
+                if (RT_FAILURE(rc))
+                    return RTMsgErrorExit(RTEXITCODE_FAILURE, "Error copying log file name: %Rrc", rc);
+                break;
+            }
+
+            case VBOXSERVICESESSIONOPT_USERNAME:
+                /* Information not needed right now, skip. */
+                break;
+
             /** @todo Implement help? */
 
             case 'v':
@@ -2329,17 +2200,15 @@ RTEXITCODE VBoxServiceControlSessionForkInit(int argc, char **argv)
 
             case VINF_GETOPT_NOT_OPTION:
                 /* Ignore; might be "guestsession" main command. */
+                /** @todo r=bird: We DO NOT ignore stuff on the command line! */
                 break;
 
             default:
                 return RTMsgErrorExit(RTEXITCODE_SYNTAX, "Unknown command '%s'", ValueUnion.psz);
-                break; /* Never reached. */
         }
     }
 
-    if (RT_FAILURE(rc))
-        return RTMsgErrorExit(RTEXITCODE_FAILURE, "Initialization failed with rc=%Rrc", rc);
-
+    /* Check that we've got all the required options. */
     if (g_Session.StartupInfo.uProtocol == UINT32_MAX)
         return RTMsgErrorExit(RTEXITCODE_SYNTAX, "No protocol version specified");
 
@@ -2347,18 +2216,18 @@ RTEXITCODE VBoxServiceControlSessionForkInit(int argc, char **argv)
         return RTMsgErrorExit(RTEXITCODE_SYNTAX, "No session ID specified");
 
     /* Init the session object. */
-    rc = GstCntlSessionInit(&g_Session, uSessionFlags);
+    int rc = VGSvcGstCtrlSessionInit(&g_Session, fSession);
     if (RT_FAILURE(rc))
-        return RTMsgErrorExit(RTEXITCODE_FAILURE, "Failed to initialize session object, rc=%Rrc\n", rc);
+        return RTMsgErrorExit(RTEXITCODE_INIT, "Failed to initialize session object, rc=%Rrc\n", rc);
 
-    rc = VBoxServiceLogCreate(strlen(g_szLogFile) ? g_szLogFile : NULL);
+    rc = VGSvcLogCreate(g_szLogFile[0] ? g_szLogFile : NULL);
     if (RT_FAILURE(rc))
-        return RTMsgErrorExit(RTEXITCODE_FAILURE, "Failed to create release log (%s, %Rrc)",
-                              strlen(g_szLogFile) ? g_szLogFile : "<None>", rc);
+        return RTMsgErrorExit(RTEXITCODE_INIT, "Failed to create log file '%s', rc=%Rrc\n",
+                              g_szLogFile[0] ? g_szLogFile : "<None>", rc);
 
-    RTEXITCODE rcExit = gstcntlSessionForkWorker(&g_Session);
+    RTEXITCODE rcExit = vgsvcGstCtrlSessionSpawnWorker(&g_Session);
 
-    VBoxServiceLogDestroy();
+    VGSvcLogDestroy();
     return rcExit;
 }
 

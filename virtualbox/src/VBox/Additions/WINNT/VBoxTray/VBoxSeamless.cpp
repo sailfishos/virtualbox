@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,16 +16,25 @@
  */
 
 #define _WIN32_WINNT 0x0500
-#include <Windows.h>
+#include <iprt/win/windows.h>
+
+#include <iprt/assert.h>
+#include <iprt/ldr.h>
+
+#include <VBoxDisplay.h>
+#include <VBoxHook.h>
+
+#ifdef DEBUG
+# define LOG_ENABLED
+# define LOG_GROUP LOG_GROUP_DEFAULT
+#endif
+#include <VBox/log.h>
+
 #include "VBoxTray.h"
 #include "VBoxHelpers.h"
 #include "VBoxSeamless.h"
-#include <VBoxHook.h>
-#include <VBoxDisplay.h>
-#include <VBox/VMMDev.h>
-#include <iprt/assert.h>
-#include <iprt/ldr.h>
-#include <VBoxGuestInternal.h>
+
+
 
 typedef struct _VBOXSEAMLESSCONTEXT
 {
@@ -37,7 +46,7 @@ typedef struct _VBOXSEAMLESSCONTEXT
     BOOL    (* pfnVBoxHookRemoveWindowTracker)();
 
     PVBOXDISPIFESCAPE lpEscapeData;
-} VBOXSEAMLESSCONTEXT;
+} VBOXSEAMLESSCONTEXT, *PVBOXSEAMLESSCONTEXT;
 
 typedef struct
 {
@@ -45,23 +54,25 @@ typedef struct
     HRGN    hrgn;
 } VBOX_ENUM_PARAM, *PVBOX_ENUM_PARAM;
 
-static VBOXSEAMLESSCONTEXT gCtx = {0};
+static VBOXSEAMLESSCONTEXT g_Ctx = { 0 };
 
 void VBoxLogString(HANDLE hDriver, char *pszStr);
 
-int VBoxSeamlessInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread)
+DECLCALLBACK(int) VBoxSeamlessInit(const PVBOXSERVICEENV pEnv, void **ppInstance)
 {
-    Log(("VBoxTray: VBoxSeamlessInit\n"));
+    LogFlowFuncEnter();
 
-    *pfStartThread = false;
-    gCtx.pEnv = pEnv;
-    gCtx.hModHook = NIL_RTLDRMOD;
+    PVBOXSEAMLESSCONTEXT pCtx = &g_Ctx; /* Only one instance at the moment. */
+    AssertPtr(pCtx);
+
+    pCtx->pEnv     = pEnv;
+    pCtx->hModHook = NIL_RTLDRMOD;
 
     OSVERSIONINFO OSinfo;
     OSinfo.dwOSVersionInfoSize = sizeof (OSinfo);
     GetVersionEx (&OSinfo);
 
-    int rc = VINF_SUCCESS;
+    int rc;
 
     /* We have to jump out here when using NT4, otherwise it complains about
        a missing API function "UnhookWinEvent" used by the dynamically loaded VBoxHook.dll below */
@@ -73,92 +84,107 @@ int VBoxSeamlessInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStar
     else
     {
         /* Will fail if SetWinEventHook is not present (version < NT4 SP6 apparently) */
-        rc = RTLdrLoadAppPriv(VBOXHOOK_DLL_NAME, &gCtx.hModHook);
+        rc = RTLdrLoadAppPriv(VBOXHOOK_DLL_NAME, &pCtx->hModHook);
         if (RT_SUCCESS(rc))
         {
-            *(PFNRT *)&gCtx.pfnVBoxHookInstallWindowTracker = RTLdrGetFunction(gCtx.hModHook, "VBoxHookInstallWindowTracker");
-            *(PFNRT *)&gCtx.pfnVBoxHookRemoveWindowTracker  = RTLdrGetFunction(gCtx.hModHook, "VBoxHookRemoveWindowTracker");
+            *(PFNRT *)&pCtx->pfnVBoxHookInstallWindowTracker = RTLdrGetFunction(pCtx->hModHook, "VBoxHookInstallWindowTracker");
+            *(PFNRT *)&pCtx->pfnVBoxHookRemoveWindowTracker  = RTLdrGetFunction(pCtx->hModHook, "VBoxHookRemoveWindowTracker");
 
             /* rc should contain success status */
-            AssertRC(rc);
+            AssertRC(rc); /** @todo r=andy Makes no sense here!? */
 
             VBoxSeamlessSetSupported(TRUE);
 
-//            if (RT_SUCCESS(rc))
-            {
-                *pfStartThread = true;
-                *ppInstance = &gCtx;
-            }
+            *ppInstance = pCtx;
         }
         else
-            Log(("VBoxTray: VBoxSeamlessInit: LoadLibrary of \"%s\" failed with rc=%Rrc\n", VBOXHOOK_DLL_NAME, rc));
+            LogFlowFunc(("Unable to load %s, rc=%Rrc\n", VBOXHOOK_DLL_NAME, rc));
     }
 
+    LogFlowFuncLeaveRC(rc);
     return rc;
 }
 
-
-void VBoxSeamlessDestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
+void VBoxSeamlessDestroy(void *pInstance)
 {
-    Log(("VBoxTray: VBoxSeamlessDestroy\n"));
+    LogFlowFuncEnter();
+
+    if (!pInstance)
+        return;
+
+    PVBOXSEAMLESSCONTEXT pCtx = (PVBOXSEAMLESSCONTEXT)pInstance;
+    AssertPtr(pCtx);
 
     VBoxSeamlessSetSupported(FALSE);
 
     /* Inform the host that we no longer support the seamless window mode. */
-    if (gCtx.pfnVBoxHookRemoveWindowTracker)
-        gCtx.pfnVBoxHookRemoveWindowTracker();
-    if (gCtx.hModHook != NIL_RTLDRMOD)
+    if (pCtx->pfnVBoxHookRemoveWindowTracker)
+        pCtx->pfnVBoxHookRemoveWindowTracker();
+    if (pCtx->hModHook != NIL_RTLDRMOD)
     {
-        RTLdrClose(gCtx.hModHook);
-        gCtx.hModHook = NIL_RTLDRMOD;
+        RTLdrClose(pCtx->hModHook);
+        pCtx->hModHook = NIL_RTLDRMOD;
     }
     return;
 }
 
-static void VBoxSeamlessInstallHook()
+static void VBoxSeamlessInstallHook(void)
 {
-    if (gCtx.pfnVBoxHookInstallWindowTracker)
+    PVBOXSEAMLESSCONTEXT pCtx = &g_Ctx; /** @todo r=andy Use instance data via service lookup (add void *pInstance). */
+    AssertPtr(pCtx);
+
+    if (pCtx->pfnVBoxHookInstallWindowTracker)
     {
         /* Check current visible region state */
         VBoxSeamlessCheckWindows(true);
 
-        HMODULE hMod = (HMODULE)RTLdrGetNativeHandle(gCtx.hModHook);
+        HMODULE hMod = (HMODULE)RTLdrGetNativeHandle(pCtx->hModHook);
         Assert(hMod != (HMODULE)~(uintptr_t)0);
-        gCtx.pfnVBoxHookInstallWindowTracker(hMod);
+        pCtx->pfnVBoxHookInstallWindowTracker(hMod);
     }
 }
 
-static void VBoxSeamlessRemoveHook()
+static void VBoxSeamlessRemoveHook(void)
 {
-    if (gCtx.pfnVBoxHookRemoveWindowTracker)
-        gCtx.pfnVBoxHookRemoveWindowTracker();
+    PVBOXSEAMLESSCONTEXT pCtx = &g_Ctx; /** @todo r=andy Use instance data via service lookup (add void *pInstance). */
+    AssertPtr(pCtx);
 
-    if (gCtx.lpEscapeData)
+    if (pCtx->pfnVBoxHookRemoveWindowTracker)
+        pCtx->pfnVBoxHookRemoveWindowTracker();
+
+    if (pCtx->lpEscapeData)
     {
-        free(gCtx.lpEscapeData);
-        gCtx.lpEscapeData = NULL;
+        free(pCtx->lpEscapeData);
+        pCtx->lpEscapeData = NULL;
     }
 }
 
-extern HANDLE ghSeamlessKmNotifyEvent;
+extern HANDLE g_hSeamlessKmNotifyEvent;
 
-static VBOXDISPIF_SEAMLESS gVBoxDispIfSeamless;
+static VBOXDISPIF_SEAMLESS gVBoxDispIfSeamless; /** @todo r=andy Move this into VBOXSEAMLESSCONTEXT? */
 
 
-void VBoxSeamlessEnable()
+void VBoxSeamlessEnable(void)
 {
-    Assert(ghSeamlessKmNotifyEvent);
+    PVBOXSEAMLESSCONTEXT pCtx = &g_Ctx; /** @todo r=andy Use instance data via service lookup (add void *pInstance). */
+    AssertPtr(pCtx);
 
-    VBoxDispIfSeamlesCreate(&gCtx.pEnv->dispIf, &gVBoxDispIfSeamless, ghSeamlessKmNotifyEvent);
+    Assert(g_hSeamlessKmNotifyEvent);
+
+    VBoxDispIfSeamlessCreate(&pCtx->pEnv->dispIf, &gVBoxDispIfSeamless, g_hSeamlessKmNotifyEvent);
 
     VBoxSeamlessInstallHook();
 }
 
-void VBoxSeamlessDisable()
+void VBoxSeamlessDisable(void)
 {
+    PVBOXSEAMLESSCONTEXT pCtx = &g_Ctx; /** @todo r=andy Use instance data via service lookup (add void *pInstance). */
+    AssertPtr(pCtx);
+    NOREF(pCtx);
+
     VBoxSeamlessRemoveHook();
 
-    VBoxDispIfSeamlesTerm(&gVBoxDispIfSeamless);
+    VBoxDispIfSeamlessTerm(&gVBoxDispIfSeamless);
 }
 
 BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
@@ -169,104 +195,112 @@ BOOL CALLBACK VBoxEnumFunc(HWND hwnd, LPARAM lParam)
 
     dwStyle   = GetWindowLong(hwnd, GWL_STYLE);
     dwExStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    if (   !(dwStyle & WS_VISIBLE)
-        ||  (dwStyle & WS_CHILD))
+
+    if ( !(dwStyle & WS_VISIBLE) || (dwStyle & WS_CHILD))
         return TRUE;
 
-    Log(("VBoxTray: VBoxEnumFunc %x\n", hwnd));
+    LogFlow(("VBoxTray: VBoxEnumFunc %x\n", hwnd));
     /* Only visible windows that are present on the desktop are interesting here */
-    if (GetWindowRect(hwnd, &rectWindow))
+    if (!GetWindowRect(hwnd, &rectWindow))
     {
-        char szWindowText[256];
-        szWindowText[0] = 0;
-        OSVERSIONINFO OSinfo;
-        HWND hStart = NULL;
-        GetWindowText(hwnd, szWindowText, sizeof(szWindowText));
-        OSinfo.dwOSVersionInfoSize = sizeof (OSinfo);
-        GetVersionEx (&OSinfo);
-        if (OSinfo.dwMajorVersion >= 6)
+        return TRUE;
+    }
+
+    char szWindowText[256];
+    char szWindowClass[256];
+    OSVERSIONINFO OSinfo;
+    HWND hStart = NULL;
+
+    szWindowText[0] = 0;
+    szWindowClass[0] = 0;
+
+    GetWindowText(hwnd, szWindowText, sizeof(szWindowText));
+    GetClassName(hwnd, szWindowClass, sizeof(szWindowClass));
+
+    OSinfo.dwOSVersionInfoSize = sizeof (OSinfo);
+    GetVersionEx (&OSinfo);
+
+    if (OSinfo.dwMajorVersion >= 6)
+    {
+        hStart = ::FindWindowEx(GetDesktopWindow(), NULL, "Button", "Start");
+
+        if ( hwnd == hStart && !strcmp(szWindowText, "Start") )
         {
-            hStart = ::FindWindowEx(GetDesktopWindow(), NULL, "Button", "Start");
-            if (  hwnd == hStart && szWindowText != NULL
-                && !(strcmp(szWindowText, "Start"))
-               )
-            {
-                /* for vista and above. To solve the issue of small bar above
-                 * the Start button when mouse is hovered over the start button in seamless mode.
-                 * Difference of 7 is observed in Win 7 platform between the dimensionsof rectangle with Start title and its shadow.
-                 */
-                rectWindow.top += 7;
-                rectWindow.bottom -=7;
-            }
+            /* for vista and above. To solve the issue of small bar above
+             * the Start button when mouse is hovered over the start button in seamless mode.
+             * Difference of 7 is observed in Win 7 platform between the dimensions of rectangle with Start title and its shadow.
+            */
+            rectWindow.top += 7;
+            rectWindow.bottom -=7;
         }
-        rectVisible = rectWindow;
+    }
 
-#ifdef LOG_ENABLED
-        DWORD pid = 0;
-        DWORD tid = GetWindowThreadProcessId(hwnd, &pid);
-#endif
+    rectVisible = rectWindow;
 
-        /* Filter out Windows XP shadow windows */
-        /** @todo still shows inside the guest */
-        if (   szWindowText[0] == 0
-            && (
-                    (dwStyle == (WS_POPUP|WS_VISIBLE|WS_CLIPSIBLINGS)
-                            && dwExStyle == (WS_EX_LAYERED|WS_EX_TOOLWINDOW|WS_EX_TRANSPARENT|WS_EX_TOPMOST))
-                 || (dwStyle == (WS_POPUP|WS_VISIBLE|WS_DISABLED|WS_CLIPSIBLINGS|WS_CLIPCHILDREN)
-                            && dwExStyle == (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE))
-                 || (dwStyle == (WS_POPUP|WS_VISIBLE|WS_CLIPSIBLINGS|WS_CLIPCHILDREN)
-                                       && dwExStyle == (WS_EX_TOOLWINDOW))
-                            ))
+    /* Filter out Windows XP shadow windows
+    /** @todo still shows inside the guest */
+    if ( szWindowText[0] == 0 &&
+            (dwStyle == (WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS)
+                && dwExStyle == (WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_TOPMOST))
+            || (dwStyle == (WS_POPUP | WS_VISIBLE | WS_DISABLED | WS_CLIPSIBLINGS | WS_CLIPCHILDREN)
+                && dwExStyle == (WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE))
+            || (dwStyle == (WS_POPUP | WS_VISIBLE | WS_CLIPSIBLINGS | WS_CLIPCHILDREN)
+                && dwExStyle == (WS_EX_TOOLWINDOW)) )
+    {
+        Log(("VBoxTray: Filter out shadow window style=%x exstyle=%x\n", dwStyle, dwExStyle));
+        Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d) (filtered)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
+        Log(("VBoxTray: title=%s style=%x exStyle=%x\n", szWindowText, dwStyle, dwExStyle));
+        return TRUE;
+    }
+
+    /** Such a windows covers the whole screen making desktop background*/
+    if (strcmp(szWindowText, "Program Manager") && strcmp(szWindowClass, "ApplicationFrameWindow"))
+    {
+        Log(("VBoxTray: Enum hwnd=%x rect (%d,%d)-(%d,%d) [%d x %d](applying)\n", hwnd,
+            rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom,
+            rectWindow.left - rectWindow.right, rectWindow.bottom - rectWindow.top));
+        Log(("VBoxTray: title=%s style=%x exStyle=%x\n", szWindowText, dwStyle, dwExStyle));
+
+        HRGN hrgn = CreateRectRgn(0, 0, 0, 0);
+
+        int ret = GetWindowRgn(hwnd, hrgn);
+
+        if (ret == ERROR)
         {
-            Log(("VBoxTray: Filter out shadow window style=%x exstyle=%x\n", dwStyle, dwExStyle));
-            Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d) (filtered)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
-            Log(("VBoxTray: title=%s style=%x exStyle=%x\n", szWindowText, dwStyle, dwExStyle));
-            Log(("VBoxTray: pid=%d tid=%d\n", pid, tid));
-            return TRUE;
-        }
-
-        /** @todo will this suffice? The Program Manager window covers the whole screen */
-        if (strcmp(szWindowText, "Program Manager"))
-        {
-            Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d) (applying)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
-            Log(("VBoxTray: title=%s style=%x exStyle=%x\n", szWindowText, dwStyle, dwExStyle));
-            Log(("VBoxTray: pid=%d tid=%d\n", pid, tid));
-
-            HRGN hrgn = CreateRectRgn(0,0,0,0);
-
-            int ret = GetWindowRgn(hwnd, hrgn);
-
-            if (ret == ERROR)
-            {
-                Log(("VBoxTray: GetWindowRgn failed with rc=%d\n", GetLastError()));
-                SetRectRgn(hrgn, rectVisible.left, rectVisible.top, rectVisible.right, rectVisible.bottom);
-            }
-            else
-            {
-                /* this region is relative to the window origin instead of the desktop origin */
-                OffsetRgn(hrgn, rectWindow.left, rectWindow.top);
-            }
-            if (lpParam->hrgn)
-            {
-                /* create a union of the current visible region and the visible rectangle of this window. */
-                CombineRgn(lpParam->hrgn, lpParam->hrgn, hrgn, RGN_OR);
-                DeleteObject(hrgn);
-            }
-            else
-                lpParam->hrgn = hrgn;
+            Log(("VBoxTray: GetWindowRgn failed with rc=%d, adding antire rect\n", GetLastError()));
+            SetRectRgn(hrgn, rectVisible.left, rectVisible.top, rectVisible.right, rectVisible.bottom);
         }
         else
         {
-            Log(("VBoxTray: Enum hwnd=%x rect (%d,%d) (%d,%d) (ignored)\n", hwnd, rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom));
-            Log(("VBoxTray: title=%s style=%x\n", szWindowText, dwStyle));
-            Log(("VBoxTray: pid=%d tid=%d\n", pid, tid));
+            /* this region is relative to the window origin instead of the desktop origin */
+            OffsetRgn(hrgn, rectWindow.left, rectWindow.top);
         }
+
+        if (lpParam->hrgn)
+        {
+            /* create a union of the current visible region and the visible rectangle of this window. */
+            CombineRgn(lpParam->hrgn, lpParam->hrgn, hrgn, RGN_OR);
+            DeleteObject(hrgn);
+        }
+        else
+            lpParam->hrgn = hrgn;
     }
+    else
+    {
+        Log(("VBoxTray: Enum hwnd=%x rect (%d,%d)-(%d,%d) [%d x %d](ignored)\n", hwnd,
+            rectWindow.left, rectWindow.top, rectWindow.right, rectWindow.bottom,
+            rectWindow.left - rectWindow.right, rectWindow.bottom - rectWindow.top));
+        Log(("VBoxTray: title=%s style=%x exStyle=%x\n", szWindowText, dwStyle, dwExStyle));
+    }
+
     return TRUE; /* continue enumeration */
 }
 
 void VBoxSeamlessCheckWindows(bool fForce)
 {
+    PVBOXSEAMLESSCONTEXT pCtx = &g_Ctx; /** @todo r=andy Use instance data via service lookup (add void *pInstance). */
+    AssertPtr(pCtx);
+
     if (!VBoxDispIfSeamlesIsValid(&gVBoxDispIfSeamless))
         return;
 
@@ -289,36 +323,38 @@ void VBoxSeamlessCheckWindows(bool fForce)
             {
                 lpEscapeData->escapeCode = VBOXESC_SETVISIBLEREGION;
                 LPRGNDATA lpRgnData = VBOXDISPIFESCAPE_DATA(lpEscapeData, RGNDATA);
+
                 memset(lpRgnData, 0, cbSize);
                 cbSize = GetRegionData(param.hrgn, cbSize, lpRgnData);
+
                 if (cbSize)
                 {
-#ifdef DEBUG
-                    RECT *lpRect = (RECT *)&lpRgnData->Buffer[0];
+#ifdef LOG_ENABLED
+                    RECT *paRects = (RECT *)&lpRgnData->Buffer[0];
                     Log(("VBoxTray: New visible region: \n"));
-
-                    for (DWORD i=0;i<lpRgnData->rdh.nCount;i++)
-                    {
-                        Log(("VBoxTray: visible rect (%d,%d)(%d,%d)\n", lpRect[i].left, lpRect[i].top, lpRect[i].right, lpRect[i].bottom));
-                    }
+                    for (DWORD i = 0; i < lpRgnData->rdh.nCount; i++)
+                        Log(("VBoxTray: visible rect (%d,%d)(%d,%d)\n",
+                             paRects[i].left, paRects[i].top, paRects[i].right, paRects[i].bottom));
 #endif
-                    LPRGNDATA lpCtxRgnData = VBOXDISPIFESCAPE_DATA(gCtx.lpEscapeData, RGNDATA);
-                    if (fForce
-                        ||  !gCtx.lpEscapeData
-                        ||  (lpCtxRgnData->rdh.dwSize + lpCtxRgnData->rdh.nRgnSize != cbSize)
-                        ||  memcmp(lpCtxRgnData, lpRgnData, cbSize))
+
+                    LPRGNDATA lpCtxRgnData = VBOXDISPIFESCAPE_DATA(pCtx->lpEscapeData, RGNDATA);
+
+                    if (   fForce
+                        || !pCtx->lpEscapeData
+                        || (lpCtxRgnData->rdh.dwSize + lpCtxRgnData->rdh.nRgnSize != cbSize)
+                        || memcmp(lpCtxRgnData, lpRgnData, cbSize))
                     {
                         /* send to display driver */
-                        VBoxDispIfSeamlesSubmit(&gVBoxDispIfSeamless, lpEscapeData, cbSize);
+                        VBoxDispIfSeamlessSubmit(&gVBoxDispIfSeamless, lpEscapeData, cbSize);
 
-                        if (gCtx.lpEscapeData)
-                            free(gCtx.lpEscapeData);
-                        gCtx.lpEscapeData = lpEscapeData;
+                        if (pCtx->lpEscapeData)
+                            free(pCtx->lpEscapeData);
+                        pCtx->lpEscapeData = lpEscapeData;
                     }
                     else
                         Log(("VBoxTray: Visible rectangles haven't changed; ignore\n"));
                 }
-                if (lpEscapeData != gCtx.lpEscapeData)
+                if (lpEscapeData != pCtx->lpEscapeData)
                     free(lpEscapeData);
             }
         }
@@ -333,140 +369,137 @@ void VBoxSeamlessCheckWindows(bool fForce)
  * Thread function to wait for and process seamless mode change
  * requests
  */
-unsigned __stdcall VBoxSeamlessThread(void *pInstance)
+static DECLCALLBACK(int) VBoxSeamlessWorker(void *pvInstance, bool volatile *pfShutdown)
 {
-    VBOXSEAMLESSCONTEXT *pCtx = (VBOXSEAMLESSCONTEXT *)pInstance;
-    HANDLE gVBoxDriver = pCtx->pEnv->hDriver;
-    bool fTerminate = false;
-    VBoxGuestFilterMaskInfo maskInfo;
-    DWORD cbReturned;
-    BOOL fWasScreenSaverActive = FALSE, ret;
+    AssertPtrReturn(pvInstance, VERR_INVALID_POINTER);
+    LogFlowFunc(("pvInstance=%p\n", pvInstance));
 
-    maskInfo.u32OrMask = VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST;
-    maskInfo.u32NotMask = 0;
-    if (DeviceIoControl (gVBoxDriver, VBOXGUEST_IOCTL_CTL_FILTER_MASK, &maskInfo, sizeof (maskInfo), NULL, 0, &cbReturned, NULL))
+    /*
+     * Tell the control thread that it can continue spawning services.
+     */
+    RTThreadUserSignal(RTThreadSelf());
+
+    int rc = VbglR3CtlFilterMask(VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST, 0 /*fNot*/);
+    if (RT_FAILURE(rc))
     {
-        Log(("VBoxTray: VBoxSeamlessThread: DeviceIOControl(CtlMask - or) succeeded\n"));
-    }
-    else
-    {
-        Log(("VBoxTray: VBoxSeamlessThread: DeviceIOControl(CtlMask) failed, SeamlessChangeThread exited\n"));
-        return 0;
+        LogRel(("Seamless: VbglR3CtlFilterMask(VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST,0) failed with %Rrc, exiting ...\n", rc));
+        return rc;
     }
 
-    do
+    BOOL fWasScreenSaverActive = FALSE;
+    for (;;)
     {
-        /* wait for a seamless change event */
-        VBoxGuestWaitEventInfo waitEvent;
-        waitEvent.u32TimeoutIn = 5000;
-        waitEvent.u32EventMaskIn = VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST;
-        if (DeviceIoControl(gVBoxDriver, VBOXGUEST_IOCTL_WAITEVENT, &waitEvent, sizeof(waitEvent), &waitEvent, sizeof(waitEvent), &cbReturned, NULL))
+        /*
+         * Wait for a seamless change event, check for shutdown both before and after.
+         */
+        if (*pfShutdown)
         {
-            Log(("VBoxTray: VBoxSeamlessThread: DeviceIOControl succeeded\n"));
+            rc = VINF_SUCCESS;
+            break;
+        }
 
-            /* are we supposed to stop? */
-            if (WaitForSingleObject(pCtx->pEnv->hStopEvent, 0) == WAIT_OBJECT_0)
-                break;
+        uint32_t fEvent = 0;
+        rc = VbglR3WaitEvent(VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST, 5000 /*ms*/, &fEvent);
 
-            Log(("VBoxTray: VBoxSeamlessThread: checking event\n"));
+        if (*pfShutdown)
+        {
+            rc = VINF_SUCCESS;
+            break;
+        }
 
+        if (RT_SUCCESS(rc))
+        {
             /* did we get the right event? */
-            if (waitEvent.u32EventFlagsOut & VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST)
+            if (fEvent & VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST)
             {
-                Log(("VBoxTray: VBoxTray: going to get seamless change information\n"));
-
-                /* We got at least one event. Read the requested resolution
+                /*
+                 * We got at least one event. Read the requested resolution
                  * and try to set it until success. New events will not be seen
                  * but a new resolution will be read in this poll loop.
                  */
                 for (;;)
                 {
                     /* get the seamless change request */
-                    VMMDevSeamlessChangeRequest seamlessChangeRequest = {0};
-                    vmmdevInitRequest((VMMDevRequestHeader*)&seamlessChangeRequest, VMMDevReq_GetSeamlessChangeRequest);
-                    seamlessChangeRequest.eventAck = VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST;
-
-                    BOOL fSeamlessChangeQueried = DeviceIoControl(gVBoxDriver, VBOXGUEST_IOCTL_VMMREQUEST(sizeof(seamlessChangeRequest)), &seamlessChangeRequest, sizeof(seamlessChangeRequest),
-                                                                 &seamlessChangeRequest, sizeof(seamlessChangeRequest), &cbReturned, NULL);
-                    if (fSeamlessChangeQueried)
+                    VMMDevSeamlessMode enmMode = (VMMDevSeamlessMode)-1;
+                    rc = VbglR3SeamlessGetLastEvent(&enmMode);
+                    if (RT_SUCCESS(rc))
                     {
-                        Log(("VBoxTray: VBoxSeamlessThread: mode change to %d\n", seamlessChangeRequest.mode));
+                        LogFlowFunc(("Mode changed to %d\n", enmMode));
 
-                        switch(seamlessChangeRequest.mode)
+                        BOOL fRet;
+                        switch (enmMode)
                         {
-                        case VMMDev_Seamless_Disabled:
-                            if (fWasScreenSaverActive)
-                            {
-                                Log(("VBoxTray: Re-enabling the screensaver\n"));
-                                ret = SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, TRUE, NULL, 0);
-                                if (!ret)
-                                    Log(("VBoxTray: SystemParametersInfo SPI_SETSCREENSAVEACTIVE failed with %d\n", GetLastError()));
-                            }
-                            PostMessage(ghwndToolWindow, WM_VBOX_SEAMLESS_DISABLE, 0, 0);
-                            break;
+                            case VMMDev_Seamless_Disabled:
+                                if (fWasScreenSaverActive)
+                                {
+                                    LogRel(("Seamless: Re-enabling the screensaver\n"));
+                                    fRet = SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, TRUE, NULL, 0);
+                                    if (!fRet)
+                                        LogRel(("Seamless: SystemParametersInfo SPI_SETSCREENSAVEACTIVE failed with %ld\n", GetLastError()));
+                                }
+                                PostMessage(g_hwndToolWindow, WM_VBOX_SEAMLESS_DISABLE, 0, 0);
+                                break;
 
-                        case VMMDev_Seamless_Visible_Region:
-                            ret = SystemParametersInfo(SPI_GETSCREENSAVEACTIVE, 0, &fWasScreenSaverActive, 0);
-                            if (!ret)
-                                Log(("VBoxTray: SystemParametersInfo SPI_GETSCREENSAVEACTIVE failed with %d\n", GetLastError()));
+                            case VMMDev_Seamless_Visible_Region:
+                                fRet = SystemParametersInfo(SPI_GETSCREENSAVEACTIVE, 0, &fWasScreenSaverActive, 0);
+                                if (!fRet)
+                                    LogRel(("Seamless: SystemParametersInfo SPI_GETSCREENSAVEACTIVE failed with %ld\n", GetLastError()));
 
-                            if (fWasScreenSaverActive)
-                                Log(("VBoxTray: Disabling the screensaver\n"));
+                                if (fWasScreenSaverActive)
+                                    LogRel(("Seamless: Disabling the screensaver\n"));
 
-                            ret = SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE, NULL, 0);
-                            if (!ret)
-                                Log(("VBoxTray: SystemParametersInfo SPI_SETSCREENSAVEACTIVE failed with %d\n", GetLastError()));
-                            PostMessage(ghwndToolWindow, WM_VBOX_SEAMLESS_ENABLE, 0, 0);
-                            break;
+                                fRet = SystemParametersInfo(SPI_SETSCREENSAVEACTIVE, FALSE, NULL, 0);
+                                if (!fRet)
+                                    LogRel(("Seamless: SystemParametersInfo SPI_SETSCREENSAVEACTIVE failed with %ld\n", GetLastError()));
+                                PostMessage(g_hwndToolWindow, WM_VBOX_SEAMLESS_ENABLE, 0, 0);
+                                break;
 
-                        case VMMDev_Seamless_Host_Window:
-                            break;
+                            case VMMDev_Seamless_Host_Window:
+                                break;
 
-                        default:
-                            AssertFailed();
-                            break;
+                            default:
+                                AssertFailed();
+                                break;
                         }
                         break;
                     }
-                    else
-                    {
-                        Log(("VBoxTray: VBoxSeamlessThread: error from DeviceIoControl VBOXGUEST_IOCTL_VMMREQUEST\n"));
-                    }
-                    /* sleep a bit to not eat too much CPU while retrying */
-                    /* are we supposed to stop? */
-                    if (WaitForSingleObject(pCtx->pEnv->hStopEvent, 50) == WAIT_OBJECT_0)
-                    {
-                        fTerminate = true;
+
+                    LogRel(("Seamless: VbglR3SeamlessGetLastEvent() failed with %Rrc\n", rc));
+
+                    if (*pfShutdown)
                         break;
-                    }
+
+                    /* sleep a bit to not eat too much CPU while retrying */
+                    RTThreadSleep(10);
                 }
             }
         }
-        else
-        {
-            Log(("VBoxTray: VBoxTray: error 0 from DeviceIoControl VBOXGUEST_IOCTL_WAITEVENT\n"));
-            /* sleep a bit to not eat too much CPU in case the above call always fails */
-            if (WaitForSingleObject(pCtx->pEnv->hStopEvent, 10) == WAIT_OBJECT_0)
-            {
-                fTerminate = true;
-                break;
-            }
-        }
-    }
-    while (!fTerminate);
-
-    maskInfo.u32OrMask = 0;
-    maskInfo.u32NotMask = VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST;
-    if (DeviceIoControl (gVBoxDriver, VBOXGUEST_IOCTL_CTL_FILTER_MASK, &maskInfo, sizeof (maskInfo), NULL, 0, &cbReturned, NULL))
-    {
-        Log(("VBoxTray: VBoxSeamlessThread: DeviceIOControl(CtlMask - not) succeeded\n"));
-    }
-    else
-    {
-        Log(("VBoxTray: VBoxSeamlessThread: DeviceIOControl(CtlMask) failed\n"));
+        /* sleep a bit to not eat too much CPU in case the above call always fails */
+        else if (rc != VERR_TIMEOUT)
+            RTThreadSleep(10);
     }
 
-    Log(("VBoxTray: VBoxSeamlessThread: finished seamless change request thread\n"));
-    return 0;
+    int rc2 = VbglR3CtlFilterMask(0 /*fOk*/, VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST);
+    if (RT_FAILURE(rc2))
+        LogRel(("Seamless: VbglR3CtlFilterMask(0, VMMDEV_EVENT_SEAMLESS_MODE_CHANGE_REQUEST) failed with %Rrc\n", rc));
+
+    LogFlowFuncLeaveRC(rc);
+    return rc;
 }
+
+/**
+ * The service description.
+ */
+VBOXSERVICEDESC g_SvcDescSeamless =
+{
+    /* pszName. */
+    "seamless",
+    /* pszDescription. */
+    "Seamless Windows",
+    /* methods */
+    VBoxSeamlessInit,
+    VBoxSeamlessWorker,
+    NULL /* pfnStop */,
+    VBoxSeamlessDestroy
+};
 

@@ -33,10 +33,11 @@
 ; of the LGPL is applied is otherwise unspecified.
 
 include vgadefs.inc
+include commondefs.inc
 
 public  vgabios_int10_handler
 
-VGAROM	segment	public 'CODE'
+VGAROM  segment public 'CODE'
 
 ; Implemented in C
 extrn   _int10_func:near
@@ -44,20 +45,19 @@ extrn   _vgabios_init_func:near
 
 ifdef VBE
 ; Implemented in separate assembly module
-extrn	vbe_biosfn_return_current_mode:near
-extrn	vbe_biosfn_display_window_control:near
-extrn	vbe_biosfn_set_get_logical_scan_line_length:near
-extrn	vbe_biosfn_set_get_display_start:near
-extrn	vbe_biosfn_set_get_dac_palette_format:near
-extrn	vbe_biosfn_set_get_palette_data:near
-extrn	vbe_biosfn_return_protected_mode_interface:near
+extrn   vbe_biosfn_return_current_mode:near
+extrn   vbe_biosfn_display_window_control:near
+extrn   vbe_biosfn_set_get_display_start:near
+extrn   vbe_biosfn_set_get_dac_palette_format:near
+extrn   vbe_biosfn_set_get_palette_data:near
+extrn   vbe_biosfn_return_protected_mode_interface:near
 endif
 
 ifdef VGA_DEBUG
-extrn	_int10_debugmsg:near
-extrn	_printf:near
-extrn	_unimplemented:near
-extrn	_unknown:near
+extrn   _int10_debugmsg:near
+extrn   _printf:near
+extrn   _unimplemented:near
+extrn   _unknown:near
 endif
 
 vgabios_start:
@@ -70,26 +70,26 @@ vgabios_entry_point:
 
   jmp _vgabios_init_func
 
-	org	1Eh
+        org     1Eh
 
-	db	'IBM',0
+        db      'IBM',0
 
 ;;
 ;;  int10 handled here
 ;;
 
-.286
+SET_DEFAULT_CPU_286
 
 vgabios_int10_handler:
   pushf
 ifdef VGA_DEBUG
   push es
   push ds
-  pusha
+  DO_pusha
   mov   bx, 0C000h
   mov   ds, bx
   call _int10_debugmsg
-  popa
+  DO_popa
   pop ds
   pop es
 endif
@@ -165,13 +165,8 @@ int10_test_4F:
   jmp   int10_end
 int10_test_vbe_05:
   cmp   al, 5
-  jne   int10_test_vbe_06
-  call  vbe_biosfn_display_window_control
-  jmp   int10_end
-int10_test_vbe_06:
-  cmp   al, 6
   jne   int10_test_vbe_07
-  call  vbe_biosfn_set_get_logical_scan_line_length
+  call  vbe_biosfn_display_window_control
   jmp   int10_end
 int10_test_vbe_07:
   cmp   al, 7
@@ -198,14 +193,14 @@ endif
 int10_normal:
   push es
   push ds
-  pusha
+  DO_pusha
 
 ;; We have to set ds to access the right data segment
   mov   bx, 0C000h
   mov   ds, bx
   call _int10_func
 
-  popa
+  DO_popa
   pop ds
   pop es
 int10_end:
@@ -483,7 +478,13 @@ biosfn_toggle_intensity:
   in    al, dx
   and   al, 0F7h
   and   bl, 01
+if VBOX_BIOS_CPU gt 8086
   shl   bl, 3
+else
+  shl   bl, 1
+  shl   bl, 1
+  shl   bl, 1
+endif
   or    al, bl
   mov   dx, VGAREG_ACTL_ADDRESS
   out   dx, al
@@ -654,7 +655,17 @@ biosfn_select_video_dac_color_page:
   and   bl, 01
   jnz   set_dac_page
   and   al, 07Fh
+if VBOX_BIOS_CPU gt 8086
   shl   bh, 7
+else
+  shl   bh, 1
+  shl   bh, 1
+  shl   bh, 1
+  shl   bh, 1
+  shl   bh, 1
+  shl   bh, 1
+  shl   bh, 1
+endif
   or    al, bh
   mov   dx, VGAREG_ACTL_ADDRESS
   out   dx, al
@@ -669,7 +680,12 @@ set_dac_page:
   pop   ax
   and   al, 80h
   jnz   set_dac_16_page
+if VBOX_BIOS_CPU gt 8086
   shl   bh, 2
+else
+  shl   bh, 1
+  shl   bh, 1
+endif
 set_dac_16_page:
   and   bh, 0Fh
   mov   al, bh
@@ -777,7 +793,17 @@ biosfn_read_video_dac_state:
   mov   dx, VGAREG_ACTL_READ_DATA
   in    al, dx
   mov   bl, al
+if VBOX_BIOS_CPU gt 8086
   shr   bl, 7
+else
+  shr   bl, 1
+  shr   bl, 1
+  shr   bl, 1
+  shr   bl, 1
+  shr   bl, 1
+  shr   bl, 1
+  shr   bl, 1
+endif
   mov   dx, VGAREG_ACTL_RESET
   in    al, dx
   mov   dx, VGAREG_ACTL_ADDRESS
@@ -789,7 +815,12 @@ biosfn_read_video_dac_state:
   and   bh, 0Fh
   test  bl, 01
   jnz   get_dac_16_page
+if VBOX_BIOS_CPU gt 8086
   shr   bh, 2
+else
+  shr   bh, 1
+  shr   bh, 1
+endif
 get_dac_16_page:
   mov   dx, VGAREG_ACTL_RESET
   in    al, dx
@@ -799,7 +830,7 @@ get_dac_16_page:
 ifdef VBOX
   mov   dx, VGAREG_ACTL_RESET
   in    al, dx
-endif ; VBOX 
+endif ; VBOX
   pop   dx
   pop   ax
   ret
@@ -922,7 +953,13 @@ biosfn_enable_default_palette_loading:
   push  dx
   mov   dl, al
   and   dl, 01
+if VBOX_BIOS_CPU gt 8086
   shl   dl, 3
+else
+  shl   dl, 1
+  shl   dl, 1
+  shl   dl, 1
+endif
   mov   ax, BIOSMEM_SEG
   mov   ds, ax
   mov   bx, BIOSMEM_MODESET_CTL
@@ -1051,6 +1088,6 @@ msg_alt_dcc:
 db "Alternate Display code (%02x) was discarded", 13, 10, 0
 endif
 
-VGAROM	ends
+VGAROM  ends
 
-	end
+        end

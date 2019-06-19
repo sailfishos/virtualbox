@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP   LOG_GROUP_SUP
 #include "SUPSvcInternal.h"
 
@@ -42,9 +43,9 @@
 #include <iprt/localipc.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to a client instance. */
 typedef struct SUPSVCGRANTSESSION *PSUPSVCGRANTSESSION;
 /** Pointer to a Grant service instance. */
@@ -144,9 +145,9 @@ typedef struct SUPSVCGRANT
 } SUPSVCGRANT;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static const char *supSvcGrantStateName(SUPSVCGRANTSTATE enmState);
 
 
@@ -493,7 +494,7 @@ static DECLCALLBACK(int) supSvcGrantThread(RTTHREAD hThread, void *pvThis)
                 rc = RTSemEventSignal(pThis->hResponseEvent);
                 if (RT_FAILURE(rc))
                     return supSvcGrantThreadButchered(pThis, true /* fOwnCritSect*/, "RTSemEventSignal", rc);
-                /* fall thru */
+                RT_FALL_THRU();
 
             case kSupSvcGrantState_Paused:
                 RTCritSectLeave(&pThis->CritSect);
@@ -508,7 +509,7 @@ static DECLCALLBACK(int) supSvcGrantThread(RTTHREAD hThread, void *pvThis)
                 rc = RTSemEventSignal(pThis->hResponseEvent);
                 if (RT_FAILURE(rc))
                     return supSvcGrantThreadButchered(pThis, true /* fOwnCritSect*/, "RTSemEventSignal", rc);
-                /* fall thru */
+                RT_FALL_THRU();
 
             case kSupSvcGrantState_Listen:
                 RTCritSectLeave(&pThis->CritSect);

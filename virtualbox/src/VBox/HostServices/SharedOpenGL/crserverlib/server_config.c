@@ -58,6 +58,9 @@ setDefaults(void)
 }
 
 /* Check if host reports minimal OpenGL capabilities.
+ *
+ * Require OpenGL 2.1 or later.
+ *
  * For example, on Windows host this may happen if host has no graphics
  * card drivers installed or drivers were not properly signed or VBox
  * is running via remote desktop session etc. Currently, we take care
@@ -66,19 +69,31 @@ setDefaults(void)
  * rest of hosts. */
 static bool crServerHasInsufficientCaps()
 {
-    const char *sRealRender;
-    const char *sRealVersion;
+    const char *pszRealVersion;
+    int rc;
+    uint32_t u32VerMajor = 0;
+    uint32_t u32VerMinor = 0;
+    char *pszNext = NULL;
 
     if (!cr_server.head_spu)
         return true;
 
-    sRealRender  = cr_server.head_spu->dispatch_table.GetString(GL_REAL_RENDERER);
-    sRealVersion = cr_server.head_spu->dispatch_table.GetString(GL_REAL_VERSION);
+    pszRealVersion = (const char *)cr_server.head_spu->dispatch_table.GetString(GL_REAL_VERSION);
+    if (!pszRealVersion)
+        return true; /* No version == insufficient. */
 
-    if (sRealRender && RTStrCmp(sRealRender, "GDI Generic") == 0)
-        if (sRealVersion && RTStrCmp(sRealVersion, "1.1.0") == 0)
-            return true;
-    return false;
+    rc = RTStrToUInt32Ex(pszRealVersion, &pszNext, 10, &u32VerMajor);
+    if (   RT_SUCCESS(rc)
+        && *pszNext == '.')
+            RTStrToUInt32Ex(pszNext + 1, NULL, 10, &u32VerMinor);
+
+    crInfo("Host supports version %d.%d [%s]", u32VerMajor, u32VerMinor, pszRealVersion);
+
+    if (   u32VerMajor > 2
+        || (u32VerMajor == 2 && u32VerMinor >= 1))
+        return false; /* >= 2.1, i.e. good enough. */
+
+    return true; /* Insufficient. */
 }
 
 void crServerSetVBoxConfiguration()
@@ -115,7 +130,11 @@ void crServerSetVBoxConfiguration()
         crError("CRServer: Couldn't get my own hostname?");
     }
 
+#ifdef VBOX_WITH_CR_DISPLAY_LISTS
+    strcpy(response, "1 0 expando");
+#else
     strcpy(response, "1 0 render");
+#endif
     crDebug("CRServer: my SPU chain: %s", response);
 
     /* response will describe the SPU chain.
@@ -134,40 +153,12 @@ void crServerSetVBoxConfiguration()
     }
     spu_names[i] = NULL;
 
-    //spu_dir = crStrdup(response);
     crNetSetRank(0);
     crNetSetContextRange(32, 35);
     crNetSetNodeRange("iam0", "iamvis20");
     crNetSetKey(key,sizeof(key));
     crNetSetKey(key,sizeof(key));
     cr_server.tcpip_port = 7000;
-
-        /*cr_server.optimizeBucket = crStrToInt(response);
-        cr_server.localTileSpec = crStrToInt(response);
-        cr_server.useL2 = crStrToInt(response);
-        cr_server.ignore_papi = crStrToInt(response);
-        if (crMothershipGetServerParam(conn, response, "overlap_blending"))
-        {
-            if (!crStrcmp(response, "blend"))
-                cr_server.overlapBlending = 1;
-            else if (!crStrcmp(response, "knockout"))
-                cr_server.overlapBlending = 2;
-        }
-        if (crMothershipGetServerParam(conn, response, "overlap_levels"))
-        cr_server.only_swap_once = crStrToInt(response);
-        cr_server.debug_barriers = crStrToInt(response);
-        cr_server.sharedDisplayLists = crStrToInt(response);
-        cr_server.sharedTextureObjects = crStrToInt(response);
-        cr_server.sharedPrograms = crStrToInt(response);
-        cr_server.sharedWindows = crStrToInt(response);
-        cr_server.uniqueWindows = crStrToInt(response);
-        cr_server.useDMX = crStrToInt(response);
-        if (crMothershipGetServerParam(conn, response, "vertprog_projection_param"))
-        if (crMothershipGetServerParam(conn, response, "stereo_view"))
-        if (crMothershipGetServerParam(conn, response, "view_matrix"))
-        if (crMothershipGetServerParam(conn, response, "right_view_matrix"))
-        if (crMothershipGetServerParam(conn, response, "projection_matrix"))
-        if (crMothershipGetServerParam(conn, response, "right_projection_matrix"))*/
 
     crDebug("CRServer: my port number is %d", cr_server.tcpip_port);
 
@@ -313,8 +304,13 @@ void crServerSetVBoxConfigurationHGCM()
 {
     CRMuralInfo *defaultMural;
 
+#ifdef VBOX_WITH_CR_DISPLAY_LISTS
+    int spu_ids[1]     = {0};
+    char *spu_names[1] = {"expando"};
+#else
     int spu_ids[1]     = {0};
     char *spu_names[1] = {"render"};
+#endif
     char *spu_dir = NULL;
     int i;
     GLint dims[4];
@@ -323,7 +319,7 @@ void crServerSetVBoxConfigurationHGCM()
     defaultMural = (CRMuralInfo *) crHashtableSearch(cr_server.muralTable, 0);
     CRASSERT(defaultMural);
 
-    //@todo should be moved to addclient so we have a chain for each client
+    /// @todo should be moved to addclient so we have a chain for each client
 
     setDefaults();
     
@@ -345,6 +341,7 @@ void crServerSetVBoxConfigurationHGCM()
     }
     else
         cr_server.fVisualBitsDefault = CR_RGB_BIT | CR_ALPHA_BIT | CR_DOUBLE_BIT;
+
 
     env = crGetenv("CR_SERVER_CAPS");
     if (env && env[0] != '\0')

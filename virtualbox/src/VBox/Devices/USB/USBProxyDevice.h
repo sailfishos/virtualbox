@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -174,6 +174,8 @@ typedef const USBPROXYBACK *PCUSBPROXYBACK;
 extern const USBPROXYBACK g_USBProxyDeviceHost;
 /** The remote desktop backend. */
 extern const USBPROXYBACK g_USBProxyDeviceVRDP;
+/** The USB/IP backend. */
+extern const USBPROXYBACK g_USBProxyDeviceUsbIp;
 
 #ifdef RDESKTOP
 typedef struct VUSBDEV
@@ -187,18 +189,6 @@ typedef struct VUSBDEV
  */
 typedef struct USBPROXYDEV
 {
-#ifdef RDESKTOP
-    /** The VUSB device structure - must be the first structure member. */
-    VUSBDEV             Dev;
-    /** The next device in rdesktop-vrdp's linked list */
-    PUSBPROXYDEV        pNext;
-    /** The previous device in rdesktop-vrdp's linked list */
-    PUSBPROXYDEV        pPrev;
-    /** The vrdp device ID */
-    uint32_t            devid;
-    /** Linked list of in-flight URBs */
-    PVUSBURB            pUrbs;
-#endif
     /** The device descriptor. */
     VUSBDESCDEVICE      DevDesc;
     /** The configuration descriptor array. */
@@ -234,7 +224,23 @@ typedef struct USBPROXYDEV
      * This is hack for making PDMUSBREG::pfnUsbQueue return the right status code. */
     bool                fDetached;
     /** Backend specific data, the size is stored in pOps::cbBackend. */
-    void                *pvInstanceDataR3;
+    void               *pvInstanceDataR3;
+
+#ifdef RDESKTOP
+    /** @name VRDP client (rdesktop) related members.
+     * @{ */
+    /** The vrdp device ID. */
+    uint32_t            idVrdp;
+    /** The VUSB device structure - must be the first structure member. */
+    VUSBDEV             Dev;
+    /** The next device in rdesktop-vrdp's linked list. */
+    PUSBPROXYDEV        pNext;
+    /** The previous device in rdesktop-vrdp's linked list. */
+    PUSBPROXYDEV        pPrev;
+    /** Linked list of in-flight URBs */
+    PVUSBURB            pUrbs;
+    /** @} */
+#endif
 } USBPROXYDEV;
 
 /** @def USBPROXYDEV_2_DATA
@@ -242,7 +248,8 @@ typedef struct USBPROXYDEV
  */
 #define USBPROXYDEV_2_DATA(a_pProxyDev, a_Type)   ( (a_Type)(a_pProxyDev)->pvInstanceDataR3 )
 
-static inline char *usbProxyGetName(PUSBPROXYDEV pProxyDev)
+
+DECLINLINE(const char *) usbProxyGetName(PUSBPROXYDEV pProxyDev)
 {
 #ifndef RDESKTOP
     return pProxyDev->pUsbIns->pszName;
@@ -252,9 +259,9 @@ static inline char *usbProxyGetName(PUSBPROXYDEV pProxyDev)
 }
 
 #ifdef RDESKTOP
-static inline PUSBPROXYDEV usbProxyFromVusbDev(PVUSBDEV pDev)
+DECLINLINE(PUSBPROXYDEV) usbProxyFromVusbDev(PVUSBDEV pDev)
 {
-    return (PUSBPROXYDEV)pDev;
+    return RT_FROM_MEMBER(pDev, USBPROXYDEV, Dev);
 }
 #endif
 

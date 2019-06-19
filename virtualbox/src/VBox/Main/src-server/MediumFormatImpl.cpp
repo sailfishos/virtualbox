@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -82,7 +82,7 @@ HRESULT MediumFormat::init(const VDBACKENDINFO *aVDInfo)
                 case VDTYPE_HDD:
                     devType = DeviceType_HardDisk;
                     break;
-                case VDTYPE_DVD:
+                case VDTYPE_OPTICAL_DISC:
                     devType = DeviceType_DVD;
                     break;
                 case VDTYPE_FLOPPY:
@@ -106,7 +106,7 @@ HRESULT MediumFormat::init(const VDBACKENDINFO *aVDInfo)
         {
             Utf8Str defaultValue("");
             DataType_T dt;
-            ULONG flags = static_cast <ULONG>(pa->uKeyFlags);
+            ULONG flags = static_cast<ULONG>(pa->uKeyFlags);
             /* Check for the configure data type */
             switch (pa->enmValueType)
             {

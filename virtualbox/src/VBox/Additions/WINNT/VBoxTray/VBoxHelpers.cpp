@@ -1,9 +1,10 @@
+/* $Id: VBoxHelpers.cpp $ */
 /** @file
  * helpers - Guest Additions Service helper functions
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -14,14 +15,12 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include <malloc.h>
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/string.h>
+#include <iprt/alloca.h>
 #include <VBox/Log.h>
 #include <VBox/VBoxGuestLib.h>
-
-#include <VBoxGuestInternal.h>
 
 #include "VBoxHelpers.h"
 #include "resource.h"
@@ -48,11 +47,11 @@ int hlpReportStatus(VBoxGuestFacilityStatus statusCurrent)
 void hlpReloadCursor(void)
 {
     POINT mousePos;
-    HWND hWin;
-    DWORD hThread, hCurrentThread;
-
     GetCursorPos(&mousePos);
-    hWin = WindowFromPoint(mousePos);
+
+    DWORD hThread = 0;          /* Shut up MSC */
+    DWORD hCurrentThread = 0;   /* Ditto */
+    HWND hWin = WindowFromPoint(mousePos);
     if (hWin)
     {
         hThread = GetWindowThreadProcessId(hWin, NULL);
@@ -60,9 +59,11 @@ void hlpReloadCursor(void)
         if (hCurrentThread != hThread)
             AttachThreadInput(hCurrentThread, hThread, TRUE);
     }
+
     ShowCursor(false);
     ShowCursor(true);
-    if (hWin && (hCurrentThread != hThread))
+
+    if (hWin && hCurrentThread != hThread)
         AttachThreadInput(hCurrentThread, hThread, FALSE);
 }
 
@@ -74,7 +75,7 @@ static unsigned hlpNextAdjacentRectXP(RECTL *paRects, unsigned nRects, unsigned 
         if (paRects[uRect].right == paRects[i].left)
             return i;
     }
-    return ~0;
+    return ~0U;
 }
 
 static unsigned hlpNextAdjacentRectXN(RECTL *paRects, unsigned nRects, unsigned uRect)
@@ -85,7 +86,7 @@ static unsigned hlpNextAdjacentRectXN(RECTL *paRects, unsigned nRects, unsigned 
         if (paRects[uRect].left == paRects[i].right)
             return i;
     }
-    return ~0;
+    return ~0U;
 }
 
 static unsigned hlpNextAdjacentRectYP(RECTL *paRects, unsigned nRects, unsigned uRect)
@@ -96,7 +97,7 @@ static unsigned hlpNextAdjacentRectYP(RECTL *paRects, unsigned nRects, unsigned 
         if (paRects[uRect].bottom == paRects[i].top)
             return i;
     }
-    return ~0;
+    return ~0U;
 }
 
 static unsigned hlpNextAdjacentRectYN(RECTL *paRects, unsigned nRects, unsigned uRect)
@@ -107,7 +108,7 @@ static unsigned hlpNextAdjacentRectYN(RECTL *paRects, unsigned nRects, unsigned 
         if (paRects[uRect].top == paRects[i].bottom)
             return i;
     }
-    return ~0;
+    return ~0U;
 }
 
 void hlpResizeRect(RECTL *paRects, unsigned nRects, unsigned uPrimary,
@@ -244,7 +245,25 @@ void hlpResizeRect(RECTL *paRects, unsigned nRects, unsigned uPrimary,
         }
     }
 
-    memcpy (paRects, paNewRects, sizeof (RECTL) * nRects);
+    /* Primary rectangle must remain at 0,0. */
+    int32_t iOffsetX = paNewRects[uPrimary].left;
+    int32_t iOffsetY = paNewRects[uPrimary].top;
+    for (iRect = 0; iRect < nRects; iRect++)
+    {
+        paRects[iRect].left   = paNewRects[iRect].left   - iOffsetX;
+        paRects[iRect].right  = paNewRects[iRect].right  - iOffsetX;
+        paRects[iRect].top    = paNewRects[iRect].top    - iOffsetY;
+        paRects[iRect].bottom = paNewRects[iRect].bottom - iOffsetY;
+        DDCLOG((" [%d]: %d,%d %dx%d -> %d,%d %dx%d%s\n",
+                iRect,
+                paRects[iRect].left, paRects[iRect].top,
+                paRects[iRect].right - paRects[iRect].left,
+                paRects[iRect].bottom - paRects[iRect].top,
+                paNewRects[iRect].left, paNewRects[iRect].top,
+                paNewRects[iRect].right - paNewRects[iRect].left,
+                paNewRects[iRect].bottom - paNewRects[iRect].top,
+                iRect == uPrimary? " <- primary": ""));
+    }
     return;
 }
 

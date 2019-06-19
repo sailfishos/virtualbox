@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define RTSEMMUTEX_WITHOUT_REMAPPING
 #include "the-darwin-kernel.h"
 #include "internal/iprt.h"
@@ -45,9 +45,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Darwin mutex semaphore.
  */
@@ -78,8 +78,10 @@ RTDECL(int)  RTSemMutexCreate(PRTSEMMUTEX phMutexSem)
 RTDECL(int) RTSemMutexCreateEx(PRTSEMMUTEX phMutexSem, uint32_t fFlags,
                                RTLOCKVALCLASS hClass, uint32_t uSubClass, const char *pszNameFmt, ...)
 {
+    RT_NOREF(hClass, uSubClass, pszNameFmt);
     AssertReturn(!(fFlags & ~RTSEMMUTEX_FLAGS_NO_LOCK_VAL), VERR_INVALID_PARAMETER);
     RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     AssertCompile(sizeof(RTSEMMUTEXINTERNAL) > sizeof(void *));
     PRTSEMMUTEXINTERNAL pThis = (PRTSEMMUTEXINTERNAL)RTMemAlloc(sizeof(*pThis));
@@ -95,11 +97,13 @@ RTDECL(int) RTSemMutexCreateEx(PRTSEMMUTEX phMutexSem, uint32_t fFlags,
         if (pThis->pSpinlock)
         {
             *phMutexSem = pThis;
+            IPRT_DARWIN_RESTORE_EFL_AC();
             return VINF_SUCCESS;
         }
 
         RTMemFree(pThis);
     }
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VERR_NO_MEMORY;
 }
 
@@ -109,9 +113,13 @@ RTDECL(int) RTSemMutexCreateEx(PRTSEMMUTEX phMutexSem, uint32_t fFlags,
  */
 static void rtSemMutexDarwinFree(PRTSEMMUTEXINTERNAL pThis)
 {
+    IPRT_DARWIN_SAVE_EFL_AC();
+
     lck_spin_unlock(pThis->pSpinlock);
     lck_spin_destroy(pThis->pSpinlock, g_pDarwinLockGroup);
     RTMemFree(pThis);
+
+    IPRT_DARWIN_RESTORE_EFL_AC();
 }
 
 
@@ -121,11 +129,12 @@ RTDECL(int)  RTSemMutexDestroy(RTSEMMUTEX hMutexSem)
      * Validate input.
      */
     PRTSEMMUTEXINTERNAL pThis = (PRTSEMMUTEXINTERNAL)hMutexSem;
-    if (!pThis)
+    if (pThis == NIL_RTSEMMUTEX)
         return VERR_INVALID_PARAMETER;
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertMsgReturn(pThis->u32Magic == RTSEMMUTEX_MAGIC, ("u32Magic=%RX32 pThis=%p\n", pThis->u32Magic, pThis), VERR_INVALID_HANDLE);
     RT_ASSERT_INTS_ON();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Kill it, wake up all waiting threads and release the reference.
@@ -141,6 +150,7 @@ RTDECL(int)  RTSemMutexDestroy(RTSEMMUTEX hMutexSem)
     else
         lck_spin_unlock(pThis->pSpinlock);
 
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return VINF_SUCCESS;
 }
 
@@ -182,6 +192,7 @@ static int rtR0SemMutexDarwinRequestSleep(PRTSEMMUTEXINTERNAL pThis, RTMSINTERVA
         rcWait = lck_spin_sleep_deadline(pThis->pSpinlock, LCK_SLEEP_DEFAULT,
                                          (event_t)pThis, fInterruptible, u64AbsTime);
     }
+
     /*
      * Translate the rc.
      */
@@ -264,6 +275,7 @@ DECLINLINE(int) rtR0SemMutexDarwinRequest(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMi
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTSEMMUTEX_MAGIC, VERR_INVALID_HANDLE);
     RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Grab the lock and check out the state.
@@ -294,9 +306,14 @@ DECLINLINE(int) rtR0SemMutexDarwinRequest(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMi
 
     /* Yawn, time for a nap... */
     else
-        return rtR0SemMutexDarwinRequestSleep(pThis, cMillies, fInterruptible, hNativeSelf);
+    {
+        rc = rtR0SemMutexDarwinRequestSleep(pThis, cMillies, fInterruptible, hNativeSelf);
+        IPRT_DARWIN_RESTORE_EFL_ONLY_AC();
+        return rc;
+    }
 
     lck_spin_unlock(pThis->pSpinlock);
+    IPRT_DARWIN_RESTORE_EFL_ONLY_AC();
     return rc;
 }
 
@@ -309,6 +326,7 @@ RTDECL(int) RTSemMutexRequest(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMillies)
 
 RTDECL(int) RTSemMutexRequestDebug(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMillies, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
+    RT_SRC_POS_NOREF(); RT_NOREF(uId);
     return RTSemMutexRequest(hMutexSem, cMillies);
 }
 
@@ -321,6 +339,7 @@ RTDECL(int) RTSemMutexRequestNoResume(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMillie
 
 RTDECL(int) RTSemMutexRequestNoResumeDebug(RTSEMMUTEX hMutexSem, RTMSINTERVAL cMillies, RTHCUINTPTR uId, RT_SRC_POS_DECL)
 {
+    RT_SRC_POS_NOREF(); RT_NOREF(uId);
     return RTSemMutexRequestNoResume(hMutexSem, cMillies);
 }
 
@@ -334,6 +353,7 @@ RTDECL(int)  RTSemMutexRelease(RTSEMMUTEX hMutexSem)
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTSEMMUTEX_MAGIC, VERR_INVALID_HANDLE);
     RT_ASSERT_PREEMPTIBLE();
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Take the lock and do the job.
@@ -349,9 +369,7 @@ RTDECL(int)  RTSemMutexRelease(RTSEMMUTEX hMutexSem)
         {
             pThis->hNativeOwner = NIL_RTNATIVETHREAD;
             if (pThis->cWaiters > 0)
-            {
-                int rc2=thread_wakeup_prim((event_t)pThis, TRUE /* one_thread */, THREAD_AWAKENED);
-            }
+                thread_wakeup_prim((event_t)pThis, TRUE /* one_thread */, THREAD_AWAKENED);
 
         }
     }
@@ -361,6 +379,7 @@ RTDECL(int)  RTSemMutexRelease(RTSEMMUTEX hMutexSem)
     lck_spin_unlock(pThis->pSpinlock);
 
     AssertRC(rc);
+    IPRT_DARWIN_RESTORE_EFL_ONLY_AC();
     return VINF_SUCCESS;
 }
 
@@ -373,6 +392,7 @@ RTDECL(bool) RTSemMutexIsOwned(RTSEMMUTEX hMutexSem)
     RTSEMMUTEXINTERNAL *pThis = hMutexSem;
     AssertPtrReturn(pThis, false);
     AssertReturn(pThis->u32Magic == RTSEMMUTEX_MAGIC, false);
+    IPRT_DARWIN_SAVE_EFL_AC();
 
     /*
      * Take the lock and do the check.
@@ -381,6 +401,7 @@ RTDECL(bool) RTSemMutexIsOwned(RTSEMMUTEX hMutexSem)
     bool fRc = pThis->hNativeOwner != NIL_RTNATIVETHREAD;
     lck_spin_unlock(pThis->pSpinlock);
 
+    IPRT_DARWIN_RESTORE_EFL_AC();
     return fRc;
 }
 

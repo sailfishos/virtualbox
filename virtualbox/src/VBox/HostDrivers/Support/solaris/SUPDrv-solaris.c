@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,14 +24,11 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP_DRV
-#ifdef DEBUG_ramshankar
-# define LOG_ENABLED
-# define LOG_INSTANCE       RTLogRelDefaultInstance()
-#endif
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/errno.h>
@@ -68,9 +65,9 @@
 #include "dtrace/SUPDrv.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The system device name. */
 #define DEVICE_NAME_SYS          "vboxdrv"
 /** The user device name. */
@@ -81,9 +78,9 @@
 #define DEVICE_MAXINSTANCES      16
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int VBoxDrvSolarisOpen(dev_t *pDev, int fFlag, int fType, cred_t *pCred);
 static int VBoxDrvSolarisClose(dev_t Dev, int fFlag, int fType, cred_t *pCred);
 static int VBoxDrvSolarisRead(dev_t Dev, struct uio *pUio, cred_t *pCred);
@@ -92,14 +89,15 @@ static int VBoxDrvSolarisIOCtl(dev_t Dev, int Cmd, intptr_t pArgs, int mode, cre
 
 static int VBoxDrvSolarisAttach(dev_info_t *pDip, ddi_attach_cmd_t Cmd);
 static int VBoxDrvSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t Cmd);
+static int VBoxDrvSolarisQuiesceNotNeeded(dev_info_t *pDip);
 
 static int VBoxSupDrvErr2SolarisErr(int rc);
 static int VBoxDrvSolarisIOCtlSlow(PSUPDRVSESSION pSession, int Cmd, int Mode, intptr_t pArgs);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * cb_ops: for drivers that support char/block entry points
  */
@@ -107,20 +105,20 @@ static struct cb_ops g_VBoxDrvSolarisCbOps =
 {
     VBoxDrvSolarisOpen,
     VBoxDrvSolarisClose,
-    nodev,                  /* b strategy */
-    nodev,                  /* b dump */
-    nodev,                  /* b print */
+    nodev,                        /* b strategy */
+    nodev,                        /* b dump */
+    nodev,                        /* b print */
     VBoxDrvSolarisRead,
     VBoxDrvSolarisWrite,
     VBoxDrvSolarisIOCtl,
-    nodev,                  /* c devmap */
-    nodev,                  /* c mmap */
-    nodev,                  /* c segmap */
-    nochpoll,               /* c poll */
-    ddi_prop_op,            /* property ops */
-    NULL,                   /* streamtab  */
-    D_NEW | D_MP,          /* compat. flag */
-    CB_REV                  /* revision */
+    nodev,                        /* c devmap */
+    nodev,                        /* c mmap */
+    nodev,                        /* c segmap */
+    nochpoll,                     /* c poll */
+    ddi_prop_op,                  /* property ops */
+    NULL,                         /* streamtab  */
+    D_NEW | D_MP,                 /* compat. flag */
+    CB_REV                        /* revision */
 };
 
 /**
@@ -128,17 +126,18 @@ static struct cb_ops g_VBoxDrvSolarisCbOps =
  */
 static struct dev_ops g_VBoxDrvSolarisDevOps =
 {
-    DEVO_REV,               /* driver build revision */
-    0,                      /* ref count */
-    nulldev,                /* get info */
-    nulldev,                /* identify */
-    nulldev,                /* probe */
+    DEVO_REV,                     /* driver build revision */
+    0,                            /* ref count */
+    nulldev,                      /* get info */
+    nulldev,                      /* identify */
+    nulldev,                      /* probe */
     VBoxDrvSolarisAttach,
     VBoxDrvSolarisDetach,
-    nodev,                  /* reset */
+    nodev,                        /* reset */
     &g_VBoxDrvSolarisCbOps,
     (struct bus_ops *)0,
-    nodev                   /* power */
+    nodev,                        /* power */
+    VBoxDrvSolarisQuiesceNotNeeded
 };
 
 /**
@@ -146,7 +145,7 @@ static struct dev_ops g_VBoxDrvSolarisDevOps =
  */
 static struct modldrv g_VBoxDrvSolarisModule =
 {
-    &mod_driverops,         /* extern from kernel */
+    &mod_driverops,               /* extern from kernel */
     DEVICE_DESC " " VBOX_VERSION_STRING "r" RT_XSTR(VBOX_SVN_REV),
     &g_VBoxDrvSolarisDevOps
 };
@@ -159,7 +158,7 @@ static struct modlinkage g_VBoxDrvSolarisModLinkage =
     MODREV_1,                     /* loadable module system revision */
     {
         &g_VBoxDrvSolarisModule,
-        NULL                     /* terminate array of linkage structures */
+        NULL                      /* terminate array of linkage structures */
     }
 };
 
@@ -176,7 +175,7 @@ typedef struct
 /** State info. for each driver instance. */
 typedef struct
 {
-    dev_info_t     *pDip;   /* Device handle */
+    dev_info_t     *pDip;         /* Device handle */
 } vbox_devstate_t;
 #endif
 
@@ -198,7 +197,9 @@ static RTSPINLOCK           g_Spinlock = NIL_RTSPINLOCK;
  */
 int _init(void)
 {
+#if 0    /* No IPRT logging before RTR0Init() is done! */
     LogFlowFunc(("vboxdrv:_init\n"));
+#endif
 
     /*
      * Prevent module autounloading.
@@ -207,7 +208,7 @@ int _init(void)
     if (pModCtl)
         pModCtl->mod_loadflags |= MOD_NOAUTOUNLOAD;
     else
-        LogRel(("vboxdrv: failed to disable autounloading!\n"));
+        cmn_err(CE_NOTE, "vboxdrv: failed to disable autounloading!\n");
 
     /*
      * Initialize IPRT R0 driver, which internally calls OS-specific r0 init.
@@ -221,6 +222,8 @@ int _init(void)
         rc = supdrvInitDevExt(&g_DevExt, sizeof(SUPDRVSESSION));
         if (RT_SUCCESS(rc))
         {
+            cmn_err(CE_CONT, "!tsc::mode %s @ tentative %lu Hz\n", SUPGetGIPModeName(g_DevExt.pGip), g_DevExt.pGip->u64CpuHz);
+
             /*
              * Initialize the session hash table.
              */
@@ -254,7 +257,7 @@ int _init(void)
         else
         {
             LogRel(("VBoxDrvSolarisAttach: supdrvInitDevExt failed\n"));
-            rc = RTErrConvertToErrno(rc);
+            rc = EINVAL;
         }
         RTR0TermForced();
     }
@@ -297,7 +300,9 @@ int _fini(void)
 
 int _info(struct modinfo *pModInfo)
 {
-    LogFlowFunc(("vboxdrv:_info\n"));
+#if 0    /* No IPRT logging before RTR0Init() is done! And yes this is called before _init()!*/
+    LogFlowFunc(("vboxdrv:_init\n"));
+#endif
     int e = mod_info(&g_VBoxDrvSolarisModLinkage, pModInfo);
     return e;
 }
@@ -439,6 +444,19 @@ static int VBoxDrvSolarisDetach(dev_info_t *pDip, ddi_detach_cmd_t enmCmd)
 }
 
 
+/**
+ * Quiesce not-needed entry point, as Solaris 10 doesn't have any
+ * ddi_quiesce_not_needed() function.
+ *
+ * @param   pDip            The module structure instance.
+ *
+ * @return  corresponding solaris error code.
+ */
+static int VBoxDrvSolarisQuiesceNotNeeded(dev_info_t *pDip)
+{
+    return DDI_SUCCESS;
+}
+
 
 /**
  * open() worker.
@@ -523,7 +541,7 @@ static int VBoxDrvSolarisOpen(dev_t *pDev, int fFlag, int fType, cred_t *pCred)
         RTSpinlockAcquire(g_Spinlock);
         pSession->pNextHash = g_apSessionHashTab[iHash];
         g_apSessionHashTab[iHash] = pSession;
-        RTSpinlockReleaseNoInts(g_Spinlock);
+        RTSpinlockRelease(g_Spinlock);
         LogFlow(("VBoxDrvSolarisOpen success\n"));
     }
 
@@ -611,7 +629,7 @@ static int VBoxDrvSolarisClose(dev_t Dev, int flag, int otyp, cred_t *cred)
             }
         }
     }
-    RTSpinlockReleaseNoInts(g_Spinlock);
+    RTSpinlockRelease(g_Spinlock);
     if (!pSession)
     {
         LogRel(("VBoxDrvSolarisClose: WHAT?!? pSession == NULL! This must be a mistake... pid=%d (close)\n", (int)Process));
@@ -646,7 +664,7 @@ static int VBoxDrvSolarisWrite(dev_t Dev, struct uio *pUio, cred_t *pCred)
  *
  * @param   Dev             Device number
  * @param   Cmd             Operation identifier
- * @param   pArg            Arguments from user to driver
+ * @param   pArgs           Arguments from user to driver
  * @param   Mode            Information bitfield (read/write, address space etc.)
  * @param   pCred           User credentials
  * @param   pVal            Return value for calling process.
@@ -685,7 +703,7 @@ static int VBoxDrvSolarisIOCtl(dev_t Dev, int Cmd, intptr_t pArgs, int Mode, cre
     pSession = g_apSessionHashTab[iHash];
     while (pSession && pSession->Process != Process && pSession->fUnrestricted == fUnrestricted);
         pSession = pSession->pNextHash;
-    RTSpinlockReleaseNoInts(g_Spinlock);
+    RTSpinlockRelease(g_Spinlock);
     if (!pSession)
     {
         LogRel(("VBoxSupDrvIOCtl: WHAT?!? pSession == NULL! This must be a mistake... pid=%d iCmd=%#x Dev=%#x\n",
@@ -726,7 +744,7 @@ static int VBoxDrvSolarisIOCtl(dev_t Dev, int Cmd, intptr_t pArgs, int Mode, cre
  * @returns Solaris errno.
  *
  * @param   pSession    The session.
- * @param   Cmd         The IOCtl command.
+ * @param   iCmd        The IOCtl command.
  * @param   Mode        Information bitfield (for specifying ownership of data)
  * @param   iArg        User space address of the request buffer.
  */
@@ -830,7 +848,7 @@ static int VBoxDrvSolarisIOCtlSlow(PSUPDRVSESSION pSession, int iCmd, int Mode, 
  * The SUPDRV IDC entry point.
  *
  * @returns VBox status code, see supdrvIDC.
- * @param   iReq        The request code.
+ * @param   uReq        The request code.
  * @param   pReq        The request.
  */
 int VBOXCALL SUPDrvSolarisIDC(uint32_t uReq, PSUPDRVIDCREQHDR pReq)
@@ -942,6 +960,20 @@ bool VBOXCALL  supdrvOSGetForcedAsyncTscMode(PSUPDRVDEVEXT pDevExt)
     return false;
 }
 
+
+bool VBOXCALL  supdrvOSAreCpusOfflinedOnSuspend(void)
+{
+    /** @todo verify this. */
+    return false;
+}
+
+
+bool VBOXCALL  supdrvOSAreTscDeltasInSync(void)
+{
+    return false;
+}
+
+
 #if  defined(VBOX_WITH_NATIVE_SOLARIS_LOADING) \
  && !defined(VBOX_WITHOUT_NATIVE_R0_LOADER)
 
@@ -1029,15 +1061,10 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
 }
 
 
-void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv,
+                                           const uint8_t *pbImageBits, const char *pszSymbol)
 {
-    NOREF(pDevExt); NOREF(pImage);
-}
-
-
-int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv, const uint8_t *pbImageBits)
-{
-    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits);
+    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits); NOREF(pszSymbol);
     if (kobj_addrcheck(pImage->pSolModCtl->mod_mp, pv))
         return VERR_INVALID_PARAMETER;
     return VINF_SUCCESS;
@@ -1179,15 +1206,10 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
 }
 
 
-void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv,
+                                           const uint8_t *pbImageBits, const char *pszSymbol)
 {
-    NOREF(pDevExt); NOREF(pImage);
-}
-
-
-int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv, const uint8_t *pbImageBits)
-{
-    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits);
+    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits); NOREF(pszSymbol);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -1205,6 +1227,54 @@ void VBOXCALL   supdrvOSLdrUnload(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
 }
 
 #endif /* !VBOX_WITH_NATIVE_SOLARIS_LOADING */
+
+
+void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
+{
+    NOREF(pDevExt); NOREF(pImage); NOREF(pszFilename);
+}
+
+
+void VBOXCALL   supdrvOSLdrNotifyUnloaded(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+{
+    NOREF(pDevExt); NOREF(pImage);
+}
+
+
+int  VBOXCALL   supdrvOSLdrQuerySymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage,
+                                       const char *pszSymbol, size_t cchSymbol, void **ppvSymbol)
+{
+    RT_NOREF(pDevExt, pImage, pszSymbol, cchSymbol, ppvSymbol);
+    return VERR_WRONG_ORDER;
+}
+
+
+#ifdef SUPDRV_WITH_MSR_PROBER
+
+int VBOXCALL    supdrvOSMsrProberRead(uint32_t uMsr, RTCPUID idCpu, uint64_t *puValue)
+{
+/** @todo cmi_hdl_rdmsr can safely do this. there is also the on_trap() fun
+ *        for catching traps that could possibly be used directly. */
+    NOREF(uMsr); NOREF(idCpu); NOREF(puValue);
+    return VERR_NOT_SUPPORTED;
+}
+
+
+int VBOXCALL    supdrvOSMsrProberWrite(uint32_t uMsr, RTCPUID idCpu, uint64_t uValue)
+{
+/** @todo cmi_hdl_wrmsr can safely do this. */
+    NOREF(uMsr); NOREF(idCpu); NOREF(uValue);
+    return VERR_NOT_SUPPORTED;
+}
+
+
+int VBOXCALL    supdrvOSMsrProberModify(RTCPUID idCpu, PSUPMSRPROBER pReq)
+{
+    NOREF(idCpu); NOREF(pReq);
+    return VERR_NOT_SUPPORTED;
+}
+
+#endif /* SUPDRV_WITH_MSR_PROBER */
 
 
 RTDECL(int) SUPR0Printf(const char *pszFormat, ...)
@@ -1226,9 +1296,6 @@ RTDECL(int) SUPR0Printf(const char *pszFormat, ...)
 }
 
 
-/**
- * Returns configuration flags of the host kernel.
- */
 SUPR0DECL(uint32_t) SUPR0GetKernelFeatures(void)
 {
     return 0;

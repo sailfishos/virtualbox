@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_SYSTEM
 #include <unistd.h>
 #include <stdio.h>
@@ -93,7 +94,7 @@ RTDECL(bool) RTMpIsCpuOnline(RTCPUID idCpu)
     char    szDriver[10];
     size_t  cbDriver = sizeof(szDriver);
     RT_ZERO(szDriver);                  /* this shouldn't be necessary. */
-    int rcBsd = sysctlbyname(szName, szDriver, &cbDriver, NULL, NULL);
+    int rcBsd = sysctlbyname(szName, szDriver, &cbDriver, NULL, 0);
     if (rcBsd == 0)
         return true;
 
@@ -154,7 +155,7 @@ RTDECL(uint32_t) RTMpGetCurFrequency(RTCPUID idCpu)
         return 0;
 
     /* CPU's have a common frequency. */
-    int rc = sysctlbyname("dev.cpu.0.freq", &uFreqCurr, &cbParameter, NULL, NULL);
+    int rc = sysctlbyname("dev.cpu.0.freq", &uFreqCurr, &cbParameter, NULL, 0);
     if (rc)
         return 0;
 
@@ -176,7 +177,7 @@ RTDECL(uint32_t) RTMpGetMaxFrequency(RTCPUID idCpu)
      * CPU 0 has the freq levels entry. ENOMEM is ok as we don't need all supported
      * levels but only the first one.
      */
-    int rc = sysctlbyname("dev.cpu.0.freq_levels", szFreqLevels, &cbFreqLevels, NULL, NULL);
+    int rc = sysctlbyname("dev.cpu.0.freq_levels", szFreqLevels, &cbFreqLevels, NULL, 0);
     if (   (rc && (errno != ENOMEM))
         || (cbFreqLevels == 0))
         return 0;

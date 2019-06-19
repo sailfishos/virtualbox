@@ -37,31 +37,33 @@
 ; of the LGPL is applied is otherwise unspecified.
 
 include vgadefs.inc
+include commondefs.inc
 
-public	_vga_compat_setup
-public	dispi_set_enable_
-public	dispi_set_bank_
-public	_dispi_set_bank_farcall
+public  _vga_compat_setup
+public  dispi_set_enable_
+public  dispi_set_bank_
+public  _dispi_set_bank_farcall
 public  _dispi_get_max_bpp
 public  _vbe_has_vbe_display
 
-public	vbe_biosfn_return_current_mode
-public	vbe_biosfn_display_window_control
-public	vbe_biosfn_set_get_logical_scan_line_length
-public	vbe_biosfn_set_get_display_start
-public	vbe_biosfn_set_get_dac_palette_format
-public	vbe_biosfn_set_get_palette_data
-public	vbe_biosfn_return_protected_mode_interface
+public  vbe_biosfn_return_current_mode
+public  vbe_biosfn_display_window_control
+public  vbe_biosfn_set_get_display_start
+public  vbe_biosfn_set_get_dac_palette_format
+public  vbe_biosfn_set_get_palette_data
+public  vbe_biosfn_return_protected_mode_interface
 
 VGAROM  segment public 'CODE'
 
-.386
+SET_DEFAULT_CPU
+
+VBE_BYTEWISE_IO EQU 1
 
 ;; Bytewise in/out
 ifdef VBE_BYTEWISE_IO
 
-public	do_out_dx_ax
-public	do_in_ax_dx
+public  do_out_dx_ax
+public  do_in_ax_dx
 
 do_out_dx_ax:
   xchg ah, al
@@ -120,7 +122,13 @@ dispi_get_bpp:
   cmp  al, 4
   jbe  get_bpp_noinc
   mov  ah, al
+if VBOX_BIOS_CPU gt 8086
   shr  ah, 3
+else
+  shr  ah, 1
+  shr  ah, 1
+  shr  ah, 1
+endif
   test al, 07
   jz   get_bpp_noinc
   inc  ah
@@ -280,7 +288,13 @@ vga_set_virt_width:
   ja   set_width_svga
   shr  bx, 1
 set_width_svga:
+if VBOX_BIOS_CPU gt 8086
   shr  bx, 3
+else
+  shr  bx, 1
+  shr  bx, 1
+  shr  bx, 1
+endif
   mov  dx, VGAREG_VGA_CRTC_ADDRESS
   mov  ah, bl
   mov  al, 13h
@@ -288,39 +302,6 @@ set_width_svga:
   pop  dx
   pop  bx
   pop  ax
-  ret
-
-dispi_set_virt_width:
-  call vga_set_virt_width
-  push dx
-  push ax
-  mov  dx, VBE_DISPI_IOPORT_INDEX
-  mov  ax, VBE_DISPI_INDEX_VIRT_WIDTH
-  out_dx_ax
-  pop  ax
-  mov  dx, VBE_DISPI_IOPORT_DATA
-  out_dx_ax
-  pop  dx
-  ret
-
-dispi_get_virt_width:
-  push dx
-  mov  dx, VBE_DISPI_IOPORT_INDEX
-  mov  ax, VBE_DISPI_INDEX_VIRT_WIDTH
-  out_dx_ax
-  mov  dx, VBE_DISPI_IOPORT_DATA
-  in_ax_dx
-  pop  dx
-  ret
-
-dispi_get_virt_height:
-  push dx
-  mov  dx, VBE_DISPI_IOPORT_INDEX
-  mov  ax, VBE_DISPI_INDEX_VIRT_HEIGHT
-  out_dx_ax
-  mov  dx, VBE_DISPI_IOPORT_DATA
-  in_ax_dx
-  pop  dx
   ret
 
 _vga_compat_setup:
@@ -339,7 +320,13 @@ _vga_compat_setup:
   out  dx, ax
   pop  ax
   push ax
+if VBOX_BIOS_CPU gt 8086
   shr  ax, 3
+else
+  shr  ax, 1
+  shr  ax, 1
+  shr  ax, 1
+endif
   dec  ax
   mov  ah, al
   mov  al, 01
@@ -550,68 +537,6 @@ vbe_05_failed:
   ret
 
 
-; Function 06h - Set/Get Logical Scan Line Length
-;
-; Input:
-;              AX      = 4F06h
-;              BL      = 00h Set Scan Line Length in Pixels
-;                      = 01h Get Scan Line Length
-;                      = 02h Set Scan Line Length in Bytes
-;                      = 03h Get Maximum Scan Line Length
-;              CX      = If BL=00h Desired Width in Pixels
-;                        If BL=02h Desired Width in Bytes
-;                        (Ignored for Get Functions)
-;
-; Output:
-;              AX      = VBE Return Status
-;              BX      = Bytes Per Scan Line
-;              CX      = Actual Pixels Per Scan Line
-;                        (truncated to nearest complete pixel)
-;              DX      = Maximum Number of Scan Lines
-;
-vbe_biosfn_set_get_logical_scan_line_length:
-  mov  ax, cx
-  cmp  bl, 1
-  je   get_logical_scan_line_length
-  cmp  bl, 2
-  je   set_logical_scan_line_bytes
-  jb   set_logical_scan_line_pixels
-  mov  ax, 0100h
-  ret
-set_logical_scan_line_bytes:
-  push ax
-  call dispi_get_bpp
-  xor  bh, bh
-  mov  bl, ah
-  or   bl, bl
-  jnz  no_4bpp_1
-  shl  ax, 3
-  mov  bl, 1
-no_4bpp_1:
-  xor  dx, dx
-  pop  ax
-  div  bx
-set_logical_scan_line_pixels:
-  call dispi_set_virt_width
-get_logical_scan_line_length:
-  call dispi_get_bpp
-  xor  bh, bh
-  mov  bl, ah
-  call dispi_get_virt_width
-  mov  cx, ax
-  or   bl, bl
-  jnz  no_4bpp_2
-  shr  ax, 3
-  mov  bl, 1
-no_4bpp_2:
-  mul  bx
-  mov  bx, ax
-  call dispi_get_virt_height
-  mov  dx, ax
-  mov  ax, 004Fh
-  ret
-
-
 ; Function 07h - Set/Get Display Start
 ;
 ; Input(16-bit):
@@ -767,7 +692,7 @@ if 0
       ; this is where we could wait for vertical retrace
 endif
 set_palette_data:
-  pushad
+  DO_pushad
   push  ds
   push  es
   pop   ds
@@ -777,6 +702,7 @@ set_palette_data:
   inc   dx
   mov   si, di
 set_pal_loop:
+if VBOX_BIOS_CPU ge 80386
   lodsd
   ror   eax, 16
   out   dx, al
@@ -784,19 +710,30 @@ set_pal_loop:
   out   dx, al
   rol   eax, 8
   out   dx, al
+else
+  lodsw
+  mov   bx, ax
+  lodsw
+  out   dx, al
+  mov   al, bh
+  out   dx, al
+  mov   al, bl
+  out   dx, al
+endif
   loop  set_pal_loop
   pop   ds
-  popad
+  DO_popad
 vbe_09_ok:
   mov  ax, 004Fh
   ret
 
 get_palette_data:
-  pushad
+  DO_pushad
   mov   al, dl
   mov   dx, VGAREG_DAC_READ_ADDRESS
   out   dx, al
   add   dl, 2
+if VBOX_BIOS_CPU ge 80386
 get_pal_loop:
   xor   eax, eax
   in    al, dx
@@ -805,8 +742,20 @@ get_pal_loop:
   shl   eax, 8
   in    al, dx
   stosd
+else
+  xor   bx, bx
+get_pal_loop:
+  in    al, dx
+  mov   bl, al
+  in    al, dx
+  mov   ah, al
+  in    al, dx
+  stosw
+  mov   ax, bx
+  stosw
+endif
   loop  get_pal_loop
-  popad
+  DO_popad
   jmp   vbe_09_ok
 
 vbe_09_unsupported:
@@ -834,7 +783,6 @@ vbe_biosfn_return_protected_mode_interface:
   mov es, di
   mov di, offset vesa_pm_start
   mov cx, vesa_pm_end - vesa_pm_start
-  sub cx, di
   mov ax, 004Fh
   ret
 _fail:

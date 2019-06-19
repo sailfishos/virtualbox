@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2011 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/rand.h>
 #include "internal/iprt.h"
 
@@ -38,7 +38,7 @@
 #include "internal/rand.h"
 
 
-RTDECL(int) RTRandAdvDestroy(RTRAND hRand) RT_NO_THROW
+RTDECL(int) RTRandAdvDestroy(RTRAND hRand) RT_NO_THROW_DEF
 {
     /* Validate. */
     if (hRand == NIL_RTRAND)
@@ -53,7 +53,7 @@ RTDECL(int) RTRandAdvDestroy(RTRAND hRand) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTRandAdvDestroy);
 
 
-RTDECL(int) RTRandAdvSeed(RTRAND hRand, uint64_t u64Seed) RT_NO_THROW
+RTDECL(int) RTRandAdvSeed(RTRAND hRand, uint64_t u64Seed) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -66,7 +66,7 @@ RTDECL(int) RTRandAdvSeed(RTRAND hRand, uint64_t u64Seed) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTRandAdvSeed);
 
 
-RTDECL(int) RTRandAdvSaveState(RTRAND hRand, char *pszState, size_t *pcbState) RT_NO_THROW
+RTDECL(int) RTRandAdvSaveState(RTRAND hRand, char *pszState, size_t *pcbState) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -81,7 +81,7 @@ RTDECL(int) RTRandAdvSaveState(RTRAND hRand, char *pszState, size_t *pcbState) R
 RT_EXPORT_SYMBOL(RTRandAdvSaveState);
 
 
-RTDECL(int) RTRandAdvRestoreState(RTRAND hRand, char const *pszState) RT_NO_THROW
+RTDECL(int) RTRandAdvRestoreState(RTRAND hRand, char const *pszState) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -95,7 +95,7 @@ RTDECL(int) RTRandAdvRestoreState(RTRAND hRand, char const *pszState) RT_NO_THRO
 RT_EXPORT_SYMBOL(RTRandAdvRestoreState);
 
 
-RTDECL(void) RTRandAdvBytes(RTRAND hRand, void *pv, size_t cb) RT_NO_THROW
+RTDECL(void) RTRandAdvBytes(RTRAND hRand, void *pv, size_t cb) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -109,7 +109,7 @@ RTDECL(void) RTRandAdvBytes(RTRAND hRand, void *pv, size_t cb) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTRandAdvBytes);
 
 
-RTDECL(int32_t) RTRandAdvS32Ex(RTRAND hRand, int32_t i32First, int32_t i32Last) RT_NO_THROW
+RTDECL(int32_t) RTRandAdvS32Ex(RTRAND hRand, int32_t i32First, int32_t i32Last) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -122,7 +122,7 @@ RTDECL(int32_t) RTRandAdvS32Ex(RTRAND hRand, int32_t i32First, int32_t i32Last) 
 RT_EXPORT_SYMBOL(RTRandAdvS32Ex);
 
 
-RTDECL(int32_t) RTRandAdvS32(RTRAND hRand) RT_NO_THROW
+RTDECL(int32_t) RTRandAdvS32(RTRAND hRand) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -135,7 +135,7 @@ RTDECL(int32_t) RTRandAdvS32(RTRAND hRand) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTRandAdvS32);
 
 
-RTDECL(uint32_t) RTRandAdvU32Ex(RTRAND hRand, uint32_t u32First, uint32_t u32Last) RT_NO_THROW
+RTDECL(uint32_t) RTRandAdvU32Ex(RTRAND hRand, uint32_t u32First, uint32_t u32Last) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -148,7 +148,7 @@ RTDECL(uint32_t) RTRandAdvU32Ex(RTRAND hRand, uint32_t u32First, uint32_t u32Las
 RT_EXPORT_SYMBOL(RTRandAdvU32Ex);
 
 
-RTDECL(uint32_t) RTRandAdvU32(RTRAND hRand) RT_NO_THROW
+RTDECL(uint32_t) RTRandAdvU32(RTRAND hRand) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -161,7 +161,7 @@ RTDECL(uint32_t) RTRandAdvU32(RTRAND hRand) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTRandAdvU32);
 
 
-RTDECL(int64_t) RTRandAdvS64Ex(RTRAND hRand, int64_t i64First, int64_t i64Last) RT_NO_THROW
+RTDECL(int64_t) RTRandAdvS64Ex(RTRAND hRand, int64_t i64First, int64_t i64Last) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -174,7 +174,7 @@ RTDECL(int64_t) RTRandAdvS64Ex(RTRAND hRand, int64_t i64First, int64_t i64Last) 
 RT_EXPORT_SYMBOL(RTRandAdvS64Ex);
 
 
-RTDECL(int64_t) RTRandAdvS64(RTRAND hRand) RT_NO_THROW
+RTDECL(int64_t) RTRandAdvS64(RTRAND hRand) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -187,7 +187,7 @@ RTDECL(int64_t) RTRandAdvS64(RTRAND hRand) RT_NO_THROW
 RT_EXPORT_SYMBOL(RTRandAdvS64);
 
 
-RTDECL(uint64_t) RTRandAdvU64Ex(RTRAND hRand, uint64_t u64First, uint64_t u64Last) RT_NO_THROW
+RTDECL(uint64_t) RTRandAdvU64Ex(RTRAND hRand, uint64_t u64First, uint64_t u64Last) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -200,7 +200,7 @@ RTDECL(uint64_t) RTRandAdvU64Ex(RTRAND hRand, uint64_t u64First, uint64_t u64Las
 RT_EXPORT_SYMBOL(RTRandAdvU64Ex);
 
 
-RTDECL(uint64_t) RTRandAdvU64(RTRAND hRand) RT_NO_THROW
+RTDECL(uint64_t) RTRandAdvU64(RTRAND hRand) RT_NO_THROW_DEF
 {
     /* Validate. */
     PRTRANDINT pThis = hRand;
@@ -221,11 +221,11 @@ DECLHIDDEN(DECLCALLBACK(void))  rtRandAdvSynthesizeBytesFromU32(PRTRANDINT pThis
         switch (cb)
         {
             case 4:
-                pb[3] = (uint8_t)(u32 >> 24);
+                pb[3] = (uint8_t)(u32 >> 24); RT_FALL_THRU();
             case 3:
-                pb[2] = (uint8_t)(u32 >> 16);
+                pb[2] = (uint8_t)(u32 >> 16); RT_FALL_THRU();
             case 2:
-                pb[1] = (uint8_t)(u32 >> 8);
+                pb[1] = (uint8_t)(u32 >> 8);  RT_FALL_THRU();
             case 1:
                 pb[0] = (uint8_t)u32;
             return; /* done */
@@ -253,19 +253,19 @@ DECLHIDDEN(DECLCALLBACK(void))  rtRandAdvSynthesizeBytesFromU64(PRTRANDINT pThis
         switch (cb)
         {
             case 8:
-                pb[7] = (uint8_t)(u64 >> 56);
+                pb[7] = (uint8_t)(u64 >> 56); RT_FALL_THRU();
             case 7:
-                pb[6] = (uint8_t)(u64 >> 48);
+                pb[6] = (uint8_t)(u64 >> 48); RT_FALL_THRU();
             case 6:
-                pb[5] = (uint8_t)(u64 >> 40);
+                pb[5] = (uint8_t)(u64 >> 40); RT_FALL_THRU();
             case 5:
-                pb[4] = (uint8_t)(u64 >> 32);
+                pb[4] = (uint8_t)(u64 >> 32); RT_FALL_THRU();
             case 4:
-                pb[3] = (uint8_t)(u64 >> 24);
+                pb[3] = (uint8_t)(u64 >> 24); RT_FALL_THRU();
             case 3:
-                pb[2] = (uint8_t)(u64 >> 16);
+                pb[2] = (uint8_t)(u64 >> 16); RT_FALL_THRU();
             case 2:
-                pb[1] = (uint8_t)(u64 >> 8);
+                pb[1] = (uint8_t)(u64 >> 8);  RT_FALL_THRU();
             case 1:
                 pb[0] = (uint8_t)u64;
             return; /* done */

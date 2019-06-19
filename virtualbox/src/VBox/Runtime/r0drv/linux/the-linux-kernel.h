@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -33,6 +33,16 @@
  */
 #include <iprt/types.h>
 #define bool linux_bool
+
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic push
+#endif
+#if RT_GNUC_PREREQ(4, 2)
+# pragma GCC diagnostic ignored "-Wunused-parameter"
+# if !defined(__cplusplus) && RT_GNUC_PREREQ(4, 3)
+#  pragma GCC diagnostic ignored "-Wold-style-declaration" /* 2.6.18-411.0.0.0.1.el5/build/include/asm/apic.h:110: warning: 'inline' is not at beginning of declaration [-Wold-style-declaration] */
+# endif
+#endif
 
 #include <linux/version.h>
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 33)
@@ -93,6 +103,10 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 9, 0)
 # include <linux/sched/rt.h>
 #endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0)
+# include <linux/sched/signal.h>
+# include <linux/sched/types.h>
+#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 7)
 # include <linux/jiffies.h>
 #endif
@@ -104,6 +118,9 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 71)
 # include <linux/cpu.h>
 # include <linux/notifier.h>
+#endif
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
+# include <uapi/linux/mman.h>
 #endif
 /* For the basic additions module */
 #include <linux/pci.h>
@@ -138,6 +155,23 @@
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0)
 # include <linux/kthread.h>
+#endif
+
+/* for cr4_init_shadow() / cpu_tlbstate. */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 20, 0)
+# include <asm/tlbflush.h>
+#endif
+
+/* for set_pages_x() */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 0)
+# include <asm/set_memory.h>
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 7, 0)
+# include <asm/smap.h>
+#else
+static inline void clac(void) { }
+static inline void stac(void) { }
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 0)
@@ -237,9 +271,9 @@ DECLINLINE(unsigned long) msecs_to_jiffies(unsigned int cMillies)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 8) && defined(PAGE_KERNEL_EXEC) && defined(CONFIG_X86_PAE)
 # ifdef __PAGE_KERNEL_EXEC
    /* >= 2.6.27 */
-#  define MY_PAGE_KERNEL_EXEC   __pgprot(cpu_has_pge ? __PAGE_KERNEL_EXEC | _PAGE_GLOBAL : __PAGE_KERNEL_EXEC)
+#  define MY_PAGE_KERNEL_EXEC   __pgprot(boot_cpu_has(X86_FEATURE_PGE) ? __PAGE_KERNEL_EXEC | _PAGE_GLOBAL : __PAGE_KERNEL_EXEC)
 # else
-#  define MY_PAGE_KERNEL_EXEC   __pgprot(cpu_has_pge ? _PAGE_KERNEL_EXEC | _PAGE_GLOBAL : _PAGE_KERNEL_EXEC)
+#  define MY_PAGE_KERNEL_EXEC   __pgprot(boot_cpu_has(X86_FEATURE_PGE) ? _PAGE_KERNEL_EXEC | _PAGE_GLOBAL : _PAGE_KERNEL_EXEC)
 # endif
 #else
 # define MY_PAGE_KERNEL_EXEC    PAGE_KERNEL
@@ -325,6 +359,10 @@ DECLINLINE(unsigned long) msecs_to_jiffies(unsigned int cMillies)
  */
 #undef bool
 
+#if RT_GNUC_PREREQ(4, 6)
+# pragma GCC diagnostic pop
+#endif
+
 /*
  * There are post-2.6.24 kernels (confusingly with unchanged version number)
  * which eliminate macros which were marked as deprecated.
@@ -365,6 +403,23 @@ DECLINLINE(unsigned long) msecs_to_jiffies(unsigned int cMillies)
 #else
 # define IPRT_DEBUG_SEMS_STATE_RC(pThis, chState, rc)  do {  } while (0)
 #endif
+
+/** @name Macros for preserving EFLAGS.AC on 3.19+/amd64  paranoid.
+ * The AMD 64 switch_to in macro in arch/x86/include/asm/switch_to.h stopped
+ * restoring flags.
+ * @{ */
+#if defined(CONFIG_X86_SMAP) || defined(RT_STRICT) || defined(IPRT_WITH_EFLAGS_AC_PRESERVING)
+# include <iprt/asm-amd64-x86.h>
+# define IPRT_X86_EFL_AC                    RT_BIT(18)
+# define IPRT_LINUX_SAVE_EFL_AC()           RTCCUINTREG fSavedEfl = ASMGetFlags()
+# define IPRT_LINUX_RESTORE_EFL_AC()        ASMSetFlags(fSavedEfl)
+# define IPRT_LINUX_RESTORE_EFL_ONLY_AC()   ASMChangeFlags(~IPRT_X86_EFL_AC, fSavedEfl & IPRT_X86_EFL_AC)
+#else
+# define IPRT_LINUX_SAVE_EFL_AC()           do { } while (0)
+# define IPRT_LINUX_RESTORE_EFL_AC()        do { } while (0)
+# define IPRT_LINUX_RESTORE_EFL_ONLY_AC()   do { } while (0)
+#endif
+/** @} */
 
 /*
  * There are some conflicting defines in iprt/param.h, sort them out here.

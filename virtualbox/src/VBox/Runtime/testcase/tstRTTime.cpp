@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/time.h>
 
 #include <iprt/err.h>
@@ -97,7 +98,10 @@ int main()
                      u64OSElapsedTS, u64RTElapsedTS, u64OSElapsedTS - u64RTElapsedTS);
     else
     {
-        RTTestValue(hTest, "Total time delta", u64OSElapsedTS - u64RTElapsedTS, RTTESTUNIT_NS);
+        if (u64OSElapsedTS >= u64RTElapsedTS)
+            RTTestValue(hTest, "Total time delta", u64OSElapsedTS - u64RTElapsedTS, RTTESTUNIT_NS);
+        else
+            RTTestValue(hTest, "Total time delta", u64RTElapsedTS - u64OSElapsedTS, RTTESTUNIT_NS);
         RTTestPrintf(hTest, RTTESTLVL_INFO, "total time difference: u64OSElapsedTS=%#llx u64RTElapsedTS=%#llx delta=%lld\n",
                      u64OSElapsedTS, u64RTElapsedTS, u64OSElapsedTS - u64RTElapsedTS);
     }

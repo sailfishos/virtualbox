@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,11 +25,11 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_OS_WINDOWS
-# include <winsock2.h>
+# include <iprt/win/winsock2.h>
 #else
 # include <sys/types.h>
 # include <sys/socket.h>
@@ -62,9 +62,9 @@
 #include "internal/socket.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /* non-standard linux stuff (it seems). */
 #ifndef MSG_NOSIGNAL
 # define MSG_NOSIGNAL           0
@@ -93,9 +93,9 @@
 #define RTTCP_SERVER_BACKLOG    10
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * TCP Server state.
  */
@@ -142,9 +142,9 @@ typedef struct RTTCPSERVER
 } RTTCPSERVER;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static DECLCALLBACK(int)  rtTcpServerThread(RTTHREAD ThreadSelf, void *pvServer);
 static int  rtTcpServerListen(PRTTCPSERVER pServer);
 static int  rtTcpServerListenCleanup(PRTTCPSERVER pServer);
@@ -155,7 +155,7 @@ static int  rtTcpClose(RTSOCKET Sock, const char *pszMsg, bool fTryGracefulShutd
  * Atomicly updates a socket variable.
  * @returns The old handle value.
  * @param   phSock          The socket handle variable to update.
- * @param   hSock           The new socket handle value.
+ * @param   hNew            The new socket handle value.
  */
 DECLINLINE(RTSOCKET) rtTcpAtomicXchgSock(RTSOCKET volatile *phSock, const RTSOCKET hNew)
 {

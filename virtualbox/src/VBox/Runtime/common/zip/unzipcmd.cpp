@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/zip.h>
 #include <iprt/asm.h>
 #include <iprt/getopt.h>
@@ -40,14 +40,14 @@
 #include <iprt/stream.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * IPRT UNZIP option structure.
@@ -94,6 +94,8 @@ typedef RTEXITCODE (*PFNDOWITHMEMBER)(PRTZIPUNZIPCMDOPS pOpts, RTVFSOBJ hVfsObj,
 static RTEXITCODE rtZipUnzipCmdListCallback(PRTZIPUNZIPCMDOPS pOpts, RTVFSOBJ hVfsObj,
                                             const char *pszName, RTEXITCODE rcExit, PRTFOFF pcBytes)
 {
+    RT_NOREF_PV(pOpts);
+
     /*
      * Query all the information.
      */
@@ -182,7 +184,7 @@ static RTEXITCODE rtZipUnzipCmdExtractCallback(PRTZIPUNZIPCMDOPS pOpts, RTVFSOBJ
     int rc = RTVfsObjQueryInfo(hVfsObj, &UnixInfo, RTFSOBJATTRADD_UNIX);
     if (RT_FAILURE(rc))
         return RTMsgErrorExit(RTEXITCODE_FAILURE, "RTVfsObjQueryInfo returned %Rrc on '%s'", rc, pszName);
-    
+
     *pcBytes = UnixInfo.cbObject;
 
     char szDst[RTPATH_MAX];
@@ -253,23 +255,13 @@ static RTEXITCODE rtZipUnzipCmdOpenInputArchive(PRTZIPUNZIPCMDOPS pOpts, PRTVFSF
     /*
      * Open the input file.
      */
-    RTVFSIOSTREAM hVfsIos;
-    const char    *pszError;
-    int rc = RTVfsChainOpenIoStream(pOpts->pszFile,
-                                    RTFILE_O_READ | RTFILE_O_DENY_WRITE | RTFILE_O_OPEN,
-                                    &hVfsIos,
-                                    &pszError);
+    RTVFSIOSTREAM   hVfsIos;
+    uint32_t        offError = 0;
+    RTERRINFOSTATIC ErrInfo;
+    int rc = RTVfsChainOpenIoStream(pOpts->pszFile, RTFILE_O_READ | RTFILE_O_DENY_WRITE | RTFILE_O_OPEN,
+                                    &hVfsIos, &offError, RTErrInfoInitStatic(&ErrInfo));
     if (RT_FAILURE(rc))
-    {
-        if (pszError && *pszError)
-            return RTMsgErrorExit(RTEXITCODE_FAILURE,
-                                  "RTVfsChainOpenIoStream failed with rc=%Rrc:\n"
-                                  "    '%s'\n",
-                                  "     %*s^\n",
-                                  rc, pOpts->pszFile, pszError - pOpts->pszFile, "");
-        return RTMsgErrorExit(RTEXITCODE_FAILURE,
-                              "Failed with %Rrc opening the input archive '%s'", rc, pOpts->pszFile);
-    }
+        return RTVfsChainMsgErrorExitFailure("RTVfsChainOpenIoStream", pOpts->pszFile, rc, offError, &ErrInfo.Core);
 
     rc = RTZipPkzipFsStreamFromIoStream(hVfsIos, 0 /*fFlags*/, phVfsFss);
     RTVfsIoStrmRelease(hVfsIos);
@@ -406,7 +398,7 @@ RTDECL(RTEXITCODE) RTZipUnzipCmd(unsigned cArgs, char **papszArgs)
 
     RTZIPUNZIPCMDOPS Opts;
     RT_ZERO(Opts);
-    
+
     RTGETOPTUNION  ValueUnion;
     while (   (rc = RTGetOpt(&GetState, &ValueUnion)) != 0
            && rc != VINF_GETOPT_NOT_OPTION)
@@ -432,7 +424,7 @@ RTDECL(RTEXITCODE) RTZipUnzipCmd(unsigned cArgs, char **papszArgs)
                     return RTMsgErrorExit(RTEXITCODE_SYNTAX,
                                           "Conflicting unzip operation (%s already set, now %s)",
                                           Opts.pszOperation, ValueUnion.pDef->pszLong);
-                Opts.iOperation   = rc;
+                Opts.iOperation   = 'l';
                 Opts.pszOperation = ValueUnion.pDef->pszLong;
                 break;
 
@@ -476,6 +468,4 @@ RTDECL(RTEXITCODE) RTZipUnzipCmd(unsigned cArgs, char **papszArgs)
         default:
             return rtZipUnzipDoWithMembers(&Opts, rtZipUnzipCmdExtractCallback, &cFiles, &cBytes);
     }
-
-    return RTEXITCODE_SUCCESS;
 }

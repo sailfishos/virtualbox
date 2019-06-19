@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/buildconfig.h>
 #include <iprt/getopt.h>
 #include <iprt/initterm.h>
@@ -32,9 +32,9 @@
 #include <VBox/version.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Known modules and their associated data (there are only known modules!).
  */
@@ -47,7 +47,6 @@ static struct
 {
     { "VMMR0.r0",       true,  NULL },
     { "VBoxDDR0.r0",    true,  NULL },
-    { "VBoxDD2R0.r0",   true,  NULL },
 };
 
 static uint32_t     g_cVerbose = 1;
@@ -194,6 +193,7 @@ static RTEXITCODE LoadModules(void)
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF1(envp);
     bool fExit = false;
     RTEXITCODE rcExit = ParseOptions(argc, argv, &fExit);
     if (rcExit == RTEXITCODE_SUCCESS && !fExit)

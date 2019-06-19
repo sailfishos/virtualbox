@@ -1,11 +1,10 @@
 /* $Id: VBoxVideoLog.h $ */
-
 /** @file
  * VBox Video drivers, logging helper
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -53,7 +52,7 @@
 /*#define VBOX_VIDEO_LOG_SHOWLINEINFO*/
 
 #define VBOX_VIDEO_LOG_PREFIX_FMT VBOX_VIDEO_LOG_NAME"::"VBOX_VIDEO_LOG_FN_FMT": "
-#define VBOX_VIDEO_LOG_PREFIX_PARMS __PRETTY_FUNCTION__
+#define VBOX_VIDEO_LOG_PREFIX_PARMS __FUNCTION__
 
 #ifdef VBOX_VIDEO_LOG_SHOWLINEINFO
 # define VBOX_VIDEO_LOG_SUFFIX_FMT " (%s:%d)\n"

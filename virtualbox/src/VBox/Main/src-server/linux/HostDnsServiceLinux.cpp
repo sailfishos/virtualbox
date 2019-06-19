@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -34,6 +34,11 @@
 
 #include <linux/limits.h>
 
+/* Workaround for <sys/cdef.h> defining __flexarr to [] which beats us in
+ * struct inotify_event (char name __flexarr). */
+#include <sys/cdefs.h>
+#undef __flexarr
+#define __flexarr [0]
 #include <sys/inotify.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -152,8 +157,6 @@ int HostDnsServiceLinux::monitorWorker()
                 if (combo.e.mask & IN_CLOSE_WRITE)
                 {
                     readResolvConf();
-                    /* notifyAll() takes required locks */
-                    notifyAll();
                 }
                 else if (combo.e.mask & IN_DELETE_SELF)
                 {
@@ -213,8 +216,6 @@ int HostDnsServiceLinux::monitorWorker()
 
                         /* Notify our listeners */
                         readResolvConf();
-                        notifyAll();
-
                     }
                 }
             }

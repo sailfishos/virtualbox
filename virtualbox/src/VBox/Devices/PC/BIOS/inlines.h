@@ -1,9 +1,10 @@
+/* $Id: inlines.h $ */
 /** @file
  * Inline routines for Watcom C.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -105,8 +106,10 @@ char __far *rep_insb(char __far *buffer, unsigned nbytes, unsigned port);
 char __far *rep_insw(char __far *buffer, unsigned nwords, unsigned port);
 #pragma aux rep_insw = ".286" "rep insw" parm [es di] [cx] [dx] value [es di] modify exact [cx di];
 
+# if VBOX_BIOS_CPU >= 80386
 char __far *rep_insd(char __far *buffer, unsigned ndwords, unsigned port);
-#pragma aux rep_insd = ".386" "rep insd" parm [es di] [cx] [dx] value [es di] modify exact [cx di];
+#  pragma aux rep_insd = ".386" "rep insd" parm [es di] [cx] [dx] value [es di] modify exact [cx di];
+# endif
 
 char __far *rep_outsb(char __far *buffer, unsigned nbytes, unsigned port);
 #pragma aux rep_outsb = ".286" "rep outs dx,byte ptr es:[si]" parm [es si] [cx] [dx] value [es si] modify exact [cx si];
@@ -114,17 +117,97 @@ char __far *rep_outsb(char __far *buffer, unsigned nbytes, unsigned port);
 char __far *rep_outsw(char __far *buffer, unsigned nwords, unsigned port);
 #pragma aux rep_outsw = ".286" "rep outs dx,word ptr es:[si]" parm [es si] [cx] [dx] value [es si] modify exact [cx si];
 
+# if VBOX_BIOS_CPU >= 80386
 char __far *rep_outsd(char __far *buffer, unsigned ndwords, unsigned port);
-#pragma aux rep_outsd = ".386" "rep outs dx,dword ptr es:[si]" parm [es si] [cx] [dx] value [es si] modify exact [cx si];
+#  pragma aux rep_outsd = ".386" "rep outs dx,dword ptr es:[si]" parm [es si] [cx] [dx] value [es si] modify exact [cx si];
+# endif
 
-uint16_t __far swap_16(uint16_t val);
+uint16_t swap_16(uint16_t val);
 #pragma aux swap_16 = "xchg ah,al" parm [ax] value [ax] modify exact [ax] nomemory;
 
-uint32_t __far swap_32(uint32_t val);
+uint32_t swap_32(uint32_t val);
 #pragma aux swap_32 =   \
     "xchg   ah, al"     \
     "xchg   dh, dl"     \
     "xchg   ax, dx"     \
     parm [dx ax] value [dx ax] modify exact [dx ax] nomemory;
+
+uint64_t swap_64(uint64_t val);
+#pragma aux swap_64 =   \
+    "xchg   ah, al"     \
+    "xchg   bh, bl"     \
+    "xchg   ch, cl"     \
+    "xchg   dh, dl"     \
+    "xchg   ax, dx"     \
+    "xchg   bx, cx"     \
+    parm [ax bx cx dx] value [ax bx cx dx] modify exact [ax bx cx dx] nomemory;
+
+#endif
+
+#if VBOX_BIOS_CPU >= 80386
+
+/* Warning: msr_read/msr_write destroy high bits of 32-bit registers (EAX, ECX, EDX). */
+
+uint64_t msr_read(uint32_t msr);
+#pragma aux msr_read =  \
+    ".586"              \
+    "shl    ecx, 16"    \
+    "mov    cx, ax"     \
+    "rdmsr"             \
+    "xchg   eax, edx"   \
+    "mov    bx, ax"     \
+    "shr    eax, 16"    \
+    "mov    cx, dx"     \
+    "shr    edx, 16"    \
+    "xchg   dx, cx"     \
+    parm [cx ax] value [ax bx cx dx] modify [] nomemory;
+
+void msr_write(uint64_t val, uint32_t msr);
+#pragma aux msr_write =  \
+    ".586"              \
+    "shl    eax, 16"    \
+    "mov    ax, bx"     \
+    "xchg   dx, cx"     \
+    "shl    edx, 16"    \
+    "mov    dx, cx"     \
+    "xchg   eax, edx"   \
+    "mov    cx, di"     \
+    "shl    ecx, 16"    \
+    "mov    cx, si"     \
+    "wrmsr"             \
+    parm [ax bx cx dx] [di si] modify [] nomemory;
+
+/* Warning: eflags_read/eflags_write destroy high bits of 32-bit registers (EDX). */
+uint32_t eflags_read( void );
+#pragma aux eflags_read =   \
+    ".386"                  \
+    "pushfd"                \
+    "pop  edx"              \
+    "mov  ax, dx"           \
+    "shr  edx, 16"          \
+    value [dx ax] modify [dx ax];
+
+uint32_t eflags_write( uint32_t e_flags );
+#pragma aux eflags_write =  \
+    ".386"                  \
+    "shl  edx, 16"          \
+    "mov  dx, ax"           \
+    "push edx"              \
+    "popfd"                 \
+    parm [dx ax] modify [dx ax];
+
+/* Warning cpuid destroys high bits of 32-bit registers (EAX, EBX, ECX, EDX). */
+void cpuid( uint32_t __far cpu_id[4], uint32_t leaf );
+#pragma aux cpuid =         \
+    ".586"                  \
+    "shl  edx, 16"          \
+    "mov  dx, ax"           \
+    "mov  eax, edx"         \
+    "cpuid"                 \
+    "mov  es:[di+0], eax"   \
+    "mov  es:[di+4], ebx"   \
+    "mov  es:[di+8], ecx"   \
+    "mov  es:[di+12], edx"  \
+    parm [es di] [dx ax] modify [bx cx dx]
 
 #endif

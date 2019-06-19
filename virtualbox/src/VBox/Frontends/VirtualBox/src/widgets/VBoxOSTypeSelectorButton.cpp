@@ -1,12 +1,10 @@
 /* $Id: VBoxOSTypeSelectorButton.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * VBoxOSTypeSelectorButton class implementation
+ * VBox Qt GUI - VBoxOSTypeSelectorButton class implementation.
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,21 +15,31 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* VBox includes */
-#include "VBoxOSTypeSelectorButton.h"
-#include "VBoxGlobal.h"
+# include "VBoxOSTypeSelectorButton.h"
+# include "VBoxGlobal.h"
 
 /* Qt includes */
-#include <QMenu>
-#include <QSignalMapper>
+# include <QMenu>
+# include <QSignalMapper>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 VBoxOSTypeSelectorButton::VBoxOSTypeSelectorButton (QWidget *aParent)
   : QIWithRetranslateUI <QPushButton> (aParent)
 {
+    /* Determine icon metric: */
+    const QStyle *pStyle = QApplication::style();
+    const int iIconMetric = pStyle->pixelMetric(QStyle::PM_SmallIconSize);
     /* We have to make sure that the button has strong focus, otherwise the
      * editing is ended when the menu is shown */
     setFocusPolicy (Qt::StrongFocus);
-    setIconSize (QSize (16, 16));
+    setIconSize (QSize (iIconMetric, iIconMetric));
     /* Create a signal mapper so that we not have to react to every single
      * menu activation ourself. */
     mSignalMapper = new QSignalMapper (this);
@@ -48,9 +56,9 @@ void VBoxOSTypeSelectorButton::setOSTypeId (const QString& aOSTypeId)
     mOSTypeId = aOSTypeId;
     CGuestOSType type = vboxGlobal().vmGuestOSType (aOSTypeId);
     /* Looks ugly on the Mac */
-#ifndef Q_WS_MAC
-    setIcon (vboxGlobal().vmGuestOSTypeIcon (type.GetId()));
-#endif /* Q_WS_MAC */
+#ifndef VBOX_WS_MAC
+    setIcon (vboxGlobal().vmGuestOSTypePixmapDefault (type.GetId()));
+#endif /* VBOX_WS_MAC */
     setText (type.GetDescription());
 }
 
@@ -75,7 +83,7 @@ void VBoxOSTypeSelectorButton::populateMenu()
         QList <CGuestOSType> types = vboxGlobal().vmGuestOSTypeList (family.GetFamilyId());
         foreach (const CGuestOSType& type, types)
         {
-            QAction *a = subMenu->addAction (vboxGlobal().vmGuestOSTypeIcon (type.GetId()), type.GetDescription());
+            QAction *a = subMenu->addAction (vboxGlobal().vmGuestOSTypePixmapDefault (type.GetId()), type.GetDescription());
             connect(a, SIGNAL (triggered()),
                     mSignalMapper, SLOT(map()));
             mSignalMapper->setMapping (a, type.GetId());

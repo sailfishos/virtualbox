@@ -37,6 +37,7 @@
 >
 
   <xsl:import href="string.xsl"/>
+  <xsl:import href="common-formatcfg.xsl"/>
 
   <xsl:variable name="g_nlsChapter">
     <xsl:choose>
@@ -111,11 +112,14 @@
 
 \usepackage{nameref}
 \usepackage{graphicx}
+\usepackage{hyperref}
 \usepackage{fancybox}
 \usepackage{fancyvrb}
 \usepackage{alltt}
 \usepackage{color}
+\usepackage{scrextend}
 \definecolor{darkgreen}{rgb}{0,0.6,0}
+\tymin=21pt
 
 </xsl:text>
   <xsl:if test="$TARGETLANG='de_DE'">\usepackage[ngerman]{babel}&#10;\PrerenderUnicode{ü}</xsl:if>
@@ -275,7 +279,43 @@
     </xsl:choose>
   </xsl:template>
 
+  <!--
+    Inserts \hypertarget{@id} that can be referenced via the /A "nameddest=@id"
+    command line or #nameddest=@id URL parameter.
+
+    TODO: The placement of the target could be improved on. The raisebox
+          stuff is a crude hack to make it a little more acceptable.  -->
+  <xsl:template name="title-wrapper">
+    <xsl:param name="texcmd" select="concat('\',name(..))"/>
+    <xsl:param name="refid" select="../@id"/>
+
+    <xsl:call-template name="xsltprocNewlineOutputHack"/>
+    <xsl:choose>
+      <xsl:when test="$refid">
+        <xsl:text>&#x0a;</xsl:text>
+        <xsl:value-of select="$texcmd"/>
+        <xsl:if test="not(contains($texcmd, '*'))">
+          <xsl:text>[</xsl:text> <!-- for toc -->
+          <xsl:apply-templates />
+          <xsl:text>]</xsl:text>
+        </xsl:if>
+        <xsl:text>{</xsl:text> <!-- for doc -->
+        <xsl:text>\raisebox{\ht\strutbox}{\hypertarget{</xsl:text>
+        <xsl:value-of select="$refid"/>
+        <xsl:text>}{}}</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>&#x0a;</xsl:text><xsl:value-of select="$texcmd"/><xsl:text>{</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
   <xsl:template match="title">
+    <xsl:variable name="refid" select="../@id" />
     <xsl:choose>
       <xsl:when test="name(..)='bookinfo'">
         <xsl:text>\newcommand\docbooktitle{</xsl:text>
@@ -283,47 +323,64 @@
         <xsl:text>}</xsl:text>
       </xsl:when>
       <xsl:when test="name(..)='chapter'">
-        <xsl:text>&#x0a;&#x0a;\chapter{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper"/>
       </xsl:when>
       <xsl:when test="name(..)='sect1'">
-        <xsl:text>&#x0a;&#x0a;\section{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\section</xsl:with-param>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:when test="parent::sect2[@role='not-in-toc'] or parent::refsect1 or (parent::section and count(ancestor::section) = 2)">
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\subsection*</xsl:with-param>
+        </xsl:call-template>
       </xsl:when>
       <xsl:when test="name(..)='sect2'">
-        <xsl:text>&#x0a;&#x0a;\subsection{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\subsection</xsl:with-param>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:when test="parent::sect3[@role='not-in-toc'] or parent::refsect2 or (parent::section and count(ancestor::section) = 3)">
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\subsubsection*</xsl:with-param>
+        </xsl:call-template>
       </xsl:when>
       <xsl:when test="name(..)='sect3'">
-        <xsl:text>&#x0a;&#x0a;\subsubsection{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\subsubsection</xsl:with-param>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:when test="parent::sect4[@role='not-in-toc'] or parent::refsect3 or (parent::section and count(ancestor::section) = 4)">
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\paragraph*</xsl:with-param>
+        </xsl:call-template>
       </xsl:when>
       <xsl:when test="name(..)='sect4'">
-        <xsl:text>&#x0a;&#x0a;\paragraph{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\paragraph</xsl:with-param>
+        </xsl:call-template>
+      </xsl:when>
+      <xsl:when test="parent::sect5[@role='not-in-toc'] or parent::refsect4 or (parent::section and count(ancestor::section) = 5)">
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\subparagraph*</xsl:with-param>
+        </xsl:call-template>
       </xsl:when>
       <xsl:when test="name(..)='sect5'">
-        <xsl:text>&#x0a;&#x0a;\subparagraph{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\subparagraph</xsl:with-param>
+        </xsl:call-template>
       </xsl:when>
       <xsl:when test="name(..)='appendix'">
-        <xsl:text>&#x0a;&#x0a;\chapter{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\chapter</xsl:with-param>
+        </xsl:call-template>
       </xsl:when>
       <xsl:when test="name(..)='glossdiv'">
-        <xsl:text>&#x0a;&#x0a;\section*{</xsl:text>
-        <xsl:apply-templates />
-        <xsl:text>}</xsl:text>
+        <xsl:call-template name="title-wrapper">
+          <xsl:with-param name="texcmd">\section*</xsl:with-param>
+        </xsl:call-template>
       </xsl:when>
     </xsl:choose>
-    <xsl:variable name="refid" select="../@id" />
     <xsl:if test="$refid">
       <xsl:value-of select="concat('&#x0a;\label{', $refid, '}')" />
     </xsl:if>
@@ -416,7 +473,7 @@
   </xsl:template>
 
   <xsl:template match="para">
-    <xsl:if test="not(name(..)='footnote' or name(..)='note' or name(..)='warning')">
+    <xsl:if test="not(name(..)='footnote' or name(..)='note' or name(..)='warning' or (name(../..)='varlistentry' and position()=1))">
       <xsl:text>&#x0a;&#x0a;</xsl:text>
     </xsl:if>
     <xsl:apply-templates />
@@ -455,12 +512,37 @@
   <xsl:template match="tgroup">
     <xsl:choose>
       <xsl:when test="@style='verywide'">
-        <xsl:text>&#x0a;&#x0a;{\small\begin{center}&#x0a;\begin{tabulary}{1.1\textwidth}[]{|L|L|L|}&#x0a;\hline&#x0a;</xsl:text>
+        <xsl:text>&#x0a;&#x0a;{\small\begin{center}&#x0a;\begin{tabulary}{1.1\textwidth}[]</xsl:text>
       </xsl:when>
       <xsl:otherwise>
-        <xsl:text>&#x0a;&#x0a;{\small\begin{center}&#x0a;\begin{tabulary}{.9\textwidth}[]{|L|L|L|}&#x0a;\hline&#x0a;</xsl:text>
+        <xsl:text>&#x0a;&#x0a;{\small\begin{center}&#x0a;\begin{tabulary}{.9\textwidth}[]</xsl:text>
       </xsl:otherwise>
     </xsl:choose>
+    <xsl:text>{</xsl:text>
+    <xsl:choose>
+      <xsl:when test="@cols='1'">
+        <xsl:text>|L|</xsl:text>
+      </xsl:when>
+      <xsl:when test="@cols='2'">
+        <xsl:text>|L|L|</xsl:text>
+      </xsl:when>
+      <xsl:when test="@cols='3'">
+        <xsl:text>|L|L|L|</xsl:text>
+      </xsl:when>
+      <xsl:when test="@cols='4'">
+        <xsl:text>|L|L|L|L|</xsl:text>
+      </xsl:when>
+      <xsl:when test="@cols='5'">
+        <xsl:text>|L|L|L|L|L|</xsl:text>
+      </xsl:when>
+      <xsl:when test="@cols='6'">
+        <xsl:text>|L|L|L|L|L|L|</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:message terminate="yes">Unsupported number of columns (<xsl:value-of select="@cols"/>), fix document or converter</xsl:message>
+      </xsl:otherwise>
+    </xsl:choose>
+    <xsl:text>}&#x0a;\hline&#x0a;</xsl:text>
     <xsl:apply-templates />
     <xsl:text>&#x0a;\end{tabulary}&#x0a;\end{center}}&#x0a;</xsl:text>
   </xsl:template>
@@ -478,15 +560,59 @@
   </xsl:template>
 
   <xsl:template match="itemizedlist">
-    <xsl:text>&#x0a;&#x0a;\begin{itemize}&#x0a;</xsl:text>
+    <xsl:call-template name="xsltprocNewlineOutputHack"/>
+    <xsl:text>&#x0a;\begin{itemize}&#x0a;</xsl:text>
+    <xsl:if test="@spacing = 'compact'">
+      <xsl:text> \setlength{\parskip}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\itemsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\topsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\parsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\partopsep}{0pt}&#x0a;</xsl:text>
+    </xsl:if>
     <xsl:apply-templates />
     <xsl:text>&#x0a;\end{itemize}&#x0a;</xsl:text>
   </xsl:template>
 
   <xsl:template match="orderedlist">
-    <xsl:text>&#x0a;&#x0a;\begin{enumerate}&#x0a;</xsl:text>
+    <xsl:call-template name="xsltprocNewlineOutputHack"/>
+    <xsl:text>&#x0a;\begin{enumerate}&#x0a;</xsl:text>
+    <xsl:if test="@spacing = 'compact'">
+      <xsl:text> \setlength{\parskip}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\itemsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\topsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\parsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\partopsep}{0pt}&#x0a;</xsl:text>
+    </xsl:if>
     <xsl:apply-templates />
     <xsl:text>&#x0a;\end{enumerate}&#x0a;</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="variablelist">
+    <xsl:call-template name="xsltprocNewlineOutputHack"/>
+    <xsl:text>&#x0a;\begin{description}&#x0a;</xsl:text>
+    <xsl:if test="@spacing = 'compact'">
+      <xsl:text> \setlength{\parskip}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\itemsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\topsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\parsep}{0pt}&#x0a;</xsl:text>
+      <xsl:text> \setlength{\partopsep}{0pt}&#x0a;</xsl:text>
+    </xsl:if>
+    <xsl:apply-templates />
+    <xsl:text>&#x0a;\end{description}&#x0a;</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="varlistentry">
+    <xsl:if test="not(./term) or not(./listitem) or count(./listitem) != 1">
+      <xsl:message terminate="yes">Expected at least one term and one listitem element in the varlistentry.</xsl:message>
+    </xsl:if>
+    <xsl:text>&#x0a;&#x0a;\item[{\parbox[t]{\linewidth}{\raggedright </xsl:text>
+    <xsl:apply-templates select="./term[1]"/>
+    <xsl:for-each select="./term[position() > 1]">
+      <xsl:text>\\&#x0a; </xsl:text>
+      <xsl:apply-templates select="."/>
+    </xsl:for-each>
+    <xsl:text>}}] \hfill \\&#x0a;</xsl:text>
+    <xsl:apply-templates select="listitem/*"/>
   </xsl:template>
 
   <xsl:template match="listitem">
@@ -545,12 +671,23 @@
 
   <xsl:template match="xref">
     <xsl:choose>
-      <xsl:when test="@xreflabel">
-        <xsl:value-of select="concat('\hyperref[', @linkend, ']{\mbox{', @xreflabel, '}}')" />
+      <xsl:when test="@endterm">
+        <xsl:value-of select="concat('\hyperref[', @linkend, ']{\mbox{', @endterm, '}}')" />
       </xsl:when>
-      <xsl:when test="@apiref='yes'">
+      <xsl:otherwise>
+        <xsl:value-of select="concat($g_nlsChapter, ' \ref{', @linkend, '}, \textit{\nameref{', @linkend, '}}, ', $g_nlsPage, ' \pageref{', @linkend, '}')" />
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="link">
+    <xsl:choose>
+      <xsl:when test="@endterm">
+        <xsl:value-of select="concat('\hyperref[', @linkend, ']{\mbox{', @endterm, '}}')" />
+      </xsl:when>
+      <xsl:when test="./text()">
         <xsl:value-of select="concat('\hyperref[', @linkend, ']{\mbox{')" />
-        <xsl:apply-templates />
+        <xsl:apply-templates select="./text()"/>
         <xsl:value-of select="'}}'" />
       </xsl:when>
       <xsl:otherwise>
@@ -573,7 +710,190 @@
     </xsl:if>
   </xsl:template>
 
+  <!--
+     Turn the refsynopsisdiv part of a manpage into a named & indented paragraph.
+  -->
+  <xsl:template match="refsynopsisdiv">
+    <xsl:if test="name(*[1]) != 'cmdsynopsis'"><xsl:message terminate="yes">Expected refsynopsisdiv to start with cmdsynopsis</xsl:message></xsl:if>
+    <xsl:if test="title"><xsl:message terminate="yes">No title element supported in refsynopsisdiv</xsl:message></xsl:if>
+    <xsl:call-template name="xsltprocNewlineOutputHack"/>
+    <xsl:text>&#x0a;\subsection*{Synopsis}</xsl:text>
+    <xsl:if test="name(*[1]) != 'cmdsynopsis'"> <!-- just in case -->
+      <xsl:text>\hfill \\&#x0a;</xsl:text>
+    </xsl:if>
+    <xsl:text>&#x0a;</xsl:text>
+    <xsl:apply-templates />
+  </xsl:template>
+
+  <!--
+    The refsect1 is used for 'Description' and such. Do same as with refsynopsisdiv
+    and turn it into a named & indented paragraph.
+    -->
+  <xsl:template match="refsect1">
+    <xsl:if test="name(*[1]) != 'title' or count(title) != 1">
+      <xsl:message terminate="yes">Expected exactly one title as the first refsect1 element (remarks goes after title!).</xsl:message>
+    </xsl:if>
+    <xsl:apply-templates/>
+  </xsl:template>
+
+  <!--
+    The refsect2 element will be turned into a subparagraph if it has a title,
+    however, that didn't work out when it didn't have a title and started with
+    a cmdsynopsis instead (subcommand docs).  So, we're doing some trickery
+    here (HACK ALERT) for the non-title case to feign a paragraph.
+    -->
+  <xsl:template match="refsect2">
+    <xsl:if test="name(*[1]) != 'title' or count(title) != 1">
+      <xsl:message terminate="yes">Expected exactly one title as the first refsect2 element (remarks goes after title!).</xsl:message>
+    </xsl:if>
+    <xsl:apply-templates/>
+    <xsl:text>&#x0a;</xsl:text>
+  </xsl:template>
+
+
+  <!--
+    Command Synopsis elements.
+
+    We treat each command element inside a cmdsynopsis as the start of
+    a new paragraph.  The DocBook HTML converter does so too, but the
+    manpage one doesn't.
+
+    sbr and linebreaks made by latex should be indented from the base
+    command level. This is done by the \hangindent3em\hangafter1 bits.
+
+    We exploit the default paragraph indentation to get each command
+    indented from the left margin.  This, unfortunately, doesn't work
+    if we're the first paragraph in a (sub*)section.  \noindent cannot
+    counter this due to when latex enforces first paragraph stuff. Since
+    it's tedious to figure out when we're in the first paragraph and when
+    not, we just do \noindent\hspace{1em} everywhere.
+    -->
+  <xsl:template match="sbr">
+    <xsl:if test="not(ancestor::cmdsynopsis)">
+      <xsl:message terminate="yes">sbr only supported inside cmdsynopsis (because of hangindent)</xsl:message>
+    </xsl:if>
+    <xsl:text>\linebreak</xsl:text>
+  </xsl:template>
+
+  <xsl:template match="refentry|refnamediv|refentryinfo|refmeta|refsect3|refsect4|refsect5|synopfragment|synopfragmentref|cmdsynopsis/info">
+    <xsl:message terminate="yes"><xsl:value-of select="name()"/> is not supported</xsl:message>
+  </xsl:template>
+
+  <xsl:template match="cmdsynopsis">
+    <xsl:if test="preceding-sibling::cmdsynopsis">
+      <xsl:text>\par%cmdsynopsis</xsl:text>
+    </xsl:if>
+    <xsl:text>&#x0a;</xsl:text>
+    <xsl:if test="parent::remark[@role='VBoxManage-overview']">
+      <!-- Overview fontsize trick -->
+      <xsl:text>{\footnotesize</xsl:text>
+    </xsl:if>
+    <xsl:text>\noindent\hspace{1em}</xsl:text>
+    <xsl:text>\hangindent3em\hangafter1\texttt{</xsl:text>
+    <xsl:apply-templates />
+    <xsl:text>}</xsl:text>
+    <xsl:if test="following-sibling::*">
+    </xsl:if>
+
+    <!-- For refsect2 subcommand descriptions. -->
+    <xsl:if test="not(following-sibling::cmdsynopsis) and position() != last()">
+      <xsl:text>\linebreak</xsl:text>
+    </xsl:if>
+    <!-- Special overview trick for the current VBoxManage command overview. -->
+    <xsl:if test="parent::remark[@role='VBoxManage-overview']">
+      <xsl:text>}\vspace{1em}</xsl:text>
+    </xsl:if>
+  </xsl:template>
+
+  <xsl:template match="command">
+    <xsl:choose>
+      <xsl:when test="ancestor::cmdsynopsis">
+        <!-- Trigger a line break if this isn't the first command in a the synopsis -->
+        <xsl:if test="preceding-sibling::command">
+          <xsl:text>}\par%command&#x0a;</xsl:text>
+          <xsl:text>\noindent\hspace{1em}</xsl:text>
+          <xsl:text>\hangindent3em\hangafter1\texttt{</xsl:text>
+        </xsl:if>
+        <xsl:apply-templates />
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\texttt{</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="option">
+    <xsl:choose>
+      <xsl:when test="ancestor::cmdsynopsis">
+        <xsl:apply-templates />
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\texttt{</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+  <!-- duplicated in docbook2latex.xsl -->
+  <xsl:template match="arg|group">
+    <!-- separator char if we're not the first child -->
+    <xsl:if test="position() > 1">
+      <xsl:choose>
+        <xsl:when test="parent::group"><xsl:value-of select="$arg.or.sep"/></xsl:when>
+        <xsl:when test="ancestor-or-self::*/@sepchar"><xsl:value-of select="ancestor-or-self::*/@sepchar"/></xsl:when>
+        <xsl:otherwise><xsl:text> </xsl:text></xsl:otherwise>
+      </xsl:choose>
+    </xsl:if>
+    <!-- open wrapping -->
+    <xsl:choose>
+      <xsl:when test="not(@choice) or @choice = ''">  <xsl:value-of select="$arg.choice.def.open.str"/></xsl:when>
+      <xsl:when test="@choice = 'opt'">               <xsl:value-of select="$arg.choice.opt.open.str"/></xsl:when>
+      <xsl:when test="@choice = 'req'">               <xsl:value-of select="$arg.choice.req.open.str"/></xsl:when>
+      <xsl:when test="@choice = 'plain'"/>
+      <xsl:otherwise><xsl:message terminate="yes">Invalid arg choice: "<xsl:value-of select="@choice"/>"</xsl:message></xsl:otherwise>
+    </xsl:choose>
+
+    <!-- render the arg (TODO: may need to do more work here) -->
+    <xsl:apply-templates />
+
+    <!-- repeat wrapping -->
+    <xsl:choose>
+      <xsl:when test="@rep = 'norepeat' or not(@rep) or @rep = ''"/>
+      <xsl:when test="@rep = 'repeat'">               <xsl:value-of select="$arg.rep.repeat.str"/></xsl:when>
+      <xsl:otherwise><xsl:message terminate="yes">Invalid rep choice: "<xsl:value-of select="@rep"/>"</xsl:message></xsl:otherwise>
+    </xsl:choose>
+    <!-- close wrapping -->
+    <xsl:choose>
+      <xsl:when test="not(@choice) or @choice = ''">  <xsl:value-of select="$arg.choice.def.close.str"/></xsl:when>
+      <xsl:when test="@choice = 'opt'">               <xsl:value-of select="$arg.choice.opt.close.str"/></xsl:when>
+      <xsl:when test="@choice = 'req'">               <xsl:value-of select="$arg.choice.req.close.str"/></xsl:when>
+    </xsl:choose>
+  </xsl:template>
+
+  <xsl:template match="replaceable">
+    <xsl:choose>
+      <xsl:when test="not(ancestor::cmdsynopsis) or ancestor::arg">
+        <xsl:text>\texttt{\textit{</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>}}</xsl:text>
+      </xsl:when>
+      <xsl:otherwise>
+        <xsl:text>\textit{&lt;</xsl:text>
+        <xsl:apply-templates />
+        <xsl:text>&gt;}</xsl:text>
+      </xsl:otherwise>
+    </xsl:choose>
+  </xsl:template>
+
+
+  <!--
+    Generic element text magic.
+    -->
   <xsl:template match="//text()">
+
     <xsl:variable name="subst1">
       <xsl:call-template name="str:subst">
         <xsl:with-param name="text" select="." />
@@ -582,11 +902,20 @@
         <xsl:with-param name="disable-output-escaping" select="no" />
       </xsl:call-template>
     </xsl:variable>
+
     <xsl:choose>
       <xsl:when test="(name(..)='screen') or (name(../..)='screen')">
         <xsl:value-of select="." />
       </xsl:when>
-      <xsl:when test="(name(..)='computeroutput') or (name(../..)='computeroutput') or (name(..)='code') or (name(../..)='code')">
+
+      <xsl:when test="(name(..) = 'computeroutput') or (name(../..) = 'computeroutput')
+                   or (name(..) = 'code')           or (name(../..) = 'code')
+                   or (name(..) = 'arg')            or (name(../..) = 'arg')
+                   or (name(..) = 'option')         or (name(../..) = 'option')
+                   or (name(..) = 'command')        or (name(../..) = 'command')
+                   or (name(..) = 'cmdsynopsis')    or (name(../..) = 'cmdsynopsis')
+                   or (name(..) = 'replaceable')    or (name(../..) = 'replaceable')
+                     ">
         <xsl:variable name="subst2">
           <xsl:call-template name="str:subst">
             <xsl:with-param name="text" select="$subst1" />
@@ -643,8 +972,24 @@
             <xsl:with-param name="disable-output-escaping" select="no" />
           </xsl:call-template>
         </xsl:variable>
-        <xsl:value-of select="$subst8" />
+        <xsl:choose>
+          <xsl:when test="parent::arg or parent::command">
+            <xsl:variable name="subst9">
+              <xsl:call-template name="str:subst">
+                <xsl:with-param name="text" select="$subst8" />
+                <xsl:with-param name="replace" select="' '" />
+                <xsl:with-param name="with" select="'~'" />
+                <xsl:with-param name="disable-output-escaping" select="no" />
+              </xsl:call-template>
+            </xsl:variable>
+            <xsl:value-of select="$subst9" />
+          </xsl:when>
+          <xsl:otherwise>
+            <xsl:value-of select="$subst8" />
+          </xsl:otherwise>
+        </xsl:choose>
       </xsl:when>
+
       <xsl:when test="(name(..)='address') or (name(../..)='address')">
         <xsl:variable name="subst2">
           <xsl:call-template name="str:subst">
@@ -656,6 +1001,7 @@
         </xsl:variable>
         <xsl:value-of select="$subst2" />
       </xsl:when>
+
       <xsl:otherwise>
         <xsl:variable name="subst2">
           <xsl:call-template name="str:subst">
@@ -738,5 +1084,27 @@
       </xsl:otherwise>
     </xsl:choose>
   </xsl:template>
+
+  <!--
+       xsltprocNewlineOutputHack - emits a single new line.
+
+       Hack Alert! This template helps xsltproc split up the output text elements
+                   and avoid reallocating them into the MB range. Calls to this
+                   template is made occationally while generating larger output
+                   file.  It's not necessary for small stuff like header.
+
+                   The trick we're playing on xsltproc has to do with CDATA
+                   and/or the escape setting of the xsl:text element.  It forces
+                   xsltproc to allocate a new output element, thus preventing
+                   things from growing out of proportions and slowing us down.
+
+                   This was successfully employed to reduce a 18+ seconds run to
+                   around one second (possibly less due to kmk overhead).
+   -->
+  <xsl:template name="xsltprocNewlineOutputHack">
+      <xsl:text disable-output-escaping="yes"><![CDATA[
+]]></xsl:text>
+  </xsl:template>
+
 </xsl:stylesheet>
 

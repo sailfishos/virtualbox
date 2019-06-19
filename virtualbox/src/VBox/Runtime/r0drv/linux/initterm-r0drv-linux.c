@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-linux-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/err.h>
@@ -35,9 +35,9 @@
 #include "internal/initterm.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The IPRT work queue. */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 41)
 static struct workqueue_struct *g_prtR0LnxWorkQueue;
@@ -46,13 +46,11 @@ static DECLARE_TASK_QUEUE(g_rtR0LnxWorkQueue);
 #endif
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-#if defined(RT_ARCH_AMD64) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23)
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 /* in alloc-r0drv0-linux.c */
 DECLHIDDEN(void) rtR0MemExecCleanup(void);
-#endif
 
 
 /**
@@ -64,17 +62,21 @@ DECLHIDDEN(void) rtR0MemExecCleanup(void);
  */
 DECLHIDDEN(void) rtR0LnxWorkqueuePush(RTR0LNXWORKQUEUEITEM *pWork, void (*pfnWorker)(RTR0LNXWORKQUEUEITEM *))
 {
+    IPRT_LINUX_SAVE_EFL_AC();
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 41)
 # if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 20)
     INIT_WORK(pWork, pfnWorker);
 # else
-    INIT_WORK(pWork, pfnWorker, pWork);
+    INIT_WORK(pWork, (void (*)(void *))pfnWorker, pWork);
 # endif
     queue_work(g_prtR0LnxWorkQueue, pWork);
 #else
     INIT_TQUEUE(pWork, (void (*)(void *))pfnWorker, pWork);
     queue_task(pWork, &g_rtR0LnxWorkQueue);
 #endif
+
+    IPRT_LINUX_RESTORE_EFL_AC();
 }
 
 
@@ -86,36 +88,50 @@ DECLHIDDEN(void) rtR0LnxWorkqueuePush(RTR0LNXWORKQUEUEITEM *pWork, void (*pfnWor
  */
 DECLHIDDEN(void) rtR0LnxWorkqueueFlush(void)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 41)
     flush_workqueue(g_prtR0LnxWorkQueue);
 #else
     run_task_queue(&g_rtR0LnxWorkQueue);
 #endif
+
+    IPRT_LINUX_RESTORE_EFL_AC();
 }
 
 
 DECLHIDDEN(int) rtR0InitNative(void)
 {
+    int rc = VINF_SUCCESS;
+    IPRT_LINUX_SAVE_EFL_AC();
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 41)
-    g_prtR0LnxWorkQueue = create_workqueue("iprt");
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 13)
+    g_prtR0LnxWorkQueue = create_workqueue("iprt-VBoxWQueue");
+ #else
+    g_prtR0LnxWorkQueue = create_workqueue("iprt-VBoxQ");
+ #endif
     if (!g_prtR0LnxWorkQueue)
-        return VERR_NO_MEMORY;
+        rc = VERR_NO_MEMORY;
 #endif
 
-    return VINF_SUCCESS;
+    IPRT_LINUX_RESTORE_EFL_AC();
+    return rc;
 }
 
 
 DECLHIDDEN(void) rtR0TermNative(void)
 {
+    IPRT_LINUX_SAVE_EFL_AC();
+
     rtR0LnxWorkqueueFlush();
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 5, 41)
     destroy_workqueue(g_prtR0LnxWorkQueue);
     g_prtR0LnxWorkQueue = NULL;
 #endif
 
-#if defined(RT_ARCH_AMD64) && LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 23)
     rtR0MemExecCleanup();
-#endif
+
+    IPRT_LINUX_RESTORE_EFL_AC();
 }
 

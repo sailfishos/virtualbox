@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vmm/vm.h>
 #include <VBox/vmm/vmm.h>
 #include <VBox/vmm/cpum.h>
@@ -33,14 +33,15 @@
 #include <iprt/time.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define TESTCASE    "tstVMREQ"
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** the error count. */
 static int g_cErrors = 0;
 
@@ -210,18 +211,8 @@ static DECLCALLBACK(int) Thread(RTTHREAD hThreadSelf, void *pvUser)
 static DECLCALLBACK(int)
 tstVMREQConfigConstructor(PUVM pUVM, PVM pVM, void *pvUser)
 {
-    NOREF(pvUser);
-    int rc = CFGMR3ConstructDefaultTree(pVM);
-    if (RT_SUCCESS(rc))
-    {
-        /* Disable HM, otherwise it will fail on machines without unrestricted guest execution
-         * because the allocation of HM_VTX_TOTAL_DEVHEAP_MEM will fail -- no VMMDev */
-        PCFGMNODE pRoot = CFGMR3GetRoot(pVM);
-        rc = CFGMR3InsertInteger(pRoot, "HMEnabled", false);
-        if (RT_FAILURE(rc))
-            RTPrintf("CFGMR3InsertInteger(pRoot,\"HMEnabled\",) -> %Rrc\n", rc);
-    }
-    return rc;
+    RT_NOREF2(pUVM, pvUser);
+    return CFGMR3ConstructDefaultTree(pVM);
 }
 
 /**
@@ -229,6 +220,7 @@ tstVMREQConfigConstructor(PUVM pUVM, PVM pVM, void *pvUser)
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF1(envp);
     RTR3InitExe(argc, &argv, RTR3INIT_FLAGS_SUPLIB);
     RTPrintf(TESTCASE ": TESTING...\n");
     RTStrmFlush(g_pStdOut);

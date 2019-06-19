@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 #ifndef ___VBoxNetFltInternal_h___
@@ -153,6 +162,8 @@ typedef struct VBOXNETFLTINS
             bool volatile fSetPromiscuous;
             /** The MAC address of the interface. */
             RTMAC MacAddr;
+            /** PF_SYSTEM socket to listen for events (XXX: globals?) */
+            socket_t pSysSock;
             /** @} */
 # elif defined(RT_OS_LINUX)
             /** @name Linux instance data
@@ -170,7 +181,9 @@ typedef struct VBOXNETFLTINS
             bool volatile fPacketHandler;
             /** The MAC address of the interface. */
             RTMAC MacAddr;
-            struct notifier_block Notifier;
+            struct notifier_block Notifier; /* netdevice */
+            struct notifier_block NotifierIPv4;
+            struct notifier_block NotifierIPv6;
             struct packet_type    PacketType;
 #  ifndef VBOXNETFLT_LINUX_NO_XMIT_QUEUE
             struct sk_buff_head   XmitQueue;
@@ -329,6 +342,7 @@ DECLHIDDEN(int) vboxNetFltTryDeleteIdc(PVBOXNETFLTGLOBALS pGlobals);
 DECLHIDDEN(bool) vboxNetFltCanUnload(PVBOXNETFLTGLOBALS pGlobals);
 DECLHIDDEN(PVBOXNETFLTINS) vboxNetFltFindInstance(PVBOXNETFLTGLOBALS pGlobals, const char *pszName);
 
+DECLHIDDEN(DECLCALLBACK(void)) vboxNetFltPortReleaseBusy(PINTNETTRUNKIFPORT pIfPort);
 DECLHIDDEN(void) vboxNetFltRetain(PVBOXNETFLTINS pThis, bool fBusy);
 DECLHIDDEN(bool) vboxNetFltTryRetainBusyActive(PVBOXNETFLTINS pThis);
 DECLHIDDEN(bool) vboxNetFltTryRetainBusyNotDisconnected(PVBOXNETFLTINS pThis);
@@ -376,6 +390,7 @@ DECLHIDDEN(int) vboxNetFltPortOsXmit(PVBOXNETFLTINS pThis, void *pvIfData, PINTN
  * It is only called when the state changes.
  *
  * @param   pThis           The instance.
+ * @param   fActive         Whether to active (@c true) or deactive.
  *
  * @remarks Owns the lock for the out-bound trunk port.
  */

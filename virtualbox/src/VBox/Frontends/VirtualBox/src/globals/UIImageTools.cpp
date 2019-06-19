@@ -1,12 +1,10 @@
 /* $Id: UIImageTools.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Implementation of utility classes and functions for image manipulation
+ * VBox Qt GUI - Implementation of utility classes and functions for image manipulation.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +15,23 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Local include */
-#include "UIImageTools.h"
+# include "UIImageTools.h"
 
 /* Qt includes */
-#include <QPainter>
+# include <QPainter>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
 /* System includes */
 #include <math.h>
 
-/* Todo: Think about the naming convention and if the images should be
+
+/** @todo Think about the naming convention and if the images should be
  * processed in place or return changed copies. Make it more uniform. Add
  * asserts if the bit depth of the given image could not processed. */
 
@@ -47,7 +52,7 @@ QImage toGray(const QImage& image)
 
 void dimImage(QImage& image)
 {
-    /* Todo: factor out the < 32bit case, cause this can be done a lot faster
+    /** @todo factor out the < 32bit case, cause this can be done a lot faster
      * by just processing every second line. */
     for (int y = 0; y < image.height(); ++y)
     {
@@ -259,21 +264,5 @@ static QImage betaLabelImage(const QSize& ls)
 QPixmap betaLabel(const QSize &ls /* = QSize(80, 16) */)
 {
     return QPixmap::fromImage(betaLabelImage(ls));
-}
-
-QPixmap betaLabelSleeve(const QSize &ls /* = QSize(80, 16) */)
-{
-    const QImage &i = betaLabelImage(ls);
-    /* Create a secondary image which will contain the rotated banner. */
-    int w = (int)sqrtf(powf(ls.width(), 2) / 2);
-    QImage i1(w, w, QImage::Format_ARGB32);
-    i1.fill(Qt::transparent);
-    QPainter p1(&i1);
-    p1.setRenderHints(QPainter::SmoothPixmapTransform);
-    p1.rotate(45);
-    p1.drawImage(0, -ls.height(), i);
-    p1.end();
-
-    return QPixmap::fromImage(i1);
 }
 

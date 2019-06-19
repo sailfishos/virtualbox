@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DIR
 
 #include <iprt/asm.h>
@@ -39,11 +39,12 @@
 #include <iprt/log.h>
 #include "internal/fileaio.h"
 
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 
 /**
  * Transfer direction.
@@ -113,17 +114,17 @@ typedef struct RTFILEAIOREQINTERNAL
 /** Pointer to an internal request structure. */
 typedef RTFILEAIOREQINTERNAL *PRTFILEAIOREQINTERNAL;
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Id for the wakeup event. */
 #define AIO_CONTEXT_WAKEUP_EVENT 1
 /** Converts a pointer to an OVERLAPPED structure to a internal request. */
-#define OVERLAPPED_2_RTFILEAIOREQINTERNAL(pOverlapped) ( (PRTFILEAIOREQINTERNAL)((uintptr_t)(pOverlapped) - RT_OFFSETOF(RTFILEAIOREQINTERNAL, Overlapped)) )
+#define OVERLAPPED_2_RTFILEAIOREQINTERNAL(pOverlapped) ( (PRTFILEAIOREQINTERNAL)((uintptr_t)(pOverlapped) - RT_UOFFSETOF(RTFILEAIOREQINTERNAL, Overlapped)) )
 
 RTR3DECL(int) RTFileAioGetLimits(PRTFILEAIOLIMITS pAioLimits)
 {
-    int rcBSD = 0;
     AssertPtrReturn(pAioLimits, VERR_INVALID_POINTER);
 
     /* No limits known. */
@@ -221,6 +222,7 @@ RTDECL(int) RTFileAioReqPrepareFlush(RTFILEAIOREQ hReq, RTFILE hFile, void *pvUs
     RTFILEAIOREQ_VALID_RETURN(pReqInt);
     RTFILEAIOREQ_NOT_STATE_RETURN_RC(pReqInt, SUBMITTED, VERR_FILE_AIO_IN_PROGRESS);
     AssertReturn(hFile != NIL_RTFILE, VERR_INVALID_HANDLE);
+    RT_NOREF_PV(pvUser);
 
     return VERR_NOT_SUPPORTED;
 }
@@ -268,12 +270,12 @@ RTDECL(int) RTFileAioReqGetRC(RTFILEAIOREQ hReq, size_t *pcbTransfered)
     return rc;
 }
 
-RTDECL(int) RTFileAioCtxCreate(PRTFILEAIOCTX phAioCtx, uint32_t cAioReqsMax,
-                               uint32_t fFlags)
+RTDECL(int) RTFileAioCtxCreate(PRTFILEAIOCTX phAioCtx, uint32_t cAioReqsMax, uint32_t fFlags)
 {
     PRTFILEAIOCTXINTERNAL pCtxInt;
     AssertPtrReturn(phAioCtx, VERR_INVALID_POINTER);
     AssertReturn(!(fFlags & ~RTFILEAIOCTX_FLAGS_VALID_MASK), VERR_INVALID_PARAMETER);
+    RT_NOREF_PV(cAioReqsMax);
 
     pCtxInt = (PRTFILEAIOCTXINTERNAL)RTMemAllocZ(sizeof(RTFILEAIOCTXINTERNAL));
     if (RT_UNLIKELY(!pCtxInt))
@@ -331,6 +333,7 @@ RTDECL(int) RTFileAioCtxAssociateWithFile(RTFILEAIOCTX hAioCtx, RTFILE hFile)
 
 RTDECL(uint32_t) RTFileAioCtxGetMaxReqCount(RTFILEAIOCTX hAioCtx)
 {
+    RT_NOREF_PV(hAioCtx);
     return RTFILEAIO_UNLIMITED_REQS;
 }
 

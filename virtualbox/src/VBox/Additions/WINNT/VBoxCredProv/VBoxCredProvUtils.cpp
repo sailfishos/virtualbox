@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,18 +15,23 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#include <Windows.h>
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#include <iprt/win/windows.h>
+
 #include <iprt/string.h>
 #include <VBox/log.h>
+#ifdef LOG_ENABLED
+# include <iprt/stream.h>
+#endif
 #include <VBox/VBoxGuestLib.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Verbosity flag for guest logging. */
 DWORD g_dwVerbosity = 0;
 
@@ -34,7 +39,7 @@ DWORD g_dwVerbosity = 0;
 /**
  * Displays a verbose message.
  *
- * @param   iLevel      Minimum log level required to display this message.
+ * @param   dwLevel     Minimum log level required to display this message.
  * @param   pszFormat   The message text.
  * @param   ...         Format arguments.
  */
@@ -51,6 +56,15 @@ void VBoxCredProvVerbose(DWORD dwLevel, const char *pszFormat, ...)
         AssertPtr(psz);
         LogRel(("%s", psz));
 
+#ifdef LOG_ENABLED
+        PRTSTREAM pStream;
+        int rc2 = RTStrmOpen("C:\\VBoxCredProvLog.txt", "a", &pStream);
+        if (RT_SUCCESS(rc2))
+        {
+            RTStrmPrintf(pStream, "%s", psz);
+            RTStrmClose(pStream);
+        }
+#endif
         RTStrFree(psz);
     }
 }

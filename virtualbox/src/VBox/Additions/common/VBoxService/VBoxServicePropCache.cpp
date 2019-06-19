@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/assert.h>
 #include <iprt/list.h>
 #include <iprt/mem.h>
@@ -30,14 +30,12 @@
 #include "VBoxServicePropCache.h"
 
 
-/** Internal functions, not for public use. */
-PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheFindInternal(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName, uint32_t uFlags);
-PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheInsertEntryInternal(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName);
-
 
 /** @todo Docs */
-PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheFindInternal(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName, uint32_t uFlags)
+static PVBOXSERVICEVEPROPCACHEENTRY vgsvcPropCacheFindInternal(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName,
+                                                               uint32_t fFlags)
 {
+    RT_NOREF1(fFlags);
     AssertPtrReturn(pCache, NULL);
     AssertPtrReturn(pszName, NULL);
 
@@ -46,9 +44,10 @@ PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheFindInternal(PVBOXSERVICEVEPROP
      *  r=bird: Use a string space (RTstrSpace*). That is O(log n) in its current
      *        implementation (AVL tree). However, this is not important at the
      *        moment. */
-    PVBOXSERVICEVEPROPCACHEENTRY pNodeIt, pNode = NULL;
+    PVBOXSERVICEVEPROPCACHEENTRY pNode = NULL;
     if (RT_SUCCESS(RTCritSectEnter(&pCache->CritSect)))
     {
+        PVBOXSERVICEVEPROPCACHEENTRY pNodeIt;
         RTListForEach(&pCache->NodeHead, pNodeIt, VBOXSERVICEVEPROPCACHEENTRY, NodeSucc)
         {
             if (strcmp(pNodeIt->pszName, pszName) == 0)
@@ -64,7 +63,7 @@ PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheFindInternal(PVBOXSERVICEVEPROP
 
 
 /** @todo Docs */
-PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheInsertEntryInternal(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName)
+static PVBOXSERVICEVEPROPCACHEENTRY vgsvcPropCacheInsertEntryInternal(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName)
 {
     AssertPtrReturn(pCache, NULL);
     AssertPtrReturn(pszName, NULL);
@@ -85,7 +84,7 @@ PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheInsertEntryInternal(PVBOXSERVIC
         int rc = RTCritSectEnter(&pCache->CritSect);
         if (RT_SUCCESS(rc))
         {
-            /*rc =*/ RTListAppend(&pCache->NodeHead, &pNode->NodeSucc);
+            RTListAppend(&pCache->NodeHead, &pNode->NodeSucc);
             rc = RTCritSectLeave(&pCache->CritSect);
         }
     }
@@ -94,7 +93,7 @@ PVBOXSERVICEVEPROPCACHEENTRY vboxServicePropCacheInsertEntryInternal(PVBOXSERVIC
 
 
 /** @todo Docs */
-int vboxServicePropCacheWritePropF(uint32_t u32ClientId, const char *pszName, uint32_t fFlags, const char *pszValueFormat, ...)
+static int vgsvcPropCacheWritePropF(uint32_t u32ClientId, const char *pszName, uint32_t fFlags, const char *pszValueFormat, ...)
 {
     AssertPtrReturn(pszName, VERR_INVALID_POINTER);
 
@@ -107,7 +106,7 @@ int vboxServicePropCacheWritePropF(uint32_t u32ClientId, const char *pszName, ui
         char *pszValue;
         if (RTStrAPrintfV(&pszValue, pszValueFormat, va) >= 0)
         {
-            if (fFlags & VBOXSERVICEPROPCACHEFLAG_TRANSIENT)
+            if (fFlags & VGSVCPROPCACHE_FLAGS_TRANSIENT)
             {
                 /*
                  * Because a value can be temporary we have to make sure it also
@@ -134,9 +133,7 @@ int vboxServicePropCacheWritePropF(uint32_t u32ClientId, const char *pszName, ui
         va_end(va);
     }
     else
-    {
         rc = VbglR3GuestPropWriteValue(u32ClientId, pszName, NULL);
-    }
     return rc;
 }
 
@@ -148,7 +145,7 @@ int vboxServicePropCacheWritePropF(uint32_t u32ClientId, const char *pszName, ui
  * @param   pCache          Pointer to the cache.
  * @param   uClientId       The HGCM handle of to the guest property service.
  */
-int VBoxServicePropCacheCreate(PVBOXSERVICEVEPROPCACHE pCache, uint32_t uClientId)
+int VGSvcPropCacheCreate(PVBOXSERVICEVEPROPCACHE pCache, uint32_t uClientId)
 {
     AssertPtrReturn(pCache, VERR_INVALID_POINTER);
     /** @todo Prevent init the cache twice!
@@ -161,6 +158,7 @@ int VBoxServicePropCacheCreate(PVBOXSERVICEVEPROPCACHE pCache, uint32_t uClientI
 
 /**
  * Updates a cache entry without submitting any changes to the host.
+ *
  * This is handy for defining default values/flags.
  *
  * @returns VBox status code.
@@ -170,14 +168,13 @@ int VBoxServicePropCacheCreate(PVBOXSERVICEVEPROPCACHE pCache, uint32_t uClientI
  * @param   fFlags          The property flags to set.
  * @param   pszValueReset   The property reset value.
  */
-int VBoxServicePropCacheUpdateEntry(PVBOXSERVICEVEPROPCACHE pCache,
-                                    const char *pszName, uint32_t fFlags, const char *pszValueReset)
+int VGSvcPropCacheUpdateEntry(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName, uint32_t fFlags, const char *pszValueReset)
 {
     AssertPtrReturn(pCache, VERR_INVALID_POINTER);
     AssertPtrReturn(pszName, VERR_INVALID_POINTER);
-    PVBOXSERVICEVEPROPCACHEENTRY pNode = vboxServicePropCacheFindInternal(pCache, pszName, 0);
+    PVBOXSERVICEVEPROPCACHEENTRY pNode = vgsvcPropCacheFindInternal(pCache, pszName, 0);
     if (pNode == NULL)
-        pNode = vboxServicePropCacheInsertEntryInternal(pCache, pszName);
+        pNode = vgsvcPropCacheInsertEntryInternal(pCache, pszName);
 
     int rc;
     if (pNode != NULL)
@@ -213,7 +210,7 @@ int VBoxServicePropCacheUpdateEntry(PVBOXSERVICEVEPROPCACHE pCache,
  *                          the property will be deleted (if possible).
  * @param   ...             Format arguments.
  */
-int VBoxServicePropCacheUpdate(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName, const char *pszValueFormat, ...)
+int VGSvcPropCacheUpdate(PVBOXSERVICEVEPROPCACHE pCache, const char *pszName, const char *pszValueFormat, ...)
 {
     AssertPtrReturn(pCache, VERR_INVALID_POINTER);
     AssertPtrReturn(pszName, VERR_INVALID_POINTER);
@@ -234,21 +231,21 @@ int VBoxServicePropCacheUpdate(PVBOXSERVICEVEPROPCACHE pCache, const char *pszNa
             return VERR_NO_STR_MEMORY;
     }
 
-    PVBOXSERVICEVEPROPCACHEENTRY pNode = vboxServicePropCacheFindInternal(pCache, pszName, 0);
+    PVBOXSERVICEVEPROPCACHEENTRY pNode = vgsvcPropCacheFindInternal(pCache, pszName, 0);
 
     /* Lock the cache. */
     int rc = RTCritSectEnter(&pCache->CritSect);
     if (RT_SUCCESS(rc))
     {
         if (pNode == NULL)
-            pNode = vboxServicePropCacheInsertEntryInternal(pCache, pszName);
+            pNode = vgsvcPropCacheInsertEntryInternal(pCache, pszName);
 
         AssertPtr(pNode);
         if (pszValue) /* Do we have a value to check for? */
         {
             bool fUpdate = false;
             /* Always update this property, no matter what? */
-            if (pNode->fFlags & VBOXSERVICEPROPCACHEFLAG_ALWAYS_UPDATE)
+            if (pNode->fFlags & VGSVCPROPCACHE_FLAGS_ALWAYS_UPDATE)
                 fUpdate = true;
             /* Did the value change so we have to update? */
             else if (pNode->pszValue && strcmp(pNode->pszValue, pszValue) != 0)
@@ -260,8 +257,8 @@ int VBoxServicePropCacheUpdate(PVBOXSERVICEVEPROPCACHE pCache, const char *pszNa
             if (fUpdate)
             {
                 /* Write the update. */
-                rc = vboxServicePropCacheWritePropF(pCache->uClientID, pNode->pszName, pNode->fFlags, pszValue);
-                VBoxServiceVerbose(4, "[PropCache %p]: Written \"%s\"=\"%s\" (flags: %x), rc=%Rrc\n",
+                rc = vgsvcPropCacheWritePropF(pCache->uClientID, pNode->pszName, pNode->fFlags, pszValue);
+                VGSvcVerbose(4, "[PropCache %p]: Written '%s'='%s' (flags: %x), rc=%Rrc\n",
                                    pCache, pNode->pszName, pszValue, pNode->fFlags, rc);
                 if (RT_SUCCESS(rc)) /* Only update the node's value on successful write. */
                 {
@@ -279,9 +276,9 @@ int VBoxServicePropCacheUpdate(PVBOXSERVICEVEPROPCACHE pCache, const char *pszNa
             /* No value specified. Deletion (or no action required). */
             if (pNode->pszValue) /* Did we have a value before? Then the value needs to be deleted. */
             {
-                rc = vboxServicePropCacheWritePropF(pCache->uClientID, pNode->pszName,
+                rc = vgsvcPropCacheWritePropF(pCache->uClientID, pNode->pszName,
                                                     0, /* Flags */ NULL /* Value */);
-                VBoxServiceVerbose(4, "[PropCache %p]: Deleted \"%s\"=\"%s\" (flags: %x), rc=%Rrc\n",
+                VGSvcVerbose(4, "[PropCache %p]: Deleted '%s'='%s' (flags: %x), rc=%Rrc\n",
                                    pCache, pNode->pszName, pNode->pszValue, pNode->fFlags, rc);
                 if (RT_SUCCESS(rc)) /* Only delete property value on successful Vbgl deletion. */
                 {
@@ -298,8 +295,7 @@ int VBoxServicePropCacheUpdate(PVBOXSERVICEVEPROPCACHE pCache, const char *pszNa
         RTCritSectLeave(&pCache->CritSect);
     }
 
-    VBoxServiceVerbose(4, "[PropCache %p]: Updating \"%s\" resulted in rc=%Rrc\n",
-                       pCache, pszName, rc);
+    VGSvcVerbose(4, "[PropCache %p]: Updating '%s' resulted in rc=%Rrc\n", pCache, pszName, rc);
 
     /* Delete temp stuff. */
     RTStrFree(pszValue);
@@ -319,13 +315,14 @@ int VBoxServicePropCacheUpdate(PVBOXSERVICEVEPROPCACHE pCache, const char *pszNa
  *                          to be an absolute path.
  * @param   ...             Format arguments.
  */
-int VBoxServicePropCacheUpdateByPath(PVBOXSERVICEVEPROPCACHE pCache, const char *pszValue, uint32_t fFlags, const char *pszPathFormat, ...)
+int VGSvcPropCacheUpdateByPath(PVBOXSERVICEVEPROPCACHE pCache, const char *pszValue, uint32_t fFlags,
+                               const char *pszPathFormat, ...)
 {
+    RT_NOREF1(fFlags);
     AssertPtrReturn(pCache, VERR_INVALID_POINTER);
     AssertPtrReturn(pszPathFormat, VERR_INVALID_POINTER);
 
     int rc = VERR_NOT_FOUND;
-    PVBOXSERVICEVEPROPCACHEENTRY pNodeIt = NULL;
     if (RT_SUCCESS(RTCritSectEnter(&pCache->CritSect)))
     {
         /*
@@ -343,12 +340,13 @@ int VBoxServicePropCacheUpdateByPath(PVBOXSERVICEVEPROPCACHE pCache, const char 
         else
         {
             /* Iterate through all nodes and compare their paths. */
+            PVBOXSERVICEVEPROPCACHEENTRY pNodeIt;
             RTListForEach(&pCache->NodeHead, pNodeIt, VBOXSERVICEVEPROPCACHEENTRY, NodeSucc)
             {
                 if (RTStrStr(pNodeIt->pszName, pszPath) == pNodeIt->pszName)
                 {
                     /** @todo Use some internal function to update the node directly, this is slow atm. */
-                    rc = VBoxServicePropCacheUpdate(pCache, pNodeIt->pszName, pszValue);
+                    rc = VGSvcPropCacheUpdate(pCache, pNodeIt->pszName, pszValue);
                 }
                 if (RT_FAILURE(rc))
                     break;
@@ -366,18 +364,17 @@ int VBoxServicePropCacheUpdateByPath(PVBOXSERVICEVEPROPCACHE pCache, const char 
  *
  * @param   pCache          The property cache.
  */
-int VBoxServicePropCacheFlush(PVBOXSERVICEVEPROPCACHE pCache)
+int VGSvcPropCacheFlush(PVBOXSERVICEVEPROPCACHE pCache)
 {
     AssertPtrReturn(pCache, VERR_INVALID_POINTER);
 
     int rc = VINF_SUCCESS;
-    PVBOXSERVICEVEPROPCACHEENTRY pNodeIt = NULL;
     if (RT_SUCCESS(RTCritSectEnter(&pCache->CritSect)))
     {
+        PVBOXSERVICEVEPROPCACHEENTRY pNodeIt;
         RTListForEach(&pCache->NodeHead, pNodeIt, VBOXSERVICEVEPROPCACHEENTRY, NodeSucc)
         {
-            rc = vboxServicePropCacheWritePropF(pCache->uClientID, pNodeIt->pszName,
-                                                pNodeIt->fFlags, pNodeIt->pszValue);
+            rc = vgsvcPropCacheWritePropF(pCache->uClientID, pNodeIt->pszName, pNodeIt->fFlags, pNodeIt->pszValue);
             if (RT_FAILURE(rc))
                 break;
         }
@@ -392,7 +389,7 @@ int VBoxServicePropCacheFlush(PVBOXSERVICEVEPROPCACHE pCache)
  *
  * @param   pCache          The property cache.
  */
-void VBoxServicePropCacheDestroy(PVBOXSERVICEVEPROPCACHE pCache)
+void VGSvcPropCacheDestroy(PVBOXSERVICEVEPROPCACHE pCache)
 {
     AssertPtrReturnVoid(pCache);
     Assert(pCache->uClientID);
@@ -410,11 +407,8 @@ void VBoxServicePropCacheDestroy(PVBOXSERVICEVEPROPCACHE pCache)
                                                                                       VBOXSERVICEVEPROPCACHEENTRY, NodeSucc);
             RTListNodeRemove(&pNode->NodeSucc);
 
-            if (pNode->fFlags & VBOXSERVICEPROPCACHEFLAG_TEMPORARY)
-            {
-                rc = vboxServicePropCacheWritePropF(pCache->uClientID, pNode->pszName,
-                                                    pNode->fFlags, pNode->pszValueReset);
-            }
+            if (pNode->fFlags & VGSVCPROPCACHE_FLAGS_TEMPORARY)
+                rc = vgsvcPropCacheWritePropF(pCache->uClientID, pNode->pszName, pNode->fFlags, pNode->pszValueReset);
 
             AssertPtr(pNode->pszName);
             RTStrFree(pNode->pszName);

@@ -1,11 +1,10 @@
+/* $Id: UIWizardNewVDPageExpert.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVDPageExpert class declaration
+ * VBox Qt GUI - UIWizardNewVDPageExpert class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -58,9 +57,6 @@ private slots:
 
     /* Location editors stuff: */
     void sltSelectLocationButtonClicked();
-    /* Size editors stuff: */
-    void sltSizeSliderValueChanged(int iValue);
-    void sltSizeEditorTextChanged(const QString &strValue);
 
 private:
 

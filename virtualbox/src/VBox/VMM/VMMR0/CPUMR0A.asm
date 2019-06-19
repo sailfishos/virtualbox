@@ -1,10 +1,10 @@
-; $Id: CPUMR0A.asm $
+ ; $Id: CPUMR0A.asm $
 ;; @file
-; CPUM - Guest Context Assembly Routines.
+; CPUM - Ring-0 Assembly Routines (supporting HM and IEM).
 ;
 
 ;
-; Copyright (C) 2006-2013 Oracle Corporation
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,12 @@
 ; hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
 ;
 
+
 ;*******************************************************************************
 ;* Header Files                                                                *
 ;*******************************************************************************
+%define RT_ASM_WITH_SEH64
+%include "iprt/asmdefs.mac"
 %include "VBox/asmdefs.mac"
 %include "VBox/vmm/vm.mac"
 %include "VBox/err.mac"
@@ -26,551 +29,330 @@
 %include "iprt/x86.mac"
 %include "VBox/vmm/cpum.mac"
 
-%ifdef IN_RING3
- %error "The jump table doesn't link on leopard."
-%endif
-
-;*******************************************************************************
-;*      Defined Constants And Macros                                           *
-;*******************************************************************************
-;; The offset of the XMM registers in X86FXSTATE.
-; Use define because I'm too lazy to convert the struct.
-%define XMM_OFF_IN_X86FXSTATE   160
-%define IP_OFF_IN_X86FXSTATE    08h
-%define CS_OFF_IN_X86FXSTATE    0ch
-%define DS_OFF_IN_X86FXSTATE    14h
-
-
-;*******************************************************************************
-;* External Symbols                                                            *
-;*******************************************************************************
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-extern NAME(SUPR0AbsIs64bit)
-extern NAME(SUPR0Abs64bitKernelCS)
-extern NAME(SUPR0Abs64bitKernelSS)
-extern NAME(SUPR0Abs64bitKernelDS)
-extern NAME(SUPR0AbsKernelCS)
-%endif
-
-
-;*******************************************************************************
-;*  Global Variables                                                           *
-;*******************************************************************************
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-BEGINDATA
-;;
-; Store the SUPR0AbsIs64bit absolute value here so we can cmp/test without
-; needing to clobber a register. (This trick doesn't quite work for PE btw.
-; but that's not relevant atm.)
-GLOBALNAME g_fCPUMIs64bitHost
-    dd  NAME(SUPR0AbsIs64bit)
-%endif
-
 
 BEGINCODE
 
-;; Macro for FXSAVE/FXRSTOR leaky behaviour on AMD CPUs, see cpumR3CheckLeakyFpu().
-; Cleans the FPU state, if necessary, before restoring the FPU.
+;;
+; Makes sure the EMTs have a FPU state associated with them on hosts where we're
+; allowed to use it in ring-0 too.
 ;
-; This macro ASSUMES CR0.TS is not set!
-; @remarks Trashes xAX!!
-; Changes here should also be reflected in CPUMRCA.asm's copy!
-%macro CLEANFPU 0
-    test    dword [xDX + CPUMCPU.fUseFlags], CPUM_USE_FFXSR_LEAKY
-    jz      .nothing_to_clean
-
-    xor     eax, eax
-    fnstsw  ax               ; Get FSW
-    test    eax, RT_BIT(7)   ; If FSW.ES (bit 7) is set, clear it to not cause FPU exceptions
-                             ; while clearing & loading the FPU bits in 'clean_fpu'
-    jz      .clean_fpu
-    fnclex
-
-.clean_fpu:
-    ffree   st7              ; Clear FPU stack register(7)'s tag entry to prevent overflow if a wraparound occurs
-                             ; for the upcoming push (load)
-    fild    dword [xDX + CPUMCPU.Guest.fpu] ; Explicit FPU load to overwrite FIP, FOP, FDP registers in the FPU.
-
-.nothing_to_clean:
-%endmacro
-
-
-;; Macro for FXSAVE for the guest FPU but tries to figure out whether to
-;  save the 32-bit FPU state or 64-bit FPU state.
+; This ensure that we don't have to allocate the state lazily while trying to execute
+; guest code with preemption disabled or worse.
 ;
-; @remarks Requires CPUMCPU pointer in RDX
-%macro SAVE_32_OR_64_FPU 0
-    o64 fxsave  [rdx + CPUMCPU.Guest.fpu]
-
-    ; Shouldn't be necessary to check if the entire 64-bit FIP is 0 (i.e. guest hasn't used its FPU yet) because it should
-    ; be taken care of by the calling code, i.e. hmR0[Vmx|Svm]LoadSharedCR0() and hmR0[Vmx|Svm]ExitXcptNm() which ensure
-    ; we swap the guest FPU state when it starts using it (#NM). In any case it's only a performance optimization.
-    ; cmp         qword [rdx + CPUMCPU.Guest.fpu + IP_OFF_IN_X86FXSTATE], 0
-    ; je          short %%save_done
-
-    cmp         dword [rdx + CPUMCPU.Guest.fpu + CS_OFF_IN_X86FXSTATE], 0
-    jne         short %%save_done
-    sub         rsp, 20h                         ; Only need 1ch bytes but keep stack aligned otherwise we #GP(0)
-    fnstenv     [rsp]
-    movzx       eax, word [rsp + 10h]
-    mov         [rdx + CPUMCPU.Guest.fpu + CS_OFF_IN_X86FXSTATE], eax
-    movzx       eax, word [rsp + 18h]
-    mov         [rdx + CPUMCPU.Guest.fpu + DS_OFF_IN_X86FXSTATE], eax
-    add         rsp, 20h
-    mov         dword [rdx + CPUMCPU.Guest.fpu + X86_OFF_FXSTATE_RSVD], X86_FXSTATE_RSVD_32BIT_MAGIC
-%%save_done:
-%endmacro
-
-;; Macro for FXRSTOR for the guest FPU but loads the one based on what
-;  was saved before using SAVE_32_OR_64_FPU().
+; @cproto VMMR0_INT_DECL(void) CPUMR0RegisterVCpuThread(PVMCPU pVCpu);
 ;
-; @remarks Requires CPUMCPU pointer in RDX
-%macro RESTORE_32_OR_64_FPU 0
-    cmp         dword [rdx + CPUMCPU.Guest.fpu + X86_OFF_FXSTATE_RSVD], X86_FXSTATE_RSVD_32BIT_MAGIC
-    jne         short %%restore_64bit_fpu
-    fxrstor     [rdx + CPUMCPU.Guest.fpu]
-    jmp         short %%restore_fpu_done
-%%restore_64bit_fpu:
-    o64 fxrstor [rdx + CPUMCPU.Guest.fpu]
-%%restore_fpu_done:
-%endmacro
+BEGINPROC CPUMR0RegisterVCpuThread
+        push    xBP
+        SEH64_PUSH_xBP
+        mov     xBP, xSP
+        SEH64_SET_FRAME_xBP 0
+SEH64_END_PROLOGUE
+
+%ifdef VMM_R0_TOUCH_FPU
+        movdqa  xmm0, xmm0              ; hope this is harmless.
+%endif
+
+.return:
+        xor     eax, eax                ; paranoia
+        leave
+        ret
+ENDPROC   CPUMR0RegisterVCpuThread
 
 
-;; Macro to save and modify CR0 (if necessary) before touching the FPU state
-;  so as to not cause any FPU exceptions.
+%ifdef VMM_R0_TOUCH_FPU
+;;
+; Touches the host FPU state.
 ;
-; @remarks Uses xCX for backing-up CR0 (if CR0 needs to be modified) otherwise clears xCX.
-; @remarks Trashes xAX.
-%macro SAVE_CR0_CLEAR_FPU_TRAPS 0
-    xor     ecx, ecx
-    mov     xAX, cr0
-    test    eax, X86_CR0_TS | X86_CR0_EM    ; Make sure its safe to access the FPU state.
-    jz      %%skip_cr0_write
-    mov     xCX, xAX                        ; Save old CR0
-    and     xAX, ~(X86_CR0_TS | X86_CR0_EM)
-    mov     cr0, xAX
-%%skip_cr0_write:
-%endmacro
-
-;; Macro to restore CR0 from xCX if necessary.
+; @uses nothing (well, maybe cr0)
 ;
-; @remarks xCX should contain the CR0 value to restore or 0 if no restoration is needed.
-%macro RESTORE_CR0 0
-    cmp     ecx, 0
-    je      %%skip_cr0_restore
-    mov     cr0, xCX
-%%skip_cr0_restore:
-%endmacro
+ %ifndef RT_ASM_WITH_SEH64 ; workaround for yasm 1.3.0 bug (error: prologue -1 bytes, must be <256)
+ALIGNCODE(16)
+ %endif
+BEGINPROC CPUMR0TouchHostFpu
+        push    xBP
+        SEH64_PUSH_xBP
+        mov     xBP, xSP
+        SEH64_SET_FRAME_xBP 0
+SEH64_END_PROLOGUE
+
+        movdqa  xmm0, xmm0              ; Hope this is harmless.
+
+        leave
+        ret
+ENDPROC   CPUMR0TouchHostFpu
+%endif ; VMM_R0_TOUCH_FPU
 
 
 ;;
-; Saves the host FPU/XMM state and restores the guest state.
+; Saves the host FPU/SSE/AVX state and restores the guest FPU/SSE/AVX state.
 ;
-; @returns  0
-; @param    pCPUMCPU  x86:[esp+4] gcc:rdi msc:rcx     CPUMCPU pointer
+; @returns  VINF_SUCCESS (0) or VINF_CPUM_HOST_CR0_MODIFIED. (EAX)
+; @param    pCpumCpu  x86:[ebp+8] gcc:rdi msc:rcx     CPUMCPU pointer
 ;
-align 16
+; @remarks  64-bit Windows drivers shouldn't use AVX registers without saving+loading:
+;               https://msdn.microsoft.com/en-us/library/windows/hardware/ff545910%28v=vs.85%29.aspx?f=255&MSPPError=-2147217396
+;           However the compiler docs have different idea:
+;               https://msdn.microsoft.com/en-us/library/9z1stfyw.aspx
+;           We'll go with the former for now.
+;
+%ifndef RT_ASM_WITH_SEH64 ; workaround for yasm 1.3.0 bug (error: prologue -1 bytes, must be <256)
+ALIGNCODE(16)
+%endif
 BEGINPROC cpumR0SaveHostRestoreGuestFPUState
+        push    xBP
+        SEH64_PUSH_xBP
+        mov     xBP, xSP
+        SEH64_SET_FRAME_xBP 0
+SEH64_END_PROLOGUE
+
+        ;
+        ; Prologue - xAX+xDX must be free for XSAVE/XRSTOR input.
+        ;
 %ifdef RT_ARCH_AMD64
  %ifdef RT_OS_WINDOWS
-    mov     xDX, rcx
+        mov     r11, rcx
  %else
-    mov     xDX, rdi
+        mov     r11, rdi
  %endif
+ %define pCpumCpu   r11
+ %define pXState    r10
 %else
-    mov     xDX, dword [esp + 4]
+        push    ebx
+        push    esi
+        mov     ebx, dword [ebp + 8]
+ %define pCpumCpu ebx
+ %define pXState  esi
 %endif
-    pushf                               ; The darwin kernel can get upset or upset things if an
-    cli                                 ; interrupt occurs while we're doing fxsave/fxrstor/cr0.
 
-    ; Switch the state.
-    or      dword [xDX + CPUMCPU.fUseFlags], (CPUM_USED_FPU | CPUM_USED_FPU_SINCE_REM)
+        pushf                           ; The darwin kernel can get upset or upset things if an
+        cli                             ; interrupt occurs while we're doing fxsave/fxrstor/cr0.
 
-    ; Clear CR0 FPU bits to not cause exceptions, uses xCX
-    SAVE_CR0_CLEAR_FPU_TRAPS
-    ; Do NOT use xCX from this point!
+        ;
+        ; Save the host state.
+        ;
+        test    dword [pCpumCpu + CPUMCPU.fUseFlags], CPUM_USED_FPU_HOST
+        jnz     .already_saved_host
 
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-    cmp     byte [NAME(g_fCPUMIs64bitHost)], 0
-    jz      .legacy_mode
-    db      0xea                        ; jmp far .sixtyfourbit_mode
-    dd      .sixtyfourbit_mode, NAME(SUPR0Abs64bitKernelCS)
-.legacy_mode:
-%endif ; VBOX_WITH_HYBRID_32BIT_KERNEL
+        CPUMRZ_TOUCH_FPU_CLEAR_CR0_FPU_TRAPS_SET_RC xCX, xAX, pCpumCpu ; xCX is the return value for VT-x; xAX is scratch.
 
-%ifdef RT_ARCH_AMD64
-    ; Use explicit REX prefix. See @bugref{6398}.
-    o64 fxsave  [rdx + CPUMCPU.Host.fpu]    ; ASSUMES that all VT-x/AMD-V boxes sports fxsave/fxrstor (safe assumption)
-
-    ; Restore the guest FPU (32-bit or 64-bit), preserves existing broken state. See @bugref{7138}.
-    test    dword [rdx + CPUMCPU.fUseFlags], CPUM_USE_SUPPORTS_LONGMODE
-    jnz     short .fpu_load_32_or_64
-    fxrstor [rdx + CPUMCPU.Guest.fpu]
-    jmp     short .fpu_load_done
-.fpu_load_32_or_64:
-    RESTORE_32_OR_64_FPU
-.fpu_load_done:
-%else
-    fxsave  [edx + CPUMCPU.Host.fpu]        ; ASSUMES that all VT-x/AMD-V boxes sports fxsave/fxrstor (safe assumption)
-    fxrstor [edx + CPUMCPU.Guest.fpu]
-%endif
+        CPUMR0_SAVE_HOST
 
 %ifdef VBOX_WITH_KERNEL_USING_XMM
-    ; Restore the non-volatile xmm registers. ASSUMING 64-bit windows
-    lea     r11, [xDX + CPUMCPU.Host.fpu + XMM_OFF_IN_X86FXSTATE]
-    movdqa  xmm6,  [r11 + 060h]
-    movdqa  xmm7,  [r11 + 070h]
-    movdqa  xmm8,  [r11 + 080h]
-    movdqa  xmm9,  [r11 + 090h]
-    movdqa  xmm10, [r11 + 0a0h]
-    movdqa  xmm11, [r11 + 0b0h]
-    movdqa  xmm12, [r11 + 0c0h]
-    movdqa  xmm13, [r11 + 0d0h]
-    movdqa  xmm14, [r11 + 0e0h]
-    movdqa  xmm15, [r11 + 0f0h]
+        jmp     .load_guest
+%endif
+.already_saved_host:
+%ifdef VBOX_WITH_KERNEL_USING_XMM
+        ; If we didn't save the host state, we must save the non-volatile XMM registers.
+        mov     pXState, [pCpumCpu + CPUMCPU.Host.pXStateR0]
+        stmxcsr [pXState + X86FXSTATE.MXCSR]
+        movdqa  [pXState + X86FXSTATE.xmm6 ], xmm6
+        movdqa  [pXState + X86FXSTATE.xmm7 ], xmm7
+        movdqa  [pXState + X86FXSTATE.xmm8 ], xmm8
+        movdqa  [pXState + X86FXSTATE.xmm9 ], xmm9
+        movdqa  [pXState + X86FXSTATE.xmm10], xmm10
+        movdqa  [pXState + X86FXSTATE.xmm11], xmm11
+        movdqa  [pXState + X86FXSTATE.xmm12], xmm12
+        movdqa  [pXState + X86FXSTATE.xmm13], xmm13
+        movdqa  [pXState + X86FXSTATE.xmm14], xmm14
+        movdqa  [pXState + X86FXSTATE.xmm15], xmm15
+
+        ;
+        ; Load the guest state.
+        ;
+.load_guest:
+%endif
+        CPUMR0_LOAD_GUEST
+
+%ifdef VBOX_WITH_KERNEL_USING_XMM
+        ; Restore the non-volatile xmm registers. ASSUMING 64-bit host.
+        mov     pXState, [pCpumCpu + CPUMCPU.Host.pXStateR0]
+        movdqa  xmm6,  [pXState + X86FXSTATE.xmm6]
+        movdqa  xmm7,  [pXState + X86FXSTATE.xmm7]
+        movdqa  xmm8,  [pXState + X86FXSTATE.xmm8]
+        movdqa  xmm9,  [pXState + X86FXSTATE.xmm9]
+        movdqa  xmm10, [pXState + X86FXSTATE.xmm10]
+        movdqa  xmm11, [pXState + X86FXSTATE.xmm11]
+        movdqa  xmm12, [pXState + X86FXSTATE.xmm12]
+        movdqa  xmm13, [pXState + X86FXSTATE.xmm13]
+        movdqa  xmm14, [pXState + X86FXSTATE.xmm14]
+        movdqa  xmm15, [pXState + X86FXSTATE.xmm15]
+        ldmxcsr        [pXState + X86FXSTATE.MXCSR]
 %endif
 
-.done:
-    ; Restore CR0 from xCX if it was previously saved.
-    RESTORE_CR0
-    popf
-    xor     eax, eax
-    ret
+        or      dword [pCpumCpu + CPUMCPU.fUseFlags], (CPUM_USED_FPU_GUEST | CPUM_USED_FPU_SINCE_REM | CPUM_USED_FPU_HOST)
+        popf
 
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
-ALIGNCODE(16)
-BITS 64
-.sixtyfourbit_mode:
-    and     edx, 0ffffffffh
-    o64 fxsave  [rdx + CPUMCPU.Host.fpu]
-
-    ; Restore the guest FPU (32-bit or 64-bit), preserves existing broken state. See @bugref{7138}.
-    test    dword [rdx + CPUMCPU.fUseFlags], CPUM_USE_SUPPORTS_LONGMODE
-    jnz     short .fpu_load_32_or_64_darwin
-    fxrstor [rdx + CPUMCPU.Guest.fpu]
-    jmp     short .fpu_load_done_darwin
-.fpu_load_32_or_64_darwin:
-    RESTORE_32_OR_64_FPU
-.fpu_load_done_darwin:
-
-    jmp far [.fpret wrt rip]
-.fpret:                                 ; 16:32 Pointer to .the_end.
-    dd      .done, NAME(SUPR0AbsKernelCS)
-BITS 32
+        mov     eax, ecx
+.return:
+%ifdef RT_ARCH_X86
+        pop     esi
+        pop     ebx
 %endif
+        leave
+        ret
 ENDPROC   cpumR0SaveHostRestoreGuestFPUState
 
 
-%ifndef RT_ARCH_AMD64
-%ifdef  VBOX_WITH_64_BITS_GUESTS
-%ifndef VBOX_WITH_HYBRID_32BIT_KERNEL
 ;;
-; Saves the host FPU/XMM state
+; Saves the guest FPU/SSE/AVX state and restores the host FPU/SSE/AVX state.
 ;
-; @returns  0
-; @param    pCPUMCPU  x86:[esp+4] gcc:rdi msc:rcx     CPUMCPU pointer
+; @param    pCpumCpu  x86:[ebp+8] gcc:rdi msc:rcx     CPUMCPU pointer
 ;
-align 16
-BEGINPROC cpumR0SaveHostFPUState
-    mov     xDX, dword [esp + 4]
-    pushf                               ; The darwin kernel can get upset or upset things if an
-    cli                                 ; interrupt occurs while we're doing fxsave/fxrstor/cr0.
-
-    ; Switch the state.
-    or      dword [xDX + CPUMCPU.fUseFlags], (CPUM_USED_FPU | CPUM_USED_FPU_SINCE_REM)
-
-    ; Clear CR0 FPU bits to not cause exceptions, uses xCX
-    SAVE_CR0_CLEAR_FPU_TRAPS
-    ; Do NOT use xCX from this point!
-
-    fxsave  [xDX + CPUMCPU.Host.fpu]    ; ASSUMES that all VT-x/AMD-V boxes support fxsave/fxrstor (safe assumption)
-
-    ; Restore CR0 from xCX if it was saved previously.
-    RESTORE_CR0
-
-    popf
-    xor     eax, eax
-    ret
-ENDPROC   cpumR0SaveHostFPUState
+; @remarks  64-bit Windows drivers shouldn't use AVX registers without saving+loading:
+;               https://msdn.microsoft.com/en-us/library/windows/hardware/ff545910%28v=vs.85%29.aspx?f=255&MSPPError=-2147217396
+;           However the compiler docs have different idea:
+;               https://msdn.microsoft.com/en-us/library/9z1stfyw.aspx
+;           We'll go with the former for now.
+;
+%ifndef RT_ASM_WITH_SEH64 ; workaround for yasm 1.3.0 bug (error: prologue -1 bytes, must be <256)
+ALIGNCODE(16)
 %endif
-%endif
-%endif
-
-
-;;
-; Saves the guest FPU/XMM state and restores the host state.
-;
-; @returns  0
-; @param    pCPUMCPU  x86:[esp+4] gcc:rdi msc:rcx     CPUMCPU pointer
-;
-align 16
 BEGINPROC cpumR0SaveGuestRestoreHostFPUState
+        push    xBP
+        SEH64_PUSH_xBP
+        mov     xBP, xSP
+        SEH64_SET_FRAME_xBP 0
+SEH64_END_PROLOGUE
+
+        ;
+        ; Prologue - xAX+xDX must be free for XSAVE/XRSTOR input.
+        ;
 %ifdef RT_ARCH_AMD64
  %ifdef RT_OS_WINDOWS
-    mov     xDX, rcx
+        mov     r11, rcx
  %else
-    mov     xDX, rdi
+        mov     r11, rdi
  %endif
+ %define pCpumCpu   r11
+ %define pXState    r10
 %else
-    mov     xDX, dword [esp + 4]
+        push    ebx
+        push    esi
+        mov     ebx, dword [ebp + 8]
+ %define pCpumCpu   ebx
+ %define pXState    esi
 %endif
+        pushf                           ; The darwin kernel can get upset or upset things if an
+        cli                             ; interrupt occurs while we're doing fxsave/fxrstor/cr0.
 
-    ; Only restore FPU if guest has used it.
-    ; Using fxrstor should ensure that we're not causing unwanted exception on the host.
-    test    dword [xDX + CPUMCPU.fUseFlags], CPUM_USED_FPU
-    jz      .fpu_not_used
+ %ifdef VBOX_WITH_KERNEL_USING_XMM
+        ;
+        ; Copy non-volatile XMM registers to the host state so we can use
+        ; them while saving the guest state (we've gotta do this anyway).
+        ;
+        mov     pXState, [pCpumCpu + CPUMCPU.Host.pXStateR0]
+        stmxcsr [pXState + X86FXSTATE.MXCSR]
+        movdqa  [pXState + X86FXSTATE.xmm6], xmm6
+        movdqa  [pXState + X86FXSTATE.xmm7], xmm7
+        movdqa  [pXState + X86FXSTATE.xmm8], xmm8
+        movdqa  [pXState + X86FXSTATE.xmm9], xmm9
+        movdqa  [pXState + X86FXSTATE.xmm10], xmm10
+        movdqa  [pXState + X86FXSTATE.xmm11], xmm11
+        movdqa  [pXState + X86FXSTATE.xmm12], xmm12
+        movdqa  [pXState + X86FXSTATE.xmm13], xmm13
+        movdqa  [pXState + X86FXSTATE.xmm14], xmm14
+        movdqa  [pXState + X86FXSTATE.xmm15], xmm15
+ %endif
 
-    pushf                               ; The darwin kernel can get upset or upset things if an
-    cli                                 ; interrupt occurs while we're doing fxsave/fxrstor/cr0.
+        ;
+        ; Save the guest state if necessary.
+        ;
+        test    dword [pCpumCpu + CPUMCPU.fUseFlags], CPUM_USED_FPU_GUEST
+        jz      .load_only_host
 
-    ; Clear CR0 FPU bits to not cause exceptions, uses xCX
-    SAVE_CR0_CLEAR_FPU_TRAPS
-    ; Do NOT use xCX from this point!
+ %ifdef VBOX_WITH_KERNEL_USING_XMM
+        ; Load the guest XMM register values we already saved in HMR0VMXStartVMWrapXMM.
+        mov     pXState, [pCpumCpu + CPUMCPU.Guest.pXStateR0]
+        movdqa  xmm0,  [pXState + X86FXSTATE.xmm0]
+        movdqa  xmm1,  [pXState + X86FXSTATE.xmm1]
+        movdqa  xmm2,  [pXState + X86FXSTATE.xmm2]
+        movdqa  xmm3,  [pXState + X86FXSTATE.xmm3]
+        movdqa  xmm4,  [pXState + X86FXSTATE.xmm4]
+        movdqa  xmm5,  [pXState + X86FXSTATE.xmm5]
+        movdqa  xmm6,  [pXState + X86FXSTATE.xmm6]
+        movdqa  xmm7,  [pXState + X86FXSTATE.xmm7]
+        movdqa  xmm8,  [pXState + X86FXSTATE.xmm8]
+        movdqa  xmm9,  [pXState + X86FXSTATE.xmm9]
+        movdqa  xmm10, [pXState + X86FXSTATE.xmm10]
+        movdqa  xmm11, [pXState + X86FXSTATE.xmm11]
+        movdqa  xmm12, [pXState + X86FXSTATE.xmm12]
+        movdqa  xmm13, [pXState + X86FXSTATE.xmm13]
+        movdqa  xmm14, [pXState + X86FXSTATE.xmm14]
+        movdqa  xmm15, [pXState + X86FXSTATE.xmm15]
+        ldmxcsr        [pXState + X86FXSTATE.MXCSR]
+ %endif
+        CPUMR0_SAVE_GUEST
 
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-    cmp     byte [NAME(g_fCPUMIs64bitHost)], 0
-    jz      .legacy_mode
-    db      0xea                        ; jmp far .sixtyfourbit_mode
-    dd      .sixtyfourbit_mode, NAME(SUPR0Abs64bitKernelCS)
-.legacy_mode:
-%endif ; VBOX_WITH_HYBRID_32BIT_KERNEL
+        ;
+        ; Load the host state.
+        ;
+.load_only_host:
+        CPUMR0_LOAD_HOST
 
-%ifdef RT_ARCH_AMD64
-    ; Save the guest FPU (32-bit or 64-bit), preserves existing broken state. See @bugref{7138}.
-    test    dword [rdx + CPUMCPU.fUseFlags], CPUM_USE_SUPPORTS_LONGMODE
-    jnz     short .fpu_save_32_or_64
-    fxsave  [rdx + CPUMCPU.Guest.fpu]
-    jmp     short .fpu_save_done
-.fpu_save_32_or_64:
-    SAVE_32_OR_64_FPU
-.fpu_save_done:
+        ; Restore the CR0 value we saved in cpumR0SaveHostRestoreGuestFPUState or
+        ; in cpumRZSaveHostFPUState.
+        mov     xCX, [pCpumCpu + CPUMCPU.Host.cr0Fpu]
+        CPUMRZ_RESTORE_CR0_IF_TS_OR_EM_SET xCX
+        and     dword [pCpumCpu + CPUMCPU.fUseFlags], ~(CPUM_USED_FPU_GUEST | CPUM_USED_FPU_HOST)
 
-    ; Use explicit REX prefix. See @bugref{6398}.
-    o64 fxrstor [rdx + CPUMCPU.Host.fpu]
-%else
-    fxsave  [edx + CPUMCPU.Guest.fpu]       ; ASSUMES that all VT-x/AMD-V boxes support fxsave/fxrstor (safe assumption)
-    fxrstor [edx + CPUMCPU.Host.fpu]
+        popf
+%ifdef RT_ARCH_X86
+        pop     esi
+        pop     ebx
 %endif
-
-.done:
-    ; Restore CR0 from xCX if it was previously saved.
-    RESTORE_CR0
-    and     dword [xDX + CPUMCPU.fUseFlags], ~CPUM_USED_FPU
-    popf
-.fpu_not_used:
-    xor     eax, eax
-    ret
-
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
-ALIGNCODE(16)
-BITS 64
-.sixtyfourbit_mode:
-    and     edx, 0ffffffffh
-
-    ; Save the guest FPU (32-bit or 64-bit), preserves existing broken state. See @bugref{7138}.
-    test    dword [rdx + CPUMCPU.fUseFlags], CPUM_USE_SUPPORTS_LONGMODE
-    jnz     short .fpu_save_32_or_64_darwin
-    fxsave  [rdx + CPUMCPU.Guest.fpu]
-    jmp     short .fpu_save_done_darwin
-.fpu_save_32_or_64_darwin:
-    SAVE_32_OR_64_FPU
-.fpu_save_done_darwin:
-
-    o64 fxrstor [rdx + CPUMCPU.Host.fpu]
-    jmp far [.fpret wrt rip]
-.fpret:                                 ; 16:32 Pointer to .the_end.
-    dd      .done, NAME(SUPR0AbsKernelCS)
-BITS 32
-%endif
+        leave
+        ret
+%undef pCpumCpu
+%undef pXState
 ENDPROC   cpumR0SaveGuestRestoreHostFPUState
 
 
+%if ARCH_BITS == 32
+ %ifdef VBOX_WITH_64_BITS_GUESTS
 ;;
-; Sets the host's FPU/XMM state
+; Restores the host's FPU/SSE/AVX state from pCpumCpu->Host.
 ;
-; @returns  0
-; @param    pCPUMCPU  x86:[esp+4] gcc:rdi msc:rcx     CPUMCPU pointer
+; @param    pCpumCpu  x86:[ebp+8] gcc:rdi msc:rcx     CPUMCPU pointer
 ;
-align 16
+  %ifndef RT_ASM_WITH_SEH64 ; workaround for yasm 1.3.0 bug (error: prologue -1 bytes, must be <256)
+ALIGNCODE(16)
+  %endif
 BEGINPROC cpumR0RestoreHostFPUState
-%ifdef RT_ARCH_AMD64
- %ifdef RT_OS_WINDOWS
-    mov     xDX, rcx
- %else
-    mov     xDX, rdi
- %endif
-%else
-    mov     xDX, dword [esp + 4]
-%endif
+        ;
+        ; Prologue - xAX+xDX must be free for XSAVE/XRSTOR input.
+        ;
+        push    ebp
+        mov     ebp, esp
+        push    ebx
+        push    esi
+        mov     ebx, dword [ebp + 8]
+  %define pCpumCpu ebx
+  %define pXState  esi
 
-    ; Restore FPU if guest has used it.
-    ; Using fxrstor should ensure that we're not causing unwanted exception on the host.
-    test    dword [xDX + CPUMCPU.fUseFlags], CPUM_USED_FPU
-    jz short .fpu_not_used
+        ;
+        ; Restore host CPU state.
+        ;
+        pushf                           ; The darwin kernel can get upset or upset things if an
+        cli                             ; interrupt occurs while we're doing fxsave/fxrstor/cr0.
 
-    pushf                               ; The darwin kernel can get upset or upset things if an
-    cli                                 ; interrupt occurs while we're doing fxsave/fxrstor/cr0.
+        CPUMR0_LOAD_HOST
 
-    ; Clear CR0 FPU bits to not cause exceptions, uses xCX
-    SAVE_CR0_CLEAR_FPU_TRAPS
-    ; Do NOT use xCX from this point!
+        ; Restore the CR0 value we saved in cpumR0SaveHostRestoreGuestFPUState or
+        ; in cpumRZSaveHostFPUState.
+        ;; @todo What about XCR0?
+        mov     xCX, [pCpumCpu + CPUMCPU.Host.cr0Fpu]
+        CPUMRZ_RESTORE_CR0_IF_TS_OR_EM_SET xCX
 
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-    cmp     byte [NAME(g_fCPUMIs64bitHost)], 0
-    jz      .legacy_mode
-    db      0xea                        ; jmp far .sixtyfourbit_mode
-    dd      .sixtyfourbit_mode, NAME(SUPR0Abs64bitKernelCS)
-.legacy_mode:
-%endif ; VBOX_WITH_HYBRID_32BIT_KERNEL
+        and     dword [pCpumCpu + CPUMCPU.fUseFlags], ~CPUM_USED_FPU_HOST
+        popf
 
-%ifdef RT_ARCH_AMD64
-    o64 fxrstor [xDX + CPUMCPU.Host.fpu]
-%else
-    fxrstor [xDX + CPUMCPU.Host.fpu]
-%endif
-
-.done:
-    ; Restore CR0 from xCX if it was previously saved.
-    RESTORE_CR0
-    and     dword [xDX + CPUMCPU.fUseFlags], ~CPUM_USED_FPU
-    popf
-.fpu_not_used:
-    xor     eax, eax
-    ret
-
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
-ALIGNCODE(16)
-BITS 64
-.sixtyfourbit_mode:
-    and     edx, 0ffffffffh
-    o64 fxrstor [rdx + CPUMCPU.Host.fpu]
-    jmp far [.fpret wrt rip]
-.fpret:                                 ; 16:32 Pointer to .the_end.
-    dd      .done, NAME(SUPR0AbsKernelCS)
-BITS 32
-%endif
+        pop     esi
+        pop     ebx
+        leave
+        ret
+  %undef pCpumCPu
+  %undef pXState
 ENDPROC   cpumR0RestoreHostFPUState
-
-
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
-;;
-; DECLASM(void)     cpumR0SaveDRx(uint64_t *pa4Regs);
-;
-ALIGNCODE(16)
-BEGINPROC cpumR0SaveDRx
-%ifdef RT_ARCH_AMD64
- %ifdef ASM_CALL64_GCC
-    mov     xCX, rdi
- %endif
-%else
-    mov     xCX, dword [esp + 4]
-%endif
-    pushf                               ; Just to be on the safe side.
-    cli
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-    cmp     byte [NAME(g_fCPUMIs64bitHost)], 0
-    jz      .legacy_mode
-    db      0xea                        ; jmp far .sixtyfourbit_mode
-    dd      .sixtyfourbit_mode, NAME(SUPR0Abs64bitKernelCS)
-.legacy_mode:
-%endif ; VBOX_WITH_HYBRID_32BIT_KERNEL
-
-    ;
-    ; Do the job.
-    ;
-    mov     xAX, dr0
-    mov     xDX, dr1
-    mov     [xCX],         xAX
-    mov     [xCX + 8 * 1], xDX
-    mov     xAX, dr2
-    mov     xDX, dr3
-    mov     [xCX + 8 * 2], xAX
-    mov     [xCX + 8 * 3], xDX
-
-.done:
-    popf
-    ret
-
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
-ALIGNCODE(16)
-BITS 64
-.sixtyfourbit_mode:
-    and     ecx, 0ffffffffh
-
-    mov     rax, dr0
-    mov     rdx, dr1
-    mov     r8,  dr2
-    mov     r9,  dr3
-    mov     [rcx],         rax
-    mov     [rcx + 8 * 1], rdx
-    mov     [rcx + 8 * 2], r8
-    mov     [rcx + 8 * 3], r9
-    jmp far [.fpret wrt rip]
-.fpret:                                 ; 16:32 Pointer to .the_end.
-    dd      .done, NAME(SUPR0AbsKernelCS)
-BITS 32
-%endif
-ENDPROC   cpumR0SaveDRx
-
-
-;;
-; DECLASM(void)     cpumR0LoadDRx(uint64_t const *pa4Regs);
-;
-ALIGNCODE(16)
-BEGINPROC cpumR0LoadDRx
-%ifdef RT_ARCH_AMD64
- %ifdef ASM_CALL64_GCC
-    mov     xCX, rdi
- %endif
-%else
-    mov     xCX, dword [esp + 4]
-%endif
-    pushf                               ; Just to be on the safe side.
-    cli
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL
-    cmp     byte [NAME(g_fCPUMIs64bitHost)], 0
-    jz      .legacy_mode
-    db      0xea                        ; jmp far .sixtyfourbit_mode
-    dd      .sixtyfourbit_mode, NAME(SUPR0Abs64bitKernelCS)
-.legacy_mode:
-%endif ; VBOX_WITH_HYBRID_32BIT_KERNEL
-
-    ;
-    ; Do the job.
-    ;
-    mov     xAX, [xCX]
-    mov     xDX, [xCX + 8 * 1]
-    mov     dr0, xAX
-    mov     dr1, xDX
-    mov     xAX, [xCX + 8 * 2]
-    mov     xDX, [xCX + 8 * 3]
-    mov     dr2, xAX
-    mov     dr3, xDX
-
-.done:
-    popf
-    ret
-
-%ifdef VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
-ALIGNCODE(16)
-BITS 64
-.sixtyfourbit_mode:
-    and     ecx, 0ffffffffh
-
-    mov     rax, [rcx]
-    mov     rdx, [rcx + 8 * 1]
-    mov     r8,  [rcx + 8 * 2]
-    mov     r9,  [rcx + 8 * 3]
-    mov     dr0, rax
-    mov     dr1, rdx
-    mov     dr2, r8
-    mov     dr3, r9
-    jmp far [.fpret wrt rip]
-.fpret:                                 ; 16:32 Pointer to .the_end.
-    dd      .done, NAME(SUPR0AbsKernelCS)
-BITS 32
-%endif
-ENDPROC   cpumR0LoadDRx
-
-%endif ; VBOX_WITH_HYBRID_32BIT_KERNEL_IN_R0
+ %endif ; VBOX_WITH_64_BITS_GUESTS
+%endif  ; ARCH_BITS == 32
 

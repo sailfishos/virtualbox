@@ -1,10 +1,10 @@
-/* $Id$ */
+/* $Id: proxy_pollmgr.h $ */
 /** @file
  * NAT Network - poll manager, definitions and declarations.
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,8 +35,7 @@ enum pollmgr_slot_t {
 
     POLLMGR_CHAN_PORTFWD,       /* add/remove port forwarding rules */
 
-    POLLMGR_SLOT_STATIC_COUNT,
-    POLLMGR_SLOT_FIRST_DYNAMIC = POLLMGR_SLOT_STATIC_COUNT
+    POLLMGR_CHAN_COUNT
 };
 
 

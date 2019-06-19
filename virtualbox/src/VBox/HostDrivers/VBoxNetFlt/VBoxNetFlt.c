@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2012 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 /** @page pg_netflt     VBoxNetFlt - Network Interface Filter
@@ -190,7 +199,7 @@
  *
  *
  *
- * @subsection subsec_netflt_msc_hif_rm    Host Interface Rediscovery - OBSOLETE
+ * @subsection subsec_netflt_msc_hif_rd    Host Interface Rediscovery - OBSOLETE
  *
  * The rediscovery is performed when we receive a send request and a certain
  * period have elapsed since the last attempt, i.e. we're polling it. We
@@ -244,9 +253,10 @@
  *
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_NET_FLT_DRV
 #include "VBoxNetFltInternal.h"
 
@@ -263,11 +273,11 @@
 #include <iprt/thread.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define IFPORT_2_VBOXNETFLTINS(pIfPort) \
-    ( (PVBOXNETFLTINS)((uint8_t *)pIfPort - RT_OFFSETOF(VBOXNETFLTINS, MyPort)) )
+    ( (PVBOXNETFLTINS)((uint8_t *)(pIfPort) - RT_UOFFSETOF(VBOXNETFLTINS, MyPort)) )
 
 
 AssertCompileMemberSize(VBOXNETFLTINS, enmState, sizeof(uint32_t));
@@ -403,7 +413,7 @@ static bool vboxNetFltMaybeRediscovered(PVBOXNETFLTINS pThis)
     if (fDoIt)
         ASMAtomicWriteBool(&pThis->fRediscoveryPending, true);
 
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     /*
      * Call the OS specific code to do the job.
@@ -516,7 +526,7 @@ static DECLCALLBACK(INTNETTRUNKIFSTATE) vboxNetFltPortSetState(PINTNETTRUNKIFPOR
     enmOldTrunkState = pThis->enmTrunkState;
     if (enmOldTrunkState != enmState)
         ASMAtomicWriteU32((uint32_t volatile *)&pThis->enmTrunkState, enmState);
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     /*
      * If the state change indicates that the trunk has become active or
@@ -621,7 +631,7 @@ static DECLCALLBACK(void) vboxNetFltPortDisconnectAndRelease(PINTNETTRUNKIFPORT 
      */
     RTSpinlockAcquire(pThis->hSpinlock);
     vboxNetFltSetState(pThis, kVBoxNetFltInsState_Disconnecting);
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     vboxNetFltOsDisconnectIt(pThis);
     pThis->pSwitchPort = NULL;
@@ -629,7 +639,7 @@ static DECLCALLBACK(void) vboxNetFltPortDisconnectAndRelease(PINTNETTRUNKIFPORT 
 #ifdef VBOXNETFLT_STATIC_CONFIG
     RTSpinlockAcquire(pThis->hSpinlock);
     vboxNetFltSetState(pThis, kVBoxNetFltInsState_Unconnected);
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 #endif
 
     vboxNetFltRelease(pThis, false /* fBusy */);
@@ -748,12 +758,22 @@ DECLHIDDEN(void) vboxNetFltRelease(PVBOXNETFLTINS pThis, bool fBusy)
 
 
 /**
- * @copydoc INTNETTRUNKIFPORT::pfnRetain
+ * @copydoc INTNETTRUNKIFPORT::pfnRelease
  */
 static DECLCALLBACK(void) vboxNetFltPortRelease(PINTNETTRUNKIFPORT pIfPort)
 {
     PVBOXNETFLTINS pThis = IFPORT_2_VBOXNETFLTINS(pIfPort);
     vboxNetFltRelease(pThis, false /* fBusy */);
+}
+
+
+/**
+ * @callback_method_impl{FNINTNETTRUNKIFPORTRELEASEBUSY}
+ */
+DECLHIDDEN(DECLCALLBACK(void)) vboxNetFltPortReleaseBusy(PINTNETTRUNKIFPORT pIfPort)
+{
+    PVBOXNETFLTINS pThis = IFPORT_2_VBOXNETFLTINS(pIfPort);
+    vboxNetFltRelease(pThis, true /*fBusy*/);
 }
 
 
@@ -839,7 +859,7 @@ DECLHIDDEN(bool) vboxNetFltTryRetainBusyActive(PVBOXNETFLTINS pThis)
         cRefs = ASMAtomicIncU32(&pThis->cBusy);
         AssertMsg(cRefs >= 1 && cRefs < UINT32_MAX / 2, ("%d\n", cRefs)); NOREF(cRefs);
     }
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     return fRc;
 }
@@ -886,7 +906,7 @@ DECLHIDDEN(bool) vboxNetFltTryRetainBusyNotDisconnected(PVBOXNETFLTINS pThis)
         cRefs = ASMAtomicIncU32(&pThis->cBusy);
         AssertMsg(cRefs >= 1 && cRefs < UINT32_MAX / 2, ("%d\n", cRefs)); NOREF(cRefs);
     }
-    RTSpinlockReleaseNoInts(pThis->hSpinlock);
+    RTSpinlockRelease(pThis->hSpinlock);
 
     return fRc;
 }
@@ -978,7 +998,7 @@ static int vboxNetFltNewInstance(PVBOXNETFLTGLOBALS pGlobals, const char *pszNam
      */
     int             rc;
     size_t const    cchName = strlen(pszName);
-    PVBOXNETFLTINS  pNew = (PVBOXNETFLTINS)RTMemAllocZ(RT_OFFSETOF(VBOXNETFLTINS, szName[cchName + 1]));
+    PVBOXNETFLTINS  pNew = (PVBOXNETFLTINS)RTMemAllocZ(RT_UOFFSETOF_DYN(VBOXNETFLTINS, szName[cchName + 1]));
     if (!pNew)
         return VERR_INTNET_FLT_IF_FAILED;
     pNew->pNext                         = NULL;
@@ -1218,7 +1238,7 @@ static DECLCALLBACK(int) vboxNetFltFactoryCreateAndConnect(PINTNETTRUNKFACTORY p
                                                            PINTNETTRUNKSWPORT pSwitchPort, uint32_t fFlags,
                                                            PINTNETTRUNKIFPORT *ppIfPort)
 {
-    PVBOXNETFLTGLOBALS pGlobals = (PVBOXNETFLTGLOBALS)((uint8_t *)pIfFactory - RT_OFFSETOF(VBOXNETFLTGLOBALS, TrunkFactory));
+    PVBOXNETFLTGLOBALS pGlobals = (PVBOXNETFLTGLOBALS)((uint8_t *)pIfFactory - RT_UOFFSETOF(VBOXNETFLTGLOBALS, TrunkFactory));
     PVBOXNETFLTINS pCur;
     int rc;
 
@@ -1305,7 +1325,7 @@ static DECLCALLBACK(int) vboxNetFltFactoryCreateAndConnect(PINTNETTRUNKFACTORY p
  */
 static DECLCALLBACK(void) vboxNetFltFactoryRelease(PINTNETTRUNKFACTORY pIfFactory)
 {
-    PVBOXNETFLTGLOBALS pGlobals = (PVBOXNETFLTGLOBALS)((uint8_t *)pIfFactory - RT_OFFSETOF(VBOXNETFLTGLOBALS, TrunkFactory));
+    PVBOXNETFLTGLOBALS pGlobals = (PVBOXNETFLTGLOBALS)((uint8_t *)pIfFactory - RT_UOFFSETOF(VBOXNETFLTGLOBALS, TrunkFactory));
 
     int32_t cRefs = ASMAtomicDecS32(&pGlobals->cFactoryRefs);
     Assert(cRefs >= 0); NOREF(cRefs);
@@ -1322,9 +1342,10 @@ static DECLCALLBACK(void) vboxNetFltFactoryRelease(PINTNETTRUNKFACTORY pIfFactor
  * @param   pSession            The session - unused.
  * @param   pszInterfaceUuid    The factory interface id.
  */
-static DECLCALLBACK(void *) vboxNetFltQueryFactoryInterface(PCSUPDRVFACTORY pSupDrvFactory, PSUPDRVSESSION pSession, const char *pszInterfaceUuid)
+static DECLCALLBACK(void *) vboxNetFltQueryFactoryInterface(PCSUPDRVFACTORY pSupDrvFactory, PSUPDRVSESSION pSession,
+                                                            const char *pszInterfaceUuid)
 {
-    PVBOXNETFLTGLOBALS pGlobals = (PVBOXNETFLTGLOBALS)((uint8_t *)pSupDrvFactory - RT_OFFSETOF(VBOXNETFLTGLOBALS, SupDrvFactory));
+    PVBOXNETFLTGLOBALS pGlobals = (PVBOXNETFLTGLOBALS)((uint8_t *)pSupDrvFactory - RT_UOFFSETOF(VBOXNETFLTGLOBALS, SupDrvFactory));
 
     /*
      * Convert the UUID strings and compare them.
@@ -1350,6 +1371,7 @@ static DECLCALLBACK(void *) vboxNetFltQueryFactoryInterface(PCSUPDRVFACTORY pSup
     else
         Log(("VBoxNetFlt: rc=%Rrc, uuid=%s\n", rc, pszInterfaceUuid));
 
+    RT_NOREF1(pSession);
     return NULL;
 }
 

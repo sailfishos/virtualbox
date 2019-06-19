@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,15 +19,15 @@
  * @todo: this should be somehow shared with with DevINIP, because
  * we want that every NAT and DevINIP instance uses a initialized LWIP
  * initialization of LWIP should happen on iLWIPInitiatorCounter 0 -> 1.
- * see pfnConstruct/Destruct. 
+ * see pfnConstruct/Destruct.
  *
- * @note: see comment to DevINIP.cpp:DevINIPConfigured 
+ * @note: see comment to DevINIP.cpp:DevINIPConfigured
  * @note: perhaps initilization stuff would be better move out of NAT driver,
  *  because we have to deal with attaching detaching NAT driver at runtime.
  */
 #include <iprt/types.h>
 #include "VBoxLwipCore.h"
-/* @todo: lwip or nat ? */
+/** @todo lwip or nat ? */
 #define LOG_GROUP LOG_GROUP_DRV_NAT
 #include <iprt/cpp/lock.h>
 #include <iprt/timer.h>
@@ -48,12 +48,12 @@ extern "C" {
 typedef struct {
     PFNRT1 pfn;
     void *pvUser;
-} LWIPCOREUSERCALLBACK, *PLWIPCOREUSERCALLBACK; 
+} LWIPCOREUSERCALLBACK, *PLWIPCOREUSERCALLBACK;
 
 
 RTCLockMtx g_mtxLwip;
 
-typedef struct LWIPCORE 
+typedef struct LWIPCORE
 {
     int iLWIPInitiatorCounter;
     sys_sem_t LwipTcpIpSem;
@@ -65,7 +65,7 @@ static LWIPCORE g_LwipCore;
 /**
  * @note: this function executes on TCPIP thread.
  */
-static DECLCALLBACK(void) lwipCoreUserCallback(void *pvArg)
+static void lwipCoreUserCallback(void *pvArg)
 {
     LogFlowFunc(("ENTER: pvArg:%p\n", pvArg));
 
@@ -82,7 +82,7 @@ static DECLCALLBACK(void) lwipCoreUserCallback(void *pvArg)
 /**
  * @note: this function executes on TCPIP thread.
  */
-static DECLCALLBACK(void) lwipCoreInitDone(void *pvArg)
+static void lwipCoreInitDone(void *pvArg)
 {
     LogFlowFunc(("ENTER: pvArg:%p\n", pvArg));
 
@@ -96,7 +96,7 @@ static DECLCALLBACK(void) lwipCoreInitDone(void *pvArg)
 /**
  * @note: this function executes on TCPIP thread.
  */
-static DECLCALLBACK(void) lwipCoreFiniDone(void *pvArg)
+static void lwipCoreFiniDone(void *pvArg)
 {
     LogFlowFunc(("ENTER: pvArg:%p\n", pvArg));
 
@@ -132,7 +132,7 @@ int vboxLwipCoreInitialize(PFNRT1 pfnCallback, void *pvCallbackArg)
             lwipRc = sys_sem_new(&g_LwipCore.LwipTcpIpSem, 0);
             if (lwipRc != ERR_OK)
             {
-                LogFlow(("%s: sys_sem_new error %d\n", __FUNCTION__, lwipRc));
+                LogFlowFunc(("sys_sem_new error %d\n", lwipRc));
                 goto done;
             }
 
@@ -143,7 +143,7 @@ int vboxLwipCoreInitialize(PFNRT1 pfnCallback, void *pvCallbackArg)
             lwipRc = tcpip_callback(lwipCoreUserCallback, &callback);
             if (lwipRc != ERR_OK)
             {
-                LogFlow(("%s: tcpip_callback error %d\n", __FUNCTION__, lwipRc));
+                LogFlowFunc(("tcpip_callback error %d\n", lwipRc));
                 goto done;
             }
         }
@@ -154,7 +154,7 @@ int vboxLwipCoreInitialize(PFNRT1 pfnCallback, void *pvCallbackArg)
   done:
     if (lwipRc != ERR_OK)
     {
-        /* @todo: map lwip error code? */
+        /** @todo map lwip error code? */
         rc = VERR_INTERNAL_ERROR;
     }
     LogFlowFuncLeaveRC(rc);
@@ -163,7 +163,7 @@ int vboxLwipCoreInitialize(PFNRT1 pfnCallback, void *pvCallbackArg)
 
 
 /**
- * This function decrement lwip reference counter 
+ * This function decrement lwip reference counter
  * and calls tcpip thread termination function.
  */
 void vboxLwipCoreFinalize(PFNRT1 pfnCallback, void *pvCallbackArg)
@@ -190,24 +190,25 @@ void vboxLwipCoreFinalize(PFNRT1 pfnCallback, void *pvCallbackArg)
              * is tcpip_msg::sem, but it seems to be unused and may be
              * gone in future versions of lwip.
              */
-            struct tcpip_msg msg;
-            msg.type = TCPIP_MSG_CALLBACK_TERMINATE;
-            msg.msg.cb.function = lwipCoreFiniDone;
-            msg.msg.cb.ctx = &callback;
-
-            lwipRc = tcpip_callbackmsg((struct tcpip_callback_msg *)&msg);
-            if (lwipRc != ERR_OK)
+            struct tcpip_msg *msg = (struct tcpip_msg *)memp_malloc(MEMP_TCPIP_MSG_API);
+            if (msg)
             {
-                LogFlow(("%s: tcpip_callback_msg error %d\n", __FUNCTION__, lwipRc));
+                msg->type = TCPIP_MSG_CALLBACK_TERMINATE;
+                msg->msg.cb.function = lwipCoreFiniDone;
+                msg->msg.cb.ctx = &callback;
+
+                lwipRc = tcpip_callbackmsg((struct tcpip_callback_msg *)msg);
+                if (lwipRc != ERR_OK)
+                    LogFlowFunc(("tcpip_callback_msg error %d\n", lwipRc));
             }
+            else
+                LogFlowFunc(("memp_malloc no memory\n"));
         }
         else
         {
             lwipRc = tcpip_callback(lwipCoreUserCallback, &callback);
             if (lwipRc != ERR_OK)
-            {
-                LogFlow(("%s: tcpip_callback error %d\n", __FUNCTION__, lwipRc));
-            }
+                LogFlowFunc(("tcpip_callback error %d\n", lwipRc));
         }
 
         if (lwipRc == ERR_OK)

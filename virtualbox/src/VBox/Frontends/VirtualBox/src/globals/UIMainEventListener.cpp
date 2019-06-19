@@ -1,12 +1,10 @@
 /* $Id: UIMainEventListener.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMainEventListener class implementation
+ * VBox Qt GUI - UIMainEventListener class implementation.
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,42 +15,161 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+/* Qt includes: */
+# include <QThread>
+# include <QMutex>
+
 /* GUI includes: */
-#include "UIMainEventListener.h"
+# include "UIMainEventListener.h"
+# include "VBoxGlobal.h"
 
 /* COM includes: */
-#include "COMEnums.h"
-#include "CVirtualBoxErrorInfo.h"
-#include "CUSBDevice.h"
-#include "CEvent.h"
-#include "CMachineStateChangedEvent.h"
-#include "CMachineDataChangedEvent.h"
-#include "CExtraDataCanChangeEvent.h"
-#include "CExtraDataChangedEvent.h"
-#include "CMachineRegisteredEvent.h"
-#include "CSessionStateChangedEvent.h"
-#include "CSnapshotTakenEvent.h"
-#include "CSnapshotDeletedEvent.h"
-#include "CSnapshotChangedEvent.h"
-#include "CMousePointerShapeChangedEvent.h"
-#include "CMouseCapabilityChangedEvent.h"
-#include "CKeyboardLedsChangedEvent.h"
-#include "CStateChangedEvent.h"
-#include "CNetworkAdapterChangedEvent.h"
-#include "CMediumChangedEvent.h"
-#include "CUSBDeviceStateChangedEvent.h"
-#include "CRuntimeErrorEvent.h"
-#include "CCanShowWindowEvent.h"
-#include "CShowWindowEvent.h"
-#include "CGuestMonitorChangedEvent.h"
+# include "COMEnums.h"
+# include "CEvent.h"
+# include "CEventSource.h"
+# include "CEventListener.h"
+# include "CVBoxSVCAvailabilityChangedEvent.h"
+# include "CVirtualBoxErrorInfo.h"
+# include "CMachineStateChangedEvent.h"
+# include "CMachineDataChangedEvent.h"
+# include "CMachineRegisteredEvent.h"
+# include "CSessionStateChangedEvent.h"
+# include "CSnapshotTakenEvent.h"
+# include "CSnapshotDeletedEvent.h"
+# include "CSnapshotChangedEvent.h"
+# include "CSnapshotRestoredEvent.h"
+# include "CExtraDataCanChangeEvent.h"
+# include "CExtraDataChangedEvent.h"
+# include "CMousePointerShapeChangedEvent.h"
+# include "CMouseCapabilityChangedEvent.h"
+# include "CKeyboardLedsChangedEvent.h"
+# include "CStateChangedEvent.h"
+# include "CNetworkAdapterChangedEvent.h"
+# include "CStorageDeviceChangedEvent.h"
+# include "CMediumChangedEvent.h"
+# include "CUSBDevice.h"
+# include "CUSBDeviceStateChangedEvent.h"
+# include "CGuestMonitorChangedEvent.h"
+# include "CRuntimeErrorEvent.h"
+# include "CCanShowWindowEvent.h"
+# include "CShowWindowEvent.h"
+# include "CProgressPercentageChangedEvent.h"
+# include "CProgressTaskCompletedEvent.h"
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+
+/** Private QThread extension allowing to listen for Main events in separate thread.
+  * This thread listens for a Main events infinitely unless creator calls for #setShutdown. */
+class UIMainEventListeningThread : public QThread
+{
+    Q_OBJECT;
+
+public:
+
+    /** Constructs Main events listener thread redirecting events from @a source to @a listener. */
+    UIMainEventListeningThread(const CEventSource &source, const CEventListener &listener);
+    /** Destructs Main events listener thread. */
+    ~UIMainEventListeningThread();
+
+protected:
+
+    /** Contains the thread excution body. */
+    virtual void run() /* override */;
+
+    /** Returns whether the thread asked to shutdown prematurely. */
+    bool isShutdown() const;
+    /** Defines whether the thread asked to @a fShutdown prematurely. */
+    void setShutdown(bool fShutdown);
+
+private:
+
+    /** Holds the Main event source reference. */
+    CEventSource m_source;
+    /** Holds the Main event listener reference. */
+    CEventListener m_listener;
+
+    /** Holds the mutex instance which protects thread access. */
+    mutable QMutex m_mutex;
+    /** Holds whether the thread asked to shutdown prematurely. */
+    bool m_fShutdown;
+};
+
+
+/*********************************************************************************************************************************
+*   Class UIMainEventListeningThread implementation.                                                                             *
+*********************************************************************************************************************************/
+
+UIMainEventListeningThread::UIMainEventListeningThread(const CEventSource &source, const CEventListener &listener)
+    : m_source(source)
+    , m_listener(listener)
+    , m_fShutdown(false)
+{
+}
+
+UIMainEventListeningThread::~UIMainEventListeningThread()
+{
+    /* Make a request to shutdown: */
+    setShutdown(true);
+
+    /* And wait 30 seconds for run() to finish: */
+    wait(30000);
+}
+
+void UIMainEventListeningThread::run()
+{
+    /* Initialize COM: */
+    COMBase::InitializeCOM(false);
+
+    /* Copy source wrapper to this thread: */
+    CEventSource source = m_source;
+    /* Copy listener wrapper to this thread: */
+    CEventListener listener = m_listener;
+
+    /* While we are not in shutdown: */
+    while (!isShutdown())
+    {
+        /* Fetch the event from the queue: */
+        CEvent event = source.GetEvent(listener, 500);
+        if (!event.isNull())
+        {
+            /* Process the event and tell the listener: */
+            listener.HandleEvent(event);
+            if (event.GetWaitable())
+                source.EventProcessed(listener, event);
+        }
+    }
+
+    /* Cleanup COM: */
+    COMBase::CleanupCOM();
+}
+
+bool UIMainEventListeningThread::isShutdown() const
+{
+    m_mutex.lock();
+    bool fShutdown = m_fShutdown;
+    m_mutex.unlock();
+    return fShutdown;
+}
+
+void UIMainEventListeningThread::setShutdown(bool fShutdown)
+{
+    m_mutex.lock();
+    m_fShutdown = fShutdown;
+    m_mutex.unlock();
+}
+
+
+/*********************************************************************************************************************************
+*   Class UIMainEventListener implementation.                                                                                    *
+*********************************************************************************************************************************/
 
 UIMainEventListener::UIMainEventListener()
-  : QObject()
 {
-    /* For queued events we have to extra register our enums/interface classes
-     * (Q_DECLARE_METATYPE isn't sufficient).
-     * Todo: Try to move this to a global function, which is auto generated
-     * from xslt. */
+    /* Register meta-types for required enums. */
     qRegisterMetaType<KMachineState>("KMachineState");
     qRegisterMetaType<KSessionState>("KSessionState");
     qRegisterMetaType< QVector<uint8_t> >("QVector<uint8_t>");
@@ -63,28 +180,41 @@ UIMainEventListener::UIMainEventListener()
     qRegisterMetaType<KGuestMonitorChangedEventType>("KGuestMonitorChangedEventType");
 }
 
-HRESULT UIMainEventListener::init(QObject * /* pParent */)
+void UIMainEventListener::registerSource(const CEventSource &source, const CEventListener &listener)
 {
-    return S_OK;
+    /* Make sure source and listener are valid: */
+    AssertReturnVoid(!source.isNull());
+    AssertReturnVoid(!listener.isNull());
+
+    /* Create thread for passed source: */
+    m_threads << new UIMainEventListeningThread(source, listener);
+    /* And start it: */
+    m_threads.last()->start();
 }
 
-void    UIMainEventListener::uninit()
+void UIMainEventListener::unregisterSources()
 {
+    /* Wipe out the threads: */
+    qDeleteAll(m_threads);
 }
 
-/**
- * @todo: instead of double wrapping of events into signals maybe it
- * make sense to use passive listeners, and peek up events in main thread.
- */
 STDMETHODIMP UIMainEventListener::HandleEvent(VBoxEventType_T /* type */, IEvent *pEvent)
 {
+    /* Try to acquire COM cleanup protection token first: */
+    if (!vboxGlobal().comTokenTryLockForRead())
+        return S_OK;
+
     CEvent event(pEvent);
     // printf("Event received: %d\n", event.GetType());
-    switch(event.GetType())
+    switch (event.GetType())
     {
-        /*
-         * All VirtualBox Events
-         */
+        case KVBoxEventType_OnVBoxSVCAvailabilityChanged:
+        {
+            CVBoxSVCAvailabilityChangedEvent es(pEvent);
+            emit sigVBoxSVCAvailabilityChange(es.GetAvailable());
+            break;
+        }
+
         case KVBoxEventType_OnMachineStateChanged:
         {
             CMachineStateChangedEvent es(pEvent);
@@ -97,26 +227,6 @@ STDMETHODIMP UIMainEventListener::HandleEvent(VBoxEventType_T /* type */, IEvent
             emit sigMachineDataChange(es.GetMachineId());
             break;
         }
-        case KVBoxEventType_OnExtraDataCanChange:
-        {
-            CExtraDataCanChangeEvent es(pEvent);
-            /* Has to be done in place to give an answer */
-            bool fVeto = false;
-            QString strReason;
-            emit sigExtraDataCanChange(es.GetMachineId(), es.GetKey(), es.GetValue(), fVeto, strReason);
-            if (fVeto)
-                es.AddVeto(strReason);
-            break;
-        }
-        case KVBoxEventType_OnExtraDataChanged:
-        {
-            CExtraDataChangedEvent es(pEvent);
-            emit sigExtraDataChange(es.GetMachineId(), es.GetKey(), es.GetValue());
-            break;
-        }
-        /* Not used:
-        case KVBoxEventType_OnMediumRegistered:
-         */
         case KVBoxEventType_OnMachineRegistered:
         {
             CMachineRegisteredEvent es(pEvent);
@@ -147,12 +257,33 @@ STDMETHODIMP UIMainEventListener::HandleEvent(VBoxEventType_T /* type */, IEvent
             emit sigSnapshotChange(es.GetMachineId(), es.GetSnapshotId());
             break;
         }
-        /* Not used:
-        case KVBoxEventType_OnGuestPropertyChange:
-         */
-        /*
-         * All Console Events
-         */
+        case KVBoxEventType_OnSnapshotRestored:
+        {
+            CSnapshotRestoredEvent es(pEvent);
+            emit sigSnapshotRestore(es.GetMachineId(), es.GetSnapshotId());
+            break;
+        }
+//        case KVBoxEventType_OnMediumRegistered:
+//        case KVBoxEventType_OnGuestPropertyChange:
+
+        case KVBoxEventType_OnExtraDataCanChange:
+        {
+            CExtraDataCanChangeEvent es(pEvent);
+            /* Has to be done in place to give an answer: */
+            bool fVeto = false;
+            QString strReason;
+            emit sigExtraDataCanChange(es.GetMachineId(), es.GetKey(), es.GetValue(), fVeto, strReason);
+            if (fVeto)
+                es.AddVeto(strReason);
+            break;
+        }
+        case KVBoxEventType_OnExtraDataChanged:
+        {
+            CExtraDataChangedEvent es(pEvent);
+            emit sigExtraDataChange(es.GetMachineId(), es.GetKey(), es.GetValue());
+            break;
+        }
+
         case KVBoxEventType_OnMousePointerShapeChanged:
         {
             CMousePointerShapeChangedEvent es(pEvent);
@@ -188,20 +319,18 @@ STDMETHODIMP UIMainEventListener::HandleEvent(VBoxEventType_T /* type */, IEvent
             emit sigNetworkAdapterChange(es.GetNetworkAdapter());
             break;
         }
-        /* Not used *
-        case KVBoxEventType_OnSerialPortChanged:
-        case KVBoxEventType_OnParallelPortChanged:
-        case KVBoxEventType_OnStorageControllerChanged:
-         */
+        case KVBoxEventType_OnStorageDeviceChanged:
+        {
+            CStorageDeviceChangedEvent es(pEvent);
+            emit sigStorageDeviceChange(es.GetStorageDevice(), es.GetRemoved(), es.GetSilent());
+            break;
+        }
         case KVBoxEventType_OnMediumChanged:
         {
             CMediumChangedEvent es(pEvent);
             emit sigMediumChange(es.GetMediumAttachment());
             break;
         }
-        /* Not used *
-        case KVBoxEventType_OnCPUChange:
-         */
         case KVBoxEventType_OnVRDEServerChanged:
         case KVBoxEventType_OnVRDEServerInfoChanged:
         {
@@ -229,32 +358,6 @@ STDMETHODIMP UIMainEventListener::HandleEvent(VBoxEventType_T /* type */, IEvent
             emit sigSharedFolderChange();
             break;
         }
-        case KVBoxEventType_OnRuntimeError:
-        {
-            CRuntimeErrorEvent es(pEvent);
-            emit sigRuntimeError(es.GetFatal(), es.GetId(), es.GetMessage());
-            break;
-        }
-        case KVBoxEventType_OnCanShowWindow:
-        {
-            CCanShowWindowEvent es(pEvent);
-            /* Has to be done in place to give an answer */
-            bool fVeto = false;
-            QString strReason;
-            emit sigCanShowWindow(fVeto, strReason);
-            if (fVeto)
-                es.AddVeto(strReason);
-            break;
-        }
-        case KVBoxEventType_OnShowWindow:
-        {
-            CShowWindowEvent es(pEvent);
-            /* Has to be done in place to give an answer */
-            LONG64 winId;
-            emit sigShowWindow(winId);
-            es.SetWinId(winId);
-            break;
-        }
         case KVBoxEventType_OnCPUExecutionCapChanged:
         {
             emit sigCPUExecutionCapChange();
@@ -267,8 +370,62 @@ STDMETHODIMP UIMainEventListener::HandleEvent(VBoxEventType_T /* type */, IEvent
                                        QRect(es.GetOriginX(), es.GetOriginY(), es.GetWidth(), es.GetHeight()));
             break;
         }
+        case KVBoxEventType_OnRuntimeError:
+        {
+            CRuntimeErrorEvent es(pEvent);
+            emit sigRuntimeError(es.GetFatal(), es.GetId(), es.GetMessage());
+            break;
+        }
+        case KVBoxEventType_OnCanShowWindow:
+        {
+            CCanShowWindowEvent es(pEvent);
+            /* Has to be done in place to give an answer: */
+            bool fVeto = false;
+            QString strReason;
+            emit sigCanShowWindow(fVeto, strReason);
+            if (fVeto)
+                es.AddVeto(strReason);
+            else
+                es.AddApproval(strReason);
+            break;
+        }
+        case KVBoxEventType_OnShowWindow:
+        {
+            CShowWindowEvent es(pEvent);
+            /* Has to be done in place to give an answer: */
+            qint64 winId = es.GetWinId();
+            if (winId != 0)
+                break; /* Already set by some listener. */
+            emit sigShowWindow(winId);
+            es.SetWinId(winId);
+            break;
+        }
+        case KVBoxEventType_OnAudioAdapterChanged:
+        {
+            emit sigAudioAdapterChange();
+            break;
+        }
+        case KVBoxEventType_OnProgressPercentageChanged:
+        {
+            CProgressPercentageChangedEvent es(pEvent);
+            emit sigProgressPercentageChange(es.GetProgressId(), (int)es.GetPercent());
+            break;
+        }
+        case KVBoxEventType_OnProgressTaskCompleted:
+        {
+            CProgressTaskCompletedEvent es(pEvent);
+            emit sigProgressTaskComplete(es.GetProgressId());
+            break;
+        }
+
         default: break;
     }
+
+    /* Unlock COM cleanup protection token: */
+    vboxGlobal().comTokenUnlock();
+
     return S_OK;
 }
+
+#include "UIMainEventListener.moc"
 

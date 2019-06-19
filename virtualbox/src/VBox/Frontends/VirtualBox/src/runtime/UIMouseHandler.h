@@ -1,11 +1,10 @@
+/* $Id: UIMouseHandler.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMouseHandler class declaration
+ * VBox Qt GUI - UIMouseHandler class declaration.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -20,31 +19,35 @@
 #define ___UIMouseHandler_h___
 
 /* Qt includes: */
+#include <QMap>
 #include <QObject>
 #include <QPoint>
-#include <QMap>
-#include <QRect>
 #include <QPointer>
+#include <QRect>
 
 /* GUI includes: */
-#include "UIDefs.h"
+#include "UIExtraDataDefs.h"
 
 /* Forward declarations: */
-class QWidget;
 class QTouchEvent;
+class QWidget;
 class UISession;
 class UIMachineLogic;
 class UIMachineWindow;
 class UIMachineView;
-#ifdef Q_WS_X11
-typedef union  _XEvent XEvent;
-#endif /* Q_WS_X11 */
-class CSession;
+class CDisplay;
+class CMouse;
+
 
 /* Delegate to control VM mouse functionality: */
 class UIMouseHandler : public QObject
 {
     Q_OBJECT;
+
+signals:
+
+    /** Notifies listeners about state-change. */
+    void sigStateChange(int iState);
 
 public:
 
@@ -64,16 +67,10 @@ public:
     void setMouseIntegrationEnabled(bool fEnabled);
 
     /* Current mouse state: */
-    int mouseState() const;
+    int state() const;
 
-#ifdef Q_WS_X11
-    bool x11EventFilter(XEvent *pEvent, ulong uScreenId);
-#endif /* Q_WS_X11 */
-
-signals:
-
-    /* Notifies listeners about mouse state-change: */
-    void mouseStateChanged(int iNewState);
+    /** Qt5: Performs pre-processing of all the native events. */
+    bool nativeEventFilter(void *pMessage, ulong uScreenId);
 
 protected slots:
 
@@ -98,7 +95,11 @@ protected:
     /* Getters: */
     UIMachineLogic* machineLogic() const;
     UISession* uisession() const;
-    CSession& session() const;
+
+    /** Returns the console's display reference. */
+    CDisplay& display() const;
+    /** Returns the console's mouse reference. */
+    CMouse& mouse() const;
 
     /* Event handler for registered machine-view(s): */
     bool eventFilter(QObject *pWatched, QEvent *pEvent);
@@ -112,12 +113,12 @@ protected:
     /* Separate function to handle incoming multi-touch events: */
     bool multiTouchEvent(QTouchEvent *pTouchEvent, ulong uScreenId);
 
-#ifdef Q_WS_WIN
+#ifdef VBOX_WS_WIN
     /* This method is actually required only because under win-host
      * we do not really grab the mouse in case of capturing it: */
     void updateMouseCursorClipping();
     QRect m_mouseCursorClippingRect;
-#endif /* Q_WS_WIN */
+#endif /* VBOX_WS_WIN */
 
     /* Machine logic parent: */
     UIMachineLogic *m_pMachineLogic;

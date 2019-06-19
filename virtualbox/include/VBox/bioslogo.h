@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -33,8 +33,11 @@
 #endif
 
 /** @defgroup grp_bios_logo     The Private BIOS Logo Interface.
- * @remark All this is currently duplicated in logo.c.
+ * @ingroup grp_devdrv
  * @internal
+ *
+ * @remark All this is currently duplicated in logo.c.
+ *
  * @{
  */
 
@@ -75,8 +78,10 @@ typedef struct LOGOHDR
 #ifndef VBOX_PC_BIOS
 AssertCompileSize(LOGOHDR, 12);
 #endif
-/** Pointer to a PC Biso logo header. */
+/** Pointer to a PC BIOS logo header. */
 typedef LOGOHDR *PLOGOHDR;
+/** Pointer to a const PC BIOS logo header. */
+typedef LOGOHDR const *PCLOGOHDR;
 
 /** The value of the LOGOHDR::u16Signature field. */
 #define LOGO_HDR_MAGIC      0x66BB

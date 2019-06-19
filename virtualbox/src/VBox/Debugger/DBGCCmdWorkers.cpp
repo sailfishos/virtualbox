@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGC
 #include <VBox/dbg.h>
 #include <VBox/vmm/dbgf.h>
@@ -61,7 +62,7 @@ int dbgcBpAdd(PDBGC pDbgc, RTUINT iBp, const char *pszCmd)
     if (pszCmd)
         pszCmd = RTStrStripL(pszCmd);
     size_t cchCmd = pszCmd ? strlen(pszCmd) : 0;
-    pBp = (PDBGCBP)RTMemAlloc(RT_OFFSETOF(DBGCBP, szCmd[cchCmd + 1]));
+    pBp = (PDBGCBP)RTMemAlloc(RT_UOFFSETOF_DYN(DBGCBP, szCmd[cchCmd + 1]));
     if (!pBp)
         return VERR_NO_MEMORY;
     if (cchCmd)

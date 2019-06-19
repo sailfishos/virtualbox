@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -129,8 +129,11 @@ typedef struct RTREQQUEUEINT
     uint32_t                u32Magic;
     /** Set if busy (pending or processing requests). */
     bool volatile           fBusy;
-    /** Head of the request queue. Atomic. */
+    /** Head of the request queue (LIFO). Atomic. */
     volatile PRTREQ         pReqs;
+    /** List of requests pending after a non-VINF_SUCCESS status code forced
+     * RTReqQueueProcess to stop processing requestins.  This is in FIFO order. */
+    volatile PRTREQ         pAlreadyPendingReqs;
     /** The last index used during alloc/free. */
     volatile uint32_t       iReqFree;
     /** Number of free request packets. */

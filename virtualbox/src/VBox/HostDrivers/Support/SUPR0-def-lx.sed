@@ -3,7 +3,8 @@
 # IPRT - SED script for generating SUPR0.def - OS/2 LX.
 #
 
-# Copyright (C) 2012 Oracle Corporation
+#
+# Copyright (C) 2012-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -36,10 +37,19 @@ $b footer
 # Drop all lines not specifying an export.
 /^    { "/!d
 
+# Handle trailing selection comment (/* solaris-only, os2-only */).
+/\*\/ *$/!b transform
+/only-os2/b transform
+/only-/!b transform
+d
+
+:transform
 # Transform the export line, the format is like this:
 #    { "g_pSUPGlobalInfoPage",                   (void *)&g_pSUPGlobalInfoPage },            /* SED: DATA */
 
 s/^    { "\([^"]*\)",[^}]*}[,].*$/    _\1/
+
+s, */\*.*\*/ *$,,
 b end
 
 :header

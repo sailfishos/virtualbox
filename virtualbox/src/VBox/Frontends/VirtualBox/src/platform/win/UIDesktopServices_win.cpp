@@ -1,12 +1,10 @@
 /* $Id: UIDesktopServices_win.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Qt GUI - Utility Classes and Functions specific to Windows.
+ * VBox Qt GUI - Qt GUI - Utility Classes and Functions specific to Windows..
  */
 
 /*
- * Copyright (C) 2010 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,15 +15,22 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* VBox includes */
-#include "UIDesktopServices.h"
+# include "UIDesktopServices.h"
 
 /* Qt includes */
-#include <QDir>
-#include <QCoreApplication>
+# include <QDir>
+# include <QCoreApplication>
 
 /* System includes */
-#include <shlobj.h>
+# include <iprt/win/shlobj.h>
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 bool UIDesktopServices::createMachineShortcut(const QString & /* strSrcFile */, const QString &strDstPath, const QString &strName, const QString &strUuid)
 {
@@ -71,7 +76,7 @@ bool UIDesktopServices::openInFileManager(const QString &strFile)
     QFileInfo fi(strFile);
     QString strTmp = QDir::toNativeSeparators(fi.absolutePath());
 
-    int rc = (int)ShellExecute(NULL, L"explore", strTmp.utf16(), NULL, NULL, SW_SHOWNORMAL);
+    intptr_t rc = (intptr_t)ShellExecute(NULL, L"explore", strTmp.utf16(), NULL, NULL, SW_SHOWNORMAL);
 
     return rc > 32 ? true : false;
 }

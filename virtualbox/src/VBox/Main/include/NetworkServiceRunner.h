@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,10 +36,9 @@ public:
 
     int setOption(const std::string& key, const std::string& val);
 
-    int start();
-    int stop();
+    int  start(bool aKillProcOnStop);
+    int  stop();
     bool isRunning();
-
     void detachFromServer();
 
     static const std::string kNsrKeyName;

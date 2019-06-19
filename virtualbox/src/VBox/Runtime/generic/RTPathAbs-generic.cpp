@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_PATH
 #include <iprt/path.h>
 
@@ -94,7 +94,7 @@ static int fsCleanPath(char *pszPath)
      * Just change slashes to RTPATH_SLASH and skip them.
      */
     /** @todo check how OS/2 treats unnecessary leading slashes */
-    int cchIgnoreLeading = 0;
+    /*int cchIgnoreLeading = 0;*/
 #ifdef HAVE_UNC
     if (   RTPATH_IS_SLASH(pszSrc[0])
         && RTPATH_IS_SLASH(pszSrc[1]))
@@ -103,10 +103,10 @@ static int fsCleanPath(char *pszPath)
         pszTrg[1] = RTPATH_SLASH;
         pszTrg += 2;
         pszSrc += 2;
-        cchIgnoreLeading = 1;
+        /*cchIgnoreLeading = 1;*/
         while (RTPATH_IS_SLASH(*pszSrc))
         {
-            cchIgnoreLeading++;
+            /*cchIgnoreLeading++;*/
             pszSrc++;
             *pszTrg++ = RTPATH_SLASH;
         }
@@ -290,7 +290,8 @@ RTDECL(int) RTPathAbs(const char *pszPath, char *pszAbsPath, size_t cchAbsPath)
      */
     for (;;)
     {
-        if (   pszCur[0] == '.'
+        char const chFirst = pszCur[0];
+        if (   chFirst == '.'
             && pszCur[1] == '.'
             && (!pszCur[2] || pszCur[2] == RTPATH_SLASH))
         {
@@ -314,6 +315,21 @@ RTDECL(int) RTPathAbs(const char *pszPath, char *pszAbsPath, size_t cchAbsPath)
             Assert(pszPrev[-1] == RTPATH_SLASH);
             memmove(pszPrev, pszCur + 3, strlen(pszCur + 3) + 1);
             pszCur = pszPrev - 1;
+        }
+        else if (   chFirst == '.'
+                 && (!pszCur[1] || pszCur[1] == RTPATH_SLASH))
+        {
+            /* remove unnecessary '.' */
+            if (!pszCur[1])
+            {
+                if (pszCur != pszTop)
+                    pszCur[-1] = '\0';
+                else
+                    *pszCur = '\0';
+                break;
+            }
+            memmove(pszCur, pszCur + 2, strlen(pszCur + 2) + 1);
+            continue;
         }
         else
         {

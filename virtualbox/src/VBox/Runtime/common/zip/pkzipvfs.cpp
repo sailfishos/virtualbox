@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/******************************************************************************
- *   Header Files                                                             *
- ******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/zip.h>
 #include <iprt/assert.h>
 #include <iprt/err.h>
@@ -40,9 +40,9 @@
 #include <iprt/stream.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /* See http://www.pkware.com/documents/casestudies/APPNOTE.TXT */
 
 /**
@@ -405,6 +405,8 @@ static int rtZipPkzipReaderDecodeDosTime(PRTTIMESPEC pTimeSpec, uint16_t u16Time
  */
 static int rtZipPkzipParseLocalFileHeader(PRTZIPPKZIPREADER pThis, PRTZIPPKZIPLOCALFILEHDR pLfh, size_t *pcbExtra)
 {
+    RT_NOREF_PV(pThis);
+
     if (pLfh->cbFilename >= sizeof(pThis->szName))
         return VERR_PKZIP_NAME_TOO_LONG;
 
@@ -451,7 +453,7 @@ static uint64_t rtZipPkzipReaderUncompressed(PRTZIPPKZIPREADER pThis)
 {
     if (pThis->fZip64Ex && pThis->cdh.cbUncompressed == (uint32_t)-1)
         return pThis->cd64ex.cbUncompressed;
-    
+
     return pThis->cdh.cbUncompressed;
 }
 
@@ -463,7 +465,7 @@ static uint64_t rtZipPkzipReaderCompressed(PRTZIPPKZIPREADER pThis)
 {
     if (pThis->fZip64Ex && pThis->cdh.cbCompressed == (uint32_t)-1)
         return pThis->cd64ex.cbCompressed;
-    
+
     return pThis->cdh.cbCompressed;
 }
 
@@ -477,7 +479,6 @@ static int rtZipPkzipParseCentrDirHeaderExtra(PRTZIPPKZIPREADER pThis, uint8_t *
     int rc = RTStrCopyEx(pThis->szName, sizeof(pThis->szName), (const char*)pu8Buf, pThis->cdh.cbFilename);
     if (RT_SUCCESS(rc))
     {
-        uint8_t *offStart = pu8Buf;
         pu8Buf += pThis->cdh.cbFilename;
         cb      = pThis->cdh.cbExtra;
         while (cb >= 4)
@@ -715,7 +716,7 @@ static int rtZipPkzipFssIosReadEocb(PRTZIPPKZIPFSSTREAM pThis)
                 if (eocd.u32Magic == RTZIPPKZIPENDOFCENTRDIRREC_MAGIC)
                 {
                     /* sanity check */
-                    if (off + RT_OFFSETOF(RTZIPPKZIPENDOFCENTRDIRREC, u8Comment) + eocd.cbComment == cbFile)
+                    if (off + RT_UOFFSETOF(RTZIPPKZIPENDOFCENTRDIRREC, u8Comment) + eocd.cbComment == cbFile)
                     {
                         pThis->offFirstCdh = eocd.offCentrDir;
                         pThis->offNextCdh = eocd.offCentrDir;
@@ -766,8 +767,7 @@ static int rtZipPkzipFssIosReadEocb(PRTZIPPKZIPFSSTREAM pThis)
  */
 static DECLCALLBACK(int) rtZipPkzipFssBaseObj_Close(void *pvThis)
 {
-    PRTZIPPKZIPBASEOBJ pThis = (PRTZIPPKZIPBASEOBJ)pvThis;
-
+    NOREF(pvThis);
     return VINF_SUCCESS;
 }
 
@@ -899,6 +899,7 @@ static DECLCALLBACK(int) rtZipPkzipFssIos_Read(void *pvThis, RTFOFF off, PCRTSGB
 {
     PRTZIPPKZIPIOSTREAM pThis = (PRTZIPPKZIPIOSTREAM)pvThis;
     Assert(pSgBuf->cSegs == 1);
+    RT_NOREF_PV(fBlocking);
 
     if (off < 0)
         off = pThis->offFile;
@@ -982,13 +983,15 @@ static DECLCALLBACK(int) rtZipPkzipFssIos_Read(void *pvThis, RTFOFF off, PCRTSGB
     return rc;
 }
 
-static DECLCALLBACK(int) rtZipPkzipFssIos_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSgBuf, bool fBlocking, size_t *pcWritten)
+static DECLCALLBACK(int) rtZipPkzipFssIos_Write(void *pvThis, RTFOFF off, PCRTSGBUF pSgBuf, bool fBlocking, size_t *pcbWritten)
 {
+    RT_NOREF_PV(pvThis); RT_NOREF_PV(off); RT_NOREF_PV(pSgBuf); RT_NOREF_PV(fBlocking); RT_NOREF_PV(pcbWritten);
     return VERR_NOT_IMPLEMENTED;
 }
 
 static DECLCALLBACK(int) rtZipPkzipFssIos_Flush(void *pvThis)
 {
+    RT_NOREF_PV(pvThis);
     return VERR_NOT_IMPLEMENTED;
 }
 
@@ -1235,6 +1238,9 @@ static const RTVFSFSSTREAMOPS rtZipPkzipFssOps =
     RTVFSFSSTREAMOPS_VERSION,
     0,
     rtZipPkzipFss_Next,
+    NULL,
+    NULL,
+    NULL,
     RTVFSFSSTREAMOPS_VERSION
 };
 
@@ -1257,8 +1263,8 @@ RTDECL(int) RTZipPkzipFsStreamFromIoStream(RTVFSIOSTREAM hVfsIosIn, uint32_t fFl
      */
     PRTZIPPKZIPFSSTREAM pThis;
     RTVFSFSSTREAM     hVfsFss;
-    int rc = RTVfsNewFsStream(&rtZipPkzipFssOps, sizeof(*pThis),
-                              NIL_RTVFS, NIL_RTVFSLOCK, &hVfsFss, (void **)&pThis);
+    int rc = RTVfsNewFsStream(&rtZipPkzipFssOps, sizeof(*pThis), NIL_RTVFS, NIL_RTVFSLOCK, true /*fReadOnly*/,
+                              &hVfsFss, (void **)&pThis);
     if (RT_SUCCESS(rc))
     {
         pThis->hVfsIos              = hVfsIosIn;

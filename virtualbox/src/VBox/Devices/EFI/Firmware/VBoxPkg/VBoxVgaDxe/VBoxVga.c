@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -51,11 +51,25 @@
 */
 
 //
-// Cirrus Logic 5430 Controller Driver
+// VirtualBox VGA Controller Driver
 //
 #include "VBoxVga.h"
-#include "iprt/asm.h"
 #include <IndustryStandard/Acpi.h>
+#include "iprt/asm.h"
+
+
+#define BOUTB(storage, count, aport, dport)                                 \
+    do {                                                                    \
+        for (i = 0 ; i < (count); ++i)                                      \
+            if ((dport) == (aport) + 1)                                     \
+                ASMOutU16((aport), ((UINT16)storage[i] << 8) | (UINT8)i);   \
+            else {                                                          \
+                ASMOutU8((aport), (UINT8)i);                                \
+                ASMOutU8((dport), storage[i]);                              \
+            }                                                               \
+    } while (0)
+
+
 
 EFI_DRIVER_BINDING_PROTOCOL gVBoxVgaDriverBinding = {
   VBoxVgaControllerDriverSupported,
@@ -79,9 +93,17 @@ UINT8  AttributeController[21] = {
 /// Generic Graphics Controller Register Settings
 ///
 UINT8 GraphicsController[9] = {
-  0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xff
 };
 
+///
+/// Generic Graphics Controller Sequencer Register Settings
+///
+UINT8 Seq_Default[5] = {
+ 0x01,  0x01,  0x0f,  0x00,  0x0a
+};
+
+#if 0 // CRTC tables not used (and not checked for correctness), as VBE is much simpler
 //
 // 640 x 480 x 256 color @ 60 Hertz
 //
@@ -94,26 +116,19 @@ UINT8 Crtc_640_480_256_60[25] = {
     /* r20 =  */0x4f,  /* r21 =  */0xe7,  /* r22 =  */0x04,  /* r23 =  */0xe3,
     /* r24 =  */0xff
 };
-UINT8 Seq_640_480_256_60[5] = {
- 0x01,  0x01,  0x0f,  0x00,  0x0a
-};
 
 //
 // 800 x 600 x 256 color @ 60 Hertz
 //
 UINT8 Crtc_800_600_256_60[25] = {
-    /* r0  =  */0x5f,  /* r1  =  */0x4f,  /* r2  =  */0x50,  /* r3  =  */0x82,
-    /* r4  =  */0x54,  /* r5  =  */0x80,  /* r6  =  */0x0b,  /* r7  =  */0x3e,
-    /* r8  =  */0x00,  /* r9  =  */0x40,  /* r10 =  */0x00,  /* r11 =  */0x00,
+    /* r0  =  */0x7f,  /* r1  =  */0x63,  /* r2  =  */0x64,  /* r3  =  */0x82,
+    /* r4  =  */0x6b,  /* r5  =  */0x80,  /* r6  =  */0x0b,  /* r7  =  */0x3e,
+    /* r8  =  */0x00,  /* r9  =  */0x60,  /* r10 =  */0x00,  /* r11 =  */0x00,
     /* r12 =  */0x00,  /* r13 =  */0x00,  /* r14 =  */0x00,  /* r15 =  */0x00,
     /* r16 =  */0xea,  /* r17 =  */0x0c,  /* r18 =  */0xdf,  /* r19 =  */0x28,
     /* r20 =  */0x4f,  /* r21 =  */0xe7,  /* r22 =  */0x04,  /* r23 =  */0xe3,
     /* r24 =  */0xff
 
-};
-
-UINT8 Seq_800_600_256_60[5] = {
- 0x01,  0x01,  0x0f,  0x00,  0x0a
 };
 
 //
@@ -128,74 +143,64 @@ UINT8 Crtc_1024_768_256_60[25] = {
     /* r20 =  */0x4f,  /* r21 =  */0x05,  /* r22 =  */0x1a,  /* r23 =  */0xe3,
     /* r24 =  */0xff
 };
-
-UINT8 Seq_1024_768_256_60[5] = {
- 0x01,  0x01,  0x0f,  0x00,  0x0a
-};
-
-//
-// 1280x1024
-//
-UINT8 Crtc_1280_1024_256_60[25] = {
-    /* r0  =  */0xa3,  /* r1  =  */0x9f,  /* r2  =  */0x81,  /* r3  =  */0x90,
-    /* r4  =  */0x88,  /* r5  =  */0x05,  /* r6  =  */0x28,  /* r7  =  */0xbd,
-    /* r8  =  */0x00,  /* r9  =  */0x60,  /* r10 =  */0x00,  /* r11 =  */0x00,
-    /* r12 =  */0x00,  /* r13 =  */0x00,  /* r14 =  */0x00,  /* r15 =  */0x00,
-    /* r16 =  */0x06,  /* r17 =  */0x0f,  /* r18 =  */0x3f,  /* r19 =  */0x40,
-    /* r20 =  */0x4f,  /* r21 =  */0x05,  /* r22 =  */0x1a,  /* r23 =  */0xe3,
-    /* r24 =  */0xff
-};
-
-UINT8 Seq_1280_1024_256_60[5] = {
- 0x01,  0x01,  0x0f,  0x00,  0x0a
-};
-
-//
-// 1440x900
-//
-UINT8 Crtc_1440_900_256_60[25] = {
-    /* r0  =  */0xa3,  /* r1  =  */0xb3,  /* r2  =  */0x81,  /* r3  =  */0x90,
-    /* r4  =  */0x88,  /* r5  =  */0x05,  /* r6  =  */0x28,  /* r7  =  */0xbd,
-    /* r8  =  */0x00,  /* r9  =  */0x60,  /* r10 =  */0x00,  /* r11 =  */0x00,
-    /* r12 =  */0x00,  /* r13 =  */0x00,  /* r14 =  */0x00,  /* r15 =  */0x00,
-    /* r16 =  */0x06,  /* r17 =  */0x0f,  /* r18 =  */0x38,  /* r19 =  */0x40,
-    /* r20 =  */0x4f,  /* r21 =  */0x05,  /* r22 =  */0x1a,  /* r23 =  */0xe3,
-    /* r24 =  */0xff
-};
-
-UINT8 Seq_1440_900_256_60[5] = {
- 0x01,  0x01,  0x0f,  0x00,  0x0a
-};
-
-//
-// 1920x1200
-//
-UINT8 Crtc_1920_1200_256_60[25] = {
-    /* r0  =  */0xa3,  /* r1  =  */0xef,  /* r2  =  */0x81,  /* r3  =  */0x90,
-    /* r4  =  */0x88,  /* r5  =  */0x05,  /* r6  =  */0x28,  /* r7  =  */0xbd,
-    /* r8  =  */0x00,  /* r9  =  */0x60,  /* r10 =  */0x00,  /* r11 =  */0x00,
-    /* r12 =  */0x00,  /* r13 =  */0x00,  /* r14 =  */0x00,  /* r15 =  */0x00,
-    /* r16 =  */0x06,  /* r17 =  */0x0f,  /* r18 =  */0x50,  /* r19 =  */0x40,
-    /* r20 =  */0x4f,  /* r21 =  */0x05,  /* r22 =  */0x1a,  /* r23 =  */0xe3,
-    /* r24 =  */0xff
-};
-
-UINT8 Seq_1920_1200_256_60[5] = {
- 0x01,  0x01,  0x0f,  0x00,  0x0a
-};
+#endif
 
 ///
-/// Table of supported video modes
+/// Table of supported video modes (sorted by increasing horizontal, then by
+/// increasing vertical resolution)
 ///
 VBOX_VGA_VIDEO_MODES  VBoxVgaVideoModes[] =
 {
-  {  640, 480, 32, 60, Crtc_640_480_256_60,  Seq_640_480_256_60,  0xe3 },
-  {  800, 600, 32, 60, Crtc_800_600_256_60,  Seq_800_600_256_60,  0x23 },
-  { 1024, 768, 32, 60, Crtc_1024_768_256_60, Seq_1024_768_256_60, 0xef },
-  { 1280, 1024, 32, 60, Crtc_1280_1024_256_60, Seq_1280_1024_256_60, 0xef },
-  { 1440, 900, 32, 60, Crtc_1440_900_256_60, Seq_1440_900_256_60, 0xef },
-  { 1920, 1200, 32, 60, Crtc_1920_1200_256_60, Seq_1920_1200_256_60, 0xef }
+  {  640,  480, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // VGA 4:3
+  {  800,  600, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // SVGA 4:3
+  { 1024,  768, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // XGA 4:3
+  { 1152,  864, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // XGA+ 4:3
+  { 1280,  720, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // HD 16:9
+  { 1280,  800, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WXGA 16:10
+  { 1280, 1024, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // SXGA 5:4
+  { 1400, 1050, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // SXGA+ 4:3
+  { 1440,  900, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WXGA+ 16:10
+  { 1600,  900, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // HD+ 16:9
+  { 1600, 1200, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // UXGA 4:3
+  { 1680, 1050, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WSXGA+ 16:10
+  { 1920, 1080, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // FHD 16:9
+  { 1920, 1200, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WUXGA 16:10
+  { 2048, 1080, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // DCI_2K 19:10
+  { 2160, 1440, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // FHD+ 3:2
+  { 2304, 1440, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // unnamed 16:10
+  { 2560, 1440, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // QHD 16:9
+  { 2560, 1600, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WQXGA 16:10
+  { 2880, 1800, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // QWXGA+ 16:10
+  { 3200, 1800, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // QHD+ 16:9
+  { 3200, 2048, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WQSXGA 16:10
+  { 3840, 2160, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // 4K_UHD 16:9
+  { 3840, 2400, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WQUXGA 16:10
+  { 4096, 2160, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // DCI_4K 19:10
+  { 4096, 3072, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // HXGA 4:3
+  { 5120, 2880, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // UHD+ 16:9
+  { 5120, 3200, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WHXGA 16:10
+  { 6400, 4096, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // WHSXGA 16:10
+  { 6400, 4800, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // HUXGA 4:3
+  { 7680, 4320, 32, 60, NULL /* crtc */, NULL /* sequencer */, 0x01 }, // 8K_UHD2 16:9
+  { 0, }, // Custom video mode 0, do not delete, must be at the end!
+  { 0, }, // Custom video mode 1, do not delete, must be at the end!
+  { 0, }, // Custom video mode 2, do not delete, must be at the end!
+  { 0, }, // Custom video mode 3, do not delete, must be at the end!
+  { 0, }, // Custom video mode 4, do not delete, must be at the end!
+  { 0, }, // Custom video mode 5, do not delete, must be at the end!
+  { 0, }, // Custom video mode 6, do not delete, must be at the end!
+  { 0, }, // Custom video mode 7, do not delete, must be at the end!
+  { 0, }, // Custom video mode 8, do not delete, must be at the end!
+  { 0, }, // Custom video mode 9, do not delete, must be at the end!
+  { 0, }, // Custom video mode 10, do not delete, must be at the end!
+  { 0, }, // Custom video mode 11, do not delete, must be at the end!
+  { 0, }, // Custom video mode 12, do not delete, must be at the end!
+  { 0, }, // Custom video mode 13, do not delete, must be at the end!
+  { 0, }, // Custom video mode 14, do not delete, must be at the end!
+  { 0, }  // Custom video mode 15, do not delete, must be at the end!
 };
+
+const UINT32 VBoxVgaVideoModeCount = sizeof(VBoxVgaVideoModes) / sizeof(VBoxVgaVideoModes[0]);
 
 typedef struct _APPLE_FRAMEBUFFERINFO_PROTOCOL APPLE_FRAMEBUFFERINFO_PROTOCOL;
 
@@ -229,6 +234,24 @@ static APPLE_FRAMEBUFFERINFO_PROTOCOL gAppleFrameBufferInfo =
     GetFrameBufferInfo,
     NULL
 };
+
+
+/*
+ *   @todo move this function to the library.
+ */
+UINT32 VBoxVgaGetVmVariable(UINT32 Variable, CHAR8* Buffer, UINT32 Size)
+{
+    UINT32 VarLen, i;
+
+    ASMOutU32(EFI_INFO_PORT, Variable);
+    VarLen = ASMInU32(EFI_INFO_PORT);
+
+    for (i = 0; i < VarLen && i < Size; i++)
+        Buffer[i] = ASMInU8(EFI_INFO_PORT);
+
+    return VarLen;
+}
+
 
 /**
   VBoxVgaControllerDriverSupported
@@ -288,7 +311,7 @@ VBoxVgaControllerDriverSupported (
   //
   //  if (((Pci.Hdr.Command & 0x01) == 0x01)) {
   //
-  // See if this is a Cirrus Logic PCI controller
+  // See if this is a VirtualBox VGA PCI controller
   //
   if (Pci.Hdr.VendorId == VBOX_VENDOR_ID) {
     if (Pci.Hdr.DeviceId == VBOX_VGA_DEVICE_ID) {
@@ -464,13 +487,17 @@ VBoxVgaControllerDriverStart (
   }
 
   //
-  // Construct video mode buffer
+  // Get VRAM size, needed for constructing a correct video mode list
+  //
+  Private->VRAMSize = ASMInU32(VBE_DISPI_IOPORT_DATA);
+
+  //
+  // Construct video mode list
   //
   Status = VBoxVgaVideoModeSetup (Private);
   if (EFI_ERROR (Status)) {
     goto Error;
   }
-
 
   if (FeaturePcdGet (PcdSupportUga)) {
     //
@@ -514,12 +541,10 @@ VBoxVgaControllerDriverStart (
                       &Private->Handle,
                       &gEfiGraphicsOutputProtocolGuid,
                       &Private->GraphicsOutput,
-#if 0
                       &gEfiEdidDiscoveredProtocolGuid,
                       &Private->EdidDiscovered,
                       &gEfiEdidActiveProtocolGuid,
                       &Private->EdidActive,
-#endif
                       NULL
                       );
     }
@@ -530,7 +555,6 @@ VBoxVgaControllerDriverStart (
     ASSERT (FALSE);
     Status = EFI_UNSUPPORTED;
   }
-
 
 Error:
   if (EFI_ERROR (Status)) {
@@ -601,6 +625,7 @@ VBoxVgaControllerDriverStop (
     if (EFI_ERROR (Status)) {
       return Status;
     }
+
     //
     // Get our private context information
     //
@@ -655,8 +680,6 @@ VBoxVgaControllerDriverStop (
     //
     Status = gBS->UninstallMultipleProtocolInterfaces (
                     Private->Handle,
-                    &gEfiUgaDrawProtocolGuid,
-                    &Private->UgaDraw,
                     &gEfiGraphicsOutputProtocolGuid,
                     &Private->GraphicsOutput,
                     NULL
@@ -665,6 +688,11 @@ VBoxVgaControllerDriverStop (
 
   if (EFI_ERROR (Status)) {
     return Status;
+  }
+
+  if (Private->ModeData) {
+      FreePool(Private->ModeData);
+      Private->ModeData = NULL;
   }
 
   //
@@ -709,12 +737,6 @@ VBoxVgaUgaDrawDestructor (
   return EFI_SUCCESS;
 }
 
-#define inb(ignore, port) ASMInU8((port))
-#define inw(ignore, port) ASMInU16((port))
-#define outb(ignore, port, val) ASMOutU8((port), (val))
-#define outw(ignore, port, val) ASMOutU16((port), (val))
-
-
 /**
   TODO: Add function description
 
@@ -736,10 +758,10 @@ SetPaletteColor (
   UINT8                           Blue
   )
 {
-  outb (Private, PALETTE_INDEX_REGISTER, (UINT8) Index);
-  outb (Private, PALETTE_DATA_REGISTER, (UINT8) (Red >> 2));
-  outb (Private, PALETTE_DATA_REGISTER, (UINT8) (Green >> 2));
-  outb (Private, PALETTE_DATA_REGISTER, (UINT8) (Blue >> 2));
+  ASMOutU8(PALETTE_INDEX_REGISTER, (UINT8) Index);
+  ASMOutU8(PALETTE_DATA_REGISTER, (UINT8) (Red >> 2));
+  ASMOutU8(PALETTE_DATA_REGISTER, (UINT8) (Green >> 2));
+  ASMOutU8(PALETTE_DATA_REGISTER, (UINT8) (Blue >> 2));
 }
 
 /**
@@ -842,10 +864,10 @@ SetDefaultPalette (
 
           for (i = 0; i < 64; ++i)
           {
-              outb(Private, 0x3c8, (UINT8)i);
-              outb(Private, 0x3c9, s_a3bVgaDac[i*3 + 0]);
-              outb(Private, 0x3c9, s_a3bVgaDac[i*3 + 1]);
-              outb(Private, 0x3c9, s_a3bVgaDac[i*3 + 2]);
+              ASMOutU8(PALETTE_INDEX_REGISTER, (UINT8)i);
+              ASMOutU8(PALETTE_DATA_REGISTER, s_a3bVgaDac[i*3 + 0]);
+              ASMOutU8(PALETTE_DATA_REGISTER, s_a3bVgaDac[i*3 + 1]);
+              ASMOutU8(PALETTE_DATA_REGISTER, s_a3bVgaDac[i*3 + 2]);
           }
      }
 
@@ -892,13 +914,13 @@ ClearScreen (
 VOID
 DrawLogo (
   VBOX_VGA_PRIVATE_DATA  *Private,
-  UINTN                           ScreenWidth,
-  UINTN                           ScreenHeight
+  UINTN                  ScreenWidth,
+  UINTN                  ScreenHeight
   )
 {
   DEBUG((DEBUG_INFO, "UGA is %a GOP is %a\n",
-        FeaturePcdGet(PcdSupportGop) ? "on" : "off",
-        FeaturePcdGet(PcdSupportUga) ? "on" : "off"
+        FeaturePcdGet(PcdSupportUga) ? "on" : "off",
+        FeaturePcdGet(PcdSupportGop) ? "on" : "off"
   ));
 }
 
@@ -917,86 +939,82 @@ InitializeGraphicsMode (
   VBOX_VGA_VIDEO_MODES   *ModeData
   )
 {
-  UINT16 DeviceId;
-  EFI_STATUS Status;
-  int i;
+    UINT16 DeviceId;
+    EFI_STATUS Status;
+    int i;
 
-  Status = Private->PciIo->Pci.Read (
+    DEBUG((DEBUG_INFO, "%a:%d InitializeGraphicsMode: %dx%d bpp:%d\n", __FILE__, __LINE__, ModeData->Width, ModeData->Height, ModeData->ColorDepth));
+
+    //
+    // Read the PCI ID from the PCI Device (dummy)
+    //
+    Status = Private->PciIo->Pci.Read (
              Private->PciIo,
              EfiPciIoWidthUint16,
              PCI_DEVICE_ID_OFFSET,
              1,
              &DeviceId
              );
-    outb(Private, 0x3c2, 0xc3);
-    outb(Private, 0x3c4, 0x04);
-    outb(Private, 0x3c5, 0x02);
-  //
-  // Read the PCI Configuration Header from the PCI Device
-  //
-#define BOUTB(storage, count, aport, dport)  \
-     do {                                \
-         for (i = 0 ; i < count; ++i)    \
-         {                               \
-             outb(Private, (aport), (UINT8)i);\
-             outb(Private, (dport), storage[i]);    \
-         }                               \
-     } while (0)
+    ASSERT_EFI_ERROR(Status);
 
-  ASSERT_EFI_ERROR (Status);
-  inb(Private, INPUT_STATUS_1_REGISTER);
-  outb(Private, ATT_ADDRESS_REGISTER, 0);
-  outb(Private, CRTC_ADDRESS_REGISTER, 0x11);
-  outb(Private, CRTC_DATA_REGISTER, 0x0);
-  /*
-   * r0 = 1
-   * boutb(1, 0x3c4, 0x3c5);
-   */
-  outb(Private, SEQ_ADDRESS_REGISTER, 0);
-  outb(Private, SEQ_DATA_REGISTER, 1);
+    ASMOutU8(MISC_OUTPUT_REGISTER, 0xc3);
+    ASMOutU16(SEQ_ADDRESS_REGISTER, 0x0204);
 
-    outw(Private, 0x1ce, 0x00); outw(Private, 0x1cf, 0xb0c0);  // ENABLE
-    outw(Private, 0x1ce, 0x04); outw(Private, 0x1cf, 0);  // ENABLE
-    outw(Private, 0x1ce, 0x01); outw(Private, 0x1cf, (UINT16)ModeData->Width);    // XRES
-    outw(Private, 0x1ce, 0x02); outw(Private, 0x1cf, (UINT16)ModeData->Height);    // YRES
-    outw(Private, 0x1ce, 0x03); outw(Private, 0x1cf, (UINT16)ModeData->ColorDepth);  // BPP
-    outw(Private, 0x1ce, 0x05); outw(Private, 0x1cf, 0);  // BANK
-    outw(Private, 0x1ce, 0x06); outw(Private, 0x1cf, (UINT16)ModeData->Width);    // VIRT_WIDTH
-    outw(Private, 0x1ce, 0x07); outw(Private, 0x1cf, (UINT16)ModeData->Height);    // VIRT_HEIGHT
-    outw(Private, 0x1ce, 0x08); outw(Private, 0x1cf, 0);  // X_OFFSET
-    outw(Private, 0x1ce, 0x09); outw(Private, 0x1cf, 0);  // Y_OFFSET
-    outw(Private, 0x1ce, 0x04); outw(Private, 0x1cf, 1);  // ENABLE
-    outb(Private, MISC_OUTPUT_REGISTER, ModeData->MiscSetting);
-    BOUTB(ModeData->SeqSettings, 5, SEQ_ADDRESS_REGISTER, SEQ_DATA_REGISTER);
-    /*
-     * r0 = 3
-     * boutb(1, 0x3c4, 0x3c5);
-     */
-  outb(Private, SEQ_ADDRESS_REGISTER, 0);
-  outb(Private, SEQ_DATA_REGISTER, 3);
+    ASMInU8(INPUT_STATUS_1_REGISTER);   // reset attribute address/data flip-flop
+    ASMOutU8(ATT_ADDRESS_REGISTER, 0);  // blank screen using the attribute address register
 
-  BOUTB(ModeData->CrtcSettings, 25, CRTC_ADDRESS_REGISTER, CRTC_DATA_REGISTER);
-  BOUTB(GraphicsController, 9, GRAPH_ADDRESS_REGISTER , GRAPH_DATA_REGISTER);
+    ASMOutU16(CRTC_ADDRESS_REGISTER, 0x0011);
 
-  inb (Private, INPUT_STATUS_1_REGISTER);
+    ASMOutU16(SEQ_ADDRESS_REGISTER, 0x0100);
+    if (ModeData->SeqSettings)
+      BOUTB(ModeData->SeqSettings, 5, SEQ_ADDRESS_REGISTER, SEQ_DATA_REGISTER);
+    else
+      BOUTB(Seq_Default, 5, SEQ_ADDRESS_REGISTER, SEQ_DATA_REGISTER);
+    ASMOutU16(SEQ_ADDRESS_REGISTER, 0x0300);
 
-  BOUTB(AttributeController, 21, ATT_ADDRESS_REGISTER, ATT_ADDRESS_REGISTER);
+    BOUTB(GraphicsController, 9, GRAPH_ADDRESS_REGISTER, GRAPH_DATA_REGISTER);
 
-  outw(Private, 0x1ce, 0x05); outw(Private, 0x1cf, 0x0);
+    ASMInU8(INPUT_STATUS_1_REGISTER);   // reset attribute address/data flip-flop
+    BOUTB(AttributeController, 21, ATT_ADDRESS_REGISTER, ATT_DATA_REGISTER);
 
-  outb (Private, ATT_ADDRESS_REGISTER, 0x20);
+    ASMOutU8(MISC_OUTPUT_REGISTER, ModeData->MiscSetting);
 
-#if 0
-  outw (Private, GRAPH_ADDRESS_REGISTER, 0x0009);
-  outw (Private, GRAPH_ADDRESS_REGISTER, 0x000a);
-  outw (Private, GRAPH_ADDRESS_REGISTER, 0x000b);
-  outb (Private, DAC_PIXEL_MASK_REGISTER, 0xff);
+    if (ModeData->ColorDepth <= 8)
+    {
+      ASMOutU8(DAC_PIXEL_MASK_REGISTER, 0xff);
+      SetDefaultPalette(Private);
+    }
 
-  SetDefaultPalette (Private);
-#endif
-  ClearScreen (Private);
+    if (!ModeData->CrtcSettings)
+    {
+        // No CRTC settings, use VBE
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x00); ASMOutU16(VBE_DISPI_IOPORT_DATA, 0xb0c0);                          // ID
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x04); ASMOutU16(VBE_DISPI_IOPORT_DATA, 0);                               // ENABLE
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x01); ASMOutU16(VBE_DISPI_IOPORT_DATA, (UINT16)ModeData->Width);         // XRES
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x02); ASMOutU16(VBE_DISPI_IOPORT_DATA, (UINT16)ModeData->Height);        // YRES
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x03); ASMOutU16(VBE_DISPI_IOPORT_DATA, (UINT16)ModeData->ColorDepth);    // BPP
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x05); ASMOutU16(VBE_DISPI_IOPORT_DATA, 0);                               // BANK
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x06); ASMOutU16(VBE_DISPI_IOPORT_DATA, (UINT16)ModeData->Width);         // VIRT_WIDTH
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x07); ASMOutU16(VBE_DISPI_IOPORT_DATA, (UINT16)ModeData->Height);        // VIRT_HEIGHT
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x08); ASMOutU16(VBE_DISPI_IOPORT_DATA, 0);                               // X_OFFSET
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x09); ASMOutU16(VBE_DISPI_IOPORT_DATA, 0);                               // Y_OFFSET
+        ASMOutU16(VBE_DISPI_IOPORT_INDEX, 0x04); ASMOutU16(VBE_DISPI_IOPORT_DATA, 1);                               // ENABLE
+        /// @todo enabling VBE is automatically tweaking the CRTC, GC, SC, clears the
+        // screen and at the end unblanks graphics. So make sure that nothing is done
+        // after this which needs blanking. Way too much magic, but that's how it is...
+    }
+    else
+    {
+        BOUTB(ModeData->CrtcSettings, 25, CRTC_ADDRESS_REGISTER, CRTC_DATA_REGISTER);
+    }
+
+    ASMInU8(INPUT_STATUS_1_REGISTER);       // reset attribute address/data flip-flop
+    ASMOutU8(ATT_ADDRESS_REGISTER, 0x20);   // unblank screen
+
+    ClearScreen(Private);
 }
 
+/** Aka know as AppleGraphInfoProtocolGuid in other sources. */
 #define EFI_UNKNOWN_2_PROTOCOL_GUID \
   { 0xE316E100, 0x0751, 0x4C49, {0x90, 0x56, 0x48, 0x6C, 0x7E, 0x47, 0x29, 0x03} }
 
@@ -1011,7 +1029,6 @@ GetFrameBufferInfo(IN  APPLE_FRAMEBUFFERINFO_PROTOCOL   *This,
                    OUT UINT32                           *Height,
                    OUT UINT32                           *Depth)
 {
-    /* @todo: figure out from current running mode */
     EFI_ACPI_ADDRESS_SPACE_DESCRIPTOR     *FrameBufDesc;
     UINT32 W, H, BPP;
     VBOX_VGA_PRIVATE_DATA  *Private = This->Private;
@@ -1061,7 +1078,6 @@ InitializeVBoxVga (
              );
   ASSERT_EFI_ERROR (Status);
 
-#if 0
   //
   // Install EFI Driver Supported EFI Version Protocol required for
   // EFI drivers that are on PCI and other plug in cards.
@@ -1071,18 +1087,11 @@ InitializeVBoxVga (
                   &ImageHandle,
                   &gEfiDriverSupportedEfiVersionProtocolGuid,
                   &gVBoxVgaDriverSupportedEfiVersion,
+                  &gEfiAppleFrameBufferInfoGuid,
+                  &gAppleFrameBufferInfo,
                   NULL
                   );
   ASSERT_EFI_ERROR (Status);
-#endif
-  Status = gBS->InstallMultipleProtocolInterfaces (
-      &ImageHandle,
-      &gEfiAppleFrameBufferInfoGuid,
-      &gAppleFrameBufferInfo,
-      NULL
-                                                   );
-  ASSERT_EFI_ERROR (Status);
-
 
   return Status;
 }

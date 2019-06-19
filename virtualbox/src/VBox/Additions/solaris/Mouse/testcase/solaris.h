@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,7 +30,7 @@
 #include <iprt/assert.h>
 #include <iprt/string.h>  /* RT_ZERO */
 #ifdef RT_OS_WINDOWS
-# include <WinSock2.h>  /* struct timeval */
+# include <iprt/win/winsock2.h>  /* struct timeval */
 #endif
 #include <errno.h>
 #include <time.h>  /* struct timeval */
@@ -346,11 +346,11 @@ extern int vboxguestSolarisInfo(struct modinfo *pModInfo);
 #define VBoxGuestDeleteDevExt(...) do {} while(0)
 #define VBoxGuestCommonIOCtl(...) VINF_SUCCESS
 #define VBoxGuestCommonISR(...) true
-#define VbglGRAlloc(...) VINF_SUCCESS
-#define VbglGRPerform(...) VINF_SUCCESS
-#define VbglGRFree(...) do {} while(0)
+#define VbglR0GRAlloc(...) VINF_SUCCESS
+#define VbglR0GRPerform(...) VINF_SUCCESS
+#define VbglR0GRFree(...) do {} while(0)
 #endif
-#define VbglInit(...) VINF_SUCCESS
+#define VbglR0InitClient(...) VINF_SUCCESS
 #define vbglDriverOpen(...) VINF_SUCCESS
 #define vbglDriverClose(...) do {} while(0)
 #define vbglDriverIOCtl(...) VINF_SUCCESS

@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,10 +19,10 @@
 #define __VBOXLWIPCORE_H__
 
 
-typedef DECLCALLBACK(void) FNRT1(void *);
-typedef FNRT1 *PFNRT1;
+typedef DECLCALLBACKPTR(void, PFNRT1)(void *);
+
 /**
- * initiliazes LWIP core, and do callback on tcp/ip thread 
+ * initiliazes LWIP core, and do callback on tcp/ip thread
  */
 int vboxLwipCoreInitialize(PFNRT1 pfnCallback, void * pfnCallbackArg);
 void vboxLwipCoreFinalize(PFNRT1 pfnCallback, void * pfnCallbackArg);

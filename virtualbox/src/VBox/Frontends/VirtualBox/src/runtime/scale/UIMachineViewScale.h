@@ -1,11 +1,10 @@
+/* $Id: UIMachineViewScale.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineViewScale class declaration
+ * VBox Qt GUI - UIMachineViewScale class declaration.
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,43 +35,29 @@ protected:
 #endif
     );
     /* Scale machine-view destructor: */
-    virtual ~UIMachineViewScale();
-
-    virtual void takePauseShotLive();
-    virtual void takePauseShotSnapshot();
-    virtual void resetPauseShot();
-    void scalePauseShot();
+    virtual ~UIMachineViewScale() {}
 
 private slots:
 
     /* Slot to perform guest resize: */
     void sltPerformGuestScale();
 
-    /* Handler: Frame-buffer NotifyUpdate stuff: */
-    void sltHandleNotifyUpdate(int iX, int iY, int iW, int iH);
-
 private:
 
     /* Event handlers: */
     bool eventFilter(QObject *pWatched, QEvent *pEvent);
 
-    /* Prepare helpers: */
-    //void loadMachineViewSettings() {}
+    /** Applies machine-view scale-factor. */
+    void applyMachineViewScaleFactor();
 
-    /* Cleanup helpers: */
-    void saveMachineViewSettings();
-
-    /** Resends guest size-hint if necessary. */
-    void maybeResendSizeHint();
+    /** Resends guest size-hint. */
+    void resendSizeHint();
 
     /* Private helpers: */
     QSize sizeHint() const;
     QRect workingArea() const;
     QSize calculateMaxGuestSize() const;
     void updateSliders();
-
-    /* Private members: */
-    QImage *m_pPauseImage;
 
     /* Friend classes: */
     friend class UIMachineView;

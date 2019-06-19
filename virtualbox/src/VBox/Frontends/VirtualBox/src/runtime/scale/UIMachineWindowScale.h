@@ -1,11 +1,10 @@
+/* $Id: UIMachineWindowScale.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineWindowScale class declaration
+ * VBox Qt GUI - UIMachineWindowScale class declaration.
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,66 +15,63 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#ifndef __UIMachineWindowScale_h__
-#define __UIMachineWindowScale_h__
+#ifndef ___UIMachineWindowScale_h___
+#define ___UIMachineWindowScale_h___
 
-/* Local includes: */
+/* GUI includes: */
 #include "UIMachineWindow.h"
 
-/* Scale machine-window implementation: */
+/** UIMachineWindow reimplementation,
+  * providing GUI with machine-window for the scale mode. */
 class UIMachineWindowScale : public UIMachineWindow
 {
     Q_OBJECT;
 
 protected:
 
-    /* Constructor: */
+    /** Constructor, passes @a pMachineLogic and @a uScreenId to the UIMachineWindow constructor. */
     UIMachineWindowScale(UIMachineLogic *pMachineLogic, ulong uScreenId);
-
-private slots:
-
-    /* Popup main-menu: */
-    void sltPopupMainMenu();
 
 private:
 
-    /* Prepare helpers: */
+    /** Prepare main-layout routine. */
     void prepareMainLayout();
-    void prepareMenu();
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
+    /** Prepare visual-state routine. */
     void prepareVisualState();
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
+    /** Load settings routine. */
     void loadSettings();
 
-    /* Cleanup helpers: */
+    /** Save settings routine. */
     void saveSettings();
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
+    /** Cleanup visual-state routine. */
     void cleanupVisualState();
-#endif /* Q_WS_MAC */
-    void cleanupMenu();
-    //void cleanupMainLayout() {}
+#endif /* VBOX_WS_MAC */
 
-    /* Show stuff: */
+    /** Updates visibility according to visual-state. */
     void showInNecessaryMode();
 
-    /* Event handlers: */
-    bool event(QEvent *pEvent);
-#ifdef Q_WS_WIN
-    bool winEvent(MSG *pMessage, long *pResult);
-#endif /* Q_WS_WIN */
+    /** Restores cached window geometry. */
+    virtual void restoreCachedGeometry() /* override */;
 
-    /* Helpers: */
+    /** Performs window geometry normalization according to guest-size and host's available geometry.
+      * @param  fAdjustPosition  Determines whether is it necessary to adjust position as well. */
+    virtual void normalizeGeometry(bool fAdjustPosition) /* override */;
+
+    /** Common @a pEvent handler. */
+    bool event(QEvent *pEvent);
+
+    /** Returns whether this window is maximized. */
     bool isMaximizedChecked();
 
-    /* Widgets: */
-    QMenu *m_pMainMenu;
-
-    /* Variables: */
+    /** Holds the current window geometry. */
     QRect m_normalGeometry;
 
-    /* Factory support: */
+    /** Factory support. */
     friend class UIMachineWindow;
 };
 
-#endif // __UIMachineWindowScale_h__
+#endif /* !___UIMachineWindowScale_h___ */
 

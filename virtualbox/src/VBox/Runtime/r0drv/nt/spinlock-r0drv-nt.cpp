@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-nt-kernel.h"
 
 #include <iprt/spinlock.h>
@@ -43,9 +43,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Apply the NoIrq hack if defined. */
 #define RTSPINLOCK_NT_HACK_NOIRQ
 
@@ -57,9 +57,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Wrapper for the KSPIN_LOCK type.
  */
@@ -85,6 +85,7 @@ typedef struct RTSPINLOCKINTERNAL
 RTDECL(int)  RTSpinlockCreate(PRTSPINLOCK pSpinlock, uint32_t fFlags, const char *pszName)
 {
     AssertReturn(fFlags == RTSPINLOCK_FLAGS_INTERRUPT_SAFE || fFlags == RTSPINLOCK_FLAGS_INTERRUPT_UNSAFE, VERR_INVALID_PARAMETER);
+    RT_NOREF1(pszName);
 
     /*
      * Allocate.
@@ -158,9 +159,8 @@ RTDECL(void) RTSpinlockAcquire(RTSPINLOCK Spinlock)
             while (!ASMAtomicCmpXchgU32(&pThis->u32Hack, RTSPINLOCK_NT_HACK_NOIRQ_TAKEN, RTSPINLOCK_NT_HACK_NOIRQ_FREE))
                 ASMNopPause();
         }
-
-        pThis->fIntSaved = fIntSaved;
 #endif
+        pThis->fIntSaved = fIntSaved;
     }
     else
         KeAcquireSpinLock(&pThis->Spinlock, &SavedIrql);
@@ -193,17 +193,5 @@ RTDECL(void) RTSpinlockRelease(RTSPINLOCK Spinlock)
     }
     else
         KeReleaseSpinLock(&pThis->Spinlock, SavedIrql);
-}
-
-
-RTDECL(void) RTSpinlockReleaseNoInts(RTSPINLOCK Spinlock)
-{
-#if 1
-    if (RT_UNLIKELY(!(Spinlock->fFlags & RTSPINLOCK_FLAGS_INTERRUPT_SAFE)))
-        RTAssertMsg2("RTSpinlockReleaseNoInts: %p (magic=%#x)\n", Spinlock, Spinlock->u32Magic);
-#else
-    AssertRelease(Spinlock->fFlags & RTSPINLOCK_FLAGS_INTERRUPT_SAFE);
-#endif
-    RTSpinlockRelease(Spinlock);
 }
 

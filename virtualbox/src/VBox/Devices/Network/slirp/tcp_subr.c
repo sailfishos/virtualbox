@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -126,8 +126,7 @@ tcp_respond(PNATState pData, struct tcpcb *tp, struct tcpiphdr *ti, struct mbuf 
 {
     register int tlen;
 
-    LogFlowFunc(("ENTER: tp = %R[tcpcb793], ti = %lx, m = %lx, ack = %u, seq = %u, flags = %x\n",
-                 tp, (long)ti, (long)m, ack, seq, flags));
+    LogFlowFunc(("ENTER: tp = %R[tcpcb793], ti = %p, m = %p, ack = %u, seq = %u, flags = %x\n", tp, ti, m, ack, seq, flags));
 
     if (m == 0)
     {
@@ -243,17 +242,17 @@ struct tcpcb *tcp_drop(PNATState pData, struct tcpcb *tp, int err)
         int errno;
 {
 */
-    int fUninitiolizedTemplate = 0;
+    int fUninitializedTemplate = 0;
 #ifndef LOG_ENABLED
     NOREF(err);
 #endif
     LogFlowFunc(("ENTER: tp = %R[tcpcb793], errno = %d\n", tp, err));
-    fUninitiolizedTemplate = RT_BOOL((   tp
+    fUninitializedTemplate = RT_BOOL((   tp
                                       && (  tp->t_template.ti_src.s_addr == INADDR_ANY
                                          || tp->t_template.ti_dst.s_addr == INADDR_ANY)));
 
     if (   TCPS_HAVERCVDSYN(tp->t_state)
-        && !fUninitiolizedTemplate)
+        && !fUninitializedTemplate)
     {
         TCP_STATE_SWITCH_TO(tp, TCPS_CLOSED);
         (void) tcp_output(pData, tp);
@@ -304,13 +303,8 @@ tcp_close(PNATState pData, register struct tcpcb *tp)
      * any sbufs reserved. */
     if (!(so->so_state & SS_FACCEPTCONN))
     {
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
         sbfree(&so->so_rcv);
         sbfree(&so->so_snd);
-#else
-        sbuf_delete(&so->so_rcv);
-        sbuf_delete(&so->so_snd);
-#endif
     }
     sofree(pData, so);
     SOCKET_UNLOCK(so);
@@ -319,7 +313,7 @@ tcp_close(PNATState pData, register struct tcpcb *tp)
 }
 
 void
-tcp_drain()
+tcp_drain(void)
 {
     /* XXX */
 }
@@ -418,10 +412,15 @@ int tcp_fconnect(PNATState pData, struct socket *so)
         struct sockaddr_in addr;
 
         fd_nonblock(s);
-        opt = 1;
-        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt));
+
         opt = 1;
         setsockopt(s, SOL_SOCKET, SO_OOBINLINE, (char *)&opt, sizeof(opt));
+        opt = 1;
+        setsockopt(s, IPPROTO_TCP, TCP_NODELAY, (char *)&opt, sizeof(opt));
+
+        ret = sobind(pData, so);
+        if (ret != 0)
+            return ret;
 
         addr.sin_family = AF_INET;
         if ((so->so_faddr.s_addr & RT_H2N_U32(pData->netmask)) == pData->special_addr.s_addr)
@@ -430,6 +429,22 @@ int tcp_fconnect(PNATState pData, struct socket *so)
             switch(RT_N2H_U32(so->so_faddr.s_addr) & ~pData->netmask)
             {
                 case CTL_DNS:
+                    /*
+                     * TCP DNS proxy.  We only support "forwarding" to
+                     * single server.  We don't have infrastructure in
+                     * place to re-try connections to other servers.
+                     */
+                    if (   pData->fUseDnsProxy
+                        && so->so_fport == RT_H2N_U16_C(53))
+                    {
+                        struct dns_entry *ns = TAILQ_LAST(&pData->pDnsList, dns_list_head);
+                        if (ns != NULL)
+                        {
+                            addr.sin_addr = ns->de_addr;
+                            break;
+                        }
+                    }
+                    RT_FALL_THRU();
                 case CTL_ALIAS:
                 default:
                     addr.sin_addr = loopback_addr;
@@ -440,9 +455,9 @@ int tcp_fconnect(PNATState pData, struct socket *so)
             addr.sin_addr = so->so_faddr;
         addr.sin_port = so->so_fport;
 
-        Log2((" connect()ing, addr.sin_port=%d, addr.sin_addr.s_addr=%.16s\n",
-             RT_N2H_U16(addr.sin_port), inet_ntoa(addr.sin_addr)));
-        /* We don't care what port we get */
+        Log2(("NAT: tcp connect to %RTnaipv4:%d\n",
+              addr.sin_addr.s_addr, RT_N2H_U16(addr.sin_port)));
+
         ret = connect(s,(struct sockaddr *)&addr,sizeof (addr));
 
         /*
@@ -481,6 +496,16 @@ tcp_connect(PNATState pData, struct socket *inso)
 
     LogFlowFunc(("ENTER: inso = %R[natsock]\n", inso));
 
+    if (   inso->so_laddr.s_addr == INADDR_ANY /* delayed port-forwarding? */
+        && pData->guest_addr_guess.s_addr == INADDR_ANY)
+    {
+        LogRel2(("NAT: Port-forward: guest address unknown for %R[natsock]\n", inso));
+        closesocket(accept(inso->s, NULL, NULL));
+        if (inso->so_state & SS_FACCEPTONCE)
+            tcp_close(pData, sototcpcb(inso));
+        return;
+    }
+
     /*
      * If it's an SS_ACCEPTONCE socket, no need to socreate()
      * another socket, just use the accept() socket.
@@ -507,6 +532,13 @@ tcp_connect(PNATState pData, struct socket *inso)
         so->so_lport = inso->so_lport;
     }
 
+    if (so->so_laddr.s_addr == INADDR_ANY)
+    {
+        LogRel2(("NAT: Port-forward: using %RTnaipv4 for %R[natsock]\n",
+                 pData->guest_addr_guess.s_addr, inso));
+        so->so_laddr = pData->guest_addr_guess;
+    }
+
     (void) tcp_mss(pData, sototcpcb(so), 0);
 
     fd_nonblock(inso->s);
@@ -520,10 +552,8 @@ tcp_connect(PNATState pData, struct socket *inso)
     setsockopt(s, SOL_SOCKET, SO_REUSEADDR,(char *)&opt, sizeof(int));
     opt = 1;
     setsockopt(s, SOL_SOCKET, SO_OOBINLINE,(char *)&opt, sizeof(int));
-#if 0
     opt = 1;
     setsockopt(s, IPPROTO_TCP, TCP_NODELAY,(char *)&opt, sizeof(int));
-#endif
 
     optlen = sizeof(int);
     status = getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&opt, &optlen);
@@ -533,8 +563,8 @@ tcp_connect(PNATState pData, struct socket *inso)
         goto no_sockopt;
     }
     if (cVerbose > 0)
-        LogRel(("NAT: old socket rcv size: %dKB\n", opt / 1024));
-    /* @todo (r-vvl) make it configurable (via extra data) */
+        LogRel(("NAT: Old socket recv size: %dKB\n", opt / 1024));
+    /** @todo (r-vvl) make it configurable (via extra data) */
     opt = pData->socket_rcv;
     status = setsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&opt, sizeof(int));
     if (status < 0)
@@ -550,7 +580,7 @@ tcp_connect(PNATState pData, struct socket *inso)
         goto no_sockopt;
     }
     if (cVerbose > 0)
-        LogRel(("NAT: old socket snd size: %dKB\n", opt / 1024));
+        LogRel(("NAT: Old socket send size: %dKB\n", opt / 1024));
     opt = pData->socket_rcv;
     status = setsockopt(s, SOL_SOCKET, SO_SNDBUF, (char *)&opt, sizeof(int));
     if (status < 0)

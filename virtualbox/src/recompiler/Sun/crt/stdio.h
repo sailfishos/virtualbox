@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -60,8 +60,8 @@ DECLINLINE(int) fprintf(FILE *ignored, const char *pszFormat, ...)
 }
 
 #define fflush(file)            RTLogFlush(NULL)
-#define printf(...)             LogIt(LOG_INSTANCE, 0, LOG_GROUP_REM_PRINTF, (__VA_ARGS__))
-#define fprintf(logfile, ...)   LogIt(LOG_INSTANCE, 0, LOG_GROUP_REM_PRINTF, (__VA_ARGS__))
+#define printf(...)             LogIt(0, LOG_GROUP_REM_PRINTF, (__VA_ARGS__))
+#define fprintf(logfile, ...)   LogIt(0, LOG_GROUP_REM_PRINTF, (__VA_ARGS__))
 
 #ifdef DEBUG_TMP_LOGGING
 # error "DEBUG_TMP_LOGGING doesn't work with the Sun/crt/stdio.h wrapper."

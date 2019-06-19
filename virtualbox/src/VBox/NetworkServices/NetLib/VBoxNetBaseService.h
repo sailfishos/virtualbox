@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -68,7 +68,8 @@ public:
     int                 syncEnter();
     int                 syncLeave();
     int                 waitForIntNetEvent(int cMillis);
-    int                 sendBufferOnWire(PCINTNETSEG pSg, int cSg, size_t cbBuffer);
+    int                 abortWait();
+    int                 sendBufferOnWire(PCINTNETSEG paSegs, size_t cSegs, size_t cbBuffer);
     void                flushWire();
 
     virtual int         hlpUDPBroadcast(unsigned uSrcPort, unsigned uDstPort,
@@ -85,11 +86,11 @@ public:
     virtual bool        isMainNeeded() const;
 
 protected:
-    const std::string getName() const;
-    void setName(const std::string&);
+    const std::string getServiceName() const;
+    void setServiceName(const std::string&);
 
-    const std::string getNetwork() const;
-    void setNetwork(const std::string&);
+    const std::string getNetworkName() const;
+    void setNetworkName(const std::string&);
 
     const RTMAC getMacAddress() const;
     void setMacAddress(const RTMAC&);
@@ -131,6 +132,7 @@ protected:
     protected:
     /* VirtualBox instance */
     ComPtr<IVirtualBox> virtualbox;
+    ComPtr<IVirtualBoxClient> virtualboxClient;
 
     private:
     struct Data;

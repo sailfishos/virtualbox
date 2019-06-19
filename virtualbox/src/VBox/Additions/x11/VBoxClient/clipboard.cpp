@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/****************************************************************************
-*   Header Files                                                            *
-****************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/alloc.h>
 #include <iprt/asm.h>
 #include <iprt/assert.h>
@@ -34,9 +35,10 @@
 
 #include "VBoxClient.h"
 
-/****************************************************************************
-*   Global Variables                                                        *
-****************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 
 /**
  * Global clipboard context information.
@@ -76,15 +78,16 @@ static int vboxClipboardSendData(uint32_t u32Format, void *pv, uint32_t cb)
  * Get clipboard data from the host.
  *
  * @returns VBox result code
+ * @param   pCtx      Our context information
  * @param   u32Format The format of the data being requested
  * @retval  ppv       On success and if pcb > 0, this will point to a buffer
  *                    to be freed with RTMemFree containing the data read.
  * @retval  pcb       On success, this contains the number of bytes of data
  *                    returned
  */
-int ClipRequestDataForX11(VBOXCLIPBOARDCONTEXT *pCtx, uint32_t u32Format,
-                          void **ppv, uint32_t *pcb)
+int ClipRequestDataForX11(VBOXCLIPBOARDCONTEXT *pCtx, uint32_t u32Format, void **ppv, uint32_t *pcb)
 {
+    RT_NOREF1(pCtx);
     int rc = VINF_SUCCESS;
     uint32_t cb = 1024;
     void *pv = RTMemAlloc(cb);
@@ -141,13 +144,14 @@ struct _CLIPREADCBREQ
 /**
  * Tell the host that new clipboard formats are available.
  *
- * @param u32Formats      The formats to advertise
+ * @param  pCtx      Our context information
+ * @param u32Formats The formats to advertise
  */
 void ClipReportX11Formats(VBOXCLIPBOARDCONTEXT *pCtx, uint32_t u32Formats)
 {
-    int rc;
+    RT_NOREF1(pCtx);
     LogRelFlowFunc(("u32Formats=%d\n", u32Formats));
-    rc = VbglR3ClipboardReportFormats(g_ctx.client, u32Formats);
+    int rc = VbglR3ClipboardReportFormats(g_ctx.client, u32Formats);
     LogRelFlowFunc(("rc=%Rrc\n", rc));
 }
 
@@ -161,10 +165,9 @@ void ClipReportX11Formats(VBOXCLIPBOARDCONTEXT *pCtx, uint32_t u32Formats)
  *                   succeeded (see @a rc)
  * @param  cb        the size of the data in @a pv
  */
-void ClipCompleteDataRequestFromX11(VBOXCLIPBOARDCONTEXT *pCtx, int rc,
-                                    CLIPREADCBREQ *pReq, void *pv,
-                                    uint32_t cb)
+void ClipCompleteDataRequestFromX11(VBOXCLIPBOARDCONTEXT *pCtx, int rc, CLIPREADCBREQ *pReq, void *pv, uint32_t cb)
 {
+    RT_NOREF1(pCtx);
     if (RT_SUCCESS(rc))
         vboxClipboardSendData(pReq->u32Format, pv, cb);
     else
@@ -201,7 +204,7 @@ int vboxClipboardConnect(void)
         }
     }
 
-    if (RT_FAILURE(rc) && g_ctx.pBackend)
+    if (rc != VINF_SUCCESS && g_ctx.pBackend)
         ClipDestructX11(g_ctx.pBackend);
     LogRelFlowFunc(("g_ctx.client=%u rc=%Rrc\n", g_ctx.client, rc));
     return rc;
@@ -284,15 +287,15 @@ static const char *getPidFilePath()
 
 static int run(struct VBCLSERVICE **ppInterface, bool fDaemonised)
 {
-    int rc;
+    RT_NOREF2(ppInterface, fDaemonised);
 
-    NOREF(ppInterface);
     /* Initialise the guest library. */
-    rc = VbglR3InitUser();
+    int rc = VbglR3InitUser();
     if (RT_FAILURE(rc))
         VBClFatalError(("Failed to connect to the VirtualBox kernel service, rc=%Rrc\n", rc));
     rc = vboxClipboardConnect();
-    if (RT_SUCCESS(rc))
+    /* Not RT_SUCCESS: VINF_PERMISSION_DENIED is host service not present. */
+    if (rc == VINF_SUCCESS)
         rc = vboxClipboardMain();
     if (rc == VERR_NOT_SUPPORTED)
         rc = VINF_SUCCESS;  /* Prevent automatic restart. */
@@ -312,8 +315,6 @@ struct VBCLSERVICE vbclClipboardInterface =
     getPidFilePath,
     VBClServiceDefaultHandler, /* init */
     run,
-    VBClServiceDefaultHandler, /* pause */
-    VBClServiceDefaultHandler, /* resume */
     cleanup
 };
 

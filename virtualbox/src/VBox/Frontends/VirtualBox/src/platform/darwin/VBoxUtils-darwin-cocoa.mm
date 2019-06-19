@@ -1,13 +1,10 @@
 /* $Id: VBoxUtils-darwin-cocoa.mm $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Declarations of utility classes and functions for handling Darwin Cocoa
- * specific tasks
+ * VBox Qt GUI -  Declarations of utility classes and functions for handling Darwin Cocoa specific tasks.
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -28,6 +25,9 @@
 #import <AppKit/NSEvent.h>
 #import <AppKit/NSColor.h>
 #import <AppKit/NSFont.h>
+#import <AppKit/NSScreen.h>
+#import <AppKit/NSWindow.h>
+#import <AppKit/NSImageView.h>
 
 #import <objc/objc-class.h>
 
@@ -57,6 +57,23 @@ NativeNSViewRef darwinToNativeViewImpl(NativeNSWindowRef pWindow)
     return view;
 }
 
+NativeNSButtonRef darwinNativeButtonOfWindowImpl(NativeNSWindowRef pWindow, StandardWindowButtonType enmButtonType)
+{
+    /* Return corresponding button: */
+    switch (enmButtonType)
+    {
+        case StandardWindowButtonType_Close:            return [pWindow standardWindowButton:NSWindowCloseButton];
+        case StandardWindowButtonType_Miniaturize:      return [pWindow standardWindowButton:NSWindowMiniaturizeButton];
+        case StandardWindowButtonType_Zoom:             return [pWindow standardWindowButton:NSWindowZoomButton];
+        case StandardWindowButtonType_Toolbar:          return [pWindow standardWindowButton:NSWindowToolbarButton];
+        case StandardWindowButtonType_DocumentIcon:     return [pWindow standardWindowButton:NSWindowDocumentIconButton];
+        case StandardWindowButtonType_DocumentVersions: /*return [pWindow standardWindowButton:NSWindowDocumentVersionsButton];*/ break;
+        case StandardWindowButtonType_FullScreen:       /*return [pWindow standardWindowButton:NSWindowFullScreenButton];*/ break;
+    }
+    /* Return Nul by default: */
+    return Nil;
+}
+
 NativeNSImageRef darwinToNSImageRef(const CGImageRef pImage)
 {
     /* Create a bitmap rep from the image. */
@@ -69,10 +86,17 @@ NativeNSImageRef darwinToNSImageRef(const CGImageRef pImage)
 
 NativeNSImageRef darwinToNSImageRef(const QImage *pImage)
 {
-   CGImageRef pCGImage = ::darwinToCGImageRef(pImage);
-   NativeNSImageRef pNSImage = ::darwinToNSImageRef(pCGImage);
-   CGImageRelease(pCGImage);
-   return pNSImage;
+    /* Create CGImage on the basis of passed QImage: */
+    CGImageRef pCGImage = ::darwinToCGImageRef(pImage);
+    NativeNSImageRef pNSImage = ::darwinToNSImageRef(pCGImage);
+    CGImageRelease(pCGImage);
+    /* Apply device pixel ratio: */
+    double dScaleFactor = pImage->devicePixelRatio();
+    NSSize imageSize = { (CGFloat)pImage->width() / dScaleFactor,
+                         (CGFloat)pImage->height() / dScaleFactor };
+    [pNSImage setSize:imageSize];
+    /* Return result: */
+    return pNSImage;
 }
 
 NativeNSImageRef darwinToNSImageRef(const QPixmap *pPixmap)
@@ -176,8 +200,17 @@ void darwinSetShowsWindowTransparentImpl(NativeNSWindowRef pWindow, bool fEnable
     }
 }
 
+void darwinSetWindowHasShadow(NativeNSWindowRef pWindow, bool fEnabled)
+{
+    if (fEnabled)
+        [pWindow setHasShadow :YES];
+    else
+        [pWindow setHasShadow :NO];
+}
+
 void darwinMinaturizeWindow(NativeNSWindowRef pWindow)
 {
+    RT_NOREF(pWindow);
 //    [[NSApplication sharedApplication] miniaturizeAll];
 //    printf("bla\n");
 //    [pWindow miniaturize:pWindow];
@@ -200,6 +233,13 @@ void darwinToggleFullscreenMode(NativeNSWindowRef pWindow)
     /* Toggle native fullscreen mode for passed pWindow. This method is available since 10.7 only. */
     if ([pWindow respondsToSelector: @selector(toggleFullScreen:)])
         [pWindow performSelector: @selector(toggleFullScreen:) withObject: (id)nil];
+}
+
+void darwinToggleWindowZoom(NativeNSWindowRef pWindow)
+{
+    /* Toggle native window zoom for passed pWindow. This method is available since 10.0. */
+    if ([pWindow respondsToSelector: @selector(zoom:)])
+        [pWindow performSelector: @selector(zoom:)];
 }
 
 bool darwinIsInFullscreenMode(NativeNSWindowRef pWindow)
@@ -249,12 +289,6 @@ double darwinBackingScaleFactor(NativeNSWindowRef pWindow)
     return 1.0;
 }
 
-void darwinSetDockIconMenu(QMenu* pMenu)
-{
-    extern void qt_mac_set_dock_menu(QMenu *);
-    qt_mac_set_dock_menu(pMenu);
-}
-
 /**
  * Calls the + (void)setMouseCoalescingEnabled:(BOOL)flag class method.
  *
@@ -267,6 +301,8 @@ void darwinSetMouseCoalescingEnabled(bool fEnabled)
 
 void darwinWindowAnimateResizeImpl(NativeNSWindowRef pWindow, int x, int y, int width, int height)
 {
+    RT_NOREF(x, y, width);
+
     /* It seems that Qt doesn't return the height of the window with the
      * toolbar height included. So add this size manually. Could easily be that
      * the Trolls fix this in the final release. */
@@ -391,9 +427,15 @@ bool darwinIsToolbarVisible(NativeNSWindowRef pWindow)
 
 bool darwinIsWindowMaximized(NativeNSWindowRef pWindow)
 {
-    bool fResult = [pWindow isZoomed];
+    /* Mac OS X API NSWindow isZoomed returns true even for almost maximized windows,
+     * So implementing this by ourseleves by comparing visible screen-frame & window-frame: */
+    NSRect windowFrame = [pWindow frame];
+    NSRect screenFrame = [[NSScreen mainScreen] visibleFrame];
 
-    return fResult;
+    return (windowFrame.origin.x == screenFrame.origin.x) &&
+           (windowFrame.origin.y == screenFrame.origin.y) &&
+           (windowFrame.size.width == screenFrame.size.width) &&
+           (windowFrame.size.height == screenFrame.size.height);
 }
 
 bool darwinOpenFile(NativeNSStringRef pstrFile)
@@ -462,6 +504,8 @@ bool darwinMouseGrabEvents(const void *pvCocoaEvent, const void *pvCarbonEvent, 
    toolbar or the title area. */
 bool darwinUnifiedToolbarEvents(const void *pvCocoaEvent, const void *pvCarbonEvent, void *pvUser)
 {
+    RT_NOREF(pvCarbonEvent);
+
     NSEvent *pEvent = (NSEvent*)pvCocoaEvent;
     NSEventType EvtType = [pEvent type];
     NSWindow *pWin = ::darwinToNativeWindow((QWidget*)pvUser);
@@ -611,6 +655,7 @@ static UIResizeProxy *gSharedResizeProxy = nil;
 }
 - (NSSize)qtWindowWillResize:(NSWindow *)pWindow toSize:(NSSize)newFrameSize
 {
+    RT_NOREF(pWindow);
     /* This is a fake implementation. It will be replaced by the original Qt
        method. */
     return newFrameSize;
@@ -626,12 +671,16 @@ static UIResizeProxy *gSharedResizeProxy = nil;
        the shift modifier state during the resize. If it is not available the
        user have to press shift before he start to resize. */
     if ([NSEvent respondsToSelector:@selector(modifierFlags)])
+    {
         if (((int)(intptr_t)[NSEvent performSelector:@selector(modifierFlags)] & NSShiftKeyMask) == NSShiftKeyMask)
             return qtSize;
+    }
     else
+    {
         /* Shift key pressed when this resize event was initiated? */
         if (([pWindow resizeFlags] & NSShiftKeyMask) == NSShiftKeyMask)
             return qtSize;
+    }
     /* The default case is to calculate the aspect radio of the old size and
        used it for the new size. */
     NSSize s = [pWindow frame].size;
@@ -667,5 +716,11 @@ void darwinInstallResizeDelegate(NativeNSWindowRef pWindow)
 void darwinUninstallResizeDelegate(NativeNSWindowRef pWindow)
 {
     [[UIResizeProxy sharedResizeProxy] removeWindow:pWindow];
+}
+
+void* darwinCocoaToCarbonEvent(void *pvCocoaEvent)
+{
+    NSEvent *pEvent = (NSEvent*)pvCocoaEvent;
+    return (void*)[pEvent eventRef];
 }
 

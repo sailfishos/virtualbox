@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/crypto/x509.h>
 
@@ -43,6 +43,8 @@
 RTDECL(int) RTCrX509Extension_ExtnValue_DecodeAsn1(PRTASN1CURSOR pCursor, uint32_t fFlags,
                                                    PRTCRX509EXTENSION pThis, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags); RT_NOREF_PV(pszErrorTag);
+
     pThis->enmValue = RTCRX509EXTENSIONVALUE_UNKNOWN;
 
     /*

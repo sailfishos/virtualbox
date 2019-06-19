@@ -1,11 +1,10 @@
+/* $Id: UIGDetailsElement.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetailsElement class declaration
+ * VBox Qt GUI - UIGDetailsElement class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,20 +23,21 @@
 
 /* GUI includes: */
 #include "UIGDetailsItem.h"
-#include "UIDefs.h"
+#include "UIExtraDataDefs.h"
 
 /* Forward declarations: */
 class UIGDetailsSet;
 class CMachine;
 class UIGraphicsRotatorButton;
+class UIGraphicsTextPane;
 class QTextLayout;
 class QStateMachine;
 class QPropertyAnimation;
+class UITextTableLine;
 
 /* Typedefs: */
-typedef QPair<QString, QString> UITextTableLine;
 typedef QList<UITextTableLine> UITextTable;
-Q_DECLARE_METATYPE(UITextTable);
+
 
 /* Details element
  * for graphics details model/view architecture: */
@@ -85,12 +85,26 @@ public:
     /* API: Animation stuff: */
     void markAnimationFinished();
 
+    /** Returns the reference to the text table. */
+    UITextTable &text() const;
+    /** Defines the @a text table as the passed one. */
+    void setText(const UITextTable &text);
+
 protected slots:
 
     /* Handlers: Toggle stuff: */
     void sltToggleButtonClicked();
     void sltElementToggleStart();
     void sltElementToggleFinish(bool fToggled);
+
+    /** Handles children geometry changes. */
+    void sltUpdateGeometry() { updateGeometry(); }
+
+    /** Handles children anchor clicks. */
+    void sltHandleAnchorClicked(const QString &strAnchor);
+
+    /** Handles mount storage medium requests. */
+    void sltMountStorageMedium();
 
 protected:
 
@@ -99,9 +113,14 @@ protected:
     {
         /* Hints: */
         ElementData_Margin,
-        ElementData_Spacing,
-        ElementData_MinimumTextColumnWidth
+        ElementData_Spacing
     };
+
+    /** This event handler is delivered after the widget has been resized. */
+    void resizeEvent(QGraphicsSceneResizeEvent *pEvent);
+
+    /** Returns the description of the item. */
+    virtual QString description() const /* override */;
 
     /* Data provider: */
     QVariant data(int iKey) const;
@@ -109,18 +128,12 @@ protected:
     /* Helpers: Update stuff: */
     void updateMinimumHeaderWidth();
     void updateMinimumHeaderHeight();
-    void updateMinimumTextWidth();
-    void updateMinimumTextHeight();
 
     /* API: Icon stuff: */
     void setIcon(const QIcon &icon);
 
     /* API: Name stuff: */
     void setName(const QString &strName);
-
-    /* API: Text stuff: */
-    UITextTable text() const { return m_text; }
-    void setText(const UITextTable &text);
 
     /* API: Machine stuff: */
     const CMachine& machine();
@@ -155,6 +168,7 @@ private:
     /* Helpers: Prepare stuff: */
     void prepareElement();
     void prepareButton();
+    void prepareTextPane();
 
     /* Helpers: Paint stuff: */
     void paint(QPainter *pPainter, const QStyleOptionGraphicsItem *pOption, QWidget *pWidget = 0);
@@ -173,10 +187,6 @@ private:
     void handleHoverEvent(QGraphicsSceneHoverEvent *pEvent);
     void updateNameHoverLink();
 
-    /* Helper: Layout stuff: */
-    static QTextLayout* prepareTextLayout(const QFont &font, QPaintDevice *pPaintDevice,
-                                          const QString &strText, int iWidth, int &iHeight);
-
     /* Helper: Animation stuff: */
     void updateAnimationParameters();
 
@@ -185,7 +195,6 @@ private:
     DetailsElementType m_type;
     QPixmap m_pixmap;
     QString m_strName;
-    UITextTable m_text;
     int m_iCornerRadius;
     QFont m_nameFont;
     QFont m_textFont;
@@ -194,14 +203,15 @@ private:
     QSize m_buttonSize;
     int m_iMinimumHeaderWidth;
     int m_iMinimumHeaderHeight;
-    int m_iMinimumTextWidth;
-    int m_iMinimumTextHeight;
 
-    /* Variables: Toggle stuff: */
-    bool m_fClosed;
+    /* Variables: Toggle-button stuff: */
     UIGraphicsRotatorButton *m_pButton;
+    bool m_fClosed;
     int m_iAdditionalHeight;
     bool m_fAnimationRunning;
+
+    /* Variables: Text-pane stuff: */
+    UIGraphicsTextPane *m_pTextPane;
 
     /* Variables: Hover stuff: */
     bool m_fHovered;

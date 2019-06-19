@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * Permission is hereby granted, free of charge, to any person
  * obtaining a copy of this software and associated documentation
@@ -21,16 +21,17 @@
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
  * OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
  * HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
  * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
  * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_KBD
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/version.h>
@@ -71,9 +72,9 @@
  */
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** The original bus mouse controller is fixed at I/O port 0x23C. */
 #define BMS_IO_BASE         0x23C
 #define BMS_IO_SIZE         4
@@ -115,9 +116,9 @@
 #define BMS_SAVED_STATE_VERSION     1
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The device state.
  */
@@ -242,6 +243,7 @@ static void bms_mouse_event(MouState *pThis, int dx, int dy, int dz, int dw,
 
 static DECLCALLBACK(void) bmsTimerCallback(PPDMDEVINS pDevIns, PTMTIMER pTimer, void *pvUser)
 {
+    RT_NOREF(pvUser);
     MouState   *pThis = PDMINS_2_DATA(pDevIns, MouState *);
     uint8_t     irq_bit;
 
@@ -418,6 +420,7 @@ static uint32_t bms_read_port(MouState *pThis, uint32_t offPort)
             break;
         default:
             AssertMsgFailed(("invalid port %#x\n", offPort));
+            uValue = 0xff;
             break;
     }
     LogRel3(("%s: read port %d: 0x%02x\n", __PRETTY_FUNCTION__, offPort, uValue));
@@ -549,7 +552,7 @@ static DECLCALLBACK(int) mouLoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSMHandle, 
 /**
  * Reset notification.
  *
- * @returns VBox status.
+ * @returns VBox status code.
  * @param   pDevIns     The device instance data.
  */
 static DECLCALLBACK(void) mouReset(PPDMDEVINS pDevIns)
@@ -581,7 +584,7 @@ static DECLCALLBACK(void *) mouQueryMouseInterface(PPDMIBASE pInterface, const c
 /* -=-=-=-=-=- Mouse: IMousePort  -=-=-=-=-=- */
 
 /**
- * @interface_method_impl{PDMIMOUSEPORT, pfnPutEvent}
+ * @interface_method_impl{PDMIMOUSEPORT,pfnPutEvent}
  */
 static DECLCALLBACK(int) mouPutEvent(PPDMIMOUSEPORT pInterface, int32_t dx,
                                      int32_t dy, int32_t dz, int32_t dw,
@@ -598,21 +601,22 @@ static DECLCALLBACK(int) mouPutEvent(PPDMIMOUSEPORT pInterface, int32_t dx,
 }
 
 /**
- * @interface_method_impl{PDMIMOUSEPORT, pfnPutEventAbs}
+ * @interface_method_impl{PDMIMOUSEPORT,pfnPutEventAbs}
  */
-static DECLCALLBACK(int) mouPutEventAbs(PPDMIMOUSEPORT pInterface, uint32_t x,
-                                        uint32_t y, int32_t dz, int32_t dw,
-                                        uint32_t fButtons)
+static DECLCALLBACK(int) mouPutEventAbs(PPDMIMOUSEPORT pInterface, uint32_t x, uint32_t y,
+                                        int32_t dz, int32_t dw, uint32_t fButtons)
 {
+    RT_NOREF(pInterface, x, y, dz, dw, fButtons);
     AssertFailedReturn(VERR_NOT_SUPPORTED);
 }
 
 /**
- * @interface_method_impl{PDMIMOUSEPORT, pfnPutEventMultiTouch}
+ * @interface_method_impl{PDMIMOUSEPORT,pfnPutEventMultiTouch}
  */
 static DECLCALLBACK(int) mouPutEventMultiTouch(PPDMIMOUSEPORT pInterface, uint8_t cContacts,
                                                const uint64_t *pau64Contacts, uint32_t u32ScanTime)
 {
+    RT_NOREF(pInterface, cContacts, pau64Contacts, u32ScanTime);
     AssertFailedReturn(VERR_NOT_SUPPORTED);
 }
 
@@ -710,6 +714,8 @@ static DECLCALLBACK(void) mouDetach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t 
             AssertMsgFailed(("Invalid LUN #%d\n", iLUN));
             break;
     }
+#else
+    RT_NOREF(pDevIns, iLUN, fFlags);
 #endif
 }
 
@@ -719,7 +725,8 @@ static DECLCALLBACK(void) mouDetach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t 
  */
 static DECLCALLBACK(void) mouRelocate(PPDMDEVINS pDevIns, RTGCINTPTR offDelta)
 {
-    MouState    *pThis = PDMINS_2_DATA(pDevIns, MouState *);
+    RT_NOREF(offDelta);
+    MouState *pThis = PDMINS_2_DATA(pDevIns, MouState *);
     pThis->pDevInsRC = PDMDEVINS_2_RCPTR(pDevIns);
 }
 
@@ -729,6 +736,8 @@ static DECLCALLBACK(void) mouRelocate(PPDMDEVINS pDevIns, RTGCINTPTR offDelta)
  */
 static DECLCALLBACK(int) mouConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNODE pCfg)
 {
+    RT_NOREF(iInstance);
+    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
     MouState   *pThis = PDMINS_2_DATA(pDevIns, MouState *);
     int         rc;
     bool        fGCEnabled;
@@ -736,7 +745,6 @@ static DECLCALLBACK(int) mouConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNO
     uint8_t     irq_lvl;
     Assert(iInstance == 0);
 
-    PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
 
     /*
      * Validate and read the configuration.
@@ -756,7 +764,7 @@ static DECLCALLBACK(int) mouConstruct(PPDMDEVINS pDevIns, int iInstance, PCFGMNO
         return PDMDEV_SET_ERROR(pDevIns, rc, N_("Invalid \"IRQ\" config setting"));
 
     pThis->irq = irq_lvl;
-    ///@todo: remove after properly enabling RC/GC support
+    /// @todo remove after properly enabling RC/GC support
     fGCEnabled = fR0Enabled = false;
     Log(("busmouse: IRQ=%d fGCEnabled=%RTbool fR0Enabled=%RTbool\n", irq_lvl, fGCEnabled, fR0Enabled));
 
@@ -828,7 +836,7 @@ const PDMDEVREG g_DeviceBusMouse =
     /* szName */
     "busmouse",
     /* szRCMod */
-    "VBoxDDGC.gc",
+    "VBoxDDRC.rc",
     /* szR0Mod */
     "VBoxDDR0.r0",
     /* pszDescription */

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-nt-kernel.h"
 
 #include <iprt/thread.h>
@@ -83,7 +84,16 @@ DECLHIDDEN(int) rtThreadNativeSetPriority(PRTTHREADINT pThread, RTTHREADTYPE enm
 
 DECLHIDDEN(int) rtThreadNativeAdopt(PRTTHREADINT pThread)
 {
+    RT_NOREF1(pThread);
     return VERR_NOT_IMPLEMENTED;
+}
+
+
+DECLHIDDEN(void) rtThreadNativeWaitKludge(PRTTHREADINT pThread)
+{
+    PVOID pvThreadObj = pThread->Core.Key;
+    NTSTATUS rcNt = KeWaitForSingleObject(pvThreadObj, Executive, KernelMode, FALSE, NULL);
+    AssertMsg(rcNt == STATUS_SUCCESS, ("rcNt=%#x\n", rcNt)); RT_NOREF1(rcNt);
 }
 
 
@@ -100,7 +110,7 @@ DECLHIDDEN(void) rtThreadNativeDestroy(PRTTHREADINT pThread)
  *
  * @param pvArg         Pointer to the argument package.
  */
-static VOID __stdcall rtThreadNativeMain(PVOID pvArg)
+static VOID rtThreadNativeMain(PVOID pvArg)
 {
     PETHREAD Self = PsGetCurrentThread();
     PRTTHREADINT pThread = (PRTTHREADINT)pvArg;

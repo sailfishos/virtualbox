@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,8 +22,8 @@
 
 #include <VBox/err.h>
 
-#include <Winsock2.h>
-#include <Windows.h>
+#include <iprt/win/winsock2.h>
+#include <iprt/win/windows.h>
 
 #include <stdio.h>
 #include <iprt/log.h>
@@ -196,6 +196,17 @@ extern "C" int RTWinSocketPair(int domain, int type, int protocol, SOCKET socket
             goto close_socket;
         }
     }
+
+    for (int i = 0; i < 2; ++i) {
+        SOCKET s = socket_vector[i];
+        u_long mode = 1;
+
+        int status = ioctlsocket(s, FIONBIO, &mode);
+        if (status == SOCKET_ERROR) {
+            LogRel(("FIONBIO: %R[sockerr]\n", WSAGetLastError()));
+        }
+    }
+
     LogFlowFuncLeaveRC(VINF_SUCCESS);
     return VINF_SUCCESS;
 

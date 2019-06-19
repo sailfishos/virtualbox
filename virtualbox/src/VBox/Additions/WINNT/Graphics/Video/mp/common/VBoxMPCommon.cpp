@@ -1,11 +1,10 @@
 /* $Id: VBoxMPCommon.cpp $ */
-
 /** @file
  * VBox Miniport common utils
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,7 +16,7 @@
  */
 
 #include "VBoxMPCommon.h"
-#include <VBox/Hardware/VBoxVideoVBE.h>
+#include <VBoxVideoVBE.h>
 
 int VBoxMPCmnMapAdapterMemory(PVBOXMP_COMMON pCommon, void **ppv, uint32_t ulOffset, uint32_t ulSize)
 {
@@ -104,4 +103,20 @@ bool VBoxMPCmnSyncToVideoIRQ(PVBOXMP_COMMON pCommon, PFNVIDEOIRQSYNC pfnSync, vo
     AssertReturn(ntStatus == STATUS_SUCCESS, false);
     return !!fRet;
 #endif
+}
+
+bool VBoxMPCmnUpdatePointerShape(PVBOXMP_COMMON pCommon, PVIDEO_POINTER_ATTRIBUTES pAttrs, uint32_t cbLength)
+{
+    const uint32_t fFlags = pAttrs->Enable & 0x0000FFFF;
+    const uint32_t cHotX = (pAttrs->Enable >> 16) & 0xFF;
+    const uint32_t cHotY = (pAttrs->Enable >> 24) & 0xFF;
+    const uint32_t cWidth = pAttrs->Width;
+    const uint32_t cHeight = pAttrs->Height;
+    uint8_t *pPixels = &pAttrs->Pixels[0];
+
+    int rc = VBoxHGSMIUpdatePointerShape(&pCommon->guestCtx,
+                                         fFlags, cHotX, cHotY,
+                                         cWidth, cHeight, pPixels,
+                                         cbLength - sizeof(VIDEO_POINTER_ATTRIBUTES));
+    return RT_SUCCESS(rc);
 }

@@ -5,7 +5,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,17 +24,17 @@
 /**
  * CPUID leaves for AMD Phenom(tm) II X6 1100T Processor.
  */
-static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_Phenom_II_X6_1100T[] = 
+static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_Phenom_II_X6_1100T[] =
 {
     { 0x00000000, 0x00000000, 0x00000000, 0x00000006, 0x68747541, 0x444d4163, 0x69746e65, 0 },
-    { 0x00000001, 0x00000000, 0x00000000, 0x00100fa0, 0x01060800, 0x00802009, 0x178bfbff, 0 },
+    { 0x00000001, 0x00000000, 0x00000000, 0x00100fa0, 0x01060800, 0x00802009, 0x178bfbff, 0 | CPUMCPUIDLEAF_F_CONTAINS_APIC_ID | CPUMCPUIDLEAF_F_CONTAINS_APIC },
     { 0x00000002, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
     { 0x00000003, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
     { 0x00000004, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0 },
     { 0x00000005, 0x00000000, 0x00000000, 0x00000040, 0x00000040, 0x00000003, 0x00000000, 0 },
     { 0x00000006, 0x00000000, 0x00000000, 0x00000000, 0x00000000, 0x00000001, 0x00000000, 0 },
     { 0x80000000, 0x00000000, 0x00000000, 0x8000001b, 0x68747541, 0x444d4163, 0x69746e65, 0 },
-    { 0x80000001, 0x00000000, 0x00000000, 0x00100fa0, 0x100000a1, 0x000837ff, 0xefd3fbff, 0 },
+    { 0x80000001, 0x00000000, 0x00000000, 0x00100fa0, 0x100000a1, 0x000837ff, 0xefd3fbff, 0 | CPUMCPUIDLEAF_F_CONTAINS_APIC },
     { 0x80000002, 0x00000000, 0x00000000, 0x20444d41, 0x6e656850, 0x74286d6f, 0x4920296d, 0 },
     { 0x80000003, 0x00000000, 0x00000000, 0x36582049, 0x30313120, 0x50205430, 0x65636f72, 0 },
     { 0x80000004, 0x00000000, 0x00000000, 0x726f7373, 0x00000000, 0x00000000, 0x00000000, 0 },
@@ -69,7 +69,7 @@ static CPUMCPUIDLEAF const g_aCpuIdLeaves_AMD_Phenom_II_X6_1100T[] =
 /**
  * MSR ranges for AMD Phenom(tm) II X6 1100T Processor.
  */
-static CPUMMSRRANGE const g_aMsrRanges_AMD_Phenom_II_X6_1100T[] = 
+static CPUMMSRRANGE const g_aMsrRanges_AMD_Phenom_II_X6_1100T[] =
 {
     MAL(0x00000000, "IA32_P5_MC_ADDR", 0x00000402),
     MAL(0x00000001, "IA32_P5_MC_TYPE", 0x00000401),
@@ -243,7 +243,7 @@ static CPUMMSRRANGE const g_aMsrRanges_AMD_Phenom_II_X6_1100T[] =
 /**
  * Database entry for AMD Phenom(tm) II X6 1100T Processor.
  */
-static CPUMDBENTRY const g_Entry_AMD_Phenom_II_X6_1100T = 
+static CPUMDBENTRY const g_Entry_AMD_Phenom_II_X6_1100T =
 {
     /*.pszName          = */ "AMD Phenom II X6 1100T",
     /*.pszFullName      = */ "AMD Phenom(tm) II X6 1100T Processor",
@@ -255,9 +255,10 @@ static CPUMDBENTRY const g_Entry_AMD_Phenom_II_X6_1100T =
     /*.uScalableBusFreq = */ CPUM_SBUSFREQ_UNKNOWN,
     /*.fFlags           = */ 0,
     /*.cMaxPhysAddrWidth= */ 48,
+    /*.fMxCsrMask       = */ 0x2ffff,
     /*.paCpuIdLeaves    = */ NULL_ALONE(g_aCpuIdLeaves_AMD_Phenom_II_X6_1100T),
     /*.cCpuIdLeaves     = */ ZERO_ALONE(RT_ELEMENTS(g_aCpuIdLeaves_AMD_Phenom_II_X6_1100T)),
-    /*.enmUnknownCpuId  = */ CPUMUKNOWNCPUID_DEFAULTS,
+    /*.enmUnknownCpuId  = */ CPUMUNKNOWNCPUID_DEFAULTS,
     /*.DefUnknownCpuId  = */ { 0x00000000, 0x00000000, 0x00000000, 0x00000000 },
     /*.fMsrMask         = */ UINT32_MAX,
     /*.cMsrRanges       = */ ZERO_ALONE(RT_ELEMENTS(g_aMsrRanges_AMD_Phenom_II_X6_1100T)),

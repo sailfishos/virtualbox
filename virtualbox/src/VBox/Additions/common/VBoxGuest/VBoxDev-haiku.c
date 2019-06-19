@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,6 +13,15 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
 /*
@@ -44,9 +53,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <sys/param.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -68,29 +78,11 @@
 #define DEVICE_NAME "misc/vboxguest"
 #define MODULE_NAME "generic/vboxguest"
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-static status_t VBoxGuestHaikuOpen(const char *name, uint32 flags, void **cookie);
-static status_t VBoxGuestHaikuClose(void *cookie);
-static status_t VBoxGuestHaikuFree(void *cookie);
-static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t len);
-static status_t VBoxGuestHaikuSelect(void *cookie, uint8 event, uint32 ref, selectsync *sync);
-static status_t VBoxGuestHaikuDeselect(void *cookie, uint8 event, selectsync *sync);
-static status_t VBoxGuestHaikuWrite(void *cookie, off_t position, const void *data, size_t *numBytes);
-static status_t VBoxGuestHaikuRead(void *cookie, off_t position, void *data, size_t *numBytes);
 
-static device_hooks g_VBoxGuestHaikuDeviceHooks =
-{
-    VBoxGuestHaikuOpen,
-    VBoxGuestHaikuClose,
-    VBoxGuestHaikuFree,
-    VBoxGuestHaikuIOCtl,
-    VBoxGuestHaikuRead,
-    VBoxGuestHaikuWrite,
-    VBoxGuestHaikuSelect,
-    VBoxGuestHaikuDeselect,
-};
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+int32 api_version = B_CUR_DRIVER_API_VERSION;
 
 
 /**
@@ -102,26 +94,26 @@ static device_hooks g_VBoxGuestHaikuDeviceHooks =
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuOpen(const char *name, uint32 flags, void **cookie)
+static status_t vgdrvHaikuOpen(const char *name, uint32 flags, void **cookie)
 {
     int rc;
     PVBOXGUESTSESSION pSession;
 
-    LogFlow((DRIVER_NAME ":VBoxGuestHaikuOpen\n"));
+    LogFlow((DRIVER_NAME ":vgdrvHaikuOpen\n"));
 
     /*
      * Create a new session.
      */
-    rc = VBoxGuestCreateUserSession(&g_DevExt, &pSession);
+    rc = VGDrvCommonCreateUserSession(&g_DevExt, &pSession);
     if (RT_SUCCESS(rc))
     {
-        Log((DRIVER_NAME ":VBoxGuestHaikuOpen success: g_DevExt=%p pSession=%p rc=%d pid=%d\n",&g_DevExt, pSession, rc,(int)RTProcSelf()));
+        Log((DRIVER_NAME ":vgdrvHaikuOpen success: g_DevExt=%p pSession=%p rc=%d pid=%d\n",&g_DevExt, pSession, rc,(int)RTProcSelf()));
         ASMAtomicIncU32(&cUsers);
         *cookie = pSession;
         return B_OK;
     }
 
-    LogRel((DRIVER_NAME ":VBoxGuestHaikuOpen: failed. rc=%d\n", rc));
+    LogRel((DRIVER_NAME ":vgdrvHaikuOpen: failed. rc=%d\n", rc));
     return RTErrConvertToErrno(rc);
 }
 
@@ -132,15 +124,15 @@ static status_t VBoxGuestHaikuOpen(const char *name, uint32 flags, void **cookie
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuClose(void *cookie)
+static status_t vgdrvHaikuClose(void *cookie)
 {
     PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)cookie;
-    Log(("VBoxGuestHaikuClose: pSession=%p\n", pSession));
+    Log(("vgdrvHaikuClose: pSession=%p\n", pSession));
 
     /** @todo r=ramshankar: should we really be using the session spinlock here? */
     RTSpinlockAcquire(g_DevExt.SessionSpinlock);
 
-    /* @todo we don't know if it belongs to this session!! */
+    /** @todo we don't know if it belongs to this session!! */
     if (sState.selectSync)
     {
         //dprintf(DRIVER_NAME "close: unblocking select %p %x\n", sState.selectSync, sState.selectEvent);
@@ -161,21 +153,21 @@ static status_t VBoxGuestHaikuClose(void *cookie)
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuFree(void *cookie)
+static status_t vgdrvHaikuFree(void *cookie)
 {
     PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)cookie;
-    Log(("VBoxGuestHaikuFree: pSession=%p\n", pSession));
+    Log(("vgdrvHaikuFree: pSession=%p\n", pSession));
 
     /*
      * Close the session if it's still hanging on to the device...
      */
     if (VALID_PTR(pSession))
     {
-        VBoxGuestCloseSession(&g_DevExt, pSession);
+        VGDrvCommonCloseSession(&g_DevExt, pSession);
         ASMAtomicDecU32(&cUsers);
     }
     else
-        Log(("VBoxGuestHaikuFree: si_drv1=%p!\n", pSession));
+        Log(("vgdrvHaikuFree: si_drv1=%p!\n", pSession));
     return B_OK;
 }
 
@@ -189,12 +181,11 @@ static status_t VBoxGuestHaikuFree(void *cookie)
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t len)
+static status_t vgdrvHaikuIOCtl(void *cookie, uint32 op, void *data, size_t len)
 {
     PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)cookie;
-    Log((DRIVER_NAME ":VBoxGuestHaikuIOCtl cookie=%p op=0x%08x data=%p len=%lu)\n", cookie, op, data, len));
-
-    int rc = B_OK;
+    int rc;
+    Log(("vgdrvHaikuIOCtl: cookie=%p op=0x%08x data=%p len=%lu)\n", cookie, op, data, len));
 
     /*
      * Validate the input.
@@ -208,7 +199,7 @@ static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t 
 #if 0
     if (IOCPARM_LEN(ulCmd) != sizeof(VBGLBIGREQ))
     {
-        Log((DRIVER_NAME ": VBoxGuestHaikuIOCtl: bad request %lu size=%lu expected=%d\n", ulCmd, IOCPARM_LEN(ulCmd),
+        Log((DRIVER_NAME ": vgdrvHaikuIOCtl: bad request %lu size=%lu expected=%d\n", ulCmd, IOCPARM_LEN(ulCmd),
                                                                                         sizeof(VBGLBIGREQ)));
         return ENOTTY;
     }
@@ -216,7 +207,7 @@ static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t 
 
     if (RT_UNLIKELY(len > _1M * 16))
     {
-        dprintf(DRIVER_NAME ": VBoxGuestHaikuIOCtl: bad size %#x; pArg=%p Cmd=%lu.\n", (unsigned)len, data, op);
+        dprintf(DRIVER_NAME ": vgdrvHaikuIOCtl: bad size %#x; pArg=%p Cmd=%lu.\n", (unsigned)len, data, op);
         return EINVAL;
     }
 
@@ -229,7 +220,7 @@ static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t 
         pvBuf = RTMemTmpAlloc(len);
         if (RT_UNLIKELY(!pvBuf))
         {
-            LogRel((DRIVER_NAME ":VBoxGuestHaikuIOCtl: RTMemTmpAlloc failed to alloc %d bytes.\n", len));
+            LogRel((DRIVER_NAME ":vgdrvHaikuIOCtl: RTMemTmpAlloc failed to alloc %d bytes.\n", len));
             return ENOMEM;
         }
 
@@ -238,29 +229,29 @@ static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t 
         if (RT_UNLIKELY(rc < 0))
         {
             RTMemTmpFree(pvBuf);
-            LogRel((DRIVER_NAME ":VBoxGuestHaikuIOCtl: user_memcpy failed; pvBuf=%p data=%p op=%d. rc=%d\n", pvBuf, data, op, rc));
+            LogRel((DRIVER_NAME ":vgdrvHaikuIOCtl: user_memcpy failed; pvBuf=%p data=%p op=%d. rc=%d\n", pvBuf, data, op, rc));
             return EFAULT;
         }
         if (RT_UNLIKELY(!VALID_PTR(pvBuf)))
         {
             RTMemTmpFree(pvBuf);
-            LogRel((DRIVER_NAME ":VBoxGuestHaikuIOCtl: pvBuf invalid pointer %p\n", pvBuf));
+            LogRel((DRIVER_NAME ":vgdrvHaikuIOCtl: pvBuf invalid pointer %p\n", pvBuf));
             return EINVAL;
         }
     }
-    Log((DRIVER_NAME ":VBoxGuestHaikuIOCtl: pSession=%p pid=%d.\n", pSession,(int)RTProcSelf()));
+    Log(("vgdrvHaikuIOCtl: pSession=%p pid=%d.\n", pSession,(int)RTProcSelf()));
 
     /*
      * Process the IOCtl.
      */
     size_t cbDataReturned;
-    rc = VBoxGuestCommonIOCtl(op, &g_DevExt, pSession, pvBuf, len, &cbDataReturned);
+    rc = VGDrvCommonIoCtl(op, &g_DevExt, pSession, pvBuf, len, &cbDataReturned);
     if (RT_SUCCESS(rc))
     {
         rc = 0;
         if (RT_UNLIKELY(cbDataReturned > len))
         {
-            Log((DRIVER_NAME ":VBoxGuestHaikuIOCtl: too much output data %d expected %d\n", cbDataReturned, len));
+            Log(("vgdrvHaikuIOCtl: too much output data %d expected %d\n", cbDataReturned, len));
             cbDataReturned = len;
         }
         if (cbDataReturned > 0)
@@ -268,14 +259,14 @@ static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t 
             rc = user_memcpy(data, pvBuf, cbDataReturned);
             if (RT_UNLIKELY(rc < 0))
             {
-                Log((DRIVER_NAME ":VBoxGuestHaikuIOCtl: user_memcpy failed; pvBuf=%p pArg=%p Cmd=%lu. rc=%d\n", pvBuf, data, op, rc));
+                Log(("vgdrvHaikuIOCtl: user_memcpy failed; pvBuf=%p pArg=%p Cmd=%lu. rc=%d\n", pvBuf, data, op, rc));
                 rc = EFAULT;
             }
         }
     }
     else
     {
-        Log((DRIVER_NAME ":VBoxGuestHaikuIOCtl: VBoxGuestCommonIOCtl failed. rc=%d\n", rc));
+        Log(("vgdrvHaikuIOCtl: VGDrvCommonIoCtl failed. rc=%d\n", rc));
         rc = EFAULT;
     }
     RTMemTmpFree(pvBuf);
@@ -293,7 +284,7 @@ static status_t VBoxGuestHaikuIOCtl(void *cookie, uint32 op, void *data, size_t 
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuSelect(void *cookie, uint8 event, uint32 ref, selectsync *sync)
+static status_t vgdrvHaikuSelect(void *cookie, uint8 event, uint32 ref, selectsync *sync)
 {
     PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)cookie;
     status_t err = B_OK;
@@ -337,7 +328,7 @@ static status_t VBoxGuestHaikuSelect(void *cookie, uint8 event, uint32 ref, sele
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuDeselect(void *cookie, uint8 event, selectsync *sync)
+static status_t vgdrvHaikuDeselect(void *cookie, uint8 event, selectsync *sync)
 {
     PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)cookie;
     status_t err = B_OK;
@@ -369,7 +360,7 @@ static status_t VBoxGuestHaikuDeselect(void *cookie, uint8 event, selectsync *sy
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuWrite(void *cookie, off_t position, const void *data, size_t *numBytes)
+static status_t vgdrvHaikuWrite(void *cookie, off_t position, const void *data, size_t *numBytes)
 {
     *numBytes = 0;
     return B_OK;
@@ -385,7 +376,7 @@ static status_t VBoxGuestHaikuWrite(void *cookie, off_t position, const void *da
  *
  * @return Haiku status code.
  */
-static status_t VBoxGuestHaikuRead(void *cookie, off_t position, void *data, size_t *numBytes)
+static status_t vgdrvHaikuRead(void *cookie, off_t position, void *data, size_t *numBytes)
 {
     PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)cookie;
 
@@ -405,7 +396,6 @@ static status_t VBoxGuestHaikuRead(void *cookie, off_t position, void *data, siz
 }
 
 
-int32 api_version = B_CUR_DRIVER_API_VERSION;
 
 status_t init_hardware()
 {
@@ -417,26 +407,26 @@ status_t init_driver()
     return B_OK;
 }
 
-device_hooks* find_device(const char *name)
+device_hooks *find_device(const char *name)
 {
-    static device_hooks g_VBoxGuestHaikuDeviceHooks =
+    static device_hooks s_vgdrvHaikuDeviceHooks =
     {
-        VBoxGuestHaikuOpen,
-        VBoxGuestHaikuClose,
-        VBoxGuestHaikuFree,
-        VBoxGuestHaikuIOCtl,
-        VBoxGuestHaikuRead,
-        VBoxGuestHaikuWrite,
-        VBoxGuestHaikuSelect,
-        VBoxGuestHaikuDeselect
+        vgdrvHaikuOpen,
+        vgdrvHaikuClose,
+        vgdrvHaikuFree,
+        vgdrvHaikuIOCtl,
+        vgdrvHaikuRead,
+        vgdrvHaikuWrite,
+        vgdrvHaikuSelect,
+        vgdrvHaikuDeselect,
     };
-    return &g_VBoxGuestHaikuDeviceHooks;
+    return &s_vgdrvHaikuDeviceHooks;
 }
 
-const char** publish_devices()
+const char **publish_devices()
 {
-    static const char *devices[] = { DEVICE_NAME, NULL };
-    return devices;
+    static const char *s_papszDevices[] = { DEVICE_NAME, NULL };
+    return s_papszDevices;
 }
 
 void uninit_driver()

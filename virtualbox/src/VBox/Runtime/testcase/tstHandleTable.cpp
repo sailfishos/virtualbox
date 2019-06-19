@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2014 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/handletable.h>
 #include <iprt/stream.h>
 #include <iprt/initterm.h>
@@ -38,21 +39,23 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static unsigned g_cErrors;
 
 static DECLCALLBACK(void) tstHandleTableTest1Delete(RTHANDLETABLE hHandleTable, uint32_t h, void *pvObj, void *pvCtx, void *pvUser)
 {
     uint32_t *pcCalls = (uint32_t *)pvUser;
     (*pcCalls)++;
+    RT_NOREF_PV(hHandleTable); RT_NOREF_PV(h); RT_NOREF_PV(pvCtx); RT_NOREF_PV(pvObj);
 }
 
 static DECLCALLBACK(int) tstHandleTableTest1Retain(RTHANDLETABLE hHandleTable, void *pvObj, void *pvCtx, void *pvUser)
 {
     uint32_t *pcCalls = (uint32_t *)pvUser;
     (*pcCalls)++;
+    RT_NOREF_PV(hHandleTable); RT_NOREF_PV(pvCtx); RT_NOREF_PV(pvObj);
     return VINF_SUCCESS;
 }
 
@@ -487,7 +490,7 @@ int main(int argc, char **argv)
                 return 1;
 
             case 'V':
-                RTPrintf("$Revision: 92648 $\n");
+                RTPrintf("$Revision: 118412 $\n");
                 return 0;
 
             default:

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_VM
 #include <VBox/vmm/tm.h>
 #include <VBox/vmm/dbgf.h>
@@ -43,23 +43,23 @@
 #include <iprt/time.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
-int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu);
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
+int vmR3EmulationThreadWithId(RTTHREAD hThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu);
 
 
 /**
  * The emulation thread main function.
  *
  * @returns Thread exit code.
- * @param   ThreadSelf  The handle to the executing thread.
+ * @param   hThreadSelf The handle to the executing thread.
  * @param   pvArgs      Pointer to the user mode per-VCpu structure (UVMPCU).
  */
-DECLCALLBACK(int) vmR3EmulationThread(RTTHREAD ThreadSelf, void *pvArgs)
+DECLCALLBACK(int) vmR3EmulationThread(RTTHREAD hThreadSelf, void *pvArgs)
 {
     PUVMCPU pUVCpu = (PUVMCPU)pvArgs;
-    return vmR3EmulationThreadWithId(ThreadSelf, pUVCpu, pUVCpu->idCpu);
+    return vmR3EmulationThreadWithId(hThreadSelf, pUVCpu, pUVCpu->idCpu);
 }
 
 
@@ -67,14 +67,15 @@ DECLCALLBACK(int) vmR3EmulationThread(RTTHREAD ThreadSelf, void *pvArgs)
  * The emulation thread main function, with Virtual CPU ID for debugging.
  *
  * @returns Thread exit code.
- * @param   ThreadSelf  The handle to the executing thread.
+ * @param   hThreadSelf The handle to the executing thread.
  * @param   pUVCpu      Pointer to the user mode per-VCpu structure.
  * @param   idCpu       The virtual CPU ID, for backtrace purposes.
  */
-int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu)
+int vmR3EmulationThreadWithId(RTTHREAD hThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu)
 {
     PUVM    pUVM = pUVCpu->pUVM;
     int     rc;
+    RT_NOREF_PV(hThreadSelf);
 
     AssertReleaseMsg(VALID_PTR(pUVM) && pUVM->u32Magic == UVM_MAGIC,
                      ("Invalid arguments to the emulation thread!\n"));
@@ -90,15 +91,18 @@ int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu
      * The request loop.
      */
     rc = VINF_SUCCESS;
-    Log(("vmR3EmulationThread: Emulation thread starting the days work... Thread=%#x pUVM=%p\n", ThreadSelf, pUVM));
+    Log(("vmR3EmulationThread: Emulation thread starting the days work... Thread=%#x pUVM=%p\n", hThreadSelf, pUVM));
     VMSTATE enmBefore = VMSTATE_CREATED; /* (only used for logging atm.) */
+    ASMAtomicIncU32(&pUVM->vm.s.cActiveEmts);
     for (;;)
     {
         /*
-         * During early init there is no pVM, so make a special path
+         * During early init there is no pVM and/or pVCpu, so make a special path
          * for that to keep things clearly separate.
          */
-        if (!pUVM->pVM)
+        PVM    pVM   = pUVM->pVM;
+        PVMCPU pVCpu = pUVCpu->pVCpu;
+        if (!pVCpu || !pVM)
         {
             /*
              * Check for termination first.
@@ -152,7 +156,6 @@ int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu
              * We check for state changes in addition to status codes when
              * servicing requests. (Look after the ifs.)
              */
-            PVM pVM = pUVM->pVM;
             enmBefore = pVM->enmVMState;
             if (pUVM->vm.s.fTerminateEMT)
             {
@@ -181,12 +184,13 @@ int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu
                 rc = VMR3ReqProcessU(pUVM, pUVCpu->idCpu, false /*fPriorityOnly*/);
                 Log(("vmR3EmulationThread: Req (cpu=%u) rc=%Rrc, VM state %s -> %s\n", pUVCpu->idCpu, rc, VMR3GetStateName(enmBefore), VMR3GetStateName(pVM->enmVMState)));
             }
-            else if (VM_FF_IS_SET(pVM, VM_FF_DBGF))
+            else if (   VM_FF_IS_SET(pVM, VM_FF_DBGF)
+                     || VMCPU_FF_IS_SET(pVCpu, VMCPU_FF_DBGF))
             {
                 /*
                  * Service the debugger request.
                  */
-                rc = DBGFR3VMMForcedAction(pVM);
+                rc = DBGFR3VMMForcedAction(pVM, pVCpu);
                 Log(("vmR3EmulationThread: Dbg rc=%Rrc, VM state %s -> %s\n", rc, VMR3GetStateName(enmBefore), VMR3GetStateName(pVM->enmVMState)));
             }
             else if (VM_FF_TEST_AND_CLEAR(pVM, VM_FF_RESET))
@@ -194,7 +198,7 @@ int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu
                 /*
                  * Service a delayed reset request.
                  */
-                rc = VMR3Reset(pVM->pUVM);
+                rc = VBOXSTRICTRC_VAL(VMR3ResetFF(pVM));
                 VM_FF_CLEAR(pVM, VM_FF_RESET);
                 Log(("vmR3EmulationThread: Reset rc=%Rrc, VM state %s -> %s\n", rc, VMR3GetStateName(enmBefore), VMR3GetStateName(pVM->enmVMState)));
             }
@@ -224,18 +228,18 @@ int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu
          * or start the VM, in that case we'll get a change in VM status
          * indicating that we're now running.
          */
-        if (    RT_SUCCESS(rc)
-            &&  pUVM->pVM)
+        if (RT_SUCCESS(rc))
         {
-            PVM     pVM   = pUVM->pVM;
-            PVMCPU  pVCpu = &pVM->aCpus[idCpu];
-            if (    pVM->enmVMState == VMSTATE_RUNNING
-                &&  VMCPUSTATE_IS_STARTED(VMCPU_GET_STATE(pVCpu)))
+            pVM = pUVM->pVM;
+            if (pVM)
             {
-                rc = EMR3ExecuteVM(pVM, pVCpu);
-                Log(("vmR3EmulationThread: EMR3ExecuteVM() -> rc=%Rrc, enmVMState=%d\n", rc, pVM->enmVMState));
-                if (EMGetState(pVCpu) == EMSTATE_GURU_MEDITATION)
-                    vmR3SetGuruMeditation(pVM);
+                pVCpu = &pVM->aCpus[idCpu];
+                if (   pVM->enmVMState == VMSTATE_RUNNING
+                    && VMCPUSTATE_IS_STARTED(VMCPU_GET_STATE(pVCpu)))
+                {
+                    rc = EMR3ExecuteVM(pVM, pVCpu);
+                    Log(("vmR3EmulationThread: EMR3ExecuteVM() -> rc=%Rrc, enmVMState=%d\n", rc, pVM->enmVMState));
+                }
             }
         }
 
@@ -243,20 +247,49 @@ int vmR3EmulationThreadWithId(RTTHREAD ThreadSelf, PUVMCPU pUVCpu, VMCPUID idCpu
 
 
     /*
+     * Decrement the active EMT count if we haven't done it yet in vmR3Destroy.
+     */
+    if (!pUVCpu->vm.s.fBeenThruVmDestroy)
+        ASMAtomicDecU32(&pUVM->vm.s.cActiveEmts);
+
+
+    /*
      * Cleanup and exit.
+     * EMT0 does the VM destruction after all other EMTs have deregistered and terminated.
      */
     Log(("vmR3EmulationThread: Terminating emulation thread! Thread=%#x pUVM=%p rc=%Rrc enmBefore=%d enmVMState=%d\n",
-         ThreadSelf, pUVM, rc, enmBefore, pUVM->pVM ? pUVM->pVM->enmVMState : VMSTATE_TERMINATED));
+         hThreadSelf, pUVM, rc, enmBefore, pUVM->pVM ? pUVM->pVM->enmVMState : VMSTATE_TERMINATED));
+    PVM pVM;
     if (   idCpu == 0
-        && pUVM->pVM)
+        && (pVM = pUVM->pVM) != NULL)
     {
-        PVM pVM = pUVM->pVM;
+        /* Wait for any other EMTs to terminate before we destroy the VM (see vmR3DestroyVM). */
+        for (VMCPUID iCpu = 1; iCpu < pUVM->cCpus; iCpu++)
+        {
+            RTTHREAD hThread;
+            ASMAtomicXchgHandle(&pUVM->aCpus[iCpu].vm.s.ThreadEMT, NIL_RTTHREAD, &hThread);
+            if (hThread != NIL_RTTHREAD)
+            {
+                int rc2 = RTThreadWait(hThread, 5 * RT_MS_1SEC, NULL);
+                AssertLogRelMsgRC(rc2, ("iCpu=%u rc=%Rrc\n", iCpu, rc2));
+                if (RT_FAILURE(rc2))
+                    pUVM->aCpus[iCpu].vm.s.ThreadEMT = hThread;
+            }
+        }
+
+        /* Switch to the terminated state, clearing the VM pointer and finally destroy the VM. */
         vmR3SetTerminated(pVM);
+
         pUVM->pVM = NULL;
 
-        /** @todo SMP: This isn't 100% safe. We should wait for the other
-         *        threads to finish before destroy the VM. */
         int rc2 = SUPR3CallVMMR0Ex(pVM->pVMR0, 0 /*idCpu*/, VMMR0_DO_GVMM_DESTROY_VM, 0, NULL);
+        AssertLogRelRC(rc2);
+    }
+    /* Deregister the EMT with VMMR0. */
+    else if (   idCpu != 0
+             && (pVM = pUVM->pVM) != NULL)
+    {
+        int rc2 = SUPR3CallVMMR0Ex(pVM->pVMR0, idCpu, VMMR0_DO_GVMM_DEREGISTER_VMCPU, 0, NULL);
         AssertLogRelRC(rc2);
     }
 
@@ -404,7 +437,7 @@ static DECLCALLBACK(int) vmR3HaltOldDoHalt(PUVMCPU pUVCpu, const uint32_t fMask,
  * Initialize the configuration of halt method 1 & 2.
  *
  * @return VBox status code. Failure on invalid CFGM data.
- * @param   pVM     Pointer to the VM.
+ * @param   pUVM        The user mode VM structure.
  */
 static int vmR3HaltMethod12ReadConfigU(PUVM pUVM)
 {
@@ -445,7 +478,7 @@ static int vmR3HaltMethod12ReadConfigU(PUVM pUVM)
             pUVM->vm.s.Halt.Method12.u32StartSpinningCfg = u32;
         if (RT_SUCCESS(CFGMR3QueryU32(pCfg, "StopSpinning", &u32)))
             pUVM->vm.s.Halt.Method12.u32StopSpinningCfg = u32;
-        LogRel(("HaltedMethod1 config: %d/%d/%d/%d/%d\n",
+        LogRel(("VMEmt: HaltedMethod1 config: %d/%d/%d/%d/%d\n",
                 pUVM->vm.s.Halt.Method12.u32LagBlockIntervalDivisorCfg,
                 pUVM->vm.s.Halt.Method12.u32MinBlockIntervalCfg,
                 pUVM->vm.s.Halt.Method12.u32MaxBlockIntervalCfg,
@@ -650,7 +683,7 @@ static DECLCALLBACK(int) vmR3HaltGlobal1Init(PUVM pUVM)
         if (RT_SUCCESS(CFGMR3QueryU32(pCfg, "SpinBlockThreshold", &u32)))
             pUVM->vm.s.Halt.Global1.cNsSpinBlockThresholdCfg = u32;
     }
-    LogRel(("HaltedGlobal1 config: cNsSpinBlockThresholdCfg=%u\n",
+    LogRel(("VMEmt: HaltedGlobal1 config: cNsSpinBlockThresholdCfg=%u\n",
             pUVM->vm.s.Halt.Global1.cNsSpinBlockThresholdCfg));
     return VINF_SUCCESS;
 }
@@ -720,7 +753,7 @@ static DECLCALLBACK(int) vmR3HaltGlobal1Halt(PUVMCPU pUVCpu, const uint32_t fMas
                 rc = VINF_SUCCESS;
             else if (RT_FAILURE(rc))
             {
-                rc = vmR3FatalWaitError(pUVCpu, "VMMR0_DO_GVMM_SCHED_HALT->%Rrc\n", rc);
+                rc = vmR3FatalWaitError(pUVCpu, "vmR3HaltGlobal1Halt: VMMR0_DO_GVMM_SCHED_HALT->%Rrc\n", rc);
                 break;
             }
             else
@@ -786,7 +819,7 @@ static DECLCALLBACK(int) vmR3HaltGlobal1Wait(PUVMCPU pUVCpu)
             rc = VINF_SUCCESS;
         else if (RT_FAILURE(rc))
         {
-            rc = vmR3FatalWaitError(pUVCpu, "VMMR0_DO_GVMM_SCHED_HALT->%Rrc\n", rc);
+            rc = vmR3FatalWaitError(pUVCpu, "vmR3HaltGlobal1Wait: VMMR0_DO_GVMM_SCHED_HALT->%Rrc\n", rc);
             break;
         }
     }
@@ -837,7 +870,7 @@ static DECLCALLBACK(void) vmR3HaltGlobal1NotifyCpuFF(PUVMCPU pUVCpu, uint32_t fF
  * Bootstrap VMR3Wait() worker.
  *
  * @returns VBox status code.
- * @param   pUVMCPU            Pointer to the user mode VMCPU structure.
+ * @param   pUVCpu      Pointer to the user mode VMCPU structure.
  */
 static DECLCALLBACK(int) vmR3BootstrapWait(PUVMCPU pUVCpu)
 {
@@ -905,7 +938,7 @@ static DECLCALLBACK(void) vmR3BootstrapNotifyCpuFF(PUVMCPU pUVCpu, uint32_t fFla
  * Default VMR3Wait() worker.
  *
  * @returns VBox status code.
- * @param   pUVMCPU            Pointer to the user mode VMCPU structure.
+ * @param   pUVCpu          Pointer to the user mode VMCPU structure.
  */
 static DECLCALLBACK(int) vmR3DefaultWait(PUVMCPU pUVCpu)
 {
@@ -960,6 +993,8 @@ static DECLCALLBACK(void) vmR3DefaultNotifyCpuFF(PUVMCPU pUVCpu, uint32_t fFlags
              && pUVCpu->pVCpu
              && pUVCpu->pVCpu->enmState == VMCPUSTATE_STARTED_EXEC_REM)
         REMR3NotifyFF(pUVCpu->pVM);
+#else
+    RT_NOREF(fFlags);
 #endif
 }
 
@@ -1041,8 +1076,8 @@ VMMR3_INT_DECL(void) VMR3NotifyCpuFFU(PUVMCPU pUVCpu, uint32_t fFlags)
  *
  * @returns VINF_SUCCESS unless a fatal error occurred. In the latter
  *          case an appropriate status code is returned.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   fIgnoreInterrupts   If set the VM_FF_INTERRUPT flags is ignored.
  * @thread  The emulation thread.
  * @remarks Made visible for implementing vmsvga sync register.
@@ -1057,7 +1092,7 @@ VMMR3_INT_DECL(int) VMR3WaitHalted(PVM pVM, PVMCPU pVCpu, bool fIgnoreInterrupts
      */
     const uint32_t fMask = !fIgnoreInterrupts
         ? VMCPU_FF_EXTERNAL_HALTED_MASK
-        : VMCPU_FF_EXTERNAL_HALTED_MASK & ~(VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC);
+        : VMCPU_FF_EXTERNAL_HALTED_MASK & ~(VMCPU_FF_UPDATE_APIC | VMCPU_FF_INTERRUPT_APIC | VMCPU_FF_INTERRUPT_PIC);
     if (    VM_FF_IS_PENDING(pVM, VM_FF_EXTERNAL_HALTED_MASK)
         ||  VMCPU_FF_IS_PENDING(pVCpu, fMask))
     {
@@ -1193,8 +1228,8 @@ VMMR3_INT_DECL(void) VMR3AsyncPdmNotificationWakeupU(PUVM pUVM)
  * Rendezvous callback that will be called once.
  *
  * @returns VBox strict status code.
- * @param   pVM                 Pointer to the VM.
- * @param   pVCpu               Pointer to the VMCPU of the calling EMT.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure of the calling EMT.
  * @param   pvUser              The new g_aHaltMethods index.
  */
 static DECLCALLBACK(VBOXSTRICTRC) vmR3SetHaltMethodCallback(PVM pVM, PVMCPU pVCpu, void *pvUser)
@@ -1279,7 +1314,7 @@ int vmR3SetHaltMethodU(PUVM pUVM, VMHALTMETHOD enmHaltMethod)
             //enmHaltMethod = VMHALTMETHOD_1;
             //enmHaltMethod = VMHALTMETHOD_OLD;
     }
-    LogRel(("VM: Halt method %s (%d)\n", vmR3GetHaltMethodName(enmHaltMethod), enmHaltMethod));
+    LogRel(("VMEmt: Halt method %s (%d)\n", vmR3GetHaltMethodName(enmHaltMethod), enmHaltMethod));
 
     /*
      * Find the descriptor.
@@ -1307,7 +1342,7 @@ int vmR3SetHaltMethodU(PUVM pUVM, VMHALTMETHOD enmHaltMethod)
  * of the actual EFLAGS.IF state.
  *
  * @returns VBox error status (never informational statuses).
- * @param   pVM                 The VM handle.
+ * @param   pVM                 The cross context VM structure.
  * @param   idCpu               The id of the calling EMT.
  */
 VMMR3DECL(int) VMR3WaitForDeviceReady(PVM pVM, VMCPUID idCpu)
@@ -1334,7 +1369,7 @@ VMMR3DECL(int) VMR3WaitForDeviceReady(PVM pVM, VMCPUID idCpu)
  * Wakes up a CPU that has called VMR3WaitForDeviceReady.
  *
  * @returns VBox error status (never informational statuses).
- * @param   pVM                 The VM handle.
+ * @param   pVM                 The cross context VM structure.
  * @param   idCpu               The id of the calling EMT.
  */
 VMMR3DECL(int) VMR3NotifyCpuDeviceReady(PVM pVM, VMCPUID idCpu)
@@ -1351,5 +1386,21 @@ VMMR3DECL(int) VMR3NotifyCpuDeviceReady(PVM pVM, VMCPUID idCpu)
      */
     VMR3NotifyCpuFFU(pVCpu->pUVCpu, VMNOTIFYFF_FLAGS_DONE_REM);
     return VINF_SUCCESS;
+}
+
+
+/**
+ * Returns the number of active EMTs.
+ *
+ * This is used by the rendezvous code during VM destruction to avoid waiting
+ * for EMTs that aren't around any more.
+ *
+ * @returns Number of active EMTs.  0 if invalid parameter.
+ * @param   pUVM                The user mode VM structure.
+ */
+VMMR3_INT_DECL(uint32_t) VMR3GetActiveEmts(PUVM pUVM)
+{
+    UVM_ASSERT_VALID_EXT_RETURN(pUVM, 0);
+    return pUVM->vm.s.cActiveEmts;
 }
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013-2014 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -87,6 +87,7 @@ portfwd_rule_add_del(struct fwspec *fwspec, int add)
 
     msg = (struct portfwd_msg *)malloc(sizeof(*msg));
     if (msg == NULL) {
+        DPRINTF0(("%s: failed to allocate message\n", __func__));
         return -1;
     }
 
@@ -188,11 +189,11 @@ fwspec_set(struct fwspec *fwspec, int sdom, int stype,
 
     if (sdom == PF_INET) {
         fwspec->src.sin.sin_port = htons(src_port);
-        fwspec->dst.sin.sin_port = htons(dst_port); 
+        fwspec->dst.sin.sin_port = htons(dst_port);
     }
     else { /* PF_INET6 */
         fwspec->src.sin6.sin6_port = htons(src_port);
-        fwspec->dst.sin6.sin6_port = htons(dst_port); 
+        fwspec->dst.sin6.sin6_port = htons(dst_port);
     }
 
     return 0;

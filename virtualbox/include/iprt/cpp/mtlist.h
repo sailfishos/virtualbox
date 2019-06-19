@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2011-2013 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -100,7 +100,7 @@ public:
      *
      * This preallocates @a cCapacity elements within the list.
      *
-     * @param   cCapacitiy   The initial capacity the list has.
+     * @param   cCapacity    The initial capacity the list has.
      * @throws  std::bad_alloc
      */
     RTCMTList(size_t cCapacity = BASE::kDefaultCapacity)
@@ -128,7 +128,7 @@ public:
      *
      * This preallocates @a cCapacity elements within the list.
      *
-     * @param   cCapacitiy   The initial capacity the list has.
+     * @param   cCapacity    The initial capacity the list has.
      * @throws  std::bad_alloc
      */
     RTCMTList(size_t cCapacity = BASE::kDefaultCapacity)
@@ -156,7 +156,7 @@ public:
      *
      * This preallocates @a cCapacity elements within the list.
      *
-     * @param   cCapacitiy   The initial capacity the list has.
+     * @param   cCapacity    The initial capacity the list has.
      * @throws  std::bad_alloc
      */
     RTCMTList(size_t cCapacity = BASE::kDefaultCapacity)

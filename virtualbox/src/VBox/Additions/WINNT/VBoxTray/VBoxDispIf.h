@@ -1,9 +1,10 @@
+/* $Id: VBoxDispIf.h $ */
 /** @file
  * VBoxTray - Display Settings Interface abstraction for XPDM & WDDM
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,12 +14,13 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
+
 #include <iprt/cdefs.h>
 
 #ifdef VBOX_WITH_WDDM
 # define D3DKMDT_SPECIAL_MULTIPLATFORM_TOOL
 # include <d3dkmthk.h>
-# include "../Graphics/Video/disp/wddm/VBoxDispKmt.h"
+# include <VBoxDispKmt.h>
 #endif
 
 #include <VBoxDisplay.h>
@@ -49,16 +51,15 @@ typedef struct VBOXDISPIF
     {
         struct
         {
-            LONG (WINAPI * pfnChangeDisplaySettingsEx)(LPCSTR lpszDeviceName, LPDEVMODE lpDevMode, HWND hwnd, DWORD dwflags, LPVOID lParam);
+            LONG (WINAPI *pfnChangeDisplaySettingsEx)(LPCSTR lpszDeviceName, LPDEVMODE lpDevMode, HWND hwnd, DWORD dwflags, LPVOID lParam);
         } xpdm;
 #ifdef VBOX_WITH_WDDM
         struct
         {
             /* ChangeDisplaySettingsEx does not exist in NT. ResizeDisplayDevice uses the function. */
-            LONG (WINAPI * pfnChangeDisplaySettingsEx)(LPCTSTR lpszDeviceName, LPDEVMODE lpDevMode, HWND hwnd, DWORD dwflags, LPVOID lParam);
-
+            LONG (WINAPI *pfnChangeDisplaySettingsEx)(LPCTSTR lpszDeviceName, LPDEVMODE lpDevMode, HWND hwnd, DWORD dwflags, LPVOID lParam);
             /* EnumDisplayDevices does not exist in NT. isVBoxDisplayDriverActive et al. are using these functions. */
-            BOOL (WINAPI * pfnEnumDisplayDevices)(IN LPCSTR lpDevice, IN DWORD iDevNum, OUT PDISPLAY_DEVICEA lpDisplayDevice, IN DWORD dwFlags);
+            BOOL (WINAPI *pfnEnumDisplayDevices)(IN LPCSTR lpDevice, IN DWORD iDevNum, OUT PDISPLAY_DEVICEA lpDisplayDevice, IN DWORD dwFlags);
 
             VBOXDISPKMT_CALLBACKS KmtCallbacks;
         } wddm;
@@ -78,9 +79,7 @@ DWORD VBoxDispIfEscape(PCVBOXDISPIF const pIf, PVBOXDISPIFESCAPE pEscape, int cb
 DWORD VBoxDispIfEscapeInOut(PCVBOXDISPIF const pIf, PVBOXDISPIFESCAPE pEscape, int cbData);
 DWORD VBoxDispIfResizeModes(PCVBOXDISPIF const pIf, UINT iChangedMode, BOOL fEnable, BOOL fExtDispSup, DISPLAY_DEVICE *paDisplayDevices, DEVMODE *paDeviceModes, UINT cDevModes);
 DWORD VBoxDispIfCancelPendingResize(PCVBOXDISPIF const pIf);
-
 DWORD VBoxDispIfResizeStarted(PCVBOXDISPIF const pIf);
-
 
 typedef struct VBOXDISPIF_SEAMLESS
 {
@@ -106,6 +105,7 @@ DECLINLINE(bool) VBoxDispIfSeamlesIsValid(VBOXDISPIF_SEAMLESS *pSeamless)
     return !!pSeamless->pIf;
 }
 
-DWORD VBoxDispIfSeamlesCreate(PCVBOXDISPIF const pIf, VBOXDISPIF_SEAMLESS *pSeamless, HANDLE hEvent);
-DWORD VBoxDispIfSeamlesTerm(VBOXDISPIF_SEAMLESS *pSeamless);
-DWORD VBoxDispIfSeamlesSubmit(VBOXDISPIF_SEAMLESS *pSeamless, VBOXDISPIFESCAPE *pData, int cbData);
+DWORD VBoxDispIfSeamlessCreate(PCVBOXDISPIF const pIf, VBOXDISPIF_SEAMLESS *pSeamless, HANDLE hEvent);
+DWORD VBoxDispIfSeamlessTerm(VBOXDISPIF_SEAMLESS *pSeamless);
+DWORD VBoxDispIfSeamlessSubmit(VBOXDISPIF_SEAMLESS *pSeamless, VBOXDISPIFESCAPE *pData, int cbData);
+

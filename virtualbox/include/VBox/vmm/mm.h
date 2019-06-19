@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -35,6 +35,7 @@
 RT_C_DECLS_BEGIN
 
 /** @defgroup grp_mm       The Memory Manager API
+ * @ingroup grp_vmm
  * @{
  */
 
@@ -73,8 +74,11 @@ typedef enum MMTAG
     MM_TAG_DBGF_STACK,
     MM_TAG_DBGF_SYMBOL,
     MM_TAG_DBGF_SYMBOL_DUP,
+    MM_TAG_DBGF_TYPE,
 
     MM_TAG_EM,
+
+    MM_TAG_IEM,
 
     MM_TAG_IOM,
     MM_TAG_IOM_STATS,
@@ -111,6 +115,7 @@ typedef enum MMTAG
     MM_TAG_PGM,
     MM_TAG_PGM_CHUNK_MAPPING,
     MM_TAG_PGM_HANDLERS,
+    MM_TAG_PGM_HANDLER_TYPES,
     MM_TAG_PGM_MAPPINGS,
     MM_TAG_PGM_PHYS,
     MM_TAG_PGM_POOL,
@@ -141,7 +146,6 @@ typedef enum MMTAG
 
 
 /** @defgroup grp_mm_hyper  Hypervisor Memory Management
- * @ingroup grp_mm
  * @{ */
 
 VMMDECL(RTR3PTR)    MMHyperR0ToR3(PVM pVM, RTR0PTR R0Ptr);
@@ -216,6 +220,8 @@ VMMDECL(void)       MMHyperHeapDump(PVM pVM);
 #endif
 VMMDECL(size_t)     MMHyperHeapGetFreeSize(PVM pVM);
 VMMDECL(size_t)     MMHyperHeapGetSize(PVM pVM);
+VMMDECL(void *)     MMHyperHeapOffsetToPtr(PVM pVM, uint32_t offHeap);
+VMMDECL(uint32_t)   MMHyperHeapPtrToOffset(PVM pVM, void *pv);
 VMMDECL(RTGCPTR)    MMHyperGetArea(PVM pVM, size_t *pcb);
 VMMDECL(bool)       MMHyperIsInsideArea(PVM pVM, RTGCPTR GCPtr);
 
@@ -240,9 +246,8 @@ VMMDECL(int)        MMPagePhys2PageTry(PVM pVM, RTHCPHYS HCPhysPage, void **ppvP
 /** @} */
 
 
-#ifdef IN_RING3
+#if defined(IN_RING3) || defined(DOXYGEN_RUNNING)
 /** @defgroup grp_mm_r3    The MM Host Context Ring-3 API
- * @ingroup grp_mm
  * @{
  */
 
@@ -252,6 +257,7 @@ VMMR3DECL(int)      MMR3InitPaging(PVM pVM);
 VMMR3DECL(int)      MMR3HyperInitFinalize(PVM pVM);
 VMMR3DECL(int)      MMR3Term(PVM pVM);
 VMMR3DECL(void)     MMR3TermUVM(PUVM pUVM);
+VMMR3_INT_DECL(bool) MMR3IsInitialized(PVM pVM);
 VMMR3DECL(int)      MMR3ReserveHandyPages(PVM pVM, uint32_t cHandyPages);
 VMMR3DECL(int)      MMR3IncreaseBaseReservation(PVM pVM, uint64_t cAddBasePages);
 VMMR3DECL(int)      MMR3AdjustFixedReservation(PVM pVM, int32_t cDeltaFixedPages, const char *pszDesc);
@@ -260,10 +266,10 @@ VMMR3DECL(int)      MMR3UpdateShadowReservation(PVM pVM, uint32_t cShadowPages);
 VMMR3DECL(int)      MMR3HCPhys2HCVirt(PVM pVM, RTHCPHYS HCPhys, void **ppv);
 
 /** @defgroup grp_mm_r3_hyper  Hypervisor Memory Manager (HC R3 Portion)
- * @ingroup grp_mm_r3
  * @{ */
 VMMR3DECL(int)      MMR3HyperAllocOnceNoRel(PVM pVM, size_t cb, uint32_t uAlignment, MMTAG enmTag, void **ppv);
 VMMR3DECL(int)      MMR3HyperAllocOnceNoRelEx(PVM pVM, size_t cb, uint32_t uAlignment, MMTAG enmTag, uint32_t fFlags, void **ppv);
+VMMR3DECL(int)      MMR3HyperRealloc(PVM pVM, void *pv, size_t cb, unsigned uAlignmentNew, MMTAG enmTagNew, size_t cbNew, void **ppv);
 /** @name  MMR3HyperAllocOnceNoRelEx flags
  * @{ */
 /** Must have kernel mapping.
@@ -273,7 +279,7 @@ VMMR3DECL(int)      MMR3HyperAllocOnceNoRelEx(PVM pVM, size_t cb, uint32_t uAlig
 VMMR3DECL(int)      MMR3HyperSetGuard(PVM pVM, void *pvStart, size_t cb, bool fSet);
 VMMR3DECL(int)      MMR3HyperMapHCPhys(PVM pVM, void *pvR3, RTR0PTR pvR0, RTHCPHYS HCPhys, size_t cb, const char *pszDesc, PRTGCPTR pGCPtr);
 VMMR3DECL(int)      MMR3HyperMapGCPhys(PVM pVM, RTGCPHYS GCPhys, size_t cb, const char *pszDesc, PRTGCPTR pGCPtr);
-VMMR3DECL(int)      MMR3HyperMapMMIO2(PVM pVM, PPDMDEVINS pDevIns, uint32_t iRegion, RTGCPHYS off, RTGCPHYS cb, const char *pszDesc, PRTRCPTR pRCPtr);
+VMMR3DECL(int)      MMR3HyperMapMMIO2(PVM pVM, PPDMDEVINS pDevIns, uint32_t iSubDev, uint32_t iRegion, RTGCPHYS off, RTGCPHYS cb, const char *pszDesc, PRTRCPTR pRCPtr);
 VMMR3DECL(int)      MMR3HyperMapPages(PVM pVM, void *pvR3, RTR0PTR pvR0, size_t cPages, PCSUPPAGE paPages, const char *pszDesc, PRTGCPTR pGCPtr);
 VMMR3DECL(int)      MMR3HyperReserve(PVM pVM, unsigned cb, const char *pszDesc, PRTGCPTR pGCPtr);
 VMMR3DECL(RTHCPHYS) MMR3HyperHCVirt2HCPhys(PVM pVM, void *pvHC);
@@ -287,14 +293,15 @@ VMMR3DECL(int)      MMR3HyperReadGCVirt(PVM pVM, void *pvDst, RTGCPTR GCPtr, siz
 
 /** @defgroup grp_mm_phys   Guest Physical Memory Manager
  * @todo retire this group, elimintating or moving MMR3PhysGetRamSize to PGMPhys.
- * @ingroup grp_mm_r3
  * @{ */
 VMMR3DECL(uint64_t) MMR3PhysGetRamSize(PVM pVM);
+VMMR3DECL(uint32_t) MMR3PhysGetRamSizeBelow4GB(PVM pVM);
+VMMR3DECL(uint64_t) MMR3PhysGetRamSizeAbove4GB(PVM pVM);
+VMMR3DECL(uint32_t) MMR3PhysGet4GBRamHoleSize(PVM pVM);
 /** @} */
 
 
 /** @defgroup grp_mm_page   Physical Page Pool
- * @ingroup grp_mm_r3
  * @{ */
 VMMR3DECL(void *)   MMR3PageAlloc(PVM pVM);
 VMMR3DECL(RTHCPHYS) MMR3PageAllocPhys(PVM pVM);
@@ -308,7 +315,6 @@ VMMR3DECL(RTHCPHYS) MMR3PageDummyHCPhys(PVM pVM);
 
 
 /** @defgroup grp_mm_heap   Heap Manager
- * @ingroup grp_mm_r3
  * @{ */
 VMMR3DECL(void *)   MMR3HeapAlloc(PVM pVM, MMTAG enmTag, size_t cbSize);
 VMMR3DECL(void *)   MMR3HeapAllocU(PUVM pUVM, MMTAG enmTag, size_t cbSize);
@@ -321,15 +327,14 @@ VMMR3DECL(int)      MMR3HeapAllocZExU(PUVM pUVM, MMTAG enmTag, size_t cbSize, vo
 VMMR3DECL(void *)   MMR3HeapRealloc(void *pv, size_t cbNewSize);
 VMMR3DECL(char *)   MMR3HeapStrDup(PVM pVM, MMTAG enmTag, const char *psz);
 VMMR3DECL(char *)   MMR3HeapStrDupU(PUVM pUVM, MMTAG enmTag, const char *psz);
-VMMR3DECL(char *)   MMR3HeapAPrintf(PVM pVM, MMTAG enmTag, const char *pszFormat, ...);
-VMMR3DECL(char *)   MMR3HeapAPrintfU(PUVM pUVM, MMTAG enmTag, const char *pszFormat, ...);
-VMMR3DECL(char *)   MMR3HeapAPrintfV(PVM pVM, MMTAG enmTag, const char *pszFormat, va_list va);
-VMMR3DECL(char *)   MMR3HeapAPrintfVU(PUVM pUVM, MMTAG enmTag, const char *pszFormat, va_list va);
+VMMR3DECL(char *)   MMR3HeapAPrintf(PVM pVM, MMTAG enmTag, const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(3, 4);
+VMMR3DECL(char *)   MMR3HeapAPrintfU(PUVM pUVM, MMTAG enmTag, const char *pszFormat, ...) RT_IPRT_FORMAT_ATTR(3, 4);
+VMMR3DECL(char *)   MMR3HeapAPrintfV(PVM pVM, MMTAG enmTag, const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(3, 0);
+VMMR3DECL(char *)   MMR3HeapAPrintfVU(PUVM pUVM, MMTAG enmTag, const char *pszFormat, va_list va) RT_IPRT_FORMAT_ATTR(3, 0);
 VMMR3DECL(void)     MMR3HeapFree(void *pv);
 /** @} */
 
-/** @defgroup grp_mm_heap   User-kernel Heap Manager.
- * @ingroup grp_mm_r3
+/** @defgroup grp_mm_ukheap   User-kernel Heap Manager.
  *
  * The memory is safely accessible from kernel context as well as user land.
  *
@@ -342,13 +347,12 @@ VMMR3DECL(void)     MMR3UkHeapFree(PVM pVM, void *pv, MMTAG enmTag);
 /** @} */
 
 /** @} */
-#endif /* IN_RING3 */
+#endif /* IN_RING3 || DOXYGEN_RUNNING */
 
 
 
-#ifdef IN_RC
-/** @defgroup grp_mm_gc    The MM Guest Context API
- * @ingroup grp_mm
+#if defined(IN_RC) || defined(DOXYGEN_RUNNING)
+/** @defgroup grp_mm_rc    The MM Raw-mode Context API
  * @{
  */
 
@@ -363,7 +367,7 @@ VMMRCDECL(int)      MMGCRamRead(PVM pVM, void *pDst, void *pSrc, size_t cb);
 VMMRCDECL(int)      MMGCRamWrite(PVM pVM, void *pDst, void *pSrc, size_t cb);
 
 /** @} */
-#endif /* IN_RC */
+#endif /* IN_RC || DOXYGEN_RUNNING */
 
 /** @} */
 RT_C_DECLS_END

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,44 +15,58 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QDesktopWidget>
+# ifndef VBOX_WS_MAC
+#  include <QTimer>
+# endif /* !VBOX_WS_MAC */
 
 /* GUI includes: */
-#include "VBoxGlobal.h"
-#include "UIMessageCenter.h"
-#include "UIPopupCenter.h"
-#include "UISession.h"
-#include "UIActionPoolRuntime.h"
-#include "UIMachineLogicSeamless.h"
-#include "UIMachineWindowSeamless.h"
-#include "UIMultiScreenLayout.h"
-#ifdef Q_WS_MAC
-# include "VBoxUtils.h"
-#endif /* Q_WS_MAC */
+# include "VBoxGlobal.h"
+# include "UIMessageCenter.h"
+# include "UIPopupCenter.h"
+# include "UISession.h"
+# include "UIActionPoolRuntime.h"
+# include "UIMachineLogicSeamless.h"
+# include "UIMachineWindowSeamless.h"
+# include "UIMultiScreenLayout.h"
+# include "UIShortcutPool.h"
+# ifndef VBOX_WS_MAC
+#  include "QIMenu.h"
+# else  /* VBOX_WS_MAC */
+#  include "VBoxUtils.h"
+# endif /* VBOX_WS_MAC */
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIMachineLogicSeamless::UIMachineLogicSeamless(QObject *pParent, UISession *pSession)
     : UIMachineLogic(pParent, pSession, UIVisualStateType_Seamless)
+#ifndef VBOX_WS_MAC
+    , m_pPopupMenu(0)
+#endif /* !VBOX_WS_MAC */
 {
     /* Create multiscreen layout: */
     m_pScreenLayout = new UIMultiScreenLayout(this);
+    actionPool()->toRuntime()->setMultiScreenLayout(m_pScreenLayout);
 }
 
 UIMachineLogicSeamless::~UIMachineLogicSeamless()
 {
     /* Delete multiscreen layout: */
+    actionPool()->toRuntime()->unsetMultiScreenLayout(m_pScreenLayout);
     delete m_pScreenLayout;
 }
 
 bool UIMachineLogicSeamless::checkAvailability()
 {
-    /* Temporary get a machine object: */
-    const CMachine &machine = uisession()->session().GetMachine();
-
     /* Check if there is enough physical memory to enter seamless: */
     if (uisession()->isGuestSupportsSeamless())
     {
-        quint64 availBits = machine.GetVRAMSize() /* VRAM */ * _1M /* MiB to bytes */ * 8 /* to bits */;
+        quint64 availBits = machine().GetVRAMSize() /* VRAM */ * _1M /* MiB to bytes */ * 8 /* to bits */;
         quint64 usedBits = m_pScreenLayout->memoryRequirements();
         if (availBits < usedBits)
         {
@@ -62,15 +76,12 @@ bool UIMachineLogicSeamless::checkAvailability()
         }
     }
 
-    /* Take the toggle hot key from the menu item.
-     * Since VBoxGlobal::extractKeyFromActionText gets exactly
-     * the linked key without the 'Host+' part we are adding it here. */
-    QString hotKey = QString("Host+%1")
-        .arg(VBoxGlobal::extractKeyFromActionText(gActionPool->action(UIActionIndexRuntime_Toggle_Seamless)->text()));
-    Assert(!hotKey.isEmpty());
-
     /* Show the info message. */
-    if (!msgCenter().confirmGoingSeamless(hotKey))
+    const UIShortcut &shortcut =
+            gShortcutPool->shortcut(actionPool()->shortcutsExtraDataID(),
+                                    actionPool()->action(UIActionIndexRT_M_View_T_Seamless)->shortcutExtraDataID());
+    const QString strHotKey = QString("Host+%1").arg(shortcut.toString());
+    if (!msgCenter().confirmGoingSeamless(strHotKey))
         return false;
 
     return true;
@@ -78,7 +89,7 @@ bool UIMachineLogicSeamless::checkAvailability()
 
 void UIMachineLogicSeamless::adjustMachineWindowsGeometry()
 {
-    LogRel(("UIMachineLogicSeamless::adjustMachineWindowsGeometry\n"));
+    LogRel(("GUI: UIMachineLogicSeamless::adjustMachineWindowsGeometry\n"));
 
     /* Rebuild multi-screen layout: */
     m_pScreenLayout->rebuild();
@@ -112,17 +123,21 @@ void UIMachineLogicSeamless::notifyAbout3DOverlayVisibilityChange(bool)
 
 void UIMachineLogicSeamless::sltCheckForRequestedVisualStateType()
 {
-    LogRel(("UIMachineLogicSeamless::sltCheckForRequestedVisualStateType: Requested-state=%d, Machine-state=%d\n",
+    LogRel(("GUI: UIMachineLogicSeamless::sltCheckForRequestedVisualStateType: Requested-state=%d, Machine-state=%d\n",
             uisession()->requestedVisualState(), uisession()->machineState()));
 
     /* Do not try to change visual-state type if machine was not started yet: */
     if (!uisession()->isRunning() && !uisession()->isPaused())
         return;
 
+    /* Do not try to change visual-state type in 'manual override' mode: */
+    if (isManualOverrideMode())
+        return;
+
     /* If 'seamless' visual-state type is no more supported: */
     if (!uisession()->isGuestSupportsSeamless())
     {
-        LogRel(("UIMachineLogicSeamless::sltCheckForRequestedVisualStateType: "
+        LogRel(("GUI: UIMachineLogicSeamless::sltCheckForRequestedVisualStateType: "
                 "Leaving 'seamless' as it is no more supported...\n"));
         uisession()->setRequestedVisualState(UIVisualStateType_Seamless);
         uisession()->changeVisualState(UIVisualStateType_Normal);
@@ -137,7 +152,7 @@ void UIMachineLogicSeamless::sltMachineStateChanged()
     /* If machine-state changed from 'paused' to 'running': */
     if (uisession()->isRunning() && uisession()->wasPaused())
     {
-        LogRel(("UIMachineLogicSeamless::sltMachineStateChanged:"
+        LogRel(("GUI: UIMachineLogicSeamless::sltMachineStateChanged:"
                 "Machine-state changed from 'paused' to 'running': "
                 "Adjust machine-window geometry...\n"));
 
@@ -148,9 +163,21 @@ void UIMachineLogicSeamless::sltMachineStateChanged()
     }
 }
 
+#ifndef VBOX_WS_MAC
+void UIMachineLogicSeamless::sltInvokePopupMenu()
+{
+    /* Popup main-menu if present: */
+    if (m_pPopupMenu && !m_pPopupMenu->isEmpty())
+    {
+        m_pPopupMenu->popup(activeMachineWindow()->geometry().center());
+        QTimer::singleShot(0, m_pPopupMenu, SLOT(sltHighlightFirstAction()));
+    }
+}
+#endif /* !VBOX_WS_MAC */
+
 void UIMachineLogicSeamless::sltScreenLayoutChanged()
 {
-    LogRel(("UIMachineLogicSeamless::sltScreenLayoutChanged: Multi-screen layout changed.\n"));
+    LogRel(("GUI: UIMachineLogicSeamless::sltScreenLayoutChanged: Multi-screen layout changed.\n"));
 
     /* Make sure all machine-window(s) have proper geometry: */
     foreach (UIMachineWindow *pMachineWindow, machineWindows())
@@ -159,7 +186,7 @@ void UIMachineLogicSeamless::sltScreenLayoutChanged()
 
 void UIMachineLogicSeamless::sltGuestMonitorChange(KGuestMonitorChangedEventType changeType, ulong uScreenId, QRect screenGeo)
 {
-    LogRel(("UIMachineLogicSeamless: Guest-screen count changed.\n"));
+    LogRel(("GUI: UIMachineLogicSeamless: Guest-screen count changed.\n"));
 
     /* Rebuild multi-screen layout: */
     m_pScreenLayout->rebuild();
@@ -170,7 +197,7 @@ void UIMachineLogicSeamless::sltGuestMonitorChange(KGuestMonitorChangedEventType
 
 void UIMachineLogicSeamless::sltHostScreenCountChange()
 {
-    LogRel(("UIMachineLogicSeamless: Host-screen count changed.\n"));
+    LogRel(("GUI: UIMachineLogicSeamless: Host-screen count changed.\n"));
 
     /* Rebuild multi-screen layout: */
     m_pScreenLayout->rebuild();
@@ -179,26 +206,42 @@ void UIMachineLogicSeamless::sltHostScreenCountChange()
     UIMachineLogic::sltHostScreenCountChange();
 }
 
+void UIMachineLogicSeamless::sltAdditionsStateChanged()
+{
+    /* Call to base-class: */
+    UIMachineLogic::sltAdditionsStateChanged();
+
+    LogRel(("GUI: UIMachineLogicSeamless: Additions-state actual-change event, rebuild multi-screen layout\n"));
+    /* Rebuild multi-screen layout: */
+    m_pScreenLayout->rebuild();
+}
+
 void UIMachineLogicSeamless::prepareActionGroups()
 {
     /* Call to base-class: */
     UIMachineLogic::prepareActionGroups();
 
-    /* Guest auto-resize isn't allowed in seamless: */
-    gActionPool->action(UIActionIndexRuntime_Toggle_GuestAutoresize)->setVisible(false);
-    /* Adjust-window isn't allowed in seamless: */
-    gActionPool->action(UIActionIndexRuntime_Simple_AdjustWindow)->setVisible(false);
-    /* Disable mouse-integration isn't allowed in seamless: */
-    gActionPool->action(UIActionIndexRuntime_Toggle_MouseIntegration)->setVisible(false);
+    /* Restrict 'Adjust Window', 'Guest Autoresize', 'Status Bar' and 'Resize' actions for 'View' menu: */
+    actionPool()->toRuntime()->setRestrictionForMenuView(UIActionRestrictionLevel_Logic,
+                                                         (UIExtraDataMetaDefs::RuntimeMenuViewActionType)
+                                                         (UIExtraDataMetaDefs::RuntimeMenuViewActionType_AdjustWindow |
+                                                          UIExtraDataMetaDefs::RuntimeMenuViewActionType_GuestAutoresize |
+                                                          UIExtraDataMetaDefs::RuntimeMenuViewActionType_MenuBar |
+                                                          UIExtraDataMetaDefs::RuntimeMenuViewActionType_StatusBar |
+                                                          UIExtraDataMetaDefs::RuntimeMenuViewActionType_Resize));
+#ifdef VBOX_WS_MAC
+    /* Restrict 'Window' menu: */
+    actionPool()->toRuntime()->setRestrictionForMenuBar(UIActionRestrictionLevel_Logic,
+                                                        UIExtraDataMetaDefs::MenuType_Window);
+#endif /* VBOX_WS_MAC */
 
     /* Take care of view-action toggle state: */
-    UIAction *pActionSeamless = gActionPool->action(UIActionIndexRuntime_Toggle_Seamless);
+    UIAction *pActionSeamless = actionPool()->action(UIActionIndexRT_M_View_T_Seamless);
     if (!pActionSeamless->isChecked())
     {
         pActionSeamless->blockSignals(true);
         pActionSeamless->setChecked(true);
         pActionSeamless->blockSignals(false);
-        pActionSeamless->update();
     }
 }
 
@@ -207,12 +250,12 @@ void UIMachineLogicSeamless::prepareActionConnections()
     /* Call to base-class: */
     UIMachineLogic::prepareActionConnections();
 
-    /* "View" actions connections: */
-    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Seamless), SIGNAL(triggered(bool)),
+    /* Prepare 'View' actions connections: */
+    connect(actionPool()->action(UIActionIndexRT_M_View_T_Seamless), SIGNAL(triggered(bool)),
             this, SLOT(sltChangeVisualStateToNormal()));
-    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Fullscreen), SIGNAL(triggered(bool)),
+    connect(actionPool()->action(UIActionIndexRT_M_View_T_Fullscreen), SIGNAL(triggered(bool)),
             this, SLOT(sltChangeVisualStateToFullscreen()));
-    connect(gActionPool->action(UIActionIndexRuntime_Toggle_Scale), SIGNAL(triggered(bool)),
+    connect(actionPool()->action(UIActionIndexRT_M_View_T_Scale), SIGNAL(triggered(bool)),
             this, SLOT(sltChangeVisualStateToScale()));
 }
 
@@ -222,36 +265,73 @@ void UIMachineLogicSeamless::prepareMachineWindows()
     if (isMachineWindowsCreated())
         return;
 
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     /* We have to make sure that we are getting the front most process.
      * This is necessary for Qt versions > 4.3.3: */
     darwinSetFrontMostProcess();
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
     /* Update the multi-screen layout: */
     m_pScreenLayout->update();
 
     /* Create machine-window(s): */
-    for (uint cScreenId = 0; cScreenId < session().GetMachine().GetMonitorCount(); ++cScreenId)
+    for (uint cScreenId = 0; cScreenId < machine().GetMonitorCount(); ++cScreenId)
         addMachineWindow(UIMachineWindow::create(this, cScreenId));
 
+    /* Listen for frame-buffer resize: */
+    foreach (UIMachineWindow *pMachineWindow, machineWindows())
+        connect(pMachineWindow, SIGNAL(sigFrameBufferResize()),
+                this, SIGNAL(sigFrameBufferResize()));
+    emit sigFrameBufferResize();
+
     /* Connect multi-screen layout change handler: */
-    connect(m_pScreenLayout, SIGNAL(sigScreenLayoutChanged()),
+    connect(m_pScreenLayout, SIGNAL(sigScreenLayoutChange()),
             this, SLOT(sltScreenLayoutChanged()));
 
     /* Mark machine-window(s) created: */
     setMachineWindowsCreated(true);
+
+#ifdef VBOX_WS_X11
+    switch (vboxGlobal().typeOfWindowManager())
+    {
+        case X11WMType_GNOMEShell:
+        case X11WMType_Mutter:
+        {
+            // WORKAROUND:
+            // Under certain WMs we can loose machine-window activation due to any Qt::Tool
+            // overlay asynchronously shown above it. Qt is not become aware of such event.
+            // We are going to ask to return machine-window activation in let's say 100ms.
+            QTimer::singleShot(100, machineWindows().first(), SLOT(sltActivateWindow()));
+            break;
+        }
+        default:
+            break;
+    }
+#endif /* VBOX_WS_X11 */
 }
 
+#ifndef VBOX_WS_MAC
 void UIMachineLogicSeamless::prepareMenu()
 {
-    /* Call to base-class: */
-    UIMachineLogic::prepareMenu();
-
-    /* Finally update view-menu, if necessary: */
-    if (uisession()->allowedActionsMenuView() & RuntimeMenuViewActionType_Multiscreen)
-        m_pScreenLayout->setViewMenu(gActionPool->action(UIActionIndexRuntime_Menu_View)->menu());
+    /* Prepare popup-menu: */
+    m_pPopupMenu = new QIMenu;
+    AssertPtrReturnVoid(m_pPopupMenu);
+    {
+        /* Prepare popup-menu: */
+        foreach (QMenu *pMenu, actionPool()->menus())
+            m_pPopupMenu->addMenu(pMenu);
+    }
 }
+#endif /* !VBOX_WS_MAC */
+
+#ifndef VBOX_WS_MAC
+void UIMachineLogicSeamless::cleanupMenu()
+{
+    /* Cleanup popup-menu: */
+    delete m_pPopupMenu;
+    m_pPopupMenu = 0;
+}
+#endif /* !VBOX_WS_MAC */
 
 void UIMachineLogicSeamless::cleanupMachineWindows()
 {
@@ -270,11 +350,11 @@ void UIMachineLogicSeamless::cleanupMachineWindows()
 void UIMachineLogicSeamless::cleanupActionConnections()
 {
     /* "View" actions disconnections: */
-    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Seamless), SIGNAL(triggered(bool)),
+    disconnect(actionPool()->action(UIActionIndexRT_M_View_T_Seamless), SIGNAL(triggered(bool)),
                this, SLOT(sltChangeVisualStateToNormal()));
-    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Fullscreen), SIGNAL(triggered(bool)),
+    disconnect(actionPool()->action(UIActionIndexRT_M_View_T_Fullscreen), SIGNAL(triggered(bool)),
                this, SLOT(sltChangeVisualStateToFullscreen()));
-    disconnect(gActionPool->action(UIActionIndexRuntime_Toggle_Scale), SIGNAL(triggered(bool)),
+    disconnect(actionPool()->action(UIActionIndexRT_M_View_T_Scale), SIGNAL(triggered(bool)),
                this, SLOT(sltChangeVisualStateToScale()));
 
     /* Call to base-class: */
@@ -284,21 +364,22 @@ void UIMachineLogicSeamless::cleanupActionConnections()
 void UIMachineLogicSeamless::cleanupActionGroups()
 {
     /* Take care of view-action toggle state: */
-    UIAction *pActionSeamless = gActionPool->action(UIActionIndexRuntime_Toggle_Seamless);
+    UIAction *pActionSeamless = actionPool()->action(UIActionIndexRT_M_View_T_Seamless);
     if (pActionSeamless->isChecked())
     {
         pActionSeamless->blockSignals(true);
         pActionSeamless->setChecked(false);
         pActionSeamless->blockSignals(false);
-        pActionSeamless->update();
     }
 
-    /* Reenable guest-autoresize action: */
-    gActionPool->action(UIActionIndexRuntime_Toggle_GuestAutoresize)->setVisible(true);
-    /* Reenable adjust-window action: */
-    gActionPool->action(UIActionIndexRuntime_Simple_AdjustWindow)->setVisible(true);
-    /* Reenable mouse-integration action: */
-    gActionPool->action(UIActionIndexRuntime_Toggle_MouseIntegration)->setVisible(true);
+    /* Allow 'Adjust Window', 'Guest Autoresize', 'Status Bar' and 'Resize' actions for 'View' menu: */
+    actionPool()->toRuntime()->setRestrictionForMenuView(UIActionRestrictionLevel_Logic,
+                                                         UIExtraDataMetaDefs::RuntimeMenuViewActionType_Invalid);
+#ifdef VBOX_WS_MAC
+    /* Allow 'Window' menu: */
+    actionPool()->toRuntime()->setRestrictionForMenuBar(UIActionRestrictionLevel_Logic,
+                                                        UIExtraDataMetaDefs::MenuType_Invalid);
+#endif /* VBOX_WS_MAC */
 
     /* Call to base-class: */
     UIMachineLogic::cleanupActionGroups();

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/ldr.h>
 #include <iprt/alloc.h>
 #include <iprt/stream.h>
@@ -37,9 +37,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** If set, don't bitch when failing to resolve symbols. */
 static bool     g_fDontBitchOnResolveFailure = false;
 /** Whether it's kernel model code or not.. */
@@ -59,9 +59,11 @@ static uint32_t g_cBits = HC_ARCH_BITS;
  * @param   pValue          Where to store the symbol value (address).
  * @param   pvUser          User argument.
  */
-static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol, unsigned uSymbol, RTUINTPTR *pValue, void *pvUser)
+static DECLCALLBACK(int) testGetImport(RTLDRMOD hLdrMod, const char *pszModule, const char *pszSymbol, unsigned uSymbol,
+                                       RTUINTPTR *pValue, void *pvUser)
 {
     /* check the name format and only permit certain names... later, right?  */
+    RT_NOREF_PV(hLdrMod); RT_NOREF_PV(pszModule); RT_NOREF_PV(pszSymbol); RT_NOREF_PV(uSymbol); RT_NOREF_PV(pvUser);
 
     if (g_cBits == 32)
         *pValue = 0xabcdef0f;
@@ -103,9 +105,6 @@ static int testLdrOne(const char *pszFilename)
         { NULL, NULL, (RTUINTPTR)0xefefef00, "foo" },
         { NULL, NULL, (RTUINTPTR)0x40404040, "bar" },
         { NULL, NULL, (RTUINTPTR)0xefefef00, "foobar" },
-        { NULL, NULL, (RTUINTPTR)0xefefef00, "kLdr-foo" },
-        { NULL, NULL, (RTUINTPTR)0x40404040, "kLdr-bar" },
-        { NULL, NULL, (RTUINTPTR)0xefefef00, "kLdr-foobar" }
     };
     unsigned i;
 
@@ -120,11 +119,7 @@ static int testLdrOne(const char *pszFilename)
         RTPrintf("tstLdr: Loading image at %RTptr\n", aLoads[i].Addr);
 
         /* open it */
-        int rc;
-        if (!strncmp(aLoads[i].pszName, RT_STR_TUPLE("kLdr-")))
-            rc = RTLdrOpenkLdr(pszFilename, 0, RTLDRARCH_WHATEVER, &aLoads[i].hLdrMod);
-        else
-            rc = RTLdrOpen(pszFilename, 0, RTLDRARCH_WHATEVER, &aLoads[i].hLdrMod);
+        int rc = RTLdrOpen(pszFilename, 0, RTLDRARCH_WHATEVER, &aLoads[i].hLdrMod);
         if (RT_FAILURE(rc))
         {
             RTPrintf("tstLdr: Failed to open '%s'/%d, rc=%Rrc. aborting test.\n", pszFilename, i, rc);

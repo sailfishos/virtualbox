@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/initterm.h>
 #include "internal/iprt.h"
 
@@ -42,12 +42,13 @@
 #endif
 
 #include "internal/initterm.h"
+#include "internal/mem.h"
 #include "internal/thread.h"
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Count of current IPRT users.
  * In ring-0 several drivers / kmods / kexts / wossnames may share the
  * same runtime code. So, we need to keep count in order not to terminate
@@ -65,8 +66,10 @@ RTR0DECL(int) RTR0Init(unsigned fReserved)
 {
     int rc;
     uint32_t cNewUsers;
-    Assert(fReserved == 0);
+    Assert(fReserved == 0); RT_NOREF_PV(fReserved);
+#ifndef RT_OS_SOLARIS       /* On Solaris our thread preemption information is only obtained in rtR0InitNative().*/
     RT_ASSERT_PREEMPTIBLE();
+#endif
 
     /*
      * The first user initializes it.
@@ -85,6 +88,9 @@ RTR0DECL(int) RTR0Init(unsigned fReserved)
     rc = rtR0InitNative();
     if (RT_SUCCESS(rc))
     {
+#ifdef RTR0MEM_WITH_EF_APIS
+        rtR0MemEfInit();
+#endif
         rc = rtThreadInit();
         if (RT_SUCCESS(rc))
         {
@@ -103,6 +109,9 @@ RTR0DECL(int) RTR0Init(unsigned fReserved)
 #endif
             rtThreadTerm();
         }
+#ifdef RTR0MEM_WITH_EF_APIS
+        rtR0MemEfTerm();
+#endif
         rtR0TermNative();
     }
     return rc;
@@ -116,6 +125,9 @@ static void rtR0Term(void)
 #ifndef IN_GUEST /* play safe for now */
     rtR0PowerNotificationTerm();
     rtR0MpNotificationTerm();
+#endif
+#ifdef RTR0MEM_WITH_EF_APIS
+    rtR0MemEfTerm();
 #endif
     rtR0TermNative();
 }

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PGM
 #include <VBox/rawpci.h>
 #include <VBox/vmm/pgm.h>
@@ -59,15 +60,23 @@
  * @retval  VINF_SUCCESS on success. FF cleared.
  * @retval  VINF_EM_NO_MEMORY if we're out of memory. The FF is set in this case.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pGVM        The global (ring-0) VM structure.
+ * @param   pVM         The cross context VM structure.
+ * @param   idCpu       The ID of the calling EMT.
+ *
+ * @thread  EMT(idCpu)
  *
  * @remarks Must be called from within the PGM critical section. The caller
  *          must clear the new pages.
  */
-VMMR0_INT_DECL(int) PGMR0PhysAllocateHandyPages(PVM pVM, PVMCPU pVCpu)
+VMMR0_INT_DECL(int) PGMR0PhysAllocateHandyPages(PGVM pGVM, PVM pVM, VMCPUID idCpu)
 {
-    PGM_LOCK_ASSERT_OWNER_EX(pVM, pVCpu);
+    /*
+     * Validate inputs.
+     */
+    AssertReturn(idCpu < pGVM->cCpus, VERR_INVALID_CPU_ID); /* caller already checked this, but just to be sure. */
+    AssertReturn(pGVM->aCpus[idCpu].hEMT == RTThreadNativeSelf(), VERR_NOT_OWNER);
+    PGM_LOCK_ASSERT_OWNER_EX(pVM, &pVM->aCpus[idCpu]);
 
     /*
      * Check for error injection.
@@ -83,7 +92,7 @@ VMMR0_INT_DECL(int) PGMR0PhysAllocateHandyPages(PVM pVM, PVMCPU pVCpu)
     uint32_t cPages = RT_ELEMENTS(pVM->pgm.s.aHandyPages) - iFirst;
     if (!cPages)
         return VINF_SUCCESS;
-    int rc = GMMR0AllocateHandyPages(pVM, pVCpu->idCpu, cPages, cPages, &pVM->pgm.s.aHandyPages[iFirst]);
+    int rc = GMMR0AllocateHandyPages(pGVM, pVM, idCpu, cPages, cPages, &pVM->pgm.s.aHandyPages[iFirst]);
     if (RT_SUCCESS(rc))
     {
 #ifdef VBOX_STRICT
@@ -125,7 +134,7 @@ VMMR0_INT_DECL(int) PGMR0PhysAllocateHandyPages(PVM pVM, PVMCPU pVCpu)
                 cPages >>= 1;
                 if (cPages + iFirst < PGM_HANDY_PAGES_MIN)
                     cPages = PGM_HANDY_PAGES_MIN - iFirst;
-                rc = GMMR0AllocateHandyPages(pVM, pVCpu->idCpu, 0, cPages, &pVM->pgm.s.aHandyPages[iFirst]);
+                rc = GMMR0AllocateHandyPages(pGVM, pVM, idCpu, 0, cPages, &pVM->pgm.s.aHandyPages[iFirst]);
             } while (   (   rc == VERR_GMM_HIT_GLOBAL_LIMIT
                          || rc == VERR_GMM_HIT_VM_ACCOUNT_LIMIT)
                      && cPages + iFirst > PGM_HANDY_PAGES_MIN);
@@ -175,14 +184,22 @@ VMMR0_INT_DECL(int) PGMR0PhysAllocateHandyPages(PVM pVM, PVMCPU pVCpu)
  * @returns The following VBox status codes.
  * @retval  VINF_SUCCESS on success. FF cleared.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pGVM        The global (ring-0) VM structure.
+ * @param   pVM         The cross context VM structure.
+ * @param   idCpu       The ID of the calling EMT.
+ *
+ * @thread  EMT(idCpu)
  *
  * @remarks Must be called from within the PGM critical section.
  */
-VMMR0_INT_DECL(int) PGMR0PhysFlushHandyPages(PVM pVM, PVMCPU pVCpu)
+VMMR0_INT_DECL(int) PGMR0PhysFlushHandyPages(PGVM pGVM, PVM pVM, VMCPUID idCpu)
 {
-    PGM_LOCK_ASSERT_OWNER_EX(pVM, pVCpu);
+    /*
+     * Validate inputs.
+     */
+    AssertReturn(idCpu < pGVM->cCpus, VERR_INVALID_CPU_ID); /* caller already checked this, but just to be sure. */
+    AssertReturn(pGVM->aCpus[idCpu].hEMT == RTThreadNativeSelf(), VERR_NOT_OWNER);
+    PGM_LOCK_ASSERT_OWNER_EX(pVM, &pVM->aCpus[idCpu]);
 
     /*
      * Try allocate a full set of handy pages.
@@ -192,7 +209,7 @@ VMMR0_INT_DECL(int) PGMR0PhysFlushHandyPages(PVM pVM, PVMCPU pVCpu)
     uint32_t cPages = RT_ELEMENTS(pVM->pgm.s.aHandyPages) - iFirst;
     if (!cPages)
         return VINF_SUCCESS;
-    int rc = GMMR0AllocateHandyPages(pVM, pVCpu->idCpu, cPages, 0, &pVM->pgm.s.aHandyPages[iFirst]);
+    int rc = GMMR0AllocateHandyPages(pGVM, pVM, idCpu, cPages, 0, &pVM->pgm.s.aHandyPages[iFirst]);
 
     LogFlow(("PGMR0PhysFlushHandyPages: cPages=%d rc=%Rrc\n", cPages, rc));
     return rc;
@@ -206,18 +223,29 @@ VMMR0_INT_DECL(int) PGMR0PhysFlushHandyPages(PVM pVM, PVMCPU pVCpu)
  * @retval  VINF_SUCCESS on success.
  * @retval  VINF_EM_NO_MEMORY if we're out of memory.
  *
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pGVM        The global (ring-0) VM structure.
+ * @param   pVM         The cross context VM structure.
+ * @param   idCpu       The ID of the calling EMT.
+ *
+ * @thread  EMT(idCpu)
  *
  * @remarks Must be called from within the PGM critical section. The caller
  *          must clear the new pages.
  */
-VMMR0_INT_DECL(int) PGMR0PhysAllocateLargeHandyPage(PVM pVM, PVMCPU pVCpu)
+VMMR0_INT_DECL(int) PGMR0PhysAllocateLargeHandyPage(PGVM pGVM, PVM pVM, VMCPUID idCpu)
 {
-    PGM_LOCK_ASSERT_OWNER_EX(pVM, pVCpu);
+    /*
+     * Validate inputs.
+     */
+    AssertReturn(idCpu < pGVM->cCpus, VERR_INVALID_CPU_ID); /* caller already checked this, but just to be sure. */
+    AssertReturn(pGVM->aCpus[idCpu].hEMT == RTThreadNativeSelf(), VERR_NOT_OWNER);
+    PGM_LOCK_ASSERT_OWNER_EX(pVM, &pVM->aCpus[idCpu]);
     Assert(!pVM->pgm.s.cLargeHandyPages);
 
-    int rc = GMMR0AllocateLargePage(pVM, pVCpu->idCpu, _2M,
+    /*
+     * Do the job.
+     */
+    int rc = GMMR0AllocateLargePage(pGVM, pVM, idCpu, _2M,
                                     &pVM->pgm.s.aLargeHandyPage[0].idPage,
                                     &pVM->pgm.s.aLargeHandyPage[0].HCPhysGCPhys);
     if (RT_SUCCESS(rc))
@@ -275,7 +303,7 @@ VMMR0_INT_DECL(int) GPciRawR0GuestPageAssign(PGVM pGVM, RTGCPHYS GCPhys, RTHCPHY
     AssertReturn(!(HCPhys & PAGE_OFFSET_MASK), VERR_INTERNAL_ERROR_3);
 
     if (pGVM->rawpci.s.pfnContigMemInfo)
-        /** @todo: what do we do on failure? */
+        /** @todo what do we do on failure? */
         pGVM->rawpci.s.pfnContigMemInfo(&pGVM->rawpci.s, HCPhys, GCPhys, PAGE_SIZE, PCIRAW_MEMINFO_MAP);
 
     return VINF_SUCCESS;
@@ -299,7 +327,7 @@ VMMR0_INT_DECL(int) GPciRawR0GuestPageUnassign(PGVM pGVM, RTGCPHYS GCPhys)
     AssertReturn(!(GCPhys & PAGE_OFFSET_MASK), VERR_INTERNAL_ERROR_3);
 
     if (pGVM->rawpci.s.pfnContigMemInfo)
-        /** @todo: what do we do on failure? */
+        /** @todo what do we do on failure? */
         pGVM->rawpci.s.pfnContigMemInfo(&pGVM->rawpci.s, 0, GCPhys, PAGE_SIZE, PCIRAW_MEMINFO_UNMAP);
 
     return VINF_SUCCESS;
@@ -352,12 +380,12 @@ VMMR0_INT_DECL(int) GPciRawR0GuestPageUpdate(PGVM pGVM, RTGCPHYS GCPhys, RTHCPHY
  *
  * @returns VBox status code.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pGVM                The global (ring-0) VM structure.
+ * @param   pVM                 The cross context VM structure.
  */
-VMMR0_INT_DECL(int) PGMR0PhysSetupIommu(PVM pVM)
+VMMR0_INT_DECL(int) PGMR0PhysSetupIoMmu(PGVM pGVM, PVM pVM)
 {
-    PGVM pGVM;
-    int rc = GVMMR0ByVM(pVM, &pGVM);
+    int rc = GVMMR0ValidateGVMandVM(pGVM, pVM);
     if (RT_FAILURE(rc))
         return rc;
 
@@ -407,11 +435,11 @@ VMMR0_INT_DECL(int) PGMR0PhysSetupIommu(PVM pVM)
 
 
 /**
- * #PF Handler for nested paging.
+ * \#PF Handler for nested paging.
  *
  * @returns VBox status code (appropriate for trap handling and GC return).
- * @param   pVM                 Pointer to the VM.
- * @param   pVCpu               Pointer to the VMCPU.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure.
  * @param   enmShwPagingMode    Paging mode for the nested page tables.
  * @param   uErr                The trap error code.
  * @param   pRegFrame           Trap register frame.
@@ -533,12 +561,12 @@ VMMR0DECL(int) PGMR0Trap0eHandlerNestedPaging(PVM pVM, PVMCPU pVCpu, PGMMODE enm
 
 
 /**
- * #PF Handler for deliberate nested paging misconfiguration (/reserved bit)
+ * \#PF Handler for deliberate nested paging misconfiguration (/reserved bit)
  * employed for MMIO pages.
  *
  * @returns VBox status code (appropriate for trap handling and GC return).
- * @param   pVM                 Pointer to the VM.
- * @param   pVCpu               Pointer to the VMCPU.
+ * @param   pVM                 The cross context VM structure.
+ * @param   pVCpu               The cross context virtual CPU structure.
  * @param   enmShwPagingMode    Paging mode for the nested page tables.
  * @param   pRegFrame           Trap register frame.
  * @param   GCPhysFault         The fault address.
@@ -556,8 +584,9 @@ VMMR0DECL(VBOXSTRICTRC) PGMR0Trap0eHandlerNPMisconfig(PVM pVM, PVMCPU pVCpu, PGM
      * Try lookup the all access physical handler for the address.
      */
     pgmLock(pVM);
-    PPGMPHYSHANDLER pHandler = pgmHandlerPhysicalLookup(pVM, GCPhysFault);
-    if (RT_LIKELY(pHandler && pHandler->enmType != PGMPHYSHANDLERTYPE_PHYSICAL_WRITE))
+    PPGMPHYSHANDLER         pHandler     = pgmHandlerPhysicalLookup(pVM, GCPhysFault);
+    PPGMPHYSHANDLERTYPEINT  pHandlerType = RT_LIKELY(pHandler) ? PGMPHYSHANDLER_GET_TYPE(pVM, pHandler) : NULL;
+    if (RT_LIKELY(pHandler && pHandlerType->enmKind != PGMPHYSHANDLERKIND_WRITE))
     {
         /*
          * If the handle has aliases page or pages that have been temporarily
@@ -578,15 +607,15 @@ VMMR0DECL(VBOXSTRICTRC) PGMR0Trap0eHandlerNPMisconfig(PVM pVM, PVMCPU pVCpu, PGM
         }
         else
         {
-            if (pHandler->CTX_SUFF(pfnHandler))
+            if (pHandlerType->CTX_SUFF(pfnPfHandler))
             {
-                CTX_MID(PFNPGM,PHYSHANDLER) pfnHandler = pHandler->CTX_SUFF(pfnHandler);
-                void                       *pvUser     = pHandler->CTX_SUFF(pvUser);
+                void *pvUser = pHandler->CTX_SUFF(pvUser);
                 STAM_PROFILE_START(&pHandler->Stat, h);
                 pgmUnlock(pVM);
 
-                Log6(("PGMR0Trap0eHandlerNPMisconfig: calling %p(,%#x,,%RGp,%p)\n", pfnHandler, uErr, GCPhysFault, pvUser));
-                rc = pfnHandler(pVM, uErr == UINT32_MAX ? RTGCPTR_MAX : uErr, pRegFrame, GCPhysFault, GCPhysFault, pvUser);
+                Log6(("PGMR0Trap0eHandlerNPMisconfig: calling %p(,%#x,,%RGp,%p)\n", pHandlerType->CTX_SUFF(pfnPfHandler), uErr, GCPhysFault, pvUser));
+                rc = pHandlerType->CTX_SUFF(pfnPfHandler)(pVM, pVCpu, uErr == UINT32_MAX ? RTGCPTR_MAX : uErr, pRegFrame,
+                                                          GCPhysFault, GCPhysFault, pvUser);
 
 #ifdef VBOX_WITH_STATISTICS
                 pgmLock(pVM);

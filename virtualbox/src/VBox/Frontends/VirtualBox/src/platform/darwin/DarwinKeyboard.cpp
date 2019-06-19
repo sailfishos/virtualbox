@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,9 +17,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_GUI
 
 #define VBOX_WITH_KBD_LEDS_SYNC
@@ -79,9 +80,9 @@ extern CGError CGSSetGlobalHotKeyOperatingMode(CGSConnection Connection, CGSGlob
 RT_C_DECLS_END
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 #define QZ_RMETA        0x36
 #define QZ_LMETA        0x37
@@ -113,9 +114,10 @@ RT_C_DECLS_END
 
 #endif
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * This is derived partially from SDL_QuartzKeys.h and partially from testing.
  *
@@ -352,9 +354,10 @@ typedef struct VBoxHidsState_t {
 } VBoxHidsState_t;
 #endif /* !VBOX_WITH_KBD_LEDS_SYNC */
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef USE_HID_FOR_MODIFIERS
 static void darwinBruteForcePropertySearch(CFDictionaryRef DictRef, struct KeyboardCacheData *pKeyboardEntry);
 #endif
@@ -1696,7 +1699,7 @@ static CGEventRef darwinCarbonCallback(CGEventTapProxy unused, CGEventType unuse
     bool         fNum  = (bool)(fMask & NX_NUMERICPADMASK);
     CGKeyCode    key   = CGEventGetIntegerValueField(pEventRef, kCGKeyboardEventKeycode);
 
-    VBoxHidsState_t *pHidState = (VBoxHidsState_t *)pData; AssertReturn(pHidState, pEventRef);
+    VBoxHidsState_t *pHidState = (VBoxHidsState_t *)pData;
     AssertReturn(pHidState, pEventRef);
 
     if (RT_FAILURE(RTSemMutexRequest(pHidState->fifoEventQueueLock, RT_INDEFINITE_WAIT)))

@@ -1,12 +1,10 @@
 /* $Id: VBoxUtils-win.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Utility classes and functions for handling Win specific tasks
+ * VBox Qt GUI - Utility classes and functions for handling Win specific tasks.
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

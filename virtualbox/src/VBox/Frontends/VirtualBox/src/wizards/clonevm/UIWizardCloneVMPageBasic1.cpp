@@ -1,12 +1,10 @@
 /* $Id: UIWizardCloneVMPageBasic1.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardCloneVMPageBasic1 class implementation
+ * VBox Qt GUI - UIWizardCloneVMPageBasic1 class implementation.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,15 +15,22 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QVBoxLayout>
-#include <QLineEdit>
-#include <QCheckBox>
+# include <QVBoxLayout>
+# include <QLineEdit>
+# include <QCheckBox>
 
 /* GUI includes: */
-#include "UIWizardCloneVMPageBasic1.h"
-#include "UIWizardCloneVM.h"
-#include "QIRichTextLabel.h"
+# include "UIWizardCloneVMPageBasic1.h"
+# include "UIWizardCloneVM.h"
+# include "QIRichTextLabel.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizardCloneVMPage1::UIWizardCloneVMPage1(const QString &strOriginalName)
     : m_strOriginalName(strOriginalName)
@@ -59,6 +64,7 @@ UIWizardCloneVMPageBasic1::UIWizardCloneVMPageBasic1(const QString &strOriginalN
             m_pNameEditor->setText(UIWizardCloneVM::tr("%1 Clone").arg(m_strOriginalName));
         }
         m_pReinitMACsCheckBox = new QCheckBox(this);
+        m_pReinitMACsCheckBox->setChecked(true);
         pMainLayout->addWidget(m_pLabel);
         pMainLayout->addWidget(m_pNameEditor);
         pMainLayout->addWidget(m_pReinitMACsCheckBox);
@@ -98,4 +104,3 @@ bool UIWizardCloneVMPageBasic1::isComplete() const
     QString strName = m_pNameEditor->text().trimmed();
     return !strName.isEmpty() && strName != m_strOriginalName;
 }
-

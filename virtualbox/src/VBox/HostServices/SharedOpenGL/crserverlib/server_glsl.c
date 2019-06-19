@@ -1,11 +1,10 @@
 /* $Id: server_glsl.c $ */
-
 /** @file
- * VBox OpenGL: GLSL related functions
+ * VBox OpenGL - GLSL related functions
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -151,7 +150,7 @@ GLint SERVER_DISPATCH_APIENTRY crServerDispatchGetUniformLocation(GLuint program
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetProgramiv( GLuint program, GLenum pname, GLint * params )
 {
-    GLint local_params[1];
+    GLint local_params[1] = {0};
     (void) params;
     cr_server.head_spu->dispatch_table.GetProgramiv(crStateGetProgramHWID(program), pname, local_params);
     crServerReturnValue( &(local_params[0]), 1*sizeof(GLint) );
@@ -159,9 +158,105 @@ void SERVER_DISPATCH_APIENTRY crServerDispatchGetProgramiv( GLuint program, GLen
 
 void SERVER_DISPATCH_APIENTRY crServerDispatchGetShaderiv( GLuint shader, GLenum pname, GLint * params )
 {
-    GLint local_params[1];
+    GLint local_params[1] = {0};
     (void) params;
     cr_server.head_spu->dispatch_table.GetShaderiv( crStateGetShaderHWID(shader), pname, local_params );
     crServerReturnValue( &(local_params[0]), 1*sizeof(GLint) );
 }
 #endif /* #ifdef CR_OPENGL_VERSION_2_0 */
+
+/* XXXX Note: shared/separate Program ID numbers aren't totally implemented! */
+GLuint crServerTranslateProgramID( GLuint id )
+{
+    if (!cr_server.sharedPrograms && id) {
+        int client = cr_server.curClient->number;
+        return id + client * 100000;
+    }
+    return id;
+}
+
+
+void SERVER_DISPATCH_APIENTRY crServerDispatchDeleteProgramsARB(GLsizei n, const GLuint * programs)
+{
+    GLuint *pLocalProgs;
+    GLint i;
+
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint))
+    {
+        crError("crServerDispatchDeleteProgramsARB: parameter 'n' is out of range");
+        return;
+    }
+
+    pLocalProgs = (GLuint *)crAlloc(n * sizeof(GLuint));
+
+    if (!pLocalProgs) {
+        crError("crServerDispatchDeleteProgramsARB: out of memory");
+        return;
+    }
+    for (i = 0; i < n; i++) {
+        pLocalProgs[i] = crServerTranslateProgramID(programs[i]);
+    }
+    crStateDeleteProgramsARB(n, pLocalProgs);
+    cr_server.head_spu->dispatch_table.DeleteProgramsARB(n, pLocalProgs);
+    crFree(pLocalProgs);
+}
+
+
+/** @todo will fail for progs loaded from snapshot */
+GLboolean SERVER_DISPATCH_APIENTRY crServerDispatchIsProgramARB( GLuint program )
+{
+    GLboolean retval;
+    program = crServerTranslateProgramID(program);
+    retval = cr_server.head_spu->dispatch_table.IsProgramARB( program );
+    crServerReturnValue( &retval, sizeof(retval) );
+    return retval; /* WILL PROBABLY BE IGNORED */
+}
+
+
+GLboolean SERVER_DISPATCH_APIENTRY
+crServerDispatchAreProgramsResidentNV(GLsizei n, const GLuint *programs,
+                                                                            GLboolean *residences)
+{
+    GLboolean retval = GL_FALSE;
+    GLboolean *res;
+    GLsizei i;
+    (void) residences;
+
+    if (n <= 0 || n >= INT32_MAX / sizeof(GLuint))
+    {
+        crError("crServerDispatchAreProgramsResidentNV: parameter 'n' is out of range");
+        return GL_FALSE;
+    }
+
+    res = (GLboolean *)crCalloc(n * sizeof(GLboolean));
+
+    if (!res) {
+        crError("crServerDispatchAreProgramsResidentNV: out of memory");
+        return GL_FALSE;
+    }
+
+    if (!cr_server.sharedTextureObjects) {
+        GLuint *programs2 = (GLuint *) crCalloc(n * sizeof(GLuint));
+        if (programs2)
+        {
+            for (i = 0; i < n; i++)
+                programs2[i] = crServerTranslateProgramID(programs[i]);
+
+            retval = cr_server.head_spu->dispatch_table.AreProgramsResidentNV(n, programs2, res);
+            crFree(programs2);
+        }
+        else
+        {
+            crError("crServerDispatchAreProgramsResidentNV: out of memory");
+        }
+    }
+    else {
+        retval = cr_server.head_spu->dispatch_table.AreProgramsResidentNV(n, programs, res);
+    }
+
+    crServerReturnValue(res, n * sizeof(GLboolean));
+    crFree(res);
+
+    return retval; /* WILL PROBABLY BE IGNORED */
+}
+

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -47,23 +48,30 @@ RTDECL(int) RTAsn1Integer_DecodeAsn1(PRTASN1CURSOR pCursor, uint32_t fFlags, PRT
                                             fFlags, pszErrorTag, "INTEGER");
         if (RT_SUCCESS(rc))
         {
-            uint32_t offLast = pThis->Asn1Core.cb - 1;
-            switch (pThis->Asn1Core.cb)
+            if (pThis->Asn1Core.cb > 0)
             {
-                default:
-                case 8: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 7] << 56;
-                case 7: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 6] << 48;
-                case 6: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 5] << 40;
-                case 5: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 4] << 32;
-                case 4: pThis->uValue.u |= (uint32_t)pThis->Asn1Core.uData.pu8[offLast - 3] << 24;
-                case 3: pThis->uValue.u |= (uint32_t)pThis->Asn1Core.uData.pu8[offLast - 2] << 16;
-                case 2: pThis->uValue.u |= (uint16_t)pThis->Asn1Core.uData.pu8[offLast - 1] << 8;
-                case 1: pThis->uValue.u |=           pThis->Asn1Core.uData.pu8[offLast];
+                uint32_t offLast = pThis->Asn1Core.cb - 1;
+                switch (pThis->Asn1Core.cb)
+                {
+                    default:
+                    case 8: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 7] << 56; RT_FALL_THRU();
+                    case 7: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 6] << 48; RT_FALL_THRU();
+                    case 6: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 5] << 40; RT_FALL_THRU();
+                    case 5: pThis->uValue.u |= (uint64_t)pThis->Asn1Core.uData.pu8[offLast - 4] << 32; RT_FALL_THRU();
+                    case 4: pThis->uValue.u |= (uint32_t)pThis->Asn1Core.uData.pu8[offLast - 3] << 24; RT_FALL_THRU();
+                    case 3: pThis->uValue.u |= (uint32_t)pThis->Asn1Core.uData.pu8[offLast - 2] << 16; RT_FALL_THRU();
+                    case 2: pThis->uValue.u |= (uint16_t)pThis->Asn1Core.uData.pu8[offLast - 1] <<  8; RT_FALL_THRU();
+                    case 1: pThis->uValue.u |=           pThis->Asn1Core.uData.pu8[offLast];
+                }
+                RTAsn1CursorSkip(pCursor, pThis->Asn1Core.cb);
+                pThis->Asn1Core.fFlags |= RTASN1CORE_F_PRIMITE_TAG_STRUCT;
+                pThis->Asn1Core.pOps    = &g_RTAsn1Integer_Vtable;
+                return VINF_SUCCESS;
             }
-            RTAsn1CursorSkip(pCursor, pThis->Asn1Core.cb);
-            pThis->Asn1Core.fFlags |= RTASN1CORE_F_PRIMITE_TAG_STRUCT;
-            pThis->Asn1Core.pOps    = &g_RTAsn1Integer_Vtable;
-            return VINF_SUCCESS;
+            else
+                rc = RTAsn1CursorSetInfo(pCursor, VERR_ASN1_INVALID_INTEGER_ENCODING,
+                                         "%s: Invalid integer length, exepcted more than 0: %#x",
+                                         pszErrorTag, pThis->Asn1Core.cb);
         }
     }
     RT_ZERO(*pThis);

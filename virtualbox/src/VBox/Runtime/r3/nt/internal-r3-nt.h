@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -48,7 +48,7 @@
  *
  * @returns @c true if equal, @c false if not.
  * @param   pwsz1               The first string.
- * @param   cb1                 The length of the first string, in bytes.
+ * @param   cch1                The length of the first string, in bytes.
  * @param   psz2                The second string.
  * @param   cch2                The length of the second string.
  */
@@ -67,4 +67,13 @@ DECLINLINE(bool) rtNtCompWideStrAndAscii(WCHAR const *pwsz1, size_t cch1, const 
 }
 
 #endif
+
+/**
+ * Common worker for RTFileSetMode, RTPathSetMode and RTDirRelPathSetMode.
+ *
+ * @returns IPRT status code.
+ * @param   hNativeFile The NT handle to the file system object.
+ * @param   fMode       Valid and normalized file mode mask to set.
+ */
+DECLHIDDEN(int) rtNtFileSetModeWorker(HANDLE hNativeFile, RTFMODE fMode);
 

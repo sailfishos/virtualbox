@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PATM
 #include <VBox/vmm/patm.h>
 #include <VBox/vmm/pgm.h>
@@ -80,7 +81,7 @@ static uint8_t uFnOpenBSDHandlerPrefix2[6] = { 0x0E, 0x56, 0x6A, 0x00, 0x6A, 0x0
  * Check Windows XP sysenter heuristics and install patch
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pInstrGC    GC Instruction pointer for sysenter
  * @param   pPatchRec   Patch structure
  *
@@ -154,7 +155,7 @@ int PATMPatchSysenterXP(PVM pVM, RTGCPTR32 pInstrGC, PPATMPATCHREC pPatchRec)
     RT_ZERO(cacheRec);
     cacheRec.pPatch = pPatch;
 
-    patmr3DisasmCodeStream(pVM, pInstrGC, pInstrGC, patmr3DisasmCallback, &cacheRec);
+    patmr3DisasmCodeStream(pVM, pInstrGC, pInstrGC, patmR3DisasmCallback, &cacheRec);
     /* Free leftover lock if any. */
     if (cacheRec.Lock.pvMap)
         PGMPhysReleasePageMappingLock(pVM, &cacheRec.Lock);
@@ -169,7 +170,7 @@ int PATMPatchSysenterXP(PVM pVM, RTGCPTR32 pInstrGC, PPATMPATCHREC pPatchRec)
  * Patch OpenBSD interrupt handler prefix
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCpu        Disassembly state of instruction.
  * @param   pInstrGC    GC Instruction pointer for instruction
  * @param   pInstrHC    GC Instruction pointer for instruction
@@ -201,11 +202,10 @@ int PATMPatchOpenBSDHandlerPrefix(PVM pVM, PDISCPUSTATE pCpu, RTGCPTR32 pInstrGC
  * Install guest OS specific patch
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pCpu        Disassembly state of instruction.
  * @param   pInstrGC    GC Instruction pointer for instruction
  * @param   pInstrHC    GC Instruction pointer for instruction
- * @param   pCallerGC   GC address of caller; CODE32_UNKNOWN_CALLER if unknown
  * @param   pPatchRec   Patch structure
  *
  */
@@ -243,6 +243,5 @@ int patmR3InstallGuestSpecificPatch(PVM pVM, PDISCPUSTATE pCpu, RTGCPTR32 pInstr
         AssertMsgFailed(("PATMInstallGuestSpecificPatch: unknown opcode %d\n", pCpu->pCurInstr->uOpcode));
         return VERR_PATCHING_REFUSED;
     }
-    return VERR_PATCHING_REFUSED;
 }
 

@@ -1,12 +1,10 @@
 /* $Id: UINetworkManagerDialog.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkManagerDialog stuff implementation
+ * VBox Qt GUI - UINetworkManagerDialog stuff implementation.
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,24 +15,31 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QVBoxLayout>
-#include <QLabel>
-#include <QPushButton>
-#include <QStatusBar>
-#include <QKeyEvent>
+# include <QVBoxLayout>
+# include <QLabel>
+# include <QPushButton>
+# include <QStatusBar>
+# include <QKeyEvent>
 
 /* Local includes: */
-#include "UINetworkManagerDialog.h"
-#include "UINetworkManager.h"
-#include "UINetworkRequest.h"
-#include "UINetworkRequestWidget.h"
-#include "UINetworkCustomer.h"
-#include "UIIconPool.h"
-#include "VBoxGlobal.h"
-#include "UIMessageCenter.h"
-#include "UIModalWindowManager.h"
-#include "QIDialogButtonBox.h"
+# include "UINetworkManagerDialog.h"
+# include "UINetworkManager.h"
+# include "UINetworkRequest.h"
+# include "UINetworkRequestWidget.h"
+# include "UINetworkCustomer.h"
+# include "UIIconPool.h"
+# include "VBoxGlobal.h"
+# include "UIMessageCenter.h"
+# include "UIModalWindowManager.h"
+# include "QIDialogButtonBox.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 void UINetworkManagerDialog::showNormal()
 {
@@ -51,7 +56,7 @@ void UINetworkManagerDialog::showNormal()
 UINetworkManagerDialog::UINetworkManagerDialog()
 {
     /* Apply window icons: */
-    setWindowIcon(UIIconPool::iconSetFull(QSize (32, 32), QSize (16, 16), ":/nw_32px.png", ":/nw_16px.png"));
+    setWindowIcon(UIIconPool::iconSetFull(":/download_manager_32px.png", ":/download_manager_16px.png"));
 
     /* Do not count that window as important for application,
      * it will NOT be taken into account when other top-level windows will be closed: */
@@ -65,7 +70,6 @@ UINetworkManagerDialog::UINetworkManagerDialog()
 
     /* Create main-layout: */
     QVBoxLayout *pMainLayout = new QVBoxLayout(centralWidget());
-    pMainLayout->setContentsMargins(6, 6, 6, 6);
 
     /* Create description-label: */
     m_pLabel = new QLabel(centralWidget());
@@ -77,7 +81,7 @@ UINetworkManagerDialog::UINetworkManagerDialog()
 
     /* Create button-box: */
     m_pButtonBox = new QIDialogButtonBox(QDialogButtonBox::Cancel, Qt::Horizontal, centralWidget());
-    connect(m_pButtonBox, SIGNAL(rejected()), this, SLOT(sltHandleCancelAllButtonPress()));
+    connect(m_pButtonBox, &QIDialogButtonBox::rejected, this, &UINetworkManagerDialog::sltHandleCancelAllButtonPress);
     m_pButtonBox->setHidden(true);
 
     /* Layout content: */
@@ -115,8 +119,8 @@ void UINetworkManagerDialog::addNetworkRequestWidget(UINetworkRequest *pNetworkR
     }
 
     /* Prepare network-request widget's notifications for network-request: */
-    connect(pNetworkRequestWidget, SIGNAL(sigRetry()), pNetworkRequest, SLOT(sltRetry()), Qt::QueuedConnection);
-    connect(pNetworkRequestWidget, SIGNAL(sigCancel()), pNetworkRequest, SLOT(sltCancel()), Qt::QueuedConnection);
+    connect(pNetworkRequestWidget, &UINetworkRequestWidget::sigRetry,  pNetworkRequest, &UINetworkRequest::sltRetry,  Qt::QueuedConnection);
+    connect(pNetworkRequestWidget, &UINetworkRequestWidget::sigCancel, pNetworkRequest, &UINetworkRequest::sltCancel, Qt::QueuedConnection);
 }
 
 void UINetworkManagerDialog::removeNetworkRequestWidget(const QUuid &uuid)

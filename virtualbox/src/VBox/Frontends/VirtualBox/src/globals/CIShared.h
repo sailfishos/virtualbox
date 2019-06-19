@@ -1,11 +1,10 @@
+/* $Id: CIShared.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * Common VirtualBox classes: CIShared class declaration
+ * VBox Qt GUI - Common VirtualBox classes: CIShared class declaration.
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

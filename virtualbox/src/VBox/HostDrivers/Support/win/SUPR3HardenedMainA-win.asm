@@ -4,7 +4,7 @@
 ;
 
 ;
-; Copyright (C) 2012-2014 Oracle Corporation
+; Copyright (C) 2012-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -163,6 +163,18 @@ BEGINPROC %1 %+ _SyscallType1
         syscall
         ret
 ENDPROC %1 %+ _SyscallType1
+BEGINPROC %1 %+ _SyscallType2 ; Introduced with build 10525
+        SEH64_END_PROLOGUE
+        mov     eax, [NAME(g_uApiNo %+ %1) xWrtRIP]
+        test    byte [07ffe0308h], 1    ; SharedUserData!Something
+        mov     r10, rcx
+        jnz     .int_alternative
+        syscall
+        ret
+.int_alternative:
+        int     2eh
+        ret
+ENDPROC %1 %+ _SyscallType2
  %else
 BEGINPROC %1 %+ _SyscallType1
         mov     edx, 07ffe0300h         ; SharedUserData!SystemCallStub
@@ -195,9 +207,10 @@ NAME(SUPHNTIMP_CONCAT(%1,_Early)):
 %endmacro
 
 %define SUPHARNT_COMMENT(a_Comment)
-%define SUPHARNT_IMPORT_SYSCALL(a_Name, a_cbParamsX86)       SupHardNtImport a_Name, a_cbParamsX86, SUPHNTIMP_SYSCALL, 1
-%define SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86)       SupHardNtImport a_Name, a_cbParamsX86, 0, 0
-%define SUPHARNT_IMPORT_STDCALL_EARLY(a_Name, a_cbParamsX86) SupHardNtImport a_Name, a_cbParamsX86, 0, 1
+%define SUPHARNT_IMPORT_SYSCALL(a_Name, a_cbParamsX86)          SupHardNtImport a_Name, a_cbParamsX86, SUPHNTIMP_SYSCALL, 1
+%define SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86)          SupHardNtImport a_Name, a_cbParamsX86, 0, 0
+%define SUPHARNT_IMPORT_STDCALL_OPTIONAL(a_Name, a_cbParamsX86) SUPHARNT_IMPORT_STDCALL(a_Name, a_cbParamsX86)
+%define SUPHARNT_IMPORT_STDCALL_EARLY(a_Name, a_cbParamsX86)    SupHardNtImport a_Name, a_cbParamsX86, 0, 1
 %define SUPHARNT_IMPORT_STDCALL_EARLY_OPTIONAL(a_Name, a_cbParamsX86) SUPHARNT_IMPORT_STDCALL_EARLY(a_Name, a_cbParamsX86)
 %include "import-template-ntdll.h"
 %include "import-template-kernel32.h"

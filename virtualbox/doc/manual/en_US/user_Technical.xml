@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.4//EN"
-"http://www.oasis-open.org/docbook/xml/4.4/docbookx.dtd">
+<!DOCTYPE chapter PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd">
 <chapter id="TechnicalBackground">
   <title>Technical background</title>
 
@@ -34,20 +34,31 @@
 
       <itemizedlist>
         <listitem>
-          <para>On Windows, this is
-          <computeroutput>%HOMEDRIVE%%HOMEPATH%</computeroutput>; typically
-          something like <computeroutput>C:\Documents and
-          Settings\Username\</computeroutput>.</para>
+          <para>On Windows, this is the location returned by the
+          <computeroutput>SHGetFolderPath</computeroutput> function of the
+          Windows system library Shell32.dll, asking for the user profile. Only
+          on very old Windows versions which don't have this function
+          or where it unexpectedly returns an error, there is a fallback based
+          on environment variables: first
+          <computeroutput>%USERPROFILE%</computeroutput> is checked, if it
+          doesn't exist then an attempt with
+          <computeroutput>%HOMEDRIVE%%HOMEPATH%</computeroutput> is made.
+          Typical value is
+          <computeroutput>C:\Users\username</computeroutput>.</para>
         </listitem>
 
         <listitem>
-          <para>On Mac OS X, this is
+          <para>On Linux, Mac OS X and Solaris, this is generally taken from
+          the environment variable <computeroutput>$HOME</computeroutput>,
+          except for the user
+          <computeroutput>root</computeroutput> for which it's taken from the
+          account database (as a workaround for the frequent trouble caused
+          by users using VirtualBox in combination with the tool
+          <computeroutput>sudo</computeroutput> which by default doesn't reset
+          the environment variable <computeroutput>$HOME</computeroutput>).
+          Typical value on Linux and Solaris is
+          <computeroutput>/home/username</computeroutput> and on Mac OS X
           <computeroutput>/Users/username</computeroutput>.</para>
-        </listitem>
-
-        <listitem>
-          <para>On Linux and Solaris, this is
-          <computeroutput>/home/username</computeroutput>.</para>
         </listitem>
       </itemizedlist>
 
@@ -81,7 +92,7 @@
       <computeroutput>Logs</computeroutput>, and once you have taken
       snapshots, they will appear in a
       <computeroutput>Snapshots</computeroutput> subfolder. For each VM, you
-      can change the location of its snapsnots folder in the VM
+      can change the location of its snapshots folder in the VM
       settings.</para>
 
       <para>You can change the default machine folder by selecting
@@ -421,8 +432,13 @@
       </listitem>
 
       <listitem>
-        <para>HWACCM (Hardware Acceleration Manager), provides support for
-        VT-x and AMD-V.</para>
+        <para>HM (Hardware Acceleration Manager), provides support for VT-x
+        and AMD-V.</para>
+      </listitem>
+
+      <listitem>
+        <para>GIM (Guest Interface Manager), provides support for various
+        paravirtualization interfaces to the guest.</para>
       </listitem>
 
       <listitem>
@@ -585,6 +601,56 @@
     </warning>
   </sect1>
 
+  <sect1 id="gimproviders">
+    <title>Paravirtualization providers</title>
+
+    <para>VirtualBox allows exposing a paravirtualization interface to
+    facilitate accurate and efficient execution of software within a
+    virtual machine. These interfaces require the guest operating system
+    to recognize their presence and make use of them in order to leverage
+    the benefits of communicating with the VirtualBox hypervisor.</para>
+
+    <para>Most modern mainstream guest operating systems, including
+    Windows and Linux, ship with support for one or more paravirtualization
+    interfaces. Hence, there is typically no need to install additional software
+    in the guest to take advantage of this feature.
+    </para>
+
+    <para>Exposing a paravirtualization provider to the guest operating
+    system does not rely on the choice of host platforms. For example, the
+    <emphasis>Hyper-V</emphasis> paravirtualization provider can be
+    used for VMs to run on any host platform (supported by VirtualBox) and
+    not just Windows.</para>
+
+    <para>VirtualBox provides the following interfaces:</para>
+      <itemizedlist>
+        <listitem>
+          <para><emphasis role="bold">Minimal</emphasis>: Announces the
+          presence of a virtualized environment. Additionally, reports the
+          TSC and APIC frequency to the guest operating system. This provider
+          is mandatory for running any Mac OS X guests.</para>
+        </listitem>
+
+        <listitem>
+          <para><emphasis role="bold">KVM</emphasis>: Presents a Linux KVM
+          hypervisor interface which is recognized by Linux kernels starting
+          with version 2.6.25. VirtualBox's implementation currently supports
+          paravirtualized clocks and SMP spinlocks. This provider is
+          recommended for Linux guests.</para>
+        </listitem>
+
+        <listitem>
+          <para><emphasis role="bold">Hyper-V</emphasis>: Presents a Microsoft
+          Hyper-V hypervisor interface which is recognized by Windows 7 and newer
+          operating systems. VirtualBox's implementation currently supports
+          paravirtualized clocks, APIC frequency reporting, guest debugging,
+          guest crash reporting and relaxed timer checks. This provider is
+          recommended for Windows guests.
+          </para>
+        </listitem>
+     </itemizedlist>
+  </sect1>
+
   <sect1>
     <title>Details about software virtualization</title>
 
@@ -701,8 +767,8 @@
         <listitem>
           <para>There are certain flaws in the implementation of ring 1 in the
           x86 architecture that were never fixed. Certain instructions that
-          <emphasis>should</emphasis> trap in ring 1 don't. This affect for
-          example the LGDT/SGDT, LIDT/SIDT, or POPF/PUSHF instruction pairs.
+          <emphasis>should</emphasis> trap in ring 1 don't. This affects, for
+          example, the LGDT/SGDT, LIDT/SIDT, or POPF/PUSHF instruction pairs.
           Whereas the "load" operation is privileged and can therefore be
           trapped, the "store" instruction always succeed. If the guest is
           allowed to execute these, it will see the true state of the CPU, not
@@ -877,6 +943,10 @@
           <computeroutput>VBoxManage modifyvm
           </computeroutput><computeroutput>--largepages</computeroutput>
           command; see <xref linkend="vboxmanage-modifyvm" />.</para>
+
+          <para>If you have an Intel CPU with EPT, please consult
+          <xref linkend="sec-rec-cve-2018-3646" /> for security concerns
+          regarding EPT.</para>
         </listitem>
 
         <listitem>

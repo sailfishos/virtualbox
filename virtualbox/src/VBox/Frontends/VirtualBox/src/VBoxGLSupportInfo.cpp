@@ -1,12 +1,10 @@
 /* $Id: VBoxGLSupportInfo.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * OpenGL support info used for 2D support detection
+ * VBox Qt GUI - OpenGL support info used for 2D support detection.
  */
 
 /*
- * Copyright (C) 2009-2011 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,25 +16,33 @@
  */
 
 #ifdef VBOX_WITH_PRECOMPILED_HEADERS
-# include "precomp.h"
+# include <precomp.h>
 #else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
-#include <iprt/assert.h>
-#include <iprt/log.h>
-#include <iprt/err.h>
-#include <iprt/env.h>
-#include <iprt/param.h>
-#include <iprt/path.h>
-#include <iprt/process.h>
-#include <iprt/string.h>
-#include <iprt/time.h>
-#include <iprt/thread.h>
 
-#include <QGLWidget>
+# ifdef RT_OS_WINDOWS
+#  include <iprt/win/windows.h> /* QGLWidget drags in Windows.h; -Wall forces us to use wrapper. */
+#  include <iprt/stdint.h>      /* QGLWidget drags in stdint.h; -Wall forces us to use wrapper. */
+# endif
+# include <QGLWidget>
+
+# include <iprt/assert.h>
+# include <iprt/log.h>
+# include <iprt/env.h>
+# include <iprt/param.h>
+# include <iprt/path.h>
+# include <iprt/process.h>
+# include <iprt/string.h>
+# include <iprt/time.h>
+# include <iprt/thread.h>
+
+# include <VBox/VBoxGL2D.h>
+# include "VBoxFBOverlayCommon.h"
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+#include <iprt/err.h>
+
 #include <QGLContext>
 
-#include <VBox/VBoxGL2D.h>
-#include "VBoxFBOverlayCommon.h"
-#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
 
 /*****************/
 
@@ -460,9 +466,9 @@ void VBoxGLInfo::initExtSupport(const QGLContext & context)
             VBOXVHWA_PFNINIT_OBJECT_ARB(context, PFNVBOXVHWA_USE_PROGRAM, UseProgram, rc);
             VBOXVHWA_PFNINIT(context, PFNVBOXVHWA_DELETE_PROGRAM, DeleteProgram, DeleteObjectARB, rc);
 
-        //TODO:    VBOXVHWA_PFNINIT(PFNVBOXVHWA_IS_SHADER, IsShader, rc);
+        /// @todo    VBOXVHWA_PFNINIT(PFNVBOXVHWA_IS_SHADER, IsShader, rc);
             VBOXVHWA_PFNINIT(context, PFNVBOXVHWA_GET_SHADERIV, GetShaderiv, GetObjectParameterivARB, rc);
-        //TODO:    VBOXVHWA_PFNINIT(PFNVBOXVHWA_IS_PROGRAM, IsProgram, rc);
+        /// @todo    VBOXVHWA_PFNINIT(PFNVBOXVHWA_IS_PROGRAM, IsProgram, rc);
             VBOXVHWA_PFNINIT(context, PFNVBOXVHWA_GET_PROGRAMIV, GetProgramiv, GetObjectParameterivARB, rc);
             VBOXVHWA_PFNINIT(context, PFNVBOXVHWA_GET_ATTACHED_SHADERS, GetAttachedShaders, GetAttachedObjectsARB, rc);
             VBOXVHWA_PFNINIT(context, PFNVBOXVHWA_GET_SHADER_INFO_LOG, GetShaderInfoLog, GetInfoLogARB, rc);
@@ -659,7 +665,7 @@ bool VBoxVHWAInfo::checkVHWASupport()
 
     return false;
 #else
-    /* @todo: test & enable external app approach*/
+    /** @todo test & enable external app approach*/
     VBoxGLTmpContext ctx;
     const QGLContext *pContext = ctx.makeCurrent();
     Assert(pContext);

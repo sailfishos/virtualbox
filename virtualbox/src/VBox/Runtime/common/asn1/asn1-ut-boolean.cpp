@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -37,9 +38,9 @@
 #include <iprt/formats/asn1.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The false value (DER & CER). */
 static const uint8_t  g_bFalse = 0;
 /** The true value (DER & CER). */
@@ -52,6 +53,7 @@ static const uint8_t  g_bTrue  = 0xff;
 
 RTDECL(int) RTAsn1Boolean_InitDefault(PRTASN1BOOLEAN pThis, bool fValue, PCRTASN1ALLOCATORVTABLE pAllocator)
 {
+    RT_NOREF_PV(pAllocator);
     RTAsn1Core_InitEx(&pThis->Asn1Core, ASN1_TAG_BOOLEAN, ASN1_TAGCLASS_UNIVERSAL | ASN1_TAGFLAG_PRIMITIVE,
                       &g_RTAsn1Boolean_Vtable, RTASN1CORE_F_DEFAULT | RTASN1CORE_F_PRIMITE_TAG_STRUCT);
     pThis->fValue = fValue;
@@ -100,6 +102,7 @@ RT_DECL_DATA_CONST(RTASN1COREVTABLE const) g_RTAsn1Boolean_Vtable =
 
 RTDECL(int) RTAsn1Boolean_Init(PRTASN1BOOLEAN pThis, PCRTASN1ALLOCATORVTABLE pAllocator)
 {
+    RT_NOREF_PV(pAllocator);
     RTAsn1Core_InitEx(&pThis->Asn1Core, ASN1_TAG_BOOLEAN, ASN1_TAGCLASS_UNIVERSAL | ASN1_TAGFLAG_PRIMITIVE,
                       &g_RTAsn1Boolean_Vtable, RTASN1CORE_F_PRESENT | RTASN1CORE_F_PRIMITE_TAG_STRUCT);
     pThis->fValue = true;
@@ -159,6 +162,7 @@ RTDECL(void) RTAsn1Boolean_Delete(PRTASN1BOOLEAN pThis)
 RTDECL(int) RTAsn1Boolean_Enum(PRTASN1BOOLEAN pThis, PFNRTASN1ENUMCALLBACK pfnCallback, uint32_t uDepth, void *pvUser)
 {
     Assert(pThis && (!RTAsn1Boolean_IsPresent(pThis) || pThis->Asn1Core.pOps == &g_RTAsn1Boolean_Vtable));
+    RT_NOREF_PV(pThis); RT_NOREF_PV(pfnCallback); RT_NOREF_PV(uDepth); RT_NOREF_PV(pvUser);
 
     /* No children to enumerate. */
     return VINF_SUCCESS;
@@ -188,6 +192,7 @@ RTDECL(int) RTAsn1Boolean_CheckSanity(PCRTASN1BOOLEAN pThis, uint32_t fFlags, PR
 {
     if (RT_UNLIKELY(!RTAsn1Boolean_IsPresent(pThis)))
         return RTErrInfoSetF(pErrInfo, VERR_ASN1_NOT_PRESENT, "%s: Missing (BOOLEAN).", pszErrorTag);
+    RT_NOREF_PV(fFlags);
     return VINF_SUCCESS;
 }
 

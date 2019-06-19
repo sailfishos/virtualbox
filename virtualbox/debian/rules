@@ -32,7 +32,6 @@ export DH_COMPAT=4
 #  NOWEBSVC=1       don't build the webservice API, default for OSE
 #  STAGEDISO=<path> don't build the VBoxAdditions, use the precompiled .iso
 #  PKGDIR=<path>    where to store the final package(s)
-#  BLEEDING_EDGE=xyz
 
 package  := virtualbox
 verpkg   := virtualbox-ose
@@ -64,14 +63,7 @@ endif
 
 debrel  := $(if $(shell which lsb_release),_$(shell lsb_release -si)_$(shell lsb_release -sc),unknown)
 
-# shipping Linux kernel modules with bleeding-edge releases doesn't make sense
-instmod := $(if $(filter _Ubuntu_lucid _Ubuntu_maverick _Ubuntu_natty _Ubuntu_oneiric _Debian_sid,$(debrel)),,1)
-
-# Location of custom built Qt libraries (see below)
-qtstdc6  := /home/vbox/Qt-4.7.4-stdc++6-$(arch)
-
 cfg_flags := $(if $(NOQT),--disable-qt,) \
-	     $(if $(filter _Debian_squeeze,$(debrel)),--build-libvpx,) \
 	     $(if $(ose),--ose,) $(if $(LINUX),--with-linux=$(LINUX),) \
 	     $(if $(HEADLESS),--build-headless,) \
 	     $(if $(DEBUG),--build-debug,) \
@@ -85,6 +77,7 @@ bld_flags := AUTOCFG=$(current)/debian/AutoConfig.kmk \
 	     PATH_OUT=$(builddir) \
 	     VBOX_WITHOUT_EXTPACK_PUEL_PACKING=1 \
 	     VBOX_WITHOUT_EXTPACK_VNC_PACKING=1 \
+	     $(if $(filter _Debian_squeeze _Ubuntu_lucid,$(debrel)),,VBOX_WITH_VMSVGA3D=1) \
 	     VBOX_DO_STRIP= \
 	     VBOX_WITH_MULTIVERSION_PYTHON= \
 	     VBOX_PATH_PACKAGE_DOCS="\"/usr/share/doc/$(verpkg)\"" \
@@ -92,8 +85,7 @@ bld_flags := AUTOCFG=$(current)/debian/AutoConfig.kmk \
 	     $(if $(svnrev),VBOX_SVN_REV=$(svnrev),) \
 	     $(if $(NODOCS),VBOX_WITH_DOCS= ,) \
 	     $(if $(VERBOSE),--print-directory KBUILD_VERBOSE=2,--no-print-directory) \
-	     $(if $(STAGEDISO),VBOX_WITHOUT_ADDITIONS=1,) \
-	     $(if $(BLEEDING_EDGE),VBOX_BLEEDING_EDGE=$(BLEEDING_EDGE),)
+	     $(if $(STAGEDISO),VBOX_WITHOUT_ADDITIONS=1,)
 
 configure: debian/configure-stamp
 debian/configure-stamp:
@@ -128,25 +120,17 @@ debian/modules-stamp: debian/build-stamp
 	make -C $(builddir)/bin/src/vboxdrv clean
 	for d in $(wildcard /lib/modules/*); do \
 	    if [ -L $$d/build ]; then \
-	        make -C $(builddir)/bin/src/vboxdrv KERN_DIR=$$d/build MODULE_DIR=$$d clean && \
-	        make -j4 -C $(builddir)/bin/src/vboxdrv KBUILD_VERBOSE= KERN_DIR=$$d/build MODULE_DIR=$$d all \
-	        $(if $(instmod),&& install -D -m 0644 -g 0 -o 0 \
-	            $(builddir)/bin/src/vboxdrv/vboxdrv.ko $(moddir)/$$(basename $$d)/vboxdrv.ko); \
-	        make -C $(builddir)/bin/src/vboxnetflt KERN_DIR=$$d/build MODULE_DIR=$$d clean && \
+	        make -C $(builddir)/bin/src/vboxdrv KERN_VER=$$(basename $$d) clean && \
+	        make -j4 -C $(builddir)/bin/src/vboxdrv KBUILD_VERBOSE= KERN_VER=$$(basename $$d) all \
+	        make -C $(builddir)/bin/src/vboxnetflt KERN_VER=$$(basename $$d) clean && \
 		(cp $(builddir)/bin/src/vboxdrv/Module.symvers $(builddir)/bin/src/vboxnetflt || true) && \
-	        make -j4 -C $(builddir)/bin/src/vboxnetflt KBUILD_VERBOSE= KERN_DIR=$$d/build MODULE_DIR=$$d all \
-	        $(if $(instmod),&& install -D -m 0644 -g 0 -o 0 \
-	            $(builddir)/bin/src/vboxnetflt/vboxnetflt.ko $(moddir)/$$(basename $$d)/vboxnetflt.ko); \
-	        make -C $(builddir)/bin/src/vboxnetadp KERN_DIR=$$d/build MODULE_DIR=$$d clean && \
+	        make -j4 -C $(builddir)/bin/src/vboxnetflt KBUILD_VERBOSE= KERN_VER=$$(basename $$d) all \
+	        make -C $(builddir)/bin/src/vboxnetadp KERN_VER=$$(basename $$d) clean && \
 		(cp $(builddir)/bin/src/vboxdrv/Module.symvers $(builddir)/bin/src/vboxnetadp || true) && \
-	        make -j4 -C $(builddir)/bin/src/vboxnetadp KBUILD_VERBOSE= KERN_DIR=$$d/build MODULE_DIR=$$d all \
-	        $(if $(instmod),&& install -D -m 0644 -g 0 -o 0 \
-	            $(builddir)/bin/src/vboxnetadp/vboxnetadp.ko $(moddir)/$$(basename $$d)/vboxnetadp.ko); \
-	        make -C $(builddir)/bin/src/vboxpci KERN_DIR=$$d/build MODULE_DIR=$$d clean && \
+	        make -j4 -C $(builddir)/bin/src/vboxnetadp KBUILD_VERBOSE= KERN_VER=$$(basename $$d) all \
+	        make -C $(builddir)/bin/src/vboxpci KERN_VER=$$(basename $$d) clean && \
 		(cp $(builddir)/bin/src/vboxdrv/Module.symvers $(builddir)/bin/src/vboxpci || true) && \
-	        make -j4 -C $(builddir)/bin/src/vboxpci KBUILD_VERBOSE= KERN_DIR=$$d/build MODULE_DIR=$$d all \
-	        $(if $(instmod),&& install -D -m 0644 -g 0 -o 0 \
-	            $(builddir)/bin/src/vboxpci/vboxpci.ko $(moddir)/$$(basename $$d)/vboxpci.ko); \
+	        make -j4 -C $(builddir)/bin/src/vboxpci KBUILD_VERBOSE= KERN_VER=$$(basename $$d) all \
 	    fi; \
 	done
 	make -C $(builddir)/bin/src/vboxdrv clean
@@ -179,7 +163,7 @@ binary binary-arch binary-indep: build $(if $(NOMODS),,modules)
 	dh_testroot
 	dh_clean -k
 	dh_installdirs
-	tar -xjC $(prefix)/opt -f $(builddir)/bin/VirtualBox.tar.bz2
+	tar -xC $(prefix)/opt -f $(builddir)/bin/VirtualBox.tar
 	$(if $(NOQT),,mv $(archdir)/virtualbox.xml debian/$(verpkg).sharedmimeinfo)
 	$(archdir)/scripts/install.sh --package $(package) --root $(prefix) \
 	    --prefix /usr $(if $(NOQT),--no-qt) $(if $(ose),--ose) \
@@ -217,7 +201,6 @@ endif
 	mv $(archdir) $(prefix)/usr/lib/$(package)
 	ln -s ../VBoxVMM.so $(prefix)/usr/lib/$(package)/components/VBoxVMM.so
 	rmdir $(prefix)/opt
-	dh_desktop
 	$(if $(NOMODS),,dh_installmodules)
 	sed \
 	    -e 's|%NOLSB%||g' \
@@ -249,13 +232,16 @@ endif
 	dh_installmime
 	dh_link
 ifeq ($(DEBUG),)
-	dh_strip --keep-debug --exclude=libQtCoreVBox.so.4 --exclude=libQtGuiVBox.so.4 --exclude=libQtNetworkVBox.so.4 --exclude=libQtOpenGLVBox.so.4 --exclude=libqtaccessiblewidgets.so
+	dh_strip --keep-debug \
+	    $(addprefix --exclude=lib,$(addsuffix VBox.so.5,\
+	      Qt5Core Qt5Gui Qt5Widgets Qt5PrintSupport Qt5OpenGL Qt5DBus Qt5XcbQpa Qt5X11Extras)) \
+	    --exclude=libqxcb.so
 endif
 	mkdir -p $(current)/debian/$(verpkg)-dbg/usr/lib
 ifeq ($(DEBUG),)
 	mv $(current)/debian/$(verpkg)/usr/lib/debug $(current)/debian/$(verpkg)-dbg/usr/lib
 endif
-	$(if $(filter _Ubuntu_hardy _Ubuntu_lucid,$(debrel)),dh_pycentral,dh_python2)
+	$(firstword $(shell which dh_python2) $(shell which dh_python3))
 	dh_compress -X.pdf -X.chm -X LICENSE -X.py
 	dh_fixperms
 	dh_makeshlibs
@@ -265,8 +251,7 @@ endif
 	dh_gencontrol -- \
 	  -Valsa=$(if $(HEADLESS),,libasound2) \
 	  -Vpulse=$(if $(HEADLESS),,libpulse0) \
-	  -Vsdlttf=$(if $(HEADLESS),,libsdl-ttf2.0-0) \
-	  -Vdkms=$(if $(filter _Debian_lenny,$(debrel)),,dkms)
+	  -Vsdlttf=$(if $(HEADLESS),,libsdl-ttf2.0-0)
 	dh_md5sums
 	dh_builddeb --destdir $(pkgdir) -- -Zxz
 endif

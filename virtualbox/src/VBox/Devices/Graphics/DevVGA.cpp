@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -40,9 +40,10 @@
  * THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /* WARNING!!! All defines that affect VGAState should be placed to DevVGA.h !!!
  *            NEVER place them here as this would lead to VGASTATE inconsistency
@@ -63,15 +64,13 @@
 /** Converts a vga adaptor state pointer to a device instance pointer. */
 #define VGASTATE2DEVINS(pVgaState)    ((pVgaState)->CTX_SUFF(pDevIns))
 
-/** Check that the video modes fit into virtual video memory.
- * Only works when VBE_NEW_DYN_LIST is defined! */
-#define VRAM_SIZE_FIX
-
 /** Check buffer if an VRAM offset is within the right range or not. */
 #if defined(IN_RC) || defined(VBOX_WITH_2X_4GB_ADDR_SPACE_IN_R0)
 # define VERIFY_VRAM_WRITE_OFF_RETURN(pThis, off) \
     do { \
-        if ((off) >= VGA_MAPPING_SIZE) \
+        if ((off) < VGA_MAPPING_SIZE) \
+            RT_UNTRUSTED_VALIDATED_FENCE(); \
+        else \
         { \
             AssertMsgReturn((off) < (pThis)->vram_size, ("%RX32 !< %RX32\n", (uint32_t)(off), (pThis)->vram_size), VINF_SUCCESS); \
             Log2(("%Rfn[%d]: %RX32 -> R3\n", __PRETTY_FUNCTION__, __LINE__, (off))); \
@@ -80,14 +79,19 @@
     } while (0)
 #else
 # define VERIFY_VRAM_WRITE_OFF_RETURN(pThis, off) \
-        AssertMsgReturn((off) < (pThis)->vram_size, ("%RX32 !< %RX32\n", (uint32_t)(off), (pThis)->vram_size), VINF_SUCCESS)
+    do { \
+       AssertMsgReturn((off) < (pThis)->vram_size, ("%RX32 !< %RX32\n", (uint32_t)(off), (pThis)->vram_size), VINF_SUCCESS); \
+       RT_UNTRUSTED_VALIDATED_FENCE(); \
+    } while (0)
 #endif
 
 /** Check buffer if an VRAM offset is within the right range or not. */
 #if defined(IN_RC) || defined(VBOX_WITH_2X_4GB_ADDR_SPACE_IN_R0)
 # define VERIFY_VRAM_READ_OFF_RETURN(pThis, off, rcVar) \
     do { \
-        if ((off) >= VGA_MAPPING_SIZE) \
+        if ((off) < VGA_MAPPING_SIZE) \
+            RT_UNTRUSTED_VALIDATED_FENCE(); \
+        else \
         { \
             AssertMsgReturn((off) < (pThis)->vram_size, ("%RX32 !< %RX32\n", (uint32_t)(off), (pThis)->vram_size), 0xff); \
             Log2(("%Rfn[%d]: %RX32 -> R3\n", __PRETTY_FUNCTION__, __LINE__, (off))); \
@@ -99,18 +103,24 @@
 # define VERIFY_VRAM_READ_OFF_RETURN(pThis, off, rcVar) \
     do { \
         AssertMsgReturn((off) < (pThis)->vram_size, ("%RX32 !< %RX32\n", (uint32_t)(off), (pThis)->vram_size), 0xff); \
+        RT_UNTRUSTED_VALIDATED_FENCE(); \
         NOREF(rcVar); \
     } while (0)
 #endif
 
+/* VGA text mode blinking constants (cursor and blinking chars). */
+#define VGA_BLINK_PERIOD_FULL   (RT_NS_100MS * 4)   /* Blink cycle length. */
+#define VGA_BLINK_PERIOD_ON     (RT_NS_100MS * 2)   /* How long cursor/text is visible. */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DEV_VGA
 #include <VBox/vmm/pdmdev.h>
 #include <VBox/vmm/pgm.h>
 #ifdef IN_RING3
+# include <iprt/cdefs.h>
 # include <iprt/mem.h>
 # include <iprt/ctype.h>
 #endif /* IN_RING3 */
@@ -122,18 +132,17 @@
 #include <iprt/uuid.h>
 
 #include <VBox/VMMDev.h>
-#include <VBox/VBoxVideo.h>
+#include <VBoxVideo.h>
 #include <VBox/bioslogo.h>
 
 /* should go BEFORE any other DevVGA include to make all DevVGA.h config defines be visible */
 #include "DevVGA.h"
 
-#if defined(VBE_NEW_DYN_LIST) && defined(IN_RING3) && !defined(VBOX_DEVICE_STRUCT_TESTCASE)
+#if defined(IN_RING3) && !defined(VBOX_DEVICE_STRUCT_TESTCASE)
 # include "DevVGAModes.h"
 # include <stdio.h> /* sscan */
 #endif
 
-#include "vl_vbox.h"
 #include "VBoxDD.h"
 #include "VBoxDD2.h"
 
@@ -142,9 +151,10 @@
 #include "vmsvga/svga_reg.h"
 #endif
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 #pragma pack(1)
 
 /** BMP File Format Bitmap Header. */
@@ -257,9 +267,10 @@ typedef WINHDR *PWINHDR;
 #define LOGO_MAX_SIZE        LOGO_MAX_WIDTH * LOGO_MAX_HEIGHT * 4
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
+#ifdef IN_RING3
 /* "Press F12 to select boot device." bitmap. */
 static const uint8_t g_abLogoF12BootText[] =
 {
@@ -297,6 +308,7 @@ static const uint8_t g_abLogoF12BootText[] =
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 };
+#endif /* IN_RING3 */
 
 
 #ifndef VBOX_DEVICE_STRUCT_TESTCASE
@@ -329,6 +341,7 @@ DECLINLINE(bool) vga_is_dirty(PVGASTATE pThis, RTGCPHYS offVRAM)
     return ASMBitTest(&pThis->au32DirtyBitmap[0], offVRAM >> PAGE_SHIFT);
 }
 
+#ifdef IN_RING3
 /**
  * Reset dirty flags in a give range.
  *
@@ -343,6 +356,12 @@ DECLINLINE(void) vga_reset_dirty(PVGASTATE pThis, RTGCPHYS offVRAMStart, RTGCPHY
     Assert(offVRAMStart < offVRAMEnd);
     ASMBitClearRange(&pThis->au32DirtyBitmap[0], offVRAMStart >> PAGE_SHIFT, offVRAMEnd >> PAGE_SHIFT);
 }
+#endif /* IN_RING3 */
+
+#ifdef _MSC_VER
+# pragma warning(push)
+# pragma warning(disable:4310 4245) /* Buggy warnings: cast truncates constant value; conversion from 'int' to 'const uint8_t', signed/unsigned mismatch */
+#endif
 
 /* force some bits to zero */
 static const uint8_t sr_mask[8] = {
@@ -374,6 +393,10 @@ static const uint8_t gr_mask[16] = {
     (uint8_t)~0xff, /* 0x0e */
     (uint8_t)~0xff, /* 0x0f */
 };
+
+#ifdef _MSC_VER
+# pragma warning(pop)
+#endif
 
 #define cbswap_32(__x) \
 ((uint32_t)( \
@@ -427,6 +450,8 @@ static const uint32_t mask16[16] = {
 #define PAT(x) cbswap_32(x)
 #endif
 
+#ifdef IN_RING3
+
 static const uint32_t dmask16[16] = {
     PAT(0x00000000),
     PAT(0x000000ff),
@@ -453,10 +478,10 @@ static const uint32_t dmask4[4] = {
     PAT(0xffffffff),
 };
 
-#if defined(IN_RING3)
 static uint32_t expand4[256];
 static uint16_t expand2[256];
 static uint8_t expand4to8[16];
+
 #endif /* IN_RING3 */
 
 /* Update the values needed for calculating Vertical Retrace and
@@ -627,6 +652,7 @@ static uint32_t vga_ioport_read(PVGASTATE pThis, uint32_t addr)
             val = pThis->dac_write_index;
             break;
         case 0x3c9:
+            Assert(pThis->dac_sub_index < 3);
             val = pThis->palette[pThis->dac_read_index * 3 + pThis->dac_sub_index];
             if (++pThis->dac_sub_index == 3) {
                 pThis->dac_sub_index = 0;
@@ -683,6 +709,7 @@ static void vga_ioport_write(PVGASTATE pThis, uint32_t addr, uint32_t val)
 
     switch(addr) {
     case 0x3c0:
+    case 0x3c1:
         if (pThis->ar_flip_flop == 0) {
             val &= 0x3f;
             pThis->ar_index = val;
@@ -758,6 +785,7 @@ static void vga_ioport_write(PVGASTATE pThis, uint32_t addr, uint32_t val)
         pThis->dac_state = 0;
         break;
     case 0x3c9:
+        Assert(pThis->dac_sub_index < 3);
         pThis->dac_cache[pThis->dac_sub_index] = val;
         if (++pThis->dac_sub_index == 3) {
             memcpy(&pThis->palette[pThis->dac_write_index * 3], pThis->dac_cache, 3);
@@ -770,6 +798,7 @@ static void vga_ioport_write(PVGASTATE pThis, uint32_t addr, uint32_t val)
         break;
     case 0x3cf:
         Log2(("vga: write GR%x = 0x%02x\n", pThis->gr_index, val));
+        Assert(pThis->gr_index < RT_ELEMENTS(gr_mask));
         pThis->gr[pThis->gr_index] = val & gr_mask[pThis->gr_index];
 
 #ifndef IN_RC
@@ -840,40 +869,48 @@ static uint32_t vbe_ioport_read_data(PVGASTATE pThis, uint32_t addr)
     uint32_t val;
     NOREF(addr);
 
-    if (pThis->vbe_index < VBE_DISPI_INDEX_NB) {
-      if (pThis->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_GETCAPS) {
-          switch(pThis->vbe_index) {
+    uint16_t const idxVbe = pThis->vbe_index;
+    if (idxVbe < VBE_DISPI_INDEX_NB)
+    {
+        RT_UNTRUSTED_VALIDATED_FENCE();
+        if (pThis->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_GETCAPS)
+        {
+            switch (idxVbe)
+            {
                 /* XXX: do not hardcode ? */
-            case VBE_DISPI_INDEX_XRES:
-                val = VBE_DISPI_MAX_XRES;
-                break;
-            case VBE_DISPI_INDEX_YRES:
-                val = VBE_DISPI_MAX_YRES;
-                break;
-            case VBE_DISPI_INDEX_BPP:
-                val = VBE_DISPI_MAX_BPP;
-                break;
-            default:
-                Assert(pThis->vbe_index < VBE_DISPI_INDEX_NB);
-                val = pThis->vbe_regs[pThis->vbe_index];
-                break;
-          }
-      } else {
-          switch(pThis->vbe_index) {
-          case VBE_DISPI_INDEX_VBOX_VIDEO:
-              /* Reading from the port means that the old additions are requesting the number of monitors. */
-              val = 1;
-              break;
-          default:
-              Assert(pThis->vbe_index < VBE_DISPI_INDEX_NB);
-              val = pThis->vbe_regs[pThis->vbe_index];
-              break;
-          }
-      }
-    } else {
-        val = 0;
+                case VBE_DISPI_INDEX_XRES:
+                    val = VBE_DISPI_MAX_XRES;
+                    break;
+                case VBE_DISPI_INDEX_YRES:
+                    val = VBE_DISPI_MAX_YRES;
+                    break;
+                case VBE_DISPI_INDEX_BPP:
+                    val = VBE_DISPI_MAX_BPP;
+                    break;
+                default:
+                    Assert(idxVbe < VBE_DISPI_INDEX_NB);
+                    val = pThis->vbe_regs[idxVbe];
+                    break;
+            }
+        }
+        else
+        {
+            switch (idxVbe)
+            {
+                case VBE_DISPI_INDEX_VBOX_VIDEO:
+                    /* Reading from the port means that the old additions are requesting the number of monitors. */
+                    val = 1;
+                    break;
+                default:
+                    Assert(idxVbe < VBE_DISPI_INDEX_NB);
+                    val = pThis->vbe_regs[idxVbe];
+                    break;
+            }
+        }
     }
-    Log(("VBE: read index=0x%x val=0x%x\n", pThis->vbe_index, val));
+    else
+        val = 0;
+    Log(("VBE: read index=0x%x val=0x%x\n", idxVbe, val));
     return val;
 }
 
@@ -938,17 +975,12 @@ static void recalculate_data(PVGASTATE pThis, bool fVirtHeightOnly)
         pThis->vbe_start_addr  = RT_MIN(offStart, pThis->vram_size);
     }
 
-    /* The VBE_DISPI_INDEX_VIRT_HEIGHT is used to prevent setting resolution bigger than VRAM permits
-     * it is used instead of VBE_DISPI_INDEX_YRES *only* in case
-     * pThis->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] < pThis->vbe_regs[VBE_DISPI_INDEX_YRES]
-     * We can not simply do pThis->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] = cVirtHeight since
-     * the cVirtHeight we calculated can exceed the 16bit value range
-     * instead we'll check if it's bigger than pThis->vbe_regs[VBE_DISPI_INDEX_YRES], and if yes,
-     * assign the pThis->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] with a dummy UINT16_MAX value
-     * that is always bigger than pThis->vbe_regs[VBE_DISPI_INDEX_YRES]
-     * to just ensure the pThis->vbe_regs[VBE_DISPI_INDEX_YRES] is always used */
-    pThis->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] = (cVirtHeight >= (uint32_t)pThis->vbe_regs[VBE_DISPI_INDEX_YRES])
-                                                 ? UINT16_MAX : (uint16_t)cVirtHeight;
+    /* The VBE_DISPI_INDEX_VIRT_HEIGHT is used to prevent setting resolution bigger than
+     * the VRAM size permits. It is used instead of VBE_DISPI_INDEX_YRES *only* in case
+     * pThis->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] < pThis->vbe_regs[VBE_DISPI_INDEX_YRES].
+     * Note that VBE_DISPI_INDEX_VIRT_HEIGHT has to be clipped to UINT16_MAX, which happens
+     * with small resolutions and big VRAM. */
+    pThis->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] = cVirtHeight >= UINT16_MAX ? UINT16_MAX : (uint16_t)cVirtHeight;
 }
 
 static void vbe_ioport_write_index(PVGASTATE pThis, uint32_t addr, uint32_t val)
@@ -1035,6 +1067,7 @@ static int vbe_ioport_write_data(PVGASTATE pThis, uint32_t addr, uint32_t val)
 #ifndef IN_RING3
             return VINF_IOM_R3_IOPORT_WRITE;
 #else
+        {
             if ((val & VBE_DISPI_ENABLED) &&
                 !(pThis->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_ENABLED)) {
                 int h, shift_control;
@@ -1122,12 +1155,12 @@ static int vbe_ioport_write_data(PVGASTATE pThis, uint32_t addr, uint32_t val)
             }
             pThis->vbe_regs[pThis->vbe_index] = val;
             /*
-             * LFB video mode is either disabled or changed. This notification
-             * is used by the display to disable VBVA.
+             * LFB video mode is either disabled or changed. Notify the display
+             * and reset VBVA.
              */
             pThis->pDrv->pfnLFBModeChange(pThis->pDrv, (val & VBE_DISPI_ENABLED) != 0);
 #ifdef VBOX_WITH_HGSMI
-            VBVAPause(pThis, (val & VBE_DISPI_ENABLED) == 0);
+            VBVAOnVBEChanged(pThis);
 #endif /* VBOX_WITH_HGSMI */
 
             /* The VGA region is (could be) affected by this change; reset all aliases we've created. */
@@ -1137,6 +1170,7 @@ static int vbe_ioport_write_data(PVGASTATE pThis, uint32_t addr, uint32_t val)
                 pThis->fRemappedVGA = false;
             }
             break;
+        }
 #endif /* IN_RING3 */
         case VBE_DISPI_INDEX_VIRT_WIDTH:
         case VBE_DISPI_INDEX_X_OFFSET:
@@ -1178,7 +1212,7 @@ static int vbe_ioport_write_data(PVGASTATE pThis, uint32_t addr, uint32_t val)
 #endif
 
 /* called for accesses between 0xa0000 and 0xc0000 */
-static uint32_t vga_mem_readb(PVGASTATE pThis, target_phys_addr_t addr, int *prc)
+static uint32_t vga_mem_readb(PVGASTATE pThis, RTGCPHYS addr, int *prc)
 {
     int memory_map_mode, plane;
     uint32_t ret;
@@ -1188,6 +1222,13 @@ static uint32_t vga_mem_readb(PVGASTATE pThis, target_phys_addr_t addr, int *prc
     memory_map_mode = (pThis->gr[6] >> 2) & 3;
 #ifndef IN_RC
     RTGCPHYS GCPhys = addr; /* save original address */
+#endif
+
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RZ
+    /* VMSVGA keeps the VGA and SVGA framebuffers separate unlike this boch-based
+       VGA implementation, so we fake it by going to ring-3 and using a heap buffer.  */
+    if (!pThis->svga.fEnabled) { /*likely*/ }
+    else                       return VINF_IOM_R3_MMIO_READ;
 #endif
 
     addr &= 0x1ffff;
@@ -1214,10 +1255,11 @@ static uint32_t vga_mem_readb(PVGASTATE pThis, target_phys_addr_t addr, int *prc
 
     if (pThis->sr[4] & 0x08) {
         /* chain 4 mode : simplest access */
-# ifndef IN_RC
+#ifndef IN_RC
         /* If all planes are accessible, then map the page to the frame buffer and make it writable. */
         if (   (pThis->sr[2] & 3) == 3
-            && !vga_is_dirty(pThis, addr))
+            && !vga_is_dirty(pThis, addr)
+            && pThis->GCPhysVRAM)
         {
             /** @todo only allow read access (doesn't work now) */
             STAM_COUNTER_INC(&pThis->StatMapPage);
@@ -1227,21 +1269,35 @@ static uint32_t vga_mem_readb(PVGASTATE pThis, target_phys_addr_t addr, int *prc
             vga_set_dirty(pThis, addr);
             pThis->fRemappedVGA = true;
         }
-# endif /* IN_RC */
+#endif /* !IN_RC */
         VERIFY_VRAM_READ_OFF_RETURN(pThis, addr, *prc);
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RING3
+        ret = !pThis->svga.fEnabled            ? pThis->CTX_SUFF(vram_ptr)[addr]
+            : addr < VMSVGA_VGA_FB_BACKUP_SIZE ? pThis->svga.pbVgaFrameBufferR3[addr] : 0xff;
+#else
         ret = pThis->CTX_SUFF(vram_ptr)[addr];
+#endif
     } else if (!(pThis->sr[4] & 0x04)) {    /* Host access is controlled by SR4, not GR5! */
         /* odd/even mode (aka text mode mapping) */
         plane = (pThis->gr[4] & 2) | (addr & 1);
         /* See the comment for a similar line in vga_mem_writeb. */
-        RTGCPHYS off = ((addr & ~1) << 2) | plane;
+        RTGCPHYS off = ((addr & ~1) * 4) | plane;
         VERIFY_VRAM_READ_OFF_RETURN(pThis, off, *prc);
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RING3
+        ret = !pThis->svga.fEnabled           ? pThis->CTX_SUFF(vram_ptr)[off]
+            : off < VMSVGA_VGA_FB_BACKUP_SIZE ? pThis->svga.pbVgaFrameBufferR3[off] : 0xff;
+#else
         ret = pThis->CTX_SUFF(vram_ptr)[off];
+#endif
     } else {
         /* standard VGA latched access */
-        VERIFY_VRAM_READ_OFF_RETURN(pThis, addr, *prc);
+        VERIFY_VRAM_READ_OFF_RETURN(pThis, addr * 4 + 3, *prc);
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RING3
+        pThis->latch = !pThis->svga.fEnabled            ? ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[addr]
+                     : addr < VMSVGA_VGA_FB_BACKUP_SIZE ? ((uint32_t *)pThis->svga.pbVgaFrameBufferR3)[addr] : UINT32_MAX;
+#else
         pThis->latch = ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[addr];
-
+#endif
         if (!(pThis->gr[5] & 0x08)) {
             /* read mode 0 */
             plane = pThis->gr[4];
@@ -1259,7 +1315,7 @@ static uint32_t vga_mem_readb(PVGASTATE pThis, target_phys_addr_t addr, int *prc
 }
 
 /* called for accesses between 0xa0000 and 0xc0000 */
-static int vga_mem_writeb(PVGASTATE pThis, target_phys_addr_t addr, uint32_t val)
+static int vga_mem_writeb(PVGASTATE pThis, RTGCPHYS addr, uint32_t val)
 {
     int memory_map_mode, plane, write_mode, b, func_select, mask;
     uint32_t write_mask, bit_mask, set_mask;
@@ -1269,6 +1325,13 @@ static int vga_mem_writeb(PVGASTATE pThis, target_phys_addr_t addr, uint32_t val
     memory_map_mode = (pThis->gr[6] >> 2) & 3;
 #ifndef IN_RC
     RTGCPHYS GCPhys = addr; /* save original address */
+#endif
+
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RZ
+    /* VMSVGA keeps the VGA and SVGA framebuffers separate unlike this boch-based
+       VGA implementation, so we fake it by going to ring-3 and using a heap buffer.  */
+    if (!pThis->svga.fEnabled) { /*likely*/ }
+    else                       return VINF_IOM_R3_MMIO_WRITE;
 #endif
 
     addr &= 0x1ffff;
@@ -1298,20 +1361,33 @@ static int vga_mem_writeb(PVGASTATE pThis, target_phys_addr_t addr, uint32_t val
         plane = addr & 3;
         mask = (1 << plane);
         if (pThis->sr[2] & mask) {
-# ifndef IN_RC
+#ifndef IN_RC
             /* If all planes are accessible, then map the page to the frame buffer and make it writable. */
             if (   (pThis->sr[2] & 3) == 3
-                && !vga_is_dirty(pThis, addr))
+                && !vga_is_dirty(pThis, addr)
+                && pThis->GCPhysVRAM)
             {
                 STAM_COUNTER_INC(&pThis->StatMapPage);
                 IOMMMIOMapMMIO2Page(PDMDevHlpGetVM(pThis->CTX_SUFF(pDevIns)), GCPhys,
                                     pThis->GCPhysVRAM + addr, X86_PTE_RW | X86_PTE_P);
                 pThis->fRemappedVGA = true;
             }
-# endif /* IN_RC */
+#endif /* !IN_RC */
 
             VERIFY_VRAM_WRITE_OFF_RETURN(pThis, addr);
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RING3
+            if (!pThis->svga.fEnabled)
+                pThis->CTX_SUFF(vram_ptr)[addr]      = val;
+            else if (addr < VMSVGA_VGA_FB_BACKUP_SIZE)
+                pThis->svga.pbVgaFrameBufferR3[addr] = val;
+            else
+            {
+                Log(("vga: chain4: out of vmsvga VGA framebuffer bounds! addr=%#x\n", addr));
+                return VINF_SUCCESS;
+            }
+#else
             pThis->CTX_SUFF(vram_ptr)[addr] = val;
+#endif
             Log3(("vga: chain4: [0x%x]\n", addr));
             pThis->plane_updated |= mask; /* only used to detect font change */
             vga_set_dirty(pThis, addr);
@@ -1326,9 +1402,21 @@ static int vga_mem_writeb(PVGASTATE pThis, target_phys_addr_t addr, uint32_t val
              * that is multiply by the number of planes,
              * and select the plane byte in the vram offset.
              */
-            addr = ((addr & ~1) << 2) | plane;
+            addr = ((addr & ~1) * 4) | plane;
             VERIFY_VRAM_WRITE_OFF_RETURN(pThis, addr);
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RING3
+            if (!pThis->svga.fEnabled)
+                pThis->CTX_SUFF(vram_ptr)[addr]      = val;
+            else if (addr < VMSVGA_VGA_FB_BACKUP_SIZE)
+                pThis->svga.pbVgaFrameBufferR3[addr] = val;
+            else
+            {
+                Log(("vga: odd/even: out of vmsvga VGA framebuffer bounds! addr=%#x\n", addr));
+                return VINF_SUCCESS;
+            }
+#else
             pThis->CTX_SUFF(vram_ptr)[addr] = val;
+#endif
             Log3(("vga: odd/even: [0x%x]\n", addr));
             pThis->plane_updated |= mask; /* only used to detect font change */
             vga_set_dirty(pThis, addr);
@@ -1337,6 +1425,8 @@ static int vga_mem_writeb(PVGASTATE pThis, target_phys_addr_t addr, uint32_t val
         /* standard VGA latched access */
         VERIFY_VRAM_WRITE_OFF_RETURN(pThis, addr * 4 + 3);
 
+#if 0
+/* This code does not work reliably (@bugref{8123}) and no longer helps performance either. */
 #ifdef IN_RING0
         if (((++pThis->cLatchAccesses) & pThis->uMaskLatchAccess) == pThis->uMaskLatchAccess)
         {
@@ -1374,6 +1464,7 @@ static int vga_mem_writeb(PVGASTATE pThis, target_phys_addr_t addr, uint32_t val
                 pThis->cLatchAccesses       = 0;
             }
         }
+#endif
 #endif
 
         write_mode = pThis->gr[5] & 3;
@@ -1439,18 +1530,31 @@ static int vga_mem_writeb(PVGASTATE pThis, target_phys_addr_t addr, uint32_t val
         mask = pThis->sr[2];
         pThis->plane_updated |= mask; /* only used to detect font change */
         write_mask = mask16[mask];
-        ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[addr] =
-            (((uint32_t *)pThis->CTX_SUFF(vram_ptr))[addr] & ~write_mask) |
-            (val & write_mask);
-            Log3(("vga: latch: [0x%x] mask=0x%08x val=0x%08x\n",
-                   addr * 4, write_mask, val));
-            vga_set_dirty(pThis, (addr << 2));
+#ifdef VMSVGA_WITH_VGA_FB_BACKUP_AND_IN_RING3
+        uint32_t *pu32Dst;
+        if (!pThis->svga.fEnabled)
+            pu32Dst = &((uint32_t *)pThis->CTX_SUFF(vram_ptr))[addr];
+        else if (addr * 4 + 3 < VMSVGA_VGA_FB_BACKUP_SIZE)
+            pu32Dst = &((uint32_t *)pThis->svga.pbVgaFrameBufferR3)[addr];
+        else
+        {
+            Log(("vga: latch: out of vmsvga VGA framebuffer bounds! addr=%#x\n", addr));
+            return VINF_SUCCESS;
+        }
+        *pu32Dst = (*pu32Dst & ~write_mask) | (val & write_mask);
+#else
+        ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[addr] = (((uint32_t *)pThis->CTX_SUFF(vram_ptr))[addr] & ~write_mask)
+                                                      | (val & write_mask);
+#endif
+        Log3(("vga: latch: [0x%x] mask=0x%08x val=0x%08x\n", addr * 4, write_mask, val));
+        vga_set_dirty(pThis, (addr * 4));
     }
 
     return VINF_SUCCESS;
 }
 
-#if defined(IN_RING3)
+#ifdef IN_RING3
+
 typedef void vga_draw_glyph8_func(uint8_t *d, int linesize,
                                   const uint8_t *font_ptr, int h,
                                   uint32_t fgcol, uint32_t bgcol,
@@ -1690,14 +1794,15 @@ static const uint8_t cursor_glyph[32 * 4] = {
     0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
 };
 
+static const uint8_t empty_glyph[32 * 4] = { 0 };
+
 /*
  * Text mode update
  * Missing:
  * - underline
- * - flashing
  */
 static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, bool reset_dirty,
-        PDMIDISPLAYCONNECTOR *pDrv)
+                         PDMIDISPLAYCONNECTOR *pDrv)
 {
     int cx, cy, cheight, cw, ch, cattr, height, width, ch_attr;
     int cx_min, cx_max, linesize, x_incr;
@@ -1710,6 +1815,9 @@ static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, 
     uint32_t *ch_attr_ptr;
     vga_draw_glyph8_func *vga_draw_glyph8;
     vga_draw_glyph9_func *vga_draw_glyph9;
+    uint64_t time_ns;
+    bool blink_on, chr_blink_flip, cur_blink_flip;
+    bool blink_enabled, blink_do_redraw;
 
     full_update |= update_palette16(pThis);
     palette = pThis->last_palette;
@@ -1793,9 +1901,9 @@ static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, 
       /* if the cursor position changed, we update the old and new
          chars */
         if (pThis->cursor_offset < CH_ATTR_SIZE)
-            pThis->last_ch_attr[pThis->cursor_offset] = ~0;
+            pThis->last_ch_attr[pThis->cursor_offset] = UINT32_MAX;
         if (cursor_offset < CH_ATTR_SIZE)
-            pThis->last_ch_attr[cursor_offset] = ~0;
+            pThis->last_ch_attr[cursor_offset] = UINT32_MAX;
         pThis->cursor_offset = cursor_offset;
         pThis->cursor_start = pThis->cr[0xa];
         pThis->cursor_end = pThis->cr[0xb];
@@ -1808,12 +1916,27 @@ static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, 
         vga_draw_glyph8 = vga_draw_glyph8_table[depth_index];
     vga_draw_glyph9 = vga_draw_glyph9_table[depth_index];
 
-    dest = pDrv->pu8Data;
+    dest = pDrv->pbData;
     linesize = pDrv->cbScanline;
     ch_attr_ptr = pThis->last_ch_attr;
     cy_start = -1;
     cx_max_upd = -1;
     cx_min_upd = width;
+
+    /* Figure out if we're in the visible period of the blink cycle. */
+    time_ns  = PDMDevHlpTMTimeVirtGetNano(VGASTATE2DEVINS(pThis));
+    blink_on = (time_ns % VGA_BLINK_PERIOD_FULL) < VGA_BLINK_PERIOD_ON;
+    chr_blink_flip = false;
+    cur_blink_flip = false;
+    if (pThis->last_chr_blink != blink_on)
+    {
+        /* Currently cursor and characters blink at the same rate, but they might not. */
+        pThis->last_chr_blink = blink_on;
+        pThis->last_cur_blink = blink_on;
+        chr_blink_flip = true;
+        cur_blink_flip = true;
+    }
+    blink_enabled = !!(pThis->ar[0x10] & 0x08); /* Attribute controller blink enable. */
 
     for(cy = 0; cy < (height - dscan); cy = cy + (1 << dscan)) {
         d1 = dest;
@@ -1822,7 +1945,9 @@ static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, 
         cx_max = -1;
         for(cx = 0; cx < width; cx++) {
             ch_attr = *(uint16_t *)src;
-            if (full_update || ch_attr != (int)*ch_attr_ptr) {
+            /* Figure out if character needs redrawing due to blink state change. */
+            blink_do_redraw = blink_enabled && chr_blink_flip && (ch_attr & 0x8000);
+            if (full_update || ch_attr != (int)*ch_attr_ptr || blink_do_redraw || (src == cursor_ptr && cur_blink_flip)) {
                 if (cx < cx_min)
                     cx_min = cx;
                 if (cx > cx_max)
@@ -1840,6 +1965,14 @@ static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, 
                 font_ptr += 32 * 4 * ch;
                 bgcol = palette[cattr >> 4];
                 fgcol = palette[cattr & 0x0f];
+
+                if (blink_enabled && (cattr & 0x80))
+                {
+                    bgcol = palette[(cattr >> 4) & 7];
+                    if (!blink_on)
+                        font_ptr = empty_glyph;
+                }
+
                 if (cw != 9) {
                     if (pThis->fRenderVRAM)
                         vga_draw_glyph8(d1, linesize,
@@ -1855,23 +1988,26 @@ static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, 
                 if (src == cursor_ptr &&
                     !(pThis->cr[0x0a] & 0x20)) {
                     int line_start, line_last, h;
-                    /* draw the cursor */
-                    line_start = pThis->cr[0x0a] & 0x1f;
-                    line_last = pThis->cr[0x0b] & 0x1f;
-                    /* XXX: check that */
-                    if (line_last > cheight - 1)
-                        line_last = cheight - 1;
-                    if (line_last >= line_start && line_start < cheight) {
-                        h = line_last - line_start + 1;
-                        d = d1 + (linesize * line_start << dscan);
-                        if (cw != 9) {
-                            if (pThis->fRenderVRAM)
-                                vga_draw_glyph8(d, linesize,
-                                                cursor_glyph, h, fgcol, bgcol, dscan);
-                        } else {
-                            if (pThis->fRenderVRAM)
-                                vga_draw_glyph9(d, linesize,
-                                                cursor_glyph, h, fgcol, bgcol, 1);
+
+                    /* draw the cursor if within the visible period */
+                    if (blink_on) {
+                        line_start = pThis->cr[0x0a] & 0x1f;
+                        line_last = pThis->cr[0x0b] & 0x1f;
+                        /* XXX: check that */
+                        if (line_last > cheight - 1)
+                            line_last = cheight - 1;
+                        if (line_last >= line_start && line_start < cheight) {
+                            h = line_last - line_start + 1;
+                            d = d1 + (linesize * line_start << dscan);
+                            if (cw != 9) {
+                                if (pThis->fRenderVRAM)
+                                    vga_draw_glyph8(d, linesize,
+                                                    cursor_glyph, h, fgcol, bgcol, dscan);
+                            } else {
+                                if (pThis->fRenderVRAM)
+                                    vga_draw_glyph9(d, linesize,
+                                                    cursor_glyph, h, fgcol, bgcol, 1);
+                            }
                         }
                     }
                 }
@@ -1903,7 +2039,7 @@ static int vga_draw_text(PVGASTATE pThis, bool full_update, bool fFailOnResize, 
         /* Flush any remaining changes to display. */
         pDrv->pfnUpdateRect(pDrv, cx_min_upd * cw, cy_start * cheight,
                                    (cx_max_upd - cx_min_upd + 1) * cw, (cy - cy_start) * cheight);
-        return VINF_SUCCESS;
+    return VINF_SUCCESS;
 }
 
 enum {
@@ -2018,9 +2154,10 @@ static void vga_get_resolution(PVGASTATE pThis, int *pwidth, int *pheight)
  * @param   pThis   Pointer to the vga state.
  * @param   cx      The width.
  * @param   cy      The height.
+ * @param   pDrv    The display connector.
  */
 static int vga_resize_graphic(PVGASTATE pThis, int cx, int cy,
-                PDMIDISPLAYCONNECTOR *pDrv)
+                              PDMIDISPLAYCONNECTOR *pDrv)
 {
     const unsigned cBits = pThis->get_bpp(pThis);
 
@@ -2028,10 +2165,12 @@ static int vga_resize_graphic(PVGASTATE pThis, int cx, int cy,
     AssertReturn(cx, VERR_INVALID_PARAMETER);
     AssertReturn(cy, VERR_INVALID_PARAMETER);
     AssertPtrReturn(pThis, VERR_INVALID_POINTER);
-    AssertReturn(pThis->line_offset, VERR_INTERNAL_ERROR);
+
+    if (!pThis->line_offset)
+        return VERR_INTERNAL_ERROR;
 
 #if 0 //def VBOX_WITH_VDMA
-    /** @todo: we get a second resize here when VBVA is on, while we actually should not */
+    /** @todo we get a second resize here when VBVA is on, while we actually should not */
     /* do not do pfnResize in case VBVA is on since all mode changes are performed over VBVA
      * we are checking for VDMA state here to ensure this code works only for WDDM driver,
      * although we should avoid calling pfnResize for XPDM as well, since pfnResize is actually an extra resize
@@ -2082,16 +2221,16 @@ static int vga_resize_graphic(PVGASTATE pThis, int cx, int cy,
     return VINF_SUCCESS;
 }
 
-#ifdef VBOX_WITH_VMSVGA
-int vgaR3UpdateDisplay(VGAState *s, unsigned xStart, unsigned yStart, unsigned width, unsigned height)
+# ifdef VBOX_WITH_VMSVGA
+
+int vgaR3UpdateDisplay(VGAState *s, unsigned xStart, unsigned yStart, unsigned cx, unsigned cy)
 {
-    int bits;
     uint32_t v;
     vga_draw_line_func *vga_draw_line;
 
     if (!s->fRenderVRAM)
     {
-        s->pDrv->pfnUpdateRect(s->pDrv, xStart, yStart, width, height);
+        s->pDrv->pfnUpdateRect(s->pDrv, xStart, yStart, cx, cy);
         return VINF_SUCCESS;
     }
     /** @todo might crash if a blit follows a resolution change very quickly (seen this many times!) */
@@ -2105,7 +2244,8 @@ int vgaR3UpdateDisplay(VGAState *s, unsigned xStart, unsigned yStart, unsigned w
         return VINF_SUCCESS;
     }
 
-    switch(s->svga.uBpp) {
+    uint32_t cBits;
+    switch (s->svga.uBpp) {
     default:
     case 0:
     case 8:
@@ -2113,37 +2253,37 @@ int vgaR3UpdateDisplay(VGAState *s, unsigned xStart, unsigned yStart, unsigned w
         return VERR_NOT_IMPLEMENTED;
     case 15:
         v = VGA_DRAW_LINE15;
-        bits = 16;
+        cBits = 16;
         break;
     case 16:
         v = VGA_DRAW_LINE16;
-        bits = 16;
+        cBits = 16;
         break;
     case 24:
         v = VGA_DRAW_LINE24;
-        bits = 24;
+        cBits = 24;
         break;
     case 32:
         v = VGA_DRAW_LINE32;
-        bits = 32;
+        cBits = 32;
         break;
     }
     vga_draw_line = vga_draw_line_table[v * 4 + get_depth_index(s->pDrv->cBits)];
 
-    unsigned offsetSource = (xStart * bits) / 8 + s->svga.cbScanline * yStart;
-    unsigned offsetDest   = (xStart * RT_ALIGN(s->pDrv->cBits, 8)) / 8 + s->pDrv->cbScanline * yStart;
+    uint32_t offSrc = (xStart * cBits) / 8 + s->svga.cbScanline * yStart;
+    uint32_t offDst = (xStart * RT_ALIGN(s->pDrv->cBits, 8)) / 8 + s->pDrv->cbScanline * yStart;
 
-    uint8_t *dest = s->pDrv->pu8Data      + offsetDest;
-    uint8_t *src  = s->CTX_SUFF(vram_ptr) + offsetSource;
+    uint8_t       *pbDst = s->pDrv->pbData       + offDst;
+    uint8_t const *pbSrc = s->CTX_SUFF(vram_ptr) + offSrc;
 
-    for(unsigned y = yStart; y < yStart + height; y++) 
+    for (unsigned y = yStart; y < yStart + cy; y++)
     {
-        vga_draw_line(s, dest, src, width);
+        vga_draw_line(s, pbDst, pbSrc, cx);
 
-        dest += s->pDrv->cbScanline;
-        src  += s->svga.cbScanline;
+        pbDst += s->pDrv->cbScanline;
+        pbSrc += s->svga.cbScanline;
     }
-    s->pDrv->pfnUpdateRect(s->pDrv, xStart, yStart, width, height);
+    s->pDrv->pfnUpdateRect(s->pDrv, xStart, yStart, cx, cy);
 
     return VINF_SUCCESS;
 }
@@ -2151,120 +2291,128 @@ int vgaR3UpdateDisplay(VGAState *s, unsigned xStart, unsigned yStart, unsigned w
 /*
  * graphic modes
  */
-static int vmsvga_draw_graphic(PVGASTATE pThis, bool full_update, bool fFailOnResize, bool reset_dirty,
-                PDMIDISPLAYCONNECTOR *pDrv)
+static int vmsvga_draw_graphic(PVGASTATE pThis, bool fFullUpdate, bool fFailOnResize, bool reset_dirty,
+                               PDMIDISPLAYCONNECTOR *pDrv)
 {
-    int y, page_min, page_max, linesize, y_start;
-    int width, height, page0, page1, bwidth, bits;
-    int disp_width;
-    uint8_t *d;
-    uint32_t v, addr1, addr;
-    vga_draw_line_func *vga_draw_line;
+    RT_NOREF1(fFailOnResize);
 
-    if (    pThis->svga.uWidth  == VMSVGA_VAL_UNINITIALIZED
-        ||  pThis->svga.uHeight == VMSVGA_VAL_UNINITIALIZED
-        ||  pThis->svga.uBpp    == VMSVGA_VAL_UNINITIALIZED)
+    uint32_t const cx        = pThis->svga.uWidth;
+    uint32_t const cxDisplay = cx;
+    uint32_t const cy        = pThis->svga.uHeight;
+    uint32_t       cBits     = pThis->svga.uBpp;
+
+    if (   cx    == VMSVGA_VAL_UNINITIALIZED
+        || cx    == 0
+        || cy    == VMSVGA_VAL_UNINITIALIZED
+        || cy    == 0
+        || cBits == VMSVGA_VAL_UNINITIALIZED
+        || cBits == 0)
     {
         /* Intermediate state; skip redraws. */
         return VINF_SUCCESS;
     }
 
-    width  = pThis->svga.uWidth;
-    height = pThis->svga.uHeight;
-
-    disp_width = width;
-
-    switch(pThis->svga.uBpp) {
-    default:
-    case 0:
-    case 8:
-        AssertFailed();
-        return VERR_NOT_IMPLEMENTED;
-    case 15:
-        v = VGA_DRAW_LINE15;
-        bits = 16;
-        break;
-    case 16:
-        v = VGA_DRAW_LINE16;
-        bits = 16;
-        break;
-    case 24:
-        v = VGA_DRAW_LINE24;
-        bits = 24;
-        break;
-    case 32:
-        v = VGA_DRAW_LINE32;
-        bits = 32;
-        break;
-    }
-    vga_draw_line = vga_draw_line_table[v * 4 + get_depth_index(pDrv->cBits)];
-
-    if (pThis->cursor_invalidate)
-        pThis->cursor_invalidate(pThis);
-
-    addr1 = 0;  /* always start at the beginning of the framebuffer */
-    bwidth = (width * bits + 7) / 8;    /* The visible width of a scanline. */
-    y_start = -1;
-    page_min = 0x7fffffff;
-    page_max = -1;
-    d = pDrv->pu8Data;
-    linesize = pDrv->cbScanline;
-
-    for(y = 0; y < height; y++) 
+    unsigned v;
+    switch (cBits)
     {
-        addr = addr1 + y * bwidth;
-
-        page0 = addr & ~PAGE_OFFSET_MASK;
-        page1 = (addr + bwidth - 1) & ~PAGE_OFFSET_MASK;
-        bool update = full_update | vga_is_dirty(pThis, page0) | vga_is_dirty(pThis, page1);
-        if (page1 - page0 > PAGE_SIZE)
-            /* if wide line, can use another page */
-            update |= vga_is_dirty(pThis, page0 + PAGE_SIZE);
-        /* explicit invalidation for the hardware cursor */
-        update |= (pThis->invalidated_y_table[y >> 5] >> (y & 0x1f)) & 1;
-        if (update)
-        {
-            if (y_start < 0)
-                y_start = y;
-            if (page0 < page_min)
-                page_min = page0;
-            if (page1 > page_max)
-                page_max = page1;
-            if (pThis->fRenderVRAM)
-                vga_draw_line(pThis, d, pThis->CTX_SUFF(vram_ptr) + addr, width);
-            if (pThis->cursor_draw_line)
-                pThis->cursor_draw_line(pThis, d, y);
-        } else
-        {
-            if (y_start >= 0)
-            {
-                /* flush to display */
-                Log(("Flush to display (%d,%d)(%d,%d)\n", 0, y_start, disp_width, y - y_start));
-                pDrv->pfnUpdateRect(pDrv, 0, y_start, disp_width, y - y_start);
-                y_start = -1;
-            }
-        }
-        d += linesize;
+        case 8:
+            /* Note! experimental, not sure if this really works... */
+            /** @todo fFullUpdate |= update_palette256(pThis); - need fFullUpdate but not
+             *        copying anything to last_palette. */
+            v = VGA_DRAW_LINE8;
+            break;
+        case 15:
+            v = VGA_DRAW_LINE15;
+            cBits = 16;
+            break;
+        case 16:
+            v = VGA_DRAW_LINE16;
+            break;
+        case 24:
+            v = VGA_DRAW_LINE24;
+            break;
+        case 32:
+            v = VGA_DRAW_LINE32;
+            break;
+        default:
+        case 0:
+            AssertFailed();
+            return VERR_NOT_IMPLEMENTED;
     }
-    if (y_start >= 0)
+    vga_draw_line_func *pfnVgaDrawLine = vga_draw_line_table[v * 4 + get_depth_index(pDrv->cBits)];
+
+    Assert(!pThis->cursor_invalidate);
+    Assert(!pThis->cursor_draw_line);
+    //not used// if (pThis->cursor_invalidate)
+    //not used//     pThis->cursor_invalidate(pThis);
+
+    uint8_t    *pbDst          = pDrv->pbData;
+    uint32_t    cbDstScanline  = pDrv->cbScanline;
+    uint32_t    offSrcStart    = 0;  /* always start at the beginning of the framebuffer */
+    uint32_t    cbScanline     = (cx * cBits + 7) / 8;   /* The visible width of a scanline. */
+    uint32_t    yUpdateRectTop = UINT32_MAX;
+    uint32_t    offPageMin     = UINT32_MAX;
+    int32_t     offPageMax     = -1;
+    uint32_t    y;
+    for (y = 0; y < cy; y++)
+    {
+        uint32_t offSrcLine = offSrcStart + y * cbScanline;
+        uint32_t offPage0   = offSrcLine & ~PAGE_OFFSET_MASK;
+        uint32_t offPage1   = (offSrcLine + cbScanline - 1) & ~PAGE_OFFSET_MASK;
+        /** @todo r=klaus this assumes that a line is fully covered by 3 pages,
+         * irrespective of alignment. Not guaranteed for high res modes, i.e.
+         * anything wider than 2050 pixels @32bpp. Need to check all pages
+         * between the first and last one. */
+        bool     fUpdate    = fFullUpdate | vga_is_dirty(pThis, offPage0) | vga_is_dirty(pThis, offPage1);
+        if (offPage1 - offPage0 > PAGE_SIZE)
+            /* if wide line, can use another page */
+            fUpdate |= vga_is_dirty(pThis, offPage0 + PAGE_SIZE);
+        /* explicit invalidation for the hardware cursor */
+        fUpdate |= (pThis->invalidated_y_table[y >> 5] >> (y & 0x1f)) & 1;
+        if (fUpdate)
+        {
+            if (yUpdateRectTop == UINT32_MAX)
+                yUpdateRectTop = y;
+            if (offPage0 < offPageMin)
+                offPageMin = offPage0;
+            if ((int32_t)offPage1 > offPageMax)
+                offPageMax = offPage1;
+            if (pThis->fRenderVRAM)
+                pfnVgaDrawLine(pThis, pbDst, pThis->CTX_SUFF(vram_ptr) + offSrcLine, cx);
+            //not used// if (pThis->cursor_draw_line)
+            //not used//     pThis->cursor_draw_line(pThis, pbDst, y);
+        }
+        else if (yUpdateRectTop != UINT32_MAX)
+        {
+            /* flush to display */
+            Log(("Flush to display (%d,%d)(%d,%d)\n", 0, yUpdateRectTop, cxDisplay, y - yUpdateRectTop));
+            pDrv->pfnUpdateRect(pDrv, 0, yUpdateRectTop, cxDisplay, y - yUpdateRectTop);
+            yUpdateRectTop = UINT32_MAX;
+        }
+        pbDst += cbDstScanline;
+    }
+    if (yUpdateRectTop != UINT32_MAX)
     {
         /* flush to display */
-        Log(("Flush to display (%d,%d)(%d,%d)\n", 0, y_start, disp_width, y - y_start));
-        pDrv->pfnUpdateRect(pDrv, 0, y_start, disp_width, y - y_start);
+        Log(("Flush to display (%d,%d)(%d,%d)\n", 0, yUpdateRectTop, cxDisplay, y - yUpdateRectTop));
+        pDrv->pfnUpdateRect(pDrv, 0, yUpdateRectTop, cxDisplay, y - yUpdateRectTop);
     }
+
     /* reset modified pages */
-    if (page_max != -1 && reset_dirty)
-        vga_reset_dirty(pThis, page_min, page_max + PAGE_SIZE);
-    memset(pThis->invalidated_y_table, 0, ((height + 31) >> 5) * 4);
+    if (offPageMax != -1 && reset_dirty)
+        vga_reset_dirty(pThis, offPageMin, offPageMax + PAGE_SIZE);
+    memset(pThis->invalidated_y_table, 0, ((cy + 31) >> 5) * 4);
+
     return VINF_SUCCESS;
 }
-#endif /* VBOX_WITH_VMSVGA */
+
+# endif /* VBOX_WITH_VMSVGA */
 
 /*
  * graphic modes
  */
 static int vga_draw_graphic(PVGASTATE pThis, bool full_update, bool fFailOnResize, bool reset_dirty,
-                PDMIDISPLAYCONNECTOR *pDrv)
+                            PDMIDISPLAYCONNECTOR *pDrv)
 {
     int y1, y2, y, page_min, page_max, linesize, y_start, double_scan;
     int width, height, shift_control, line_offset, page0, page1, bwidth, bits;
@@ -2354,6 +2502,23 @@ static int vga_draw_graphic(PVGASTATE pThis, bool full_update, bool fFailOnResiz
             return rc;
         full_update = true;
     }
+
+    if (pThis->fRenderVRAM)
+    {
+        /* Do not update the destination buffer if it is not big enough.
+         * Can happen if the resize request was ignored by the driver.
+         * Compare with 'disp_width', because it is what the framebuffer has been resized to.
+         */
+        if (   pDrv->cx != (uint32_t)disp_width
+            || pDrv->cy != (uint32_t)height)
+        {
+            LogRel(("Framebuffer mismatch: vga %dx%d, drv %dx%d!!!\n",
+                    disp_width, height,
+                    pDrv->cx, pDrv->cy));
+            return VINF_SUCCESS;
+        }
+    }
+
     vga_draw_line = vga_draw_line_table[v * 4 + get_depth_index(pDrv->cBits)];
 
     if (pThis->cursor_invalidate)
@@ -2369,8 +2534,13 @@ static int vga_draw_graphic(PVGASTATE pThis, bool full_update, bool fFailOnResiz
     y_start = -1;
     page_min = 0x7fffffff;
     page_max = -1;
-    d = pDrv->pu8Data;
+    d = pDrv->pbData;
     linesize = pDrv->cbScanline;
+
+    if (!(pThis->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_ENABLED))
+        pThis->vga_addr_mask = 0x3ffff;
+    else
+        pThis->vga_addr_mask = UINT32_MAX;
 
     y1 = 0;
     y2 = pThis->cr[0x09] & 0x1F;    /* starting row scan count */
@@ -2385,12 +2555,17 @@ static int vga_draw_graphic(PVGASTATE pThis, bool full_update, bool fFailOnResiz
         if (!(pThis->cr[0x17] & 2)) {
             addr = (addr & ~(1 << 16)) | ((y1 & 2) << 15);
         }
-        page0 = addr & TARGET_PAGE_MASK;
-        page1 = (addr + bwidth - 1) & TARGET_PAGE_MASK;
+        addr &= pThis->vga_addr_mask;
+        page0 = addr & ~PAGE_OFFSET_MASK;
+        page1 = (addr + bwidth - 1) & ~PAGE_OFFSET_MASK;
+        /** @todo r=klaus this assumes that a line is fully covered by 3 pages,
+         * irrespective of alignment. Not guaranteed for high res modes, i.e.
+         * anything wider than 2050 pixels @32bpp. Need to check all pages
+         * between the first and last one. */
         bool update = full_update | vga_is_dirty(pThis, page0) | vga_is_dirty(pThis, page1);
-        if (page1 - page0 > TARGET_PAGE_SIZE) {
+        if (page1 - page0 > PAGE_SIZE) {
             /* if wide line, can use another page */
-            update |= vga_is_dirty(pThis, page0 + TARGET_PAGE_SIZE);
+            update |= vga_is_dirty(pThis, page0 + PAGE_SIZE);
         }
         /* explicit invalidation for the hardware cursor */
         update |= (pThis->invalidated_y_table[y >> 5] >> (y & 0x1f)) & 1;
@@ -2436,30 +2611,58 @@ static int vga_draw_graphic(PVGASTATE pThis, bool full_update, bool fFailOnResiz
     }
     /* reset modified pages */
     if (page_max != -1 && reset_dirty) {
-        vga_reset_dirty(pThis, page_min, page_max + TARGET_PAGE_SIZE);
+        vga_reset_dirty(pThis, page_min, page_max + PAGE_SIZE);
     }
     memset(pThis->invalidated_y_table, 0, ((height + 31) >> 5) * 4);
     return VINF_SUCCESS;
 }
 
-static void vga_draw_blank(PVGASTATE pThis, int full_update, PDMIDISPLAYCONNECTOR *pDrv)
+/*
+ * blanked modes
+ */
+static int vga_draw_blank(PVGASTATE pThis, bool full_update, bool fFailOnResize, bool reset_dirty,
+                          PDMIDISPLAYCONNECTOR *pDrv)
 {
     int i, w, val;
     uint8_t *d;
     uint32_t cbScanline = pDrv->cbScanline;
+    uint32_t page_min, page_max;
 
-    if (pDrv->pu8Data == pThis->vram_ptrR3) /* Do not clear the VRAM itself. */
-        return;
+    if (pThis->last_width != 0)
+    {
+        if (fFailOnResize)
+        {
+            /* The caller does not want to call the pfnResize. */
+            return VERR_TRY_AGAIN;
+        }
+        pThis->last_width = 0;
+        pThis->last_height = 0;
+        /* For blanking signal width=0, height=0, bpp=0 and cbLine=0 here.
+         * There is no screen content, which distinguishes it from text mode. */
+        pDrv->pfnResize(pDrv, 0, NULL, 0, 0, 0);
+    }
+    /* reset modified pages, i.e. everything */
+    if (reset_dirty && pThis->last_scr_height > 0)
+    {
+        page_min = (pThis->start_addr * 4) & ~PAGE_OFFSET_MASK;
+        /* round up page_max by one page, as otherwise this can be -PAGE_SIZE,
+         * which causes assertion trouble in vga_reset_dirty. */
+        page_max = (  pThis->start_addr * 4 + pThis->line_offset * pThis->last_scr_height
+                    - 1 + PAGE_SIZE) & ~PAGE_OFFSET_MASK;
+        vga_reset_dirty(pThis, page_min, page_max + PAGE_SIZE);
+    }
+    if (pDrv->pbData == pThis->vram_ptrR3) /* Do not clear the VRAM itself. */
+        return VINF_SUCCESS;
     if (!full_update)
-        return;
+        return VINF_SUCCESS;
     if (pThis->last_scr_width <= 0 || pThis->last_scr_height <= 0)
-        return;
+        return VINF_SUCCESS;
     if (pDrv->cBits == 8)
         val = pThis->rgb_to_pixel(0, 0, 0);
     else
         val = 0;
     w = pThis->last_scr_width * ((pDrv->cBits + 7) >> 3);
-    d = pDrv->pu8Data;
+    d = pDrv->pbData;
     if (pThis->fRenderVRAM)
     {
         for(i = 0; i < (int)pThis->last_scr_height; i++) {
@@ -2468,17 +2671,13 @@ static void vga_draw_blank(PVGASTATE pThis, int full_update, PDMIDISPLAYCONNECTO
         }
     }
     pDrv->pfnUpdateRect(pDrv, 0, 0, pThis->last_scr_width, pThis->last_scr_height);
-}
-
-static DECLCALLBACK(void) voidUpdateRect(PPDMIDISPLAYCONNECTOR pInterface, uint32_t x, uint32_t y, uint32_t cx, uint32_t cy)
-{
-    NOREF(pInterface); NOREF(x); NOREF(y); NOREF(cx); NOREF(cy);
+    return VINF_SUCCESS;
 }
 
 
-#define GMODE_TEXT     0
-#define GMODE_GRAPH    1
-#define GMODE_BLANK 2
+#define GMODE_TEXT      0
+#define GMODE_GRAPH     1
+#define GMODE_BLANK     2
 #ifdef VBOX_WITH_VMSVGA
 #define GMODE_SVGA      3
 #endif
@@ -2508,59 +2707,6 @@ static int vga_update_display(PVGASTATE pThis, bool fUpdateAll, bool fFailOnResi
             break;
         }
 
-        if (fUpdateAll) {
-            /* A full update is requested. Special processing for a "blank" mode is required, because
-             * the request must process all pending resolution changes.
-             *
-             * Appropriate vga_draw_graphic or vga_draw_text function, which checks the resolution change,
-             * must be called even if the screen has been blanked, but then the function should do no actual
-             * screen update. To do this, pfnUpdateRect is replaced with a nop.
-             */
-            typedef DECLCALLBACK(void) FNUPDATERECT(PPDMIDISPLAYCONNECTOR pInterface, uint32_t x, uint32_t y, uint32_t cx, uint32_t cy);
-            typedef FNUPDATERECT *PFNUPDATERECT;
-
-            PFNUPDATERECT pfnUpdateRect = NULL;
-
-            /* Detect the "screen blank" conditions. */
-            int fBlank = 0;
-            if (!(pThis->ar_index & 0x20) || (pThis->sr[0x01] & 0x20)) {
-                fBlank = 1;
-            }
-
-            if (fBlank) {
-                /* Provide a void pfnUpdateRect callback. */
-                if (pDrv) {
-                    pfnUpdateRect = pDrv->pfnUpdateRect;
-                    pDrv->pfnUpdateRect = voidUpdateRect;
-                }
-            }
-
-            /* Do a complete redraw, which will pick up a new screen resolution. */
-#ifdef VBOX_WITH_VMSVGA
-            if (pThis->svga.fEnabled) {
-                *pcur_graphic_mode = GMODE_SVGA;
-                rc = vmsvga_draw_graphic(pThis, 1, false, reset_dirty, pDrv);
-            }
-            else
-#endif
-            if (pThis->gr[6] & 1) {
-                *pcur_graphic_mode = GMODE_GRAPH;
-                rc = vga_draw_graphic(pThis, 1, false, reset_dirty, pDrv);
-            } else {
-                *pcur_graphic_mode = GMODE_TEXT;
-                rc = vga_draw_text(pThis, 1, false, reset_dirty, pDrv);
-            }
-
-            if (fBlank) {
-                /* Set the current mode and restore the callback. */
-                *pcur_graphic_mode = GMODE_BLANK;
-                if (pDrv) {
-                    pDrv->pfnUpdateRect = pfnUpdateRect;
-                }
-            }
-            return rc;
-        }
-
 #ifdef VBOX_WITH_VMSVGA
         if (pThis->svga.fEnabled) {
             graphic_mode = GMODE_SVGA;
@@ -2570,9 +2716,9 @@ static int vga_update_display(PVGASTATE pThis, bool fUpdateAll, bool fFailOnResi
         if (!(pThis->ar_index & 0x20) || (pThis->sr[0x01] & 0x20)) {
             graphic_mode = GMODE_BLANK;
         } else {
-            graphic_mode = pThis->gr[6] & 1;
+            graphic_mode = pThis->gr[6] & 1 ? GMODE_GRAPH : GMODE_TEXT;
         }
-        bool full_update = graphic_mode != *pcur_graphic_mode;
+        bool full_update = fUpdateAll || graphic_mode != *pcur_graphic_mode;
         if (full_update) {
             *pcur_graphic_mode = graphic_mode;
         }
@@ -2590,96 +2736,98 @@ static int vga_update_display(PVGASTATE pThis, bool fUpdateAll, bool fFailOnResi
 #endif
         case GMODE_BLANK:
         default:
-            vga_draw_blank(pThis, full_update, pDrv);
+            rc = vga_draw_blank(pThis, full_update, fFailOnResize, reset_dirty, pDrv);
             break;
         }
     }
     return rc;
 }
 
-static void vga_save(QEMUFile *f, PVGASTATE pThis)
+static void vga_save(PSSMHANDLE pSSM, PVGASTATE pThis)
 {
     int i;
 
-    qemu_put_be32s(f, &pThis->latch);
-    qemu_put_8s(f, &pThis->sr_index);
-    qemu_put_buffer(f, pThis->sr, 8);
-    qemu_put_8s(f, &pThis->gr_index);
-    qemu_put_buffer(f, pThis->gr, 16);
-    qemu_put_8s(f, &pThis->ar_index);
-    qemu_put_buffer(f, pThis->ar, 21);
-    qemu_put_be32s(f, &pThis->ar_flip_flop);
-    qemu_put_8s(f, &pThis->cr_index);
-    qemu_put_buffer(f, pThis->cr, 256);
-    qemu_put_8s(f, &pThis->msr);
-    qemu_put_8s(f, &pThis->fcr);
-    qemu_put_8s(f, &pThis->st00);
-    qemu_put_8s(f, &pThis->st01);
+    SSMR3PutU32(pSSM, pThis->latch);
+    SSMR3PutU8(pSSM, pThis->sr_index);
+    SSMR3PutMem(pSSM, pThis->sr, 8);
+    SSMR3PutU8(pSSM, pThis->gr_index);
+    SSMR3PutMem(pSSM, pThis->gr, 16);
+    SSMR3PutU8(pSSM, pThis->ar_index);
+    SSMR3PutMem(pSSM, pThis->ar, 21);
+    SSMR3PutU32(pSSM, pThis->ar_flip_flop);
+    SSMR3PutU8(pSSM, pThis->cr_index);
+    SSMR3PutMem(pSSM, pThis->cr, 256);
+    SSMR3PutU8(pSSM, pThis->msr);
+    SSMR3PutU8(pSSM, pThis->fcr);
+    SSMR3PutU8(pSSM, pThis->st00);
+    SSMR3PutU8(pSSM, pThis->st01);
 
-    qemu_put_8s(f, &pThis->dac_state);
-    qemu_put_8s(f, &pThis->dac_sub_index);
-    qemu_put_8s(f, &pThis->dac_read_index);
-    qemu_put_8s(f, &pThis->dac_write_index);
-    qemu_put_buffer(f, pThis->dac_cache, 3);
-    qemu_put_buffer(f, pThis->palette, 768);
+    SSMR3PutU8(pSSM, pThis->dac_state);
+    SSMR3PutU8(pSSM, pThis->dac_sub_index);
+    SSMR3PutU8(pSSM, pThis->dac_read_index);
+    SSMR3PutU8(pSSM, pThis->dac_write_index);
+    SSMR3PutMem(pSSM, pThis->dac_cache, 3);
+    SSMR3PutMem(pSSM, pThis->palette, 768);
 
-    qemu_put_be32s(f, &pThis->bank_offset);
+    SSMR3PutU32(pSSM, pThis->bank_offset);
 #ifdef CONFIG_BOCHS_VBE
-    qemu_put_byte(f, 1);
-    qemu_put_be16s(f, &pThis->vbe_index);
+    SSMR3PutU8(pSSM, 1);
+    SSMR3PutU16(pSSM, pThis->vbe_index);
     for(i = 0; i < VBE_DISPI_INDEX_NB_SAVED; i++)
-        qemu_put_be16s(f, &pThis->vbe_regs[i]);
-    qemu_put_be32s(f, &pThis->vbe_start_addr);
-    qemu_put_be32s(f, &pThis->vbe_line_offset);
+        SSMR3PutU16(pSSM, pThis->vbe_regs[i]);
+    SSMR3PutU32(pSSM, pThis->vbe_start_addr);
+    SSMR3PutU32(pSSM, pThis->vbe_line_offset);
 #else
-    qemu_put_byte(f, 0);
+    SSMR3PutU8(pSSM, 0);
 #endif
 }
 
-static int vga_load(QEMUFile *f, PVGASTATE pThis, int version_id)
+static int vga_load(PSSMHANDLE pSSM, PVGASTATE pThis, int version_id)
 {
     int is_vbe, i;
     uint32_t u32Dummy;
+    uint8_t u8;
 
-    qemu_get_be32s(f, &pThis->latch);
-    qemu_get_8s(f, &pThis->sr_index);
-    qemu_get_buffer(f, pThis->sr, 8);
-    qemu_get_8s(f, &pThis->gr_index);
-    qemu_get_buffer(f, pThis->gr, 16);
-    qemu_get_8s(f, &pThis->ar_index);
-    qemu_get_buffer(f, pThis->ar, 21);
-    qemu_get_be32s(f, (uint32_t *)&pThis->ar_flip_flop);
-    qemu_get_8s(f, &pThis->cr_index);
-    qemu_get_buffer(f, pThis->cr, 256);
-    qemu_get_8s(f, &pThis->msr);
-    qemu_get_8s(f, &pThis->fcr);
-    qemu_get_8s(f, &pThis->st00);
-    qemu_get_8s(f, &pThis->st01);
+    SSMR3GetU32(pSSM, &pThis->latch);
+    SSMR3GetU8(pSSM, &pThis->sr_index);
+    SSMR3GetMem(pSSM, pThis->sr, 8);
+    SSMR3GetU8(pSSM, &pThis->gr_index);
+    SSMR3GetMem(pSSM, pThis->gr, 16);
+    SSMR3GetU8(pSSM, &pThis->ar_index);
+    SSMR3GetMem(pSSM, pThis->ar, 21);
+    SSMR3GetU32(pSSM, (uint32_t *)&pThis->ar_flip_flop);
+    SSMR3GetU8(pSSM, &pThis->cr_index);
+    SSMR3GetMem(pSSM, pThis->cr, 256);
+    SSMR3GetU8(pSSM, &pThis->msr);
+    SSMR3GetU8(pSSM, &pThis->fcr);
+    SSMR3GetU8(pSSM, &pThis->st00);
+    SSMR3GetU8(pSSM, &pThis->st01);
 
-    qemu_get_8s(f, &pThis->dac_state);
-    qemu_get_8s(f, &pThis->dac_sub_index);
-    qemu_get_8s(f, &pThis->dac_read_index);
-    qemu_get_8s(f, &pThis->dac_write_index);
-    qemu_get_buffer(f, pThis->dac_cache, 3);
-    qemu_get_buffer(f, pThis->palette, 768);
+    SSMR3GetU8(pSSM, &pThis->dac_state);
+    SSMR3GetU8(pSSM, &pThis->dac_sub_index);
+    SSMR3GetU8(pSSM, &pThis->dac_read_index);
+    SSMR3GetU8(pSSM, &pThis->dac_write_index);
+    SSMR3GetMem(pSSM, pThis->dac_cache, 3);
+    SSMR3GetMem(pSSM, pThis->palette, 768);
 
-    qemu_get_be32s(f, (uint32_t *)&pThis->bank_offset);
-    is_vbe = qemu_get_byte(f);
+    SSMR3GetU32(pSSM, (uint32_t *)&pThis->bank_offset);
+    SSMR3GetU8(pSSM, &u8);
+    is_vbe = !!u8;
 #ifdef CONFIG_BOCHS_VBE
     if (!is_vbe)
     {
         Log(("vga_load: !is_vbe !!\n"));
         return VERR_SSM_DATA_UNIT_FORMAT_CHANGED;
     }
-    qemu_get_be16s(f, &pThis->vbe_index);
+    SSMR3GetU16(pSSM, &pThis->vbe_index);
     for(i = 0; i < VBE_DISPI_INDEX_NB_SAVED; i++)
-        qemu_get_be16s(f, &pThis->vbe_regs[i]);
+        SSMR3GetU16(pSSM, &pThis->vbe_regs[i]);
     if (version_id <= VGA_SAVEDSTATE_VERSION_INV_VHEIGHT)
         recalculate_data(pThis, false); /* <- re-calculate the pThis->vbe_regs[VBE_DISPI_INDEX_VIRT_HEIGHT] since it might be invalid */
-    qemu_get_be32s(f, &pThis->vbe_start_addr);
-    qemu_get_be32s(f, &pThis->vbe_line_offset);
+    SSMR3GetU32(pSSM, &pThis->vbe_start_addr);
+    SSMR3GetU32(pSSM, &pThis->vbe_line_offset);
     if (version_id < 2)
-        qemu_get_be32s(f, &u32Dummy);
+        SSMR3GetU32(pSSM, &u32Dummy);
     pThis->vbe_bank_max = (pThis->vram_size >> 16) - 1;
 #else
     if (is_vbe)
@@ -2961,14 +3109,29 @@ static DECLCALLBACK(int) vgaR3IOPortHGSMIWrite(PPDMDEVINS pDevIns, void *pvUser,
 # if defined(VBOX_WITH_VIDEOHWACCEL) || defined(VBOX_WITH_VDMA) || defined(VBOX_WITH_WDDM)
                 if (u32 == HGSMIOFFSET_VOID)
                 {
-                    PDMDevHlpPCISetIrq(pDevIns, 0, PDM_IRQ_LEVEL_LOW);
-                    HGSMIClearHostGuestFlags(pThis->pHGSMI,
-                                             HGSMIHOSTFLAGS_IRQ
+                    PDMCritSectEnter(&pThis->CritSectIRQ, VERR_SEM_BUSY);
+
+                    if (pThis->fu32PendingGuestFlags == 0)
+                    {
+                        PDMDevHlpPCISetIrqNoWait(pDevIns, 0, PDM_IRQ_LEVEL_LOW);
+                        HGSMIClearHostGuestFlags(pThis->pHGSMI,
+                                                 HGSMIHOSTFLAGS_IRQ
 #  ifdef VBOX_VDMA_WITH_WATCHDOG
-                                             | HGSMIHOSTFLAGS_WATCHDOG
+                                                 | HGSMIHOSTFLAGS_WATCHDOG
 #  endif
-                                             | HGSMIHOSTFLAGS_VSYNC
-                                             );
+                                                 | HGSMIHOSTFLAGS_VSYNC
+                                                 | HGSMIHOSTFLAGS_HOTPLUG
+                                                 | HGSMIHOSTFLAGS_CURSOR_CAPABILITIES
+                                                );
+                    }
+                    else
+                    {
+                        HGSMISetHostGuestFlags(pThis->pHGSMI, HGSMIHOSTFLAGS_IRQ | pThis->fu32PendingGuestFlags);
+                        pThis->fu32PendingGuestFlags = 0;
+                        /* Keep the IRQ unchanged. */
+                    }
+
+                    PDMCritSectLeave(&pThis->CritSectIRQ);
                 }
                 else
 # endif
@@ -3148,7 +3311,7 @@ static int vgaInternalMMIOFill(PVGASTATE pThis, void *pvUser, RTGCPHYS GCPhysAdd
             {
                 unsigned plane = (pThis->gr[4] & 2) | (GCPhysAddr & 1);
                 if (pThis->sr[2] & (1 << plane)) {
-                    RTGCPHYS PhysAddr2 = ((GCPhysAddr & ~1) << 2) | plane;
+                    RTGCPHYS PhysAddr2 = ((GCPhysAddr & ~1) * 4) | plane;
                     pThis->CTX_SUFF(vram_ptr)[PhysAddr2] = aVal[i];
                     vga_set_dirty(pThis, PhysAddr2);
                 }
@@ -3222,7 +3385,7 @@ static int vgaInternalMMIOFill(PVGASTATE pThis, void *pvUser, RTGCPHYS GCPhysAdd
             while (cItems-- > 0)
             {
                 ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] = (((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] & ~write_mask) | (aVal[0] & write_mask);
-                vga_set_dirty(pThis, GCPhysAddr << 2);
+                vga_set_dirty(pThis, GCPhysAddr * 4);
                 GCPhysAddr++;
             }
         }
@@ -3232,11 +3395,11 @@ static int vgaInternalMMIOFill(PVGASTATE pThis, void *pvUser, RTGCPHYS GCPhysAdd
             while (cItems-- > 0)
             {
                 ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] = (((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] & ~write_mask) | (aVal[0] & write_mask);
-                vga_set_dirty(pThis, GCPhysAddr << 2);
+                vga_set_dirty(pThis, GCPhysAddr * 4);
                 GCPhysAddr++;
 
                 ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] = (((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] & ~write_mask) | (aVal[1] & write_mask);
-                vga_set_dirty(pThis, GCPhysAddr << 2);
+                vga_set_dirty(pThis, GCPhysAddr * 4);
                 GCPhysAddr++;
             }
         }
@@ -3248,7 +3411,7 @@ static int vgaInternalMMIOFill(PVGASTATE pThis, void *pvUser, RTGCPHYS GCPhysAdd
                 for (i = 0; i < cbItem; i++)
                 {
                     ((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] = (((uint32_t *)pThis->CTX_SUFF(vram_ptr))[GCPhysAddr] & ~write_mask) | (aVal[i] & write_mask);
-                    vga_set_dirty(pThis, GCPhysAddr << 2);
+                    vga_set_dirty(pThis, GCPhysAddr * 4);
                     GCPhysAddr++;
                 }
         }
@@ -3259,7 +3422,7 @@ static int vgaInternalMMIOFill(PVGASTATE pThis, void *pvUser, RTGCPHYS GCPhysAdd
 
 /**
  * @callback_method_impl{FNIOMMMIOFILL,
- * Legacy VGA memory (0xa0000 - 0xbffff) write hook, to be called from IOM and
+ * Legacy VGA memory (0xa0000 - 0xbffff) write hook\, to be called from IOM and
  * from the inside of VGADeviceGC.cpp. This is the advanced version of
  * vga_mem_writeb function.}
  */
@@ -3275,7 +3438,7 @@ PDMBOTHCBDECL(int) vgaMMIOFill(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhys
 
 /**
  * @callback_method_impl{FNIOMMMIOREAD, Legacy VGA memory (0xa0000 - 0xbffff)
- *                      read hook, to be called from IOM.}
+ *                      read hook\, to be called from IOM.}
  */
 PDMBOTHCBDECL(int) vgaMMIORead(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhysAddr, void *pv, unsigned cb)
 {
@@ -3314,10 +3477,10 @@ PDMBOTHCBDECL(int) vgaMMIORead(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhys
 
         default:
         {
-            uint8_t *pu8Data = (uint8_t *)pv;
+            uint8_t *pbData = (uint8_t *)pv;
             while (cb-- > 0)
             {
-                *pu8Data++ = vga_mem_readb(pThis, GCPhysAddr++, &rc);
+                *pbData++ = vga_mem_readb(pThis, GCPhysAddr++, &rc);
                 if (RT_UNLIKELY(rc != VINF_SUCCESS))
                     break;
             }
@@ -3330,12 +3493,12 @@ PDMBOTHCBDECL(int) vgaMMIORead(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhys
 
 /**
  * @callback_method_impl{FNIOMMMIOWRITE, Legacy VGA memory (0xa0000 - 0xbffff)
- *                      write hook, to be called from IOM.}
+ *                      write hook\, to be called from IOM.}
  */
 PDMBOTHCBDECL(int) vgaMMIOWrite(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhysAddr, void const *pv, unsigned cb)
 {
     PVGASTATE pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
-    uint8_t  *pu8 = (uint8_t *)pv;
+    uint8_t const *pbSrc = (uint8_t const *)pv;
     NOREF(pvUser);
     STAM_PROFILE_START(&pThis->CTX_MID_Z(Stat,MemoryWrite), a);
     Assert(PDMCritSectIsOwner(pDevIns->CTX_SUFF(pCritSectRo)));
@@ -3344,39 +3507,39 @@ PDMBOTHCBDECL(int) vgaMMIOWrite(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhy
     switch (cb)
     {
         case 1:
-            rc = vga_mem_writeb(pThis, GCPhysAddr, *pu8);
+            rc = vga_mem_writeb(pThis, GCPhysAddr, *pbSrc);
             break;
 #if 1
         case 2:
-            rc = vga_mem_writeb(pThis, GCPhysAddr + 0, pu8[0]);
+            rc = vga_mem_writeb(pThis, GCPhysAddr + 0, pbSrc[0]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 1, pu8[1]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 1, pbSrc[1]);
             break;
         case 4:
-            rc = vga_mem_writeb(pThis, GCPhysAddr + 0, pu8[0]);
+            rc = vga_mem_writeb(pThis, GCPhysAddr + 0, pbSrc[0]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 1, pu8[1]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 1, pbSrc[1]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 2, pu8[2]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 2, pbSrc[2]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 3, pu8[3]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 3, pbSrc[3]);
             break;
         case 8:
-            rc = vga_mem_writeb(pThis, GCPhysAddr + 0, pu8[0]);
+            rc = vga_mem_writeb(pThis, GCPhysAddr + 0, pbSrc[0]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 1, pu8[1]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 1, pbSrc[1]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 2, pu8[2]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 2, pbSrc[2]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 3, pu8[3]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 3, pbSrc[3]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 4, pu8[4]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 4, pbSrc[4]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 5, pu8[5]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 5, pbSrc[5]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 6, pu8[6]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 6, pbSrc[6]);
             if (RT_LIKELY(rc == VINF_SUCCESS))
-                rc = vga_mem_writeb(pThis, GCPhysAddr + 7, pu8[7]);
+                rc = vga_mem_writeb(pThis, GCPhysAddr + 7, pbSrc[7]);
             break;
 #else
         case 2:
@@ -3392,7 +3555,7 @@ PDMBOTHCBDECL(int) vgaMMIOWrite(PPDMDEVINS pDevIns, void *pvUser, RTGCPHYS GCPhy
         default:
             rc = VINF_SUCCESS;
             while (cb-- > 0 && rc == VINF_SUCCESS)
-                rc = vga_mem_writeb(pThis, GCPhysAddr++, *pu8++);
+                rc = vga_mem_writeb(pThis, GCPhysAddr++, *pbSrc++);
             break;
 
     }
@@ -3442,6 +3605,7 @@ static int vgaLFBAccess(PVM pVM, PVGASTATE pThis, RTGCPHYS GCPhys, RTGCPTR GCPtr
 #else /* IN_RING3 : We don't have any virtual page address of the access here. */
         PDMCritSectLeave(&pThis->CritSect);
         Assert(GCPtr == 0);
+        RT_NOREF1(GCPtr);
 #endif
         return VINF_SUCCESS;
     }
@@ -3452,49 +3616,36 @@ static int vgaLFBAccess(PVM pVM, PVGASTATE pThis, RTGCPHYS GCPhys, RTGCPTR GCPtr
 }
 
 
-#ifdef IN_RC
+#ifndef IN_RING3
 /**
  * @callback_method_impl{FNPGMRCPHYSHANDLER, \#PF Handler for VBE LFB access.}
  */
-PDMBOTHCBDECL(int) vgaRCLFBAccessHandler(PVM pVM, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault, RTGCPHYS GCPhysFault, void *pvUser)
+PDMBOTHCBDECL(VBOXSTRICTRC) vgaLbfAccessPfHandler(PVM pVM, PVMCPU pVCpu, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame,
+                                                  RTGCPTR pvFault, RTGCPHYS GCPhysFault, void *pvUser)
 {
     PVGASTATE   pThis = (PVGASTATE)pvUser;
     AssertPtr(pThis);
     Assert(GCPhysFault >= pThis->GCPhysVRAM);
     AssertMsg(uErrorCode & X86_TRAP_PF_RW, ("uErrorCode=%#x\n", uErrorCode));
-    NOREF(pRegFrame);
+    RT_NOREF3(pVCpu, pRegFrame, uErrorCode);
 
     return vgaLFBAccess(pVM, pThis, GCPhysFault, pvFault);
 }
+#endif /* !IN_RING3 */
 
-#elif IN_RING0
-
-/**
- * @callback_method_impl{FNPGMR0PHYSHANDLER, \#PF Handler for VBE LFB access.}
- */
-PDMBOTHCBDECL(int) vgaR0LFBAccessHandler(PVM pVM, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault, RTGCPHYS GCPhysFault, void *pvUser)
-{
-    PVGASTATE   pThis = (PVGASTATE)pvUser;
-    Assert(pThis);
-    Assert(GCPhysFault >= pThis->GCPhysVRAM);
-    AssertMsg(uErrorCode & X86_TRAP_PF_RW, ("uErrorCode=%#x\n", uErrorCode));
-    NOREF(pRegFrame);
-
-    return vgaLFBAccess(pVM, pThis, GCPhysFault, pvFault);
-}
-
-#else /* IN_RING3 */
 
 /**
- * @callback_method_impl{FNPGMR3PHYSHANDLER, HC access handler for the LFB.}
+ * @callback_method_impl{FNPGMPHYSHANDLER,
+ *      VBE LFB write access handler for the dirty tracking.}
  */
-static DECLCALLBACK(int) vgaR3LFBAccessHandler(PVM pVM, RTGCPHYS GCPhys, void *pvPhys, void *pvBuf, size_t cbBuf, PGMACCESSTYPE enmAccessType, void *pvUser)
+PGM_ALL_CB_DECL(VBOXSTRICTRC) vgaLFBAccessHandler(PVM pVM, PVMCPU pVCpu, RTGCPHYS GCPhys, void *pvPhys, void *pvBuf, size_t cbBuf,
+                                                  PGMACCESSTYPE enmAccessType, PGMACCESSORIGIN enmOrigin, void *pvUser)
 {
     PVGASTATE   pThis = (PVGASTATE)pvUser;
     int         rc;
     Assert(pThis);
     Assert(GCPhys >= pThis->GCPhysVRAM);
-    NOREF(pvPhys); NOREF(pvBuf); NOREF(cbBuf); NOREF(enmAccessType);
+    NOREF(pVCpu); NOREF(pvPhys); NOREF(pvBuf); NOREF(cbBuf); NOREF(enmAccessType); NOREF(enmOrigin);
 
     rc = vgaLFBAccess(pVM, pThis, GCPhys, 0);
     if (RT_SUCCESS(rc))
@@ -3502,7 +3653,7 @@ static DECLCALLBACK(int) vgaR3LFBAccessHandler(PVM pVM, RTGCPHYS GCPhys, void *p
     AssertMsg(rc <= VINF_SUCCESS, ("rc=%Rrc\n", rc));
     return rc;
 }
-#endif /* IN_RING3 */
+
 
 /* -=-=-=-=-=- All rings: VGA BIOS I/Os -=-=-=-=-=- */
 
@@ -3527,8 +3678,7 @@ PDMBOTHCBDECL(int) vgaIOPortReadBIOS(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT 
 PDMBOTHCBDECL(int) vgaIOPortWriteBIOS(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT Port, uint32_t u32, unsigned cb)
 {
     static int lastWasNotNewline = 0;  /* We are only called in a single-threaded way */
-    PVGASTATE pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
-    NOREF(pvUser);
+    RT_NOREF2(pDevIns, pvUser);
     Assert(PDMCritSectIsOwner(pDevIns->CTX_SUFF(pCritSectRo)));
 
     /*
@@ -3568,7 +3718,6 @@ PDMBOTHCBDECL(int) vgaIOPortWriteBIOS(PPDMDEVINS pDevIns, void *pvUser, RTIOPORT
 
 #ifdef IN_RING3
 
-# ifdef VBE_NEW_DYN_LIST
 /**
  * @callback_method_impl{FNIOMIOPORTOUT,
  *      Port I/O Handler for VBE Extra OUT operations.}
@@ -3614,28 +3763,31 @@ PDMBOTHCBDECL(int) vbeIOPortReadVBEExtra(PPDMDEVINS pDevIns, void *pvUser, RTIOP
         Log(("vbeIOPortReadVBEExtra: Requested address is out of VBE data!!! Address=%#x(%d) cbVBEExtraData=%#x(%d)\n",
              pThis->u16VBEExtraAddress, pThis->u16VBEExtraAddress, pThis->cbVBEExtraData, pThis->cbVBEExtraData));
     }
-    else if (cb == 1)
-    {
-        *pu32 = pThis->pu8VBEExtraData[pThis->u16VBEExtraAddress] & 0xFF;
-
-        Log(("vbeIOPortReadVBEExtra: cb=%#x %.*Rhxs\n", cb, cb, pu32));
-    }
-    else if (cb == 2)
-    {
-        *pu32 = pThis->pu8VBEExtraData[pThis->u16VBEExtraAddress]
-              | pThis->pu8VBEExtraData[pThis->u16VBEExtraAddress + 1] << 8;
-
-        Log(("vbeIOPortReadVBEExtra: cb=%#x %.*Rhxs\n", cb, cb, pu32));
-    }
     else
     {
-        Log(("vbeIOPortReadVBEExtra: Invalid cb=%d read from the VBE Extra port!!!\n", cb));
-        rc = VERR_IOM_IOPORT_UNUSED;
+        RT_UNTRUSTED_VALIDATED_FENCE();
+        if (cb == 1)
+        {
+            *pu32 = pThis->pbVBEExtraData[pThis->u16VBEExtraAddress] & 0xFF;
+
+            Log(("vbeIOPortReadVBEExtra: cb=%#x %.*Rhxs\n", cb, cb, pu32));
+        }
+        else if (cb == 2)
+        {
+            *pu32 =           pThis->pbVBEExtraData[pThis->u16VBEExtraAddress]
+                  | (uint32_t)pThis->pbVBEExtraData[pThis->u16VBEExtraAddress + 1] << 8;
+
+            Log(("vbeIOPortReadVBEExtra: cb=%#x %.*Rhxs\n", cb, cb, pu32));
+        }
+        else
+        {
+            Log(("vbeIOPortReadVBEExtra: Invalid cb=%d read from the VBE Extra port!!!\n", cb));
+            rc = VERR_IOM_IOPORT_UNUSED;
+        }
     }
 
     return rc;
 }
-# endif /* VBE_NEW_DYN_LIST */
 
 
 /**
@@ -3656,8 +3808,8 @@ static int vbeParseBitmap(PVGASTATE pThis)
     /*
      * Get bitmap header data
      */
-    bmpInfo = (PBMPINFO)(pThis->pu8Logo + sizeof(LOGOHDR));
-    pWinHdr = (PWINHDR)(pThis->pu8Logo + sizeof(LOGOHDR) + sizeof(BMPINFO));
+    bmpInfo = (PBMPINFO)(pThis->pbLogo + sizeof(LOGOHDR));
+    pWinHdr = (PWINHDR)(pThis->pbLogo + sizeof(LOGOHDR) + sizeof(BMPINFO));
 
     if (bmpInfo->Type == BMP_ID)
     {
@@ -3728,7 +3880,7 @@ static int vbeParseBitmap(PVGASTATE pThis)
 
         if (pThis->cLogoPalEntries)
         {
-            const uint8_t *pu8Pal = pThis->pu8Logo + sizeof(LOGOHDR) + sizeof(BMPINFO) + pWinHdr->Size; /* ASSUMES Size location (safe) */
+            const uint8_t *pbPal = pThis->pbLogo + sizeof(LOGOHDR) + sizeof(BMPINFO) + pWinHdr->Size; /* ASSUMES Size location (safe) */
 
             for (i = 0; i < pThis->cLogoPalEntries; i++)
             {
@@ -3737,12 +3889,12 @@ static int vbeParseBitmap(PVGASTATE pThis)
 
                 for (j = 0; j < 3; j++)
                 {
-                    uint8_t b = *pu8Pal++;
+                    uint8_t b = *pbPal++;
                     u32Pal <<= 8;
                     u32Pal |= b;
                 }
 
-                pu8Pal++; /* skip unused byte */
+                pbPal++; /* skip unused byte */
                 pThis->au32LogoPalette[i] = u32Pal;
             }
         }
@@ -3750,7 +3902,7 @@ static int vbeParseBitmap(PVGASTATE pThis)
         /*
          * Bitmap data offset
          */
-        pThis->pu8LogoBitmap = pThis->pu8Logo + sizeof(LOGOHDR) + bmpInfo->Offset;
+        pThis->pbLogoBitmap = pThis->pbLogo + sizeof(LOGOHDR) + bmpInfo->Offset;
     }
     else
         AssertLogRelMsgFailedReturn(("Not a BMP file.\n"), VERR_INVALID_PARAMETER);
@@ -3764,30 +3916,32 @@ static int vbeParseBitmap(PVGASTATE pThis)
  *
  * @returns VBox status code.
  *
- * @param   cbDepth     Logo depth.
+ * @param   cBits       Logo depth.
  * @param   xLogo       Logo X position.
  * @param   yLogo       Logo Y position.
  * @param   cxLogo      Logo width.
  * @param   cyLogo      Logo height.
+ * @param   fInverse    True if the bitmask is black on white (only for 1bpp)
  * @param   iStep       Fade in/fade out step.
  * @param   pu32Palette Palette data.
- * @param   pu8Src      Source buffer.
- * @param   pu8Dst      Destination buffer.
+ * @param   pbSrc       Source buffer.
+ * @param   pbDst       Destination buffer.
  */
-static void vbeShowBitmap(uint16_t cBits, uint16_t xLogo, uint16_t yLogo, uint16_t cxLogo, uint16_t cyLogo, uint8_t iStep,
-                          const uint32_t *pu32Palette, const uint8_t *pu8Src, uint8_t *pu8Dst)
+static void vbeShowBitmap(uint16_t cBits, uint16_t xLogo, uint16_t yLogo, uint16_t cxLogo, uint16_t cyLogo,
+                          bool fInverse, uint8_t iStep,
+                          const uint32_t *pu32Palette, const uint8_t *pbSrc, uint8_t *pbDst)
 {
     uint16_t        i;
     size_t          cbPadBytes  = 0;
     size_t          cbLineDst   = LOGO_MAX_WIDTH * 4;
     uint16_t        cyLeft      = cyLogo;
 
-    pu8Dst += xLogo * 4 + yLogo * cbLineDst;
+    pbDst += xLogo * 4 + yLogo * cbLineDst;
 
     switch (cBits)
     {
         case 1:
-            pu8Dst += cyLogo * cbLineDst;
+            pbDst += cyLogo * cbLineDst;
             cbPadBytes = 0;
             break;
 
@@ -3815,37 +3969,41 @@ static void vbeShowBitmap(uint16_t cBits, uint16_t xLogo, uint16_t yLogo, uint16
 
     while (cyLeft-- > 0)
     {
-        uint8_t *pu8TmpPtr = pu8Dst;
+        uint8_t *pbTmpDst = pbDst;
 
         if (cBits != 1)
             j = 0;
 
         for (i = 0; i < cxLogo; i++)
         {
-            uint8_t pix;
-
             switch (cBits)
             {
                 case 1:
                 {
                     if (!j)
-                        c = *pu8Src++;
+                        c = *pbSrc++;
 
-                    pix = (c & 1) ? 0xFF : 0;
-                    c >>= 1;
-
-                    if (pix)
+                    if (c & 1)
                     {
-                        *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
-                        *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
-                        *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
-                        *pu8TmpPtr++;
+                        if (fInverse)
+                        {
+                            *pbTmpDst++ = 0;
+                            *pbTmpDst++ = 0;
+                            *pbTmpDst++ = 0;
+                            pbTmpDst++;
+                        }
+                        else
+                        {
+                            uint8_t pix = 0xFF * iStep / LOGO_SHOW_STEPS;
+                            *pbTmpDst++ = pix;
+                            *pbTmpDst++ = pix;
+                            *pbTmpDst++ = pix;
+                            pbTmpDst++;
+                        }
                     }
                     else
-                    {
-                        pu8TmpPtr += 4;
-                    }
-
+                        pbTmpDst += 4;
+                    c >>= 1;
                     j = (j + 1) % 8;
                     break;
                 }
@@ -3853,20 +4011,20 @@ static void vbeShowBitmap(uint16_t cBits, uint16_t xLogo, uint16_t yLogo, uint16
                 case 4:
                 {
                     if (!j)
-                        c = *pu8Src++;
+                        c = *pbSrc++;
 
-                    pix = (c >> 4) & 0xF;
+                    uint8_t pix = (c >> 4) & 0xF;
                     c <<= 4;
 
                     uint32_t u32Pal = pu32Palette[pix];
 
                     pix = (u32Pal >> 16) & 0xFF;
-                    *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
+                    *pbTmpDst++ = pix * iStep / LOGO_SHOW_STEPS;
                     pix = (u32Pal >> 8) & 0xFF;
-                    *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
+                    *pbTmpDst++ = pix * iStep / LOGO_SHOW_STEPS;
                     pix = u32Pal & 0xFF;
-                    *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
-                    *pu8TmpPtr++;
+                    *pbTmpDst++ = pix * iStep / LOGO_SHOW_STEPS;
+                    pbTmpDst++;
 
                     j = (j + 1) % 2;
                     break;
@@ -3874,29 +4032,29 @@ static void vbeShowBitmap(uint16_t cBits, uint16_t xLogo, uint16_t yLogo, uint16
 
                 case 8:
                 {
-                    uint32_t u32Pal = pu32Palette[*pu8Src++];
+                    uint32_t u32Pal = pu32Palette[*pbSrc++];
 
-                    pix = (u32Pal >> 16) & 0xFF;
-                    *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
+                    uint8_t pix = (u32Pal >> 16) & 0xFF;
+                    *pbTmpDst++ = pix * iStep / LOGO_SHOW_STEPS;
                     pix = (u32Pal >> 8) & 0xFF;
-                    *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
+                    *pbTmpDst++ = pix * iStep / LOGO_SHOW_STEPS;
                     pix = u32Pal & 0xFF;
-                    *pu8TmpPtr++ = pix * iStep / LOGO_SHOW_STEPS;
-                    *pu8TmpPtr++;
+                    *pbTmpDst++ = pix * iStep / LOGO_SHOW_STEPS;
+                    pbTmpDst++;
                     break;
                 }
 
                 case 24:
-                    *pu8TmpPtr++ = *pu8Src++ * iStep / LOGO_SHOW_STEPS;
-                    *pu8TmpPtr++ = *pu8Src++ * iStep / LOGO_SHOW_STEPS;
-                    *pu8TmpPtr++ = *pu8Src++ * iStep / LOGO_SHOW_STEPS;
-                    *pu8TmpPtr++;
+                    *pbTmpDst++ = *pbSrc++ * iStep / LOGO_SHOW_STEPS;
+                    *pbTmpDst++ = *pbSrc++ * iStep / LOGO_SHOW_STEPS;
+                    *pbTmpDst++ = *pbSrc++ * iStep / LOGO_SHOW_STEPS;
+                    pbTmpDst++;
                     break;
             }
         }
 
-        pu8Dst -= cbLineDst;
-        pu8Src += cbPadBytes;
+        pbDst -= cbLineDst;
+        pbSrc += cbPadBytes;
     }
 }
 
@@ -3925,9 +4083,9 @@ PDMBOTHCBDECL(int) vbeIOPortWriteCMDLogo(PPDMDEVINS pDevIns, void *pvUser, RTIOP
             case LOGO_CMD_SHOW_BMP:
             {
                 uint8_t         iStep = u32 & 0xFF;
-                const uint8_t  *pu8Src = pThis->pu8LogoBitmap;
-                uint8_t        *pu8Dst;
-                PLOGOHDR        pLogoHdr = (PLOGOHDR)pThis->pu8Logo;
+                const uint8_t  *pbSrc = pThis->pbLogoBitmap;
+                uint8_t        *pbDst;
+                PCLOGOHDR       pLogoHdr = (PCLOGOHDR)pThis->pbLogo;
                 uint32_t        offDirty = 0;
                 uint16_t        xLogo = (LOGO_MAX_WIDTH - pThis->cxLogo) / 2;
                 uint16_t        yLogo = LOGO_MAX_HEIGHT - (LOGO_MAX_HEIGHT - pThis->cyLogo) / 2;
@@ -3937,36 +4095,33 @@ PDMBOTHCBDECL(int) vbeIOPortWriteCMDLogo(PPDMDEVINS pDevIns, void *pvUser, RTIOP
                     break;
 
                 if (pThis->vram_size >= LOGO_MAX_SIZE * 2)
-                    pu8Dst = pThis->vram_ptrR3 + LOGO_MAX_SIZE;
+                    pbDst = pThis->vram_ptrR3 + LOGO_MAX_SIZE;
                 else
-                    pu8Dst = pThis->vram_ptrR3;
+                    pbDst = pThis->vram_ptrR3;
 
                 /* Clear screen - except on power on... */
                 if (!pThis->fLogoClearScreen)
                 {
-                    uint32_t *pu32TmpPtr = (uint32_t *)pu8Dst;
-
                     /* Clear vram */
+                    uint32_t *pu32Dst = (uint32_t *)pbDst;
                     for (int i = 0; i < LOGO_MAX_WIDTH; i++)
-                    {
                         for (int j = 0; j < LOGO_MAX_HEIGHT; j++)
-                            *pu32TmpPtr++ = 0;
-                    }
+                            *pu32Dst++ = 0;
                     pThis->fLogoClearScreen = true;
                 }
 
                 /* Show the bitmap. */
                 vbeShowBitmap(pThis->cLogoBits, xLogo, yLogo,
                               pThis->cxLogo, pThis->cyLogo,
-                              iStep, &pThis->au32LogoPalette[0],
-                              pu8Src, pu8Dst);
+                              false, iStep, &pThis->au32LogoPalette[0],
+                              pbSrc, pbDst);
 
                 /* Show the 'Press F12...' text. */
                 if (pLogoHdr->fu8ShowBootMenu == 2)
                     vbeShowBitmap(1, LOGO_F12TEXT_X, LOGO_F12TEXT_Y,
                                   LOGO_F12TEXT_WIDTH, LOGO_F12TEXT_HEIGHT,
-                                  iStep, &pThis->au32LogoPalette[0],
-                                  &g_abLogoF12BootText[0], pu8Dst);
+                                  pThis->fBootMenuInverse, iStep, &pThis->au32LogoPalette[0],
+                                  &g_abLogoF12BootText[0], pbDst);
 
                 /* Blit the offscreen buffer. */
                 if (pThis->vram_size >= LOGO_MAX_SIZE * 2)
@@ -4013,16 +4168,15 @@ PDMBOTHCBDECL(int) vbeIOPortReadCMDLogo(PPDMDEVINS pDevIns, void *pvUser, RTIOPO
     NOREF(pvUser);
     NOREF(Port);
 
-    PRTUINT64U  p;
-
     if (pThis->offLogoData + cb > pThis->cbLogo)
     {
         Log(("vbeIOPortReadCMDLogo: Requested address is out of Logo data!!! offLogoData=%#x(%d) cbLogo=%#x(%d)\n",
              pThis->offLogoData, pThis->offLogoData, pThis->cbLogo, pThis->cbLogo));
         return VINF_SUCCESS;
     }
-    p = (PRTUINT64U)&pThis->pu8Logo[pThis->offLogoData];
+    RT_UNTRUSTED_VALIDATED_FENCE();
 
+    PCRTUINT64U p = (PCRTUINT64U)&pThis->pbLogo[pThis->offLogoData];
     switch (cb)
     {
         case 1: *pu32 = p->au8[0]; break;
@@ -4083,6 +4237,16 @@ static DECLCALLBACK(void) vgaInfoState(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, c
         char_height = val;
         pHlp->pfnPrintf(pHlp, "char height %d\n", val);
         pHlp->pfnPrintf(pHlp, "text mode %dx%d\n", w / char_dots, h / (char_height << double_scan));
+
+        uint32_t cbLine;
+        uint32_t offStart;
+        uint32_t uLineCompareIgn;
+        vga_get_offsets(pThis, &cbLine, &offStart, &uLineCompareIgn);
+        if (!cbLine)
+            cbLine = 80 * 8;
+        offStart *= 8;
+        pHlp->pfnPrintf(pHlp, "cbLine:   %#x\n", cbLine);
+        pHlp->pfnPrintf(pHlp, "offStart: %#x (line %#x)\n", offStart, offStart / cbLine);
     }
     if (pThis->fRealRetrace)
     {
@@ -4094,12 +4258,21 @@ static DECLCALLBACK(void) vgaInfoState(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, c
         pHlp->pfnPrintf(pHlp, "vsync start : %d px, end: %d px\n", r->vs_start, r->vs_end);
         pHlp->pfnPrintf(pHlp, "cclks per frame: %d\n", r->frame_cclks);
         pHlp->pfnPrintf(pHlp, "cclk time (ns) : %d\n", r->cclk_ns);
-        vfreq_hz = 1000000000 / r->frame_ns;
-        hfreq_hz = 1000000000 / r->h_total_ns;
-        pHlp->pfnPrintf(pHlp, "vfreq: %d Hz, hfreq: %d.%03d kHz\n",
-                        vfreq_hz, hfreq_hz / 1000, hfreq_hz % 1000);
+        if (r->frame_ns && r->h_total_ns)   /* Careful in case state is temporarily invalid. */
+        {
+            vfreq_hz = 1000000000 / r->frame_ns;
+            hfreq_hz = 1000000000 / r->h_total_ns;
+            pHlp->pfnPrintf(pHlp, "vfreq: %d Hz, hfreq: %d.%03d kHz\n",
+                            vfreq_hz, hfreq_hz / 1000, hfreq_hz % 1000);
+        }
     }
     pHlp->pfnPrintf(pHlp, "display refresh interval: %u ms\n", pThis->cMilliesRefreshInterval);
+
+#ifdef VBOX_WITH_VMSVGA
+    if (pThis->svga.fEnabled)
+        pHlp->pfnPrintf(pHlp, pThis->svga.f3DEnabled ? "VMSVGA 3D enabled: %ux%ux%u\n" : "VMSVGA enabled: %ux%ux%u",
+                        pThis->svga.uWidth, pThis->svga.uHeight, pThis->svga.uBpp);
+#endif
 }
 
 
@@ -4198,8 +4371,8 @@ static void vgaInfoTextWorker(PVGASTATE pThis, PCDBGFINFOHLP pHlp,
 
 /**
  * @callback_method_impl{FNDBGFHANDLERDEV,
- *      Dumps VGA memory formatted as ASCII text, no attributes. Only looks at the
- *      first page.}
+ *      Dumps VGA memory formatted as ASCII text\, no attributes. Only looks at
+ *      the first page.}
  */
 static DECLCALLBACK(void) vgaInfoText(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, const char *pszArgs)
 {
@@ -4237,6 +4410,7 @@ static DECLCALLBACK(void) vgaInfoText(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, co
              *       do with some brushing up.  Dumping from the start of the
              *       frame buffer is done intentionally so that we're more
              *       likely to obtain the full scrollback of a linux panic.
+             * windbg> .printf "------ start -----\n"; .for (r $t0 = 0; @$t0 < 25; r $t0 = @$t0 + 1) { .for (r $t1 = 0; @$t1 < 80; r $t1 = @$t1 + 1) { .printf "%c", by( (@$t0 * 80 + @$t1) * 8 + 100f0000) }; .printf "\n" }; .printf "------ end -----\n";
              */
             uint32_t cbLine;
             uint32_t offStart;
@@ -4282,7 +4456,7 @@ static DECLCALLBACK(void) vgaInfoSR(PPDMDEVINS pDevIns, PCDBGFINFOHLP pHlp, cons
 
     pHlp->pfnPrintf(pHlp, "VGA Sequencer (3C5): SR index 3C4:%02X\n", pThis->sr_index);
     Assert(sizeof(pThis->sr) >= 8);
-    for (i = 0; i < 5; ++i)
+    for (i = 0; i < 8; ++i)
         pHlp->pfnPrintf(pHlp, " SR%02X:%02X", i, pThis->sr[i]);
     pHlp->pfnPrintf(pHlp, "\n");
 }
@@ -4445,9 +4619,39 @@ static DECLCALLBACK(void *) vgaPortQueryInterface(PPDMIBASE pInterface, const ch
 #if defined(VBOX_WITH_HGSMI) && (defined(VBOX_WITH_VIDEOHWACCEL) || defined(VBOX_WITH_CRHGSMI))
     PDMIBASE_RETURN_INTERFACE(pszIID, PDMIDISPLAYVBVACALLBACKS, &pThis->IVBVACallbacks);
 #endif
+    PDMIBASE_RETURN_INTERFACE(pszIID, PDMILEDPORTS, &pThis->ILeds);
     return NULL;
 }
 
+/* -=-=-=-=-=- Ring 3: ILeds -=-=-=-=-=- */
+#define ILEDPORTS_2_VGASTATE(pInterface) ( (PVGASTATE)((uintptr_t)pInterface - RT_OFFSETOF(VGASTATE, ILeds)) )
+
+/**
+ * Gets the pointer to the status LED of a unit.
+ *
+ * @returns VBox status code.
+ * @param   pInterface      Pointer to the interface structure containing the called function pointer.
+ * @param   iLUN            The unit which status LED we desire.
+ * @param   ppLed           Where to store the LED pointer.
+ */
+static DECLCALLBACK(int) vgaPortQueryStatusLed(PPDMILEDPORTS pInterface, unsigned iLUN, PPDMLED *ppLed)
+{
+    PVGASTATE pThis = ILEDPORTS_2_VGASTATE(pInterface);
+    switch (iLUN)
+    {
+        /* LUN #0 is the only one for which we have a status LED. */
+        case 0:
+        {
+            *ppLed = &pThis->Led3D;
+            Assert((*ppLed)->u32Magic == PDMLED_MAGIC);
+            return VINF_SUCCESS;
+        }
+
+        default:
+            AssertMsgFailed(("Invalid LUN #%d\n", iLUN));
+            return VERR_PDM_NO_SUCH_LUN;
+    }
+}
 
 /* -=-=-=-=-=- Ring 3: Dummy IDisplayConnector -=-=-=-=-=- */
 
@@ -4457,6 +4661,9 @@ static DECLCALLBACK(void *) vgaPortQueryInterface(PPDMIBASE pInterface, const ch
  * request from the guest os, but may also happen as the result of a reset.
  *
  * @param   pInterface          Pointer to this interface.
+ * @param   bpp                 Bits per pixel.
+ * @param   pvVRAM              VRAM.
+ * @param   cbLine              Number of bytes per line.
  * @param   cx                  New display width.
  * @param   cy                  New display height
  * @thread  The emulation thread.
@@ -4567,7 +4774,7 @@ static DECLCALLBACK(int) vgaPortUpdateDisplay(PPDMIDISPLAYPORT pInterface)
 /**
  * Internal vgaPortUpdateDisplayAll worker called under pThis->CritSect.
  */
-static int updateDisplayAll(PVGASTATE pThis)
+static int updateDisplayAll(PVGASTATE pThis, bool fFailOnResize)
 {
     PPDMDEVINS pDevIns = pThis->CTX_SUFF(pDevIns);
 
@@ -4590,12 +4797,12 @@ static int updateDisplayAll(PVGASTATE pThis)
 
     pThis->graphic_mode = -1; /* force full update */
 
-    return vga_update_display(pThis, true, false, true,
+    return vga_update_display(pThis, true, fFailOnResize, true,
             pThis->pDrv, &pThis->graphic_mode);
 }
 
 
-int vgaUpdateDisplayAll(PVGASTATE pThis)
+DECLCALLBACK(int) vgaUpdateDisplayAll(PVGASTATE pThis, bool fFailOnResize)
 {
 #ifdef DEBUG_sunlover
     LogFlow(("vgaPortUpdateDisplayAll\n"));
@@ -4604,7 +4811,7 @@ int vgaUpdateDisplayAll(PVGASTATE pThis)
     int rc = PDMCritSectEnter(&pThis->CritSect, VERR_SEM_BUSY);
     AssertRC(rc);
 
-    rc = updateDisplayAll(pThis);
+    rc = updateDisplayAll(pThis, fFailOnResize);
 
     PDMCritSectLeave(&pThis->CritSect);
     return rc;
@@ -4614,16 +4821,17 @@ int vgaUpdateDisplayAll(PVGASTATE pThis)
  * Update the entire display.
  *
  * @param   pInterface          Pointer to this interface.
+ * @param   fFailOnResize       Fail on resize.
  * @see     PDMIKEYBOARDPORT::pfnUpdateDisplayAll() for details.
  */
-static DECLCALLBACK(int) vgaPortUpdateDisplayAll(PPDMIDISPLAYPORT pInterface)
+static DECLCALLBACK(int) vgaPortUpdateDisplayAll(PPDMIDISPLAYPORT pInterface, bool fFailOnResize)
 {
     PVGASTATE pThis = IDISPLAYPORT_2_VGASTATE(pInterface);
     PDMDEV_ASSERT_EMT(VGASTATE2DEVINS(pThis));
 
     /* This is called both in VBVA mode and normal modes. */
 
-    return vgaUpdateDisplayAll(pThis);
+    return vgaUpdateDisplayAll(pThis, fFailOnResize);
 }
 
 
@@ -4646,14 +4854,18 @@ static DECLCALLBACK(int) vgaPortSetRefreshRate(PPDMIDISPLAYPORT pInterface, uint
 }
 
 
-/** @copydoc PDMIDISPLAYPORT::pfnQueryColorDepth */
-static DECLCALLBACK(int) vgaPortQueryColorDepth(PPDMIDISPLAYPORT pInterface, uint32_t *pcBits)
+/** @interface_method_impl{PDMIDISPLAYPORT,pfnQueryVideoMode} */
+static DECLCALLBACK(int) vgaPortQueryVideoMode(PPDMIDISPLAYPORT pInterface, uint32_t *pcBits, uint32_t *pcx, uint32_t *pcy)
 {
     PVGASTATE pThis = IDISPLAYPORT_2_VGASTATE(pInterface);
 
     if (!pcBits)
         return VERR_INVALID_PARAMETER;
     *pcBits = vga_get_bpp(pThis);
+    if (pcx)
+        *pcx = pThis->last_scr_width;
+    if (pcy)
+        *pcy = pThis->last_scr_height;
     return VINF_SUCCESS;
 }
 
@@ -4662,23 +4874,25 @@ static DECLCALLBACK(int) vgaPortQueryColorDepth(PPDMIDISPLAYPORT pInterface, uin
  * Create a 32-bbp screenshot of the display. Size of the bitmap scanline in bytes is 4*width.
  *
  * @param   pInterface          Pointer to this interface.
- * @param   ppu8Data            Where to store the pointer to the allocated buffer.
+ * @param   ppbData             Where to store the pointer to the allocated
+ *                              buffer.
  * @param   pcbData             Where to store the actual size of the bitmap.
  * @param   pcx                 Where to store the width of the bitmap.
  * @param   pcy                 Where to store the height of the bitmap.
  * @see     PDMIDISPLAYPORT::pfnTakeScreenshot() for details.
  */
-static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint8_t **ppu8Data, size_t *pcbData, uint32_t *pcx, uint32_t *pcy)
+static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint8_t **ppbData, size_t *pcbData,
+                                               uint32_t *pcx, uint32_t *pcy)
 {
     PVGASTATE pThis = IDISPLAYPORT_2_VGASTATE(pInterface);
     PDMDEV_ASSERT_EMT(VGASTATE2DEVINS(pThis));
 
-    LogFlow(("vgaPortTakeScreenshot: ppu8Data=%p pcbData=%p pcx=%p pcy=%p\n", ppu8Data, pcbData, pcx, pcy));
+    LogFlow(("vgaPortTakeScreenshot: ppbData=%p pcbData=%p pcx=%p pcy=%p\n", ppbData, pcbData, pcx, pcy));
 
     /*
      * Validate input.
      */
-    if (!RT_VALID_PTR(ppu8Data) || !RT_VALID_PTR(pcbData) || !RT_VALID_PTR(pcx) || !RT_VALID_PTR(pcy))
+    if (!RT_VALID_PTR(ppbData) || !RT_VALID_PTR(pcbData) || !RT_VALID_PTR(pcx) || !RT_VALID_PTR(pcy))
         return VERR_INVALID_PARAMETER;
 
     int rc = PDMCritSectEnter(&pThis->CritSect, VERR_SEM_BUSY);
@@ -4698,8 +4912,8 @@ static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint
     size_t cbRequired = pThis->last_scr_width * 4 * pThis->last_scr_height;
     if (cbRequired && cbRequired <= pThis->vram_size)
     {
-        uint8_t *pu8Data = (uint8_t *)RTMemAlloc(cbRequired);
-        if (pu8Data != NULL)
+        uint8_t *pbData = (uint8_t *)RTMemAlloc(cbRequired);
+        if (pbData != NULL)
         {
             /*
              * Only 3 methods, assigned below, will be called during the screenshot update.
@@ -4708,7 +4922,7 @@ static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint
             /* The display connector interface is temporarily replaced with the fake one. */
             PDMIDISPLAYCONNECTOR Connector;
             RT_ZERO(Connector);
-            Connector.pu8Data       = pu8Data;
+            Connector.pbData        = pbData;
             Connector.cBits         = 32;
             Connector.cx            = pThis->last_scr_width;
             Connector.cy            = pThis->last_scr_height;
@@ -4723,15 +4937,14 @@ static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint
             pThis->fRenderVRAM = true;
 
             /*
-             * Make the screenshot.
+             * Take the screenshot.
              *
              * The second parameter is 'false' because the current display state is being rendered to an
              * external buffer using a fake connector. That is if display is blanked, we expect a black
              * screen in the external buffer.
              * If there is a pending resize, the function will fail.
              */
-            rc = vga_update_display(pThis, false, true, false,
-                    &Connector, &cur_graphic_mode);
+            rc = vga_update_display(pThis, false, true, false, &Connector, &cur_graphic_mode);
 
             pThis->fRenderVRAM = fSavedRenderVRAM;
 
@@ -4740,7 +4953,7 @@ static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint
                 /*
                  * Return the result.
                  */
-                *ppu8Data = pu8Data;
+                *ppbData = pbData;
                 *pcbData = cbRequired;
                 *pcx = Connector.cx;
                 *pcy = Connector.cy;
@@ -4748,7 +4961,7 @@ static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint
             else
             {
                 /* If we do not return a success, then the data buffer must be freed. */
-                RTMemFree(pu8Data);
+                RTMemFree(pbData);
                 if (RT_SUCCESS_NP(rc))
                 {
                     AssertMsgFailed(("%Rrc\n", rc));
@@ -4772,16 +4985,16 @@ static DECLCALLBACK(int) vgaPortTakeScreenshot(PPDMIDISPLAYPORT pInterface, uint
  * Free a screenshot buffer allocated in vgaPortTakeScreenshot.
  *
  * @param   pInterface          Pointer to this interface.
- * @param   pu8Data             Pointer returned by vgaPortTakeScreenshot.
+ * @param   pbData              Pointer returned by vgaPortTakeScreenshot.
  * @see     PDMIDISPLAYPORT::pfnFreeScreenshot() for details.
  */
-static DECLCALLBACK(void) vgaPortFreeScreenshot(PPDMIDISPLAYPORT pInterface, uint8_t *pu8Data)
+static DECLCALLBACK(void) vgaPortFreeScreenshot(PPDMIDISPLAYPORT pInterface, uint8_t *pbData)
 {
     NOREF(pInterface);
 
-    LogFlow(("vgaPortFreeScreenshot: pu8Data=%p\n", pu8Data));
+    LogFlow(("vgaPortFreeScreenshot: pbData=%p\n", pbData));
 
-    RTMemFree(pu8Data);
+    RTMemFree(pbData);
 }
 
 /**
@@ -4795,7 +5008,8 @@ static DECLCALLBACK(void) vgaPortFreeScreenshot(PPDMIDISPLAYPORT pInterface, uin
  * @param   cy                  The height of the source and destination rectangles.
  * @see     PDMIDISPLAYPORT::pfnDisplayBlt() for details.
  */
-static DECLCALLBACK(int) vgaPortDisplayBlt(PPDMIDISPLAYPORT pInterface, const void *pvData, uint32_t x, uint32_t y, uint32_t cx, uint32_t cy)
+static DECLCALLBACK(int) vgaPortDisplayBlt(PPDMIDISPLAYPORT pInterface, const void *pvData, uint32_t x, uint32_t y,
+                                           uint32_t cx, uint32_t cy)
 {
     PVGASTATE       pThis = IDISPLAYPORT_2_VGASTATE(pInterface);
     int             rc = VINF_SUCCESS;
@@ -4845,17 +5059,17 @@ static DECLCALLBACK(int) vgaPortDisplayBlt(PPDMIDISPLAYPORT pInterface, const vo
              * The blitting loop.
              */
             size_t      cbLineSrc   = cx * 4; /* 32 bits per pixel. */
-            uint8_t    *pu8Src      = (uint8_t *)pvData;
+            uint8_t    *pbSrc       = (uint8_t *)pvData;
             size_t      cbLineDst   = pThis->pDrv->cbScanline;
-            uint8_t    *pu8Dst      = pThis->pDrv->pu8Data + y * cbLineDst + x * cbPixelDst;
+            uint8_t    *pbDst       = pThis->pDrv->pbData + y * cbLineDst + x * cbPixelDst;
             uint32_t    cyLeft      = cy;
             vga_draw_line_func *pfnVgaDrawLine = vga_draw_line_table[VGA_DRAW_LINE32 * 4 + get_depth_index(pThis->pDrv->cBits)];
             Assert(pfnVgaDrawLine);
             while (cyLeft-- > 0)
             {
-                pfnVgaDrawLine(pThis, pu8Dst, pu8Src, cx);
-                pu8Dst += cbLineDst;
-                pu8Src += cbLineSrc;
+                pfnVgaDrawLine(pThis, pbDst, pbSrc, cx);
+                pbDst += cbLineDst;
+                pbSrc += cbLineSrc;
             }
 
             /*
@@ -4880,13 +5094,11 @@ static DECLCALLBACK(void) vgaPortUpdateDisplayRect(PPDMIDISPLAYPORT pInterface, 
 
     uint32_t cbPixelDst;
     uint32_t cbLineDst;
-    uint8_t *pu8Dst;
+    uint8_t *pbDst;
 
     uint32_t cbPixelSrc;
     uint32_t cbLineSrc;
-    uint8_t *pu8Src;
-
-    uint32_t u32OffsetSrc, u32Dummy;
+    uint8_t *pbSrc;
 
     PVGASTATE pThis = IDISPLAYPORT_2_VGASTATE(pInterface);
 
@@ -4895,8 +5107,9 @@ static DECLCALLBACK(void) vgaPortUpdateDisplayRect(PPDMIDISPLAYPORT pInterface, 
 #endif /* DEBUG_sunlover */
 
     Assert(pInterface);
-    Assert(pThis->pDrv);
-    Assert(pThis->pDrv->pu8Data);
+
+    int rc = PDMCritSectEnter(&pThis->CritSect, VERR_SEM_BUSY);
+    AssertRC(rc);
 
     /* Check if there is something to do at all. */
     if (!pThis->fRenderVRAM)
@@ -4905,11 +5118,12 @@ static DECLCALLBACK(void) vgaPortUpdateDisplayRect(PPDMIDISPLAYPORT pInterface, 
 #ifdef DEBUG_sunlover
         LogFlow(("vgaPortUpdateDisplayRect: nothing to do fRender is false.\n"));
 #endif /* DEBUG_sunlover */
+        PDMCritSectLeave(&pThis->CritSect);
         return;
     }
 
-    int rc = PDMCritSectEnter(&pThis->CritSect, VERR_SEM_BUSY);
-    AssertRC(rc);
+    Assert(pThis->pDrv);
+    Assert(pThis->pDrv->pbData);
 
     /* Correct negative x and y coordinates. */
     if (x < 0)
@@ -4992,28 +5206,29 @@ static DECLCALLBACK(void) vgaPortUpdateDisplayRect(PPDMIDISPLAYPORT pInterface, 
     /* Compute source and destination addresses and pitches. */
     cbPixelDst = (pThis->pDrv->cBits + 7) / 8;
     cbLineDst  = pThis->pDrv->cbScanline;
-    pu8Dst     = pThis->pDrv->pu8Data + y * cbLineDst + x * cbPixelDst;
+    pbDst      = pThis->pDrv->pbData + y * cbLineDst + x * cbPixelDst;
 
     cbPixelSrc = (pThis->get_bpp(pThis) + 7) / 8;
-    pThis->get_offsets(pThis, &cbLineSrc, &u32OffsetSrc, &u32Dummy);
+    uint32_t offSrc, u32Dummy;
+    pThis->get_offsets(pThis, &cbLineSrc, &offSrc, &u32Dummy);
 
     /* Assume that rendering is performed only on visible part of VRAM.
      * This is true because coordinates were verified.
      */
-    pu8Src = pThis->vram_ptrR3;
-    pu8Src += u32OffsetSrc * 4 + y * cbLineSrc + x * cbPixelSrc;
+    pbSrc = pThis->vram_ptrR3;
+    pbSrc += offSrc * 4 + y * cbLineSrc + x * cbPixelSrc;
 
     /* Render VRAM to framebuffer. */
 
 #ifdef DEBUG_sunlover
-    LogFlow(("vgaPortUpdateDisplayRect: dst: %p, %d, %d. src: %p, %d, %d\n", pu8Dst, cbLineDst, cbPixelDst, pu8Src, cbLineSrc, cbPixelSrc));
+    LogFlow(("vgaPortUpdateDisplayRect: dst: %p, %d, %d. src: %p, %d, %d\n", pbDst, cbLineDst, cbPixelDst, pbSrc, cbLineSrc, cbPixelSrc));
 #endif /* DEBUG_sunlover */
 
     while (h-- > 0)
     {
-        vga_draw_line (pThis, pu8Dst, pu8Src, w);
-        pu8Dst += cbLineDst;
-        pu8Src += cbLineSrc;
+        vga_draw_line (pThis, pbDst, pbSrc, w);
+        pbDst += cbLineDst;
+        pbSrc += cbLineSrc;
     }
 
     PDMCritSectLeave(&pThis->CritSect);
@@ -5022,37 +5237,21 @@ static DECLCALLBACK(void) vgaPortUpdateDisplayRect(PPDMIDISPLAYPORT pInterface, 
 #endif /* DEBUG_sunlover */
 }
 
-static DECLCALLBACK(int) vgaPortCopyRect (PPDMIDISPLAYPORT pInterface,
-                                          uint32_t w,
-                                          uint32_t h,
-                                          const uint8_t *pu8Src,
-                                          int32_t xSrc,
-                                          int32_t ySrc,
-                                          uint32_t u32SrcWidth,
-                                          uint32_t u32SrcHeight,
-                                          uint32_t u32SrcLineSize,
-                                          uint32_t u32SrcBitsPerPixel,
-                                          uint8_t *pu8Dst,
-                                          int32_t xDst,
-                                          int32_t yDst,
-                                          uint32_t u32DstWidth,
-                                          uint32_t u32DstHeight,
-                                          uint32_t u32DstLineSize,
-                                          uint32_t u32DstBitsPerPixel)
+
+static DECLCALLBACK(int)
+vgaPortCopyRect(PPDMIDISPLAYPORT pInterface,
+                uint32_t cx,
+                uint32_t cy,
+                const uint8_t *pbSrc, int32_t xSrc, int32_t ySrc, uint32_t cxSrc, uint32_t cySrc,
+                uint32_t cbSrcLine, uint32_t cSrcBitsPerPixel,
+                uint8_t *pbDst, int32_t xDst, int32_t yDst, uint32_t cxDst, uint32_t cyDst,
+                uint32_t cbDstLine, uint32_t cDstBitsPerPixel)
 {
     uint32_t v;
     vga_draw_line_func *vga_draw_line;
 
-    uint32_t cbPixelDst;
-    uint32_t cbLineDst;
-    uint8_t *pu8DstPtr;
-
-    uint32_t cbPixelSrc;
-    uint32_t cbLineSrc;
-    const uint8_t *pu8SrcPtr;
-
 #ifdef DEBUG_sunlover
-    LogFlow(("vgaPortCopyRect: %d,%d %dx%d -> %d,%d\n", xSrc, ySrc, w, h, xDst, yDst));
+    LogFlow(("vgaPortCopyRect: %d,%d %dx%d -> %d,%d\n", xSrc, ySrc, cx, cy, xDst, yDst));
 #endif /* DEBUG_sunlover */
 
     PVGASTATE pThis = IDISPLAYPORT_2_VGASTATE(pInterface);
@@ -5060,49 +5259,49 @@ static DECLCALLBACK(int) vgaPortCopyRect (PPDMIDISPLAYPORT pInterface,
     Assert(pInterface);
     Assert(pThis->pDrv);
 
-    int32_t xSrcCorrected = xSrc;
-    int32_t ySrcCorrected = ySrc;
-    uint32_t wCorrected = w;
-    uint32_t hCorrected = h;
+    int32_t  xSrcCorrected = xSrc;
+    int32_t  ySrcCorrected = ySrc;
+    uint32_t cxCorrected = cx;
+    uint32_t cyCorrected = cy;
 
     /* Correct source coordinates to be within the source bitmap. */
     if (xSrcCorrected < 0)
     {
-        xSrcCorrected += wCorrected; /* Compute xRight which is also the new width. */
-        wCorrected = (xSrcCorrected < 0) ? 0 : xSrcCorrected;
+        xSrcCorrected += cxCorrected; /* Compute xRight which is also the new width. */
+        cxCorrected = (xSrcCorrected < 0) ? 0 : xSrcCorrected;
         xSrcCorrected = 0;
     }
 
     if (ySrcCorrected < 0)
     {
-        ySrcCorrected += hCorrected; /* Compute yBottom, which is also the new height. */
-        hCorrected = (ySrcCorrected < 0) ? 0 : ySrcCorrected;
+        ySrcCorrected += cyCorrected; /* Compute yBottom, which is also the new height. */
+        cyCorrected = (ySrcCorrected < 0) ? 0 : ySrcCorrected;
         ySrcCorrected = 0;
     }
 
     /* Also check if coords are greater than the display resolution. */
-    if (xSrcCorrected + wCorrected > u32SrcWidth)
+    if (xSrcCorrected + cxCorrected > cxSrc)
     {
         /* xSrcCorrected < 0 is not possible here */
-        wCorrected = u32SrcWidth > (uint32_t)xSrcCorrected? u32SrcWidth - xSrcCorrected: 0;
+        cxCorrected = cxSrc > (uint32_t)xSrcCorrected ? cxSrc - xSrcCorrected : 0;
     }
 
-    if (ySrcCorrected + hCorrected > u32SrcHeight)
+    if (ySrcCorrected + cyCorrected > cySrc)
     {
         /* y < 0 is not possible here */
-        hCorrected = u32SrcHeight > (uint32_t)ySrcCorrected? u32SrcHeight - ySrcCorrected: 0;
+        cyCorrected = cySrc > (uint32_t)ySrcCorrected ? cySrc - ySrcCorrected : 0;
     }
 
 #ifdef DEBUG_sunlover
-    LogFlow(("vgaPortCopyRect: %d,%d %dx%d (corrected coords)\n", xSrcCorrected, ySrcCorrected, wCorrected, hCorrected));
+    LogFlow(("vgaPortCopyRect: %d,%d %dx%d (corrected coords)\n", xSrcCorrected, ySrcCorrected, cxCorrected, cyCorrected));
 #endif /* DEBUG_sunlover */
 
     /* Check if there is something to do at all. */
-    if (wCorrected == 0 || hCorrected == 0)
+    if (cxCorrected == 0 || cyCorrected == 0)
     {
         /* Empty rectangle. */
 #ifdef DEBUG_sunlover
-        LogFlow(("vgaPortUpdateDisplayRectEx: nothing to do: %dx%d\n", wCorrected, hCorrected));
+        LogFlow(("vgaPortUpdateDisplayRectEx: nothing to do: %dx%d\n", cxCorrected, cyCorrected));
 #endif /* DEBUG_sunlover */
         return VINF_SUCCESS;
     }
@@ -5112,18 +5311,40 @@ static DECLCALLBACK(int) vgaPortCopyRect (PPDMIDISPLAYPORT pInterface,
      */
     if (   xDst < 0
         || yDst < 0
-        || xDst + wCorrected > u32DstWidth
-        || yDst + hCorrected > u32DstHeight)
+        || xDst + cxCorrected > cxDst
+        || yDst + cyCorrected > cyDst)
     {
         return VERR_INVALID_PARAMETER;
     }
 
+    int rc = PDMCritSectEnter(&pThis->CritSect, VERR_SEM_BUSY);
+    AssertRC(rc);
+
+    /* This method only works if the VGA device is in a VBE mode or not paused VBVA mode.
+     * VGA modes are reported to the caller by returning VERR_INVALID_STATE.
+     *
+     * If VBE_DISPI_ENABLED is set, then it is a VBE or VBE compatible VBVA mode. Both of them can be handled.
+     *
+     * If VBE_DISPI_ENABLED is clear, then it is either a VGA mode or a VBVA mode set by guest additions
+     * which have VBVACAPS_USE_VBVA_ONLY capability.
+     * When VBE_DISPI_ENABLED is being cleared and VBVACAPS_USE_VBVA_ONLY is not set (i.e. guest wants a VGA mode),
+     * then VBVAOnVBEChanged makes sure that VBVA is paused.
+     * That is a not paused VBVA means that the video mode can be handled even if VBE_DISPI_ENABLED is clear.
+     */
+    if (   (pThis->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_ENABLED) == 0
+        && VBVAIsPaused(pThis))
+    {
+        PDMCritSectLeave(&pThis->CritSect);
+        return VERR_INVALID_STATE;
+    }
+
     /* Choose the rendering function. */
-    switch(u32SrcBitsPerPixel)
+    switch (cSrcBitsPerPixel)
     {
         default:
         case 0:
             /* Nothing to do, just return. */
+            PDMCritSectLeave(&pThis->CritSect);
             return VINF_SUCCESS;
         case 8:
             v = VGA_DRAW_LINE8;
@@ -5142,36 +5363,26 @@ static DECLCALLBACK(int) vgaPortCopyRect (PPDMIDISPLAYPORT pInterface,
             break;
     }
 
-    int rc = PDMCritSectEnter(&pThis->CritSect, VERR_SEM_BUSY);
-    AssertRC(rc);
-
-    /* This method only works if the VGA device is in a VBE mode. */
-    if ((pThis->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_ENABLED) == 0)
-    {
-        PDMCritSectLeave(&pThis->CritSect);
-        return VERR_INVALID_STATE;
-    }
-
-    vga_draw_line = vga_draw_line_table[v * 4 + get_depth_index(u32DstBitsPerPixel)];
+    vga_draw_line = vga_draw_line_table[v * 4 + get_depth_index(cDstBitsPerPixel)];
 
     /* Compute source and destination addresses and pitches. */
-    cbPixelDst = (u32DstBitsPerPixel + 7) / 8;
-    cbLineDst  = u32DstLineSize;
-    pu8DstPtr  = pu8Dst + yDst * cbLineDst + xDst * cbPixelDst;
+    uint32_t cbPixelDst = (cDstBitsPerPixel + 7) / 8;
+    uint32_t cbLineDst  = cbDstLine;
+    uint8_t *pbDstCur   = pbDst + yDst * cbLineDst + xDst * cbPixelDst;
 
-    cbPixelSrc = (u32SrcBitsPerPixel + 7) / 8;
-    cbLineSrc = u32SrcLineSize;
-    pu8SrcPtr = pu8Src + ySrcCorrected * cbLineSrc + xSrcCorrected * cbPixelSrc;
+    uint32_t cbPixelSrc = (cSrcBitsPerPixel + 7) / 8;
+    uint32_t cbLineSrc  = cbSrcLine;
+    const uint8_t *pbSrcCur = pbSrc + ySrcCorrected * cbLineSrc + xSrcCorrected * cbPixelSrc;
 
 #ifdef DEBUG_sunlover
-    LogFlow(("vgaPortCopyRect: dst: %p, %d, %d. src: %p, %d, %d\n", pu8DstPtr, cbLineDst, cbPixelDst, pu8SrcPtr, cbLineSrc, cbPixelSrc));
+    LogFlow(("vgaPortCopyRect: dst: %p, %d, %d. src: %p, %d, %d\n", pbDstCur, cbLineDst, cbPixelDst, pbSrcCur, cbLineSrc, cbPixelSrc));
 #endif /* DEBUG_sunlover */
 
-    while (hCorrected-- > 0)
+    while (cyCorrected-- > 0)
     {
-        vga_draw_line (pThis, pu8DstPtr, pu8SrcPtr, wCorrected);
-        pu8DstPtr += cbLineDst;
-        pu8SrcPtr += cbLineSrc;
+        vga_draw_line(pThis, pbDstCur, pbSrcCur, cxCorrected);
+        pbDstCur += cbLineDst;
+        pbSrcCur += cbLineSrc;
     }
 
     PDMCritSectLeave(&pThis->CritSect);
@@ -5218,7 +5429,7 @@ static DECLCALLBACK(void) vgaTimerRefresh(PPDMDEVINS pDevIns, PTMTIMER pTimer, v
 #endif
 
 #ifdef VBOX_WITH_CRHGSMI
-    vboxCmdVBVACmdTimer(pThis);
+    vboxCmdVBVATimerRefresh(pThis);
 #endif
 }
 
@@ -5226,16 +5437,13 @@ static DECLCALLBACK(void) vgaTimerRefresh(PPDMDEVINS pDevIns, PTMTIMER pTimer, v
 int vgaR3RegisterVRAMHandler(PVGASTATE pVGAState, uint64_t cbFrameBuffer)
 {
     PPDMDEVINS pDevIns = pVGAState->pDevInsR3;
-
     Assert(pVGAState->GCPhysVRAM);
 
-    int rc = PGMR3HandlerPhysicalRegister(PDMDevHlpGetVM(pDevIns),
-                                          PGMPHYSHANDLERTYPE_PHYSICAL_WRITE,
-                                          pVGAState->GCPhysVRAM, pVGAState->GCPhysVRAM + (cbFrameBuffer - 1),
-                                          vgaR3LFBAccessHandler, pVGAState,
-                                          g_DeviceVga.szR0Mod, "vgaR0LFBAccessHandler", pDevIns->pvInstanceDataR0,
-                                          g_DeviceVga.szRCMod, "vgaGCLFBAccessHandler", pDevIns->pvInstanceDataRC,
-                                          "VGA LFB");
+    int rc = PGMHandlerPhysicalRegister(PDMDevHlpGetVM(pDevIns),
+                                        pVGAState->GCPhysVRAM, pVGAState->GCPhysVRAM + (cbFrameBuffer - 1),
+                                        pVGAState->hLfbAccessHandlerType, pVGAState, pDevIns->pvInstanceDataR0,
+                                        pDevIns->pvInstanceDataRC, "VGA LFB");
+
     AssertRC(rc);
     return rc;
 }
@@ -5254,44 +5462,38 @@ int vgaR3UnregisterVRAMHandler(PVGASTATE pVGAState)
 /* -=-=-=-=-=- Ring 3: PCI Device -=-=-=-=-=- */
 
 /**
- * Callback function for unmapping and/or mapping the VRAM MMIO2 region (called by the PCI bus).
- *
- * @return VBox status code.
- * @param   pPciDev         Pointer to PCI device. Use pPciDev->pDevIns to get the device instance.
- * @param   iRegion         The region number.
- * @param   GCPhysAddress   Physical address of the region. If iType is PCI_ADDRESS_SPACE_IO, this is an
- *                          I/O port, else it's a physical address.
- *                          This address is *NOT* relative to pci_mem_base like earlier!
- * @param   enmType         One of the PCI_ADDRESS_SPACE_* values.
+ * @callback_method_impl{FNPCIIOREGIONMAP, Mapping/unmapping the VRAM MMI2 region}
  */
-static DECLCALLBACK(int) vgaR3IORegionMap(PPCIDEVICE pPciDev, /*unsigned*/ int iRegion, RTGCPHYS GCPhysAddress, uint32_t cb, PCIADDRESSSPACE enmType)
+static DECLCALLBACK(int) vgaR3IORegionMap(PPDMDEVINS pDevIns, PPDMPCIDEV pPciDev, uint32_t iRegion,
+                                          RTGCPHYS GCPhysAddress, RTGCPHYS cb, PCIADDRESSSPACE enmType)
 {
+    RT_NOREF1(cb);
     int         rc;
-    PPDMDEVINS  pDevIns = pPciDev->pDevIns;
     PVGASTATE   pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
-    Log(("vgaR3IORegionMap: iRegion=%d GCPhysAddress=%RGp cb=%#x enmType=%d\n", iRegion, GCPhysAddress, cb, enmType));
+    Log(("vgaR3IORegionMap: iRegion=%d GCPhysAddress=%RGp cb=%RGp enmType=%d\n", iRegion, GCPhysAddress, cb, enmType));
 #ifdef VBOX_WITH_VMSVGA
-    AssertReturn((iRegion == ((pThis->fVMSVGAEnabled) ? 1 : 0)) && (enmType == ((pThis->fVMSVGAEnabled) ? PCI_ADDRESS_SPACE_MEM : PCI_ADDRESS_SPACE_MEM_PREFETCH)), VERR_INTERNAL_ERROR);    
+    AssertReturn(   iRegion == (pThis->fVMSVGAEnabled ? 1U : 0U)
+                 && enmType == (pThis->fVMSVGAEnabled ? PCI_ADDRESS_SPACE_MEM : PCI_ADDRESS_SPACE_MEM_PREFETCH),
+                 VERR_INTERNAL_ERROR);
 #else
     AssertReturn(iRegion == 0 && enmType == PCI_ADDRESS_SPACE_MEM_PREFETCH, VERR_INTERNAL_ERROR);
 #endif
+
+    rc = PDMCritSectEnter(&pThis->CritSect, VERR_SEM_BUSY);
+    AssertRC(rc);
 
     if (GCPhysAddress != NIL_RTGCPHYS)
     {
         /*
          * Mapping the VRAM.
          */
-        rc = PDMDevHlpMMIO2Map(pDevIns, iRegion, GCPhysAddress);
+        rc = PDMDevHlpMMIOExMap(pDevIns, pPciDev, iRegion, GCPhysAddress);
         AssertRC(rc);
         if (RT_SUCCESS(rc))
         {
-            rc = PGMR3HandlerPhysicalRegister(PDMDevHlpGetVM(pDevIns),
-                                              PGMPHYSHANDLERTYPE_PHYSICAL_WRITE,
-                                              GCPhysAddress, GCPhysAddress + (pThis->vram_size - 1),
-                                              vgaR3LFBAccessHandler, pThis,
-                                              g_DeviceVga.szR0Mod, "vgaR0LFBAccessHandler", pDevIns->pvInstanceDataR0,
-                                              g_DeviceVga.szRCMod, "vgaRCLFBAccessHandler", pDevIns->pvInstanceDataRC,
-                                              "VGA LFB");
+            rc = PGMHandlerPhysicalRegister(PDMDevHlpGetVM(pDevIns), GCPhysAddress, GCPhysAddress + (pThis->vram_size - 1),
+                                            pThis->hLfbAccessHandlerType, pThis, pDevIns->pvInstanceDataR0,
+                                            pDevIns->pvInstanceDataRC, "VGA LFB");
             AssertRC(rc);
             if (RT_SUCCESS(rc))
             {
@@ -5316,8 +5518,8 @@ static DECLCALLBACK(int) vgaR3IORegionMap(PPCIDEVICE pPciDev, /*unsigned*/ int i
            )
         {
 #endif
-        rc = PGMHandlerPhysicalDeregister(PDMDevHlpGetVM(pDevIns), pThis->GCPhysVRAM);
-        AssertRC(rc);
+            rc = PGMHandlerPhysicalDeregister(PDMDevHlpGetVM(pDevIns), pThis->GCPhysVRAM);
+            AssertRC(rc);
 #ifdef VBOX_WITH_VMSVGA
         }
         else
@@ -5326,8 +5528,67 @@ static DECLCALLBACK(int) vgaR3IORegionMap(PPCIDEVICE pPciDev, /*unsigned*/ int i
         pThis->GCPhysVRAM = 0;
         /* NB: VBE_DISPI_INDEX_FB_BASE_HI is left unchanged here. */
     }
+    PDMCritSectLeave(&pThis->CritSect);
     return rc;
 }
+
+
+#ifdef VBOX_WITH_VMSVGA /* Currently not needed in the non-VMSVGA mode, but keeping it flexible for later. */
+/**
+ * @interface_method_impl{PDMPCIDEV,pfnRegionLoadChangeHookR3}
+ */
+static DECLCALLBACK(int) vgaR3PciRegionLoadChangeHook(PPDMDEVINS pDevIns, PPDMPCIDEV pPciDev, uint32_t iRegion,
+                                                      uint64_t cbRegion, PCIADDRESSSPACE enmType,
+                                                      PFNPCIIOREGIONOLDSETTER pfnOldSetter)
+{
+    PVGASTATE pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
+
+# ifdef VBOX_WITH_VMSVGA
+    /*
+     * The VMSVGA changed the default FIFO size from 128KB to 2MB after 5.1.
+     */
+    if (pThis->fVMSVGAEnabled)
+    {
+        if (iRegion == 2 /*FIFO*/)
+        {
+            /* Make sure it's still 32-bit memory.  Ignore fluxtuations in the prefetch flag */
+            AssertLogRelMsgReturn(!(enmType & (PCI_ADDRESS_SPACE_IO | PCI_ADDRESS_SPACE_BAR64)), ("enmType=%#x\n", enmType),
+                                  VERR_VGA_UNEXPECTED_PCI_REGION_LOAD_CHANGE);
+
+            /* If the size didn't change we're fine, so just return already. */
+            if (cbRegion == pThis->svga.cbFIFO)
+                return VINF_SUCCESS;
+
+            /* If the size is larger than the current configuration, refuse to load. */
+            AssertLogRelMsgReturn(cbRegion <= pThis->svga.cbFIFOConfig,
+                                  ("cbRegion=%#RGp cbFIFOConfig=%#x cbFIFO=%#x\n",
+                                   cbRegion, pThis->svga.cbFIFOConfig, pThis->svga.cbFIFO),
+                                  VERR_SSM_LOAD_CONFIG_MISMATCH);
+
+            /* Adjust the size down. */
+            int rc = PDMDevHlpMMIOExReduce(pDevIns, pPciDev, iRegion, cbRegion);
+            AssertLogRelMsgRCReturn(rc,
+                                    ("cbRegion=%#RGp cbFIFOConfig=%#x cbFIFO=%#x: %Rrc\n",
+                                     cbRegion, pThis->svga.cbFIFOConfig, pThis->svga.cbFIFO, rc),
+                                    rc);
+            pThis->svga.cbFIFO = cbRegion;
+            return rc;
+
+        }
+        /* Emulate callbacks for 5.1 and older saved states by recursion. */
+        else if (iRegion == UINT32_MAX)
+        {
+            int rc = vgaR3PciRegionLoadChangeHook(pDevIns, pPciDev, 2, VMSVGA_FIFO_SIZE_OLD, PCI_ADDRESS_SPACE_MEM, NULL);
+            if (RT_SUCCESS(rc))
+                rc = pfnOldSetter(pPciDev, 2, VMSVGA_FIFO_SIZE_OLD, PCI_ADDRESS_SPACE_MEM);
+            return rc;
+        }
+    }
+# endif /* VBOX_WITH_VMSVGA */
+
+    return VERR_VGA_UNEXPECTED_PCI_REGION_LOAD_CHANGE;
+}
+#endif /* VBOX_WITH_VMSVGA */
 
 
 /* -=-=-=-=-=- Ring3: Misc Wrappers & Sidekicks -=-=-=-=-=- */
@@ -5346,7 +5607,7 @@ static void vgaR3SaveConfig(PVGASTATE pThis, PSSMHANDLE pSSM)
 
 
 /**
- * @copydoc FNSSMDEVLIVEEXEC
+ * @callback_method_impl{FNSSMDEVLIVEEXEC}
  */
 static DECLCALLBACK(int) vgaR3LiveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t uPass)
 {
@@ -5358,40 +5619,48 @@ static DECLCALLBACK(int) vgaR3LiveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint
 
 
 /**
- * @copydoc FNSSMDEVSAVEPREP
+ * @callback_method_impl{FNSSMDEVSAVEPREP}
  */
 static DECLCALLBACK(int) vgaR3SavePrep(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
 {
 #ifdef VBOX_WITH_VIDEOHWACCEL
-    return vboxVBVASaveStatePrep(pDevIns, pSSM);
+    RT_NOREF(pSSM);
+    return vboxVBVASaveStatePrep(pDevIns);
 #else
-    return VINF_SUCCESS;
-#endif
-}
-
-static DECLCALLBACK(int) vgaR3SaveDone(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
-{
-#ifdef VBOX_WITH_VIDEOHWACCEL
-    return vboxVBVASaveStateDone(pDevIns, pSSM);
-#else
+    RT_NOREF(pDevIns, pSSM);
     return VINF_SUCCESS;
 #endif
 }
 
 /**
- * @copydoc FNSSMDEVSAVEEXEC
+ * @callback_method_impl{FNSSMDEVSAVEDONE}
+ */
+static DECLCALLBACK(int) vgaR3SaveDone(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
+{
+#ifdef VBOX_WITH_VIDEOHWACCEL
+    RT_NOREF(pSSM);
+    return vboxVBVASaveStateDone(pDevIns);
+#else
+    RT_NOREF(pDevIns, pSSM);
+    return VINF_SUCCESS;
+#endif
+}
+
+/**
+ * @callback_method_impl{FNSSMDEVSAVEEXEC}
  */
 static DECLCALLBACK(int) vgaR3SaveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
 {
     PVGASTATE pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
 
 #ifdef VBOX_WITH_VDMA
-    vboxVDMASaveStateExecPrep(pThis->pVdma, pSSM);
+    vboxVDMASaveStateExecPrep(pThis->pVdma);
 #endif
 
     vgaR3SaveConfig(pThis, pSSM);
     vga_save(pSSM, PDMINS_2_DATA(pDevIns, PVGASTATE));
 
+    VGA_SAVED_STATE_PUT_MARKER(pSSM, 1);
 #ifdef VBOX_WITH_HGSMI
     SSMR3PutBool(pSSM, true);
     int rc = vboxVBVASaveStateExec(pDevIns, pSSM);
@@ -5401,6 +5670,7 @@ static DECLCALLBACK(int) vgaR3SaveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
 
     AssertRCReturn(rc, rc);
 
+    VGA_SAVED_STATE_PUT_MARKER(pSSM, 3);
 #ifdef VBOX_WITH_VDMA
     rc = SSMR3PutU32(pSSM, 1);
     AssertRCReturn(rc, rc);
@@ -5411,9 +5681,10 @@ static DECLCALLBACK(int) vgaR3SaveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
     AssertRCReturn(rc, rc);
 
 #ifdef VBOX_WITH_VDMA
-    vboxVDMASaveStateExecDone(pThis->pVdma, pSSM);
+    vboxVDMASaveStateExecDone(pThis->pVdma);
 #endif
 
+    VGA_SAVED_STATE_PUT_MARKER(pSSM, 5);
 #ifdef VBOX_WITH_VMSVGA
     if (pThis->fVMSVGAEnabled)
     {
@@ -5421,13 +5692,14 @@ static DECLCALLBACK(int) vgaR3SaveExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
         AssertRCReturn(rc, rc);
     }
 #endif
+    VGA_SAVED_STATE_PUT_MARKER(pSSM, 6);
 
     return rc;
 }
 
 
 /**
- * @copydoc FNSSMDEVSAVEEXEC
+ * @copydoc FNSSMDEVLOADEXEC
  */
 static DECLCALLBACK(int) vgaR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint32_t uVersion, uint32_t uPass)
 {
@@ -5458,6 +5730,11 @@ static DECLCALLBACK(int) vgaR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint
         rc = vga_load(pSSM, pThis, uVersion);
         if (RT_FAILURE(rc))
             return rc;
+
+        /*
+         * Restore the HGSMI state, if present.
+         */
+        VGA_SAVED_STATE_GET_MARKER_RETURN_ON_MISMATCH(pSSM, uVersion, 1);
         bool fWithHgsmi = uVersion == VGA_SAVEDSTATE_VERSION_HGSMI;
         if (uVersion > VGA_SAVEDSTATE_VERSION_HGSMI)
         {
@@ -5474,6 +5751,7 @@ static DECLCALLBACK(int) vgaR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint
 #endif
         }
 
+        VGA_SAVED_STATE_GET_MARKER_RETURN_ON_MISMATCH(pSSM, uVersion, 3);
         if (uVersion >= VGA_SAVEDSTATE_VERSION_3D)
         {
             uint32_t u32;
@@ -5495,6 +5773,7 @@ static DECLCALLBACK(int) vgaR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint
             }
         }
 
+        VGA_SAVED_STATE_GET_MARKER_RETURN_ON_MISMATCH(pSSM, uVersion, 5);
 #ifdef VBOX_WITH_VMSVGA
         if (pThis->fVMSVGAEnabled)
         {
@@ -5502,6 +5781,7 @@ static DECLCALLBACK(int) vgaR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint
             AssertRCReturn(rc, rc);
         }
 #endif
+        VGA_SAVED_STATE_GET_MARKER_RETURN_ON_MISMATCH(pSSM, uVersion, 6);
     }
     return VINF_SUCCESS;
 }
@@ -5512,17 +5792,19 @@ static DECLCALLBACK(int) vgaR3LoadExec(PPDMDEVINS pDevIns, PSSMHANDLE pSSM, uint
  */
 static DECLCALLBACK(int) vgaR3LoadDone(PPDMDEVINS pDevIns, PSSMHANDLE pSSM)
 {
+    RT_NOREF(pSSM);
     int rc = VINF_SUCCESS;
 
 #ifdef VBOX_WITH_HGSMI
     PVGASTATE pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
-    VBVAPause(pThis, (pThis->vbe_regs[VBE_DISPI_INDEX_ENABLE] & VBE_DISPI_ENABLED) == 0);
-    rc = vboxVBVALoadStateDone(pDevIns, pSSM);
+    rc = vboxVBVALoadStateDone(pDevIns);
     AssertRCReturn(rc, rc);
 # ifdef VBOX_WITH_VDMA
     rc = vboxVDMASaveLoadDone(pThis->pVdma);
     AssertRCReturn(rc, rc);
 # endif
+    /* Now update the current VBVA state which depends on VBE registers. vboxVBVALoadStateDone cleared the state. */
+    VBVAOnVBEChanged(pThis);
 #endif
 #ifdef VBOX_WITH_VMSVGA
     if (pThis->fVMSVGAEnabled)
@@ -5596,7 +5878,7 @@ static DECLCALLBACK(void)  vgaR3Reset(PPDMDEVINS pDevIns)
 #endif /* CONFIG_BOCHS_VBE */
 
     /*
-     * Reset the LBF mapping.
+     * Reset the LFB mapping.
      */
     pThis->fLFBUpdated = false;
     if (    (   pThis->fGCEnabled
@@ -5678,7 +5960,7 @@ static DECLCALLBACK(int)  vgaAttach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t 
                 pThis->pDrv = PDMIBASE_QUERY_INTERFACE(pThis->pDrvBase, PDMIDISPLAYCONNECTOR);
                 if (pThis->pDrv)
                 {
-                    /* pThis->pDrv->pu8Data can be NULL when there is no framebuffer. */
+                    /* pThis->pDrv->pbData can be NULL when there is no framebuffer. */
                     if (    pThis->pDrv->pfnRefresh
                         &&  pThis->pDrv->pfnResize
                         &&  pThis->pDrv->pfnUpdateRect)
@@ -5732,14 +6014,13 @@ static DECLCALLBACK(int)  vgaAttach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t 
  */
 static DECLCALLBACK(void)  vgaDetach(PPDMDEVINS pDevIns, unsigned iLUN, uint32_t fFlags)
 {
+    RT_NOREF1(fFlags);
+    PVGASTATE   pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
+    AssertMsg(fFlags & PDM_TACH_FLAGS_NOT_HOT_PLUG, ("VGA device does not support hotplugging\n"));
+
     /*
      * Reset the interfaces and update the controller state.
      */
-    PVGASTATE   pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
-
-    AssertMsg(fFlags & PDM_TACH_FLAGS_NOT_HOT_PLUG,
-              ("VGA device does not support hotplugging\n"));
-
     switch (iLUN)
     {
         /* LUN #0: Display port. */
@@ -5762,7 +6043,6 @@ static DECLCALLBACK(int) vgaR3Destruct(PPDMDEVINS pDevIns)
 {
     PDMDEV_CHECK_VERSIONS_RETURN_QUIET(pDevIns);
 
-#ifdef VBE_NEW_DYN_LIST
     PVGASTATE   pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
     LogFlow(("vgaR3Destruct:\n"));
 
@@ -5776,19 +6056,22 @@ static DECLCALLBACK(int) vgaR3Destruct(PPDMDEVINS pDevIns)
         vmsvgaDestruct(pDevIns);
 #endif
 
+#ifdef VBOX_WITH_HGSMI
+    VBVADestroy(pThis);
+#endif
+
     /*
      * Free MM heap pointers.
      */
-    if (pThis->pu8VBEExtraData)
+    if (pThis->pbVBEExtraData)
     {
-        MMR3HeapFree(pThis->pu8VBEExtraData);
-        pThis->pu8VBEExtraData = NULL;
+        PDMDevHlpMMHeapFree(pDevIns, pThis->pbVBEExtraData);
+        pThis->pbVBEExtraData = NULL;
     }
-#endif /* VBE_NEW_DYN_LIST */
-    if (pThis->pu8VgaBios)
+    if (pThis->pbVgaBios)
     {
-        MMR3HeapFree(pThis->pu8VgaBios);
-        pThis->pu8VgaBios = NULL;
+        PDMDevHlpMMHeapFree(pDevIns, pThis->pbVgaBios);
+        pThis->pbVgaBios = NULL;
     }
 
     if (pThis->pszVgaBiosFile)
@@ -5803,6 +6086,13 @@ static DECLCALLBACK(int) vgaR3Destruct(PPDMDEVINS pDevIns)
         pThis->pszLogoFile = NULL;
     }
 
+    if (pThis->pbLogo)
+    {
+        PDMDevHlpMMHeapFree(pDevIns, pThis->pbLogo);
+        pThis->pbLogo = NULL;
+    }
+
+    PDMR3CritSectDelete(&pThis->CritSectIRQ);
     PDMR3CritSectDelete(&pThis->CritSect);
     return VINF_SUCCESS;
 }
@@ -5844,14 +6134,12 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
     static bool s_fExpandDone = false;
     int         rc;
     unsigned    i;
-#ifdef VBE_NEW_DYN_LIST
     uint32_t    cCustomModes;
     uint32_t    cyReduction;
     uint32_t    cbPitch;
     PVBEHEADER  pVBEDataHdr;
     ModeInfoListItem *pCurMode;
     unsigned    cb;
-#endif
     PDMDEV_CHECK_VERSIONS_RETURN(pDevIns);
     PVGASTATE   pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
     PVM         pVM   = PDMDevHlpGetVM(pDevIns);
@@ -5904,11 +6192,13 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
                                           "MaxBiosYRes\0"
 #ifdef VBOX_WITH_VMSVGA
                                           "VMSVGAEnabled\0"
+                                          "VMSVGAFifoSize\0"
 #endif
 #ifdef VBOX_WITH_VMSVGA3D
                                           "VMSVGA3dEnabled\0"
                                           "HostWindowId\0"
 #endif
+                                          "SuppressNewYearSplash\0"
                                           ))
         return PDMDEV_SET_ERROR(pDevIns, VERR_PDM_DEVINS_UNKNOWN_CFG_VALUES,
                                 N_("Invalid configuration for vga device"));
@@ -5942,6 +6232,14 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
     rc = CFGMR3QueryBoolDef(pCfg, "VMSVGAEnabled", &pThis->fVMSVGAEnabled, false);
     AssertLogRelRCReturn(rc, rc);
     Log(("VMSVGA: VMSVGAEnabled   = %d\n", pThis->fVMSVGAEnabled));
+
+    rc = CFGMR3QueryU32Def(pCfg, "VMSVGAFifoSize", &pThis->svga.cbFIFO, VMSVGA_FIFO_SIZE);
+    AssertLogRelRCReturn(rc, rc);
+    AssertLogRelMsgReturn(pThis->svga.cbFIFO >= _128K, ("cbFIFO=%#x\n", pThis->svga.cbFIFO), VERR_OUT_OF_RANGE);
+    AssertLogRelMsgReturn(pThis->svga.cbFIFO <=  _16M, ("cbFIFO=%#x\n", pThis->svga.cbFIFO), VERR_OUT_OF_RANGE);
+    AssertLogRelMsgReturn(RT_IS_POWER_OF_TWO(pThis->svga.cbFIFO), ("cbFIFO=%#x\n", pThis->svga.cbFIFO), VERR_NOT_POWER_OF_TWO);
+    pThis->svga.cbFIFOConfig = pThis->svga.cbFIFO;
+    Log(("VMSVGA: VMSVGAFifoSize  = %#x (%'u)\n", pThis->svga.cbFIFO, pThis->svga.cbFIFO));
 #endif
 #ifdef VBOX_WITH_VMSVGA3D
     rc = CFGMR3QueryBoolDef(pCfg, "VMSVGA3dEnabled", &pThis->svga.f3DEnabled, false);
@@ -5971,8 +6269,8 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
     else
     {
 #endif /* VBOX_WITH_VMSVGA */
-    PCIDevSetVendorId(  &pThis->Dev, 0x80ee);   /* PCI vendor, just a free bogus value */
-    PCIDevSetDeviceId(  &pThis->Dev, 0xbeef);
+        PCIDevSetVendorId(&pThis->Dev, 0x80ee);   /* PCI vendor, just a free bogus value */
+        PCIDevSetDeviceId(&pThis->Dev, 0xbeef);
 #ifdef VBOX_WITH_VMSVGA
     }
 #endif
@@ -5988,7 +6286,7 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
 
     pThis->IPort.pfnUpdateDisplay       = vgaPortUpdateDisplay;
     pThis->IPort.pfnUpdateDisplayAll    = vgaPortUpdateDisplayAll;
-    pThis->IPort.pfnQueryColorDepth     = vgaPortQueryColorDepth;
+    pThis->IPort.pfnQueryVideoMode      = vgaPortQueryVideoMode;
     pThis->IPort.pfnSetRefreshRate      = vgaPortSetRefreshRate;
     pThis->IPort.pfnTakeScreenshot      = vgaPortTakeScreenshot;
     pThis->IPort.pfnFreeScreenshot      = vgaPortFreeScreenshot;
@@ -5997,7 +6295,9 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
     pThis->IPort.pfnCopyRect            = vgaPortCopyRect;
     pThis->IPort.pfnSetRenderVRAM       = vgaPortSetRenderVRAM;
 #ifdef VBOX_WITH_VMSVGA
-    pThis->IPort.pfnSetViewPort         = vmsvgaPortSetViewPort;
+    pThis->IPort.pfnSetViewport         = vmsvgaPortSetViewport;
+#else
+    pThis->IPort.pfnSetViewport         = NULL;
 #endif
     pThis->IPort.pfnSendModeHint        = vbvaPortSendModeHint;
     pThis->IPort.pfnReportHostCursorCapabilities
@@ -6018,19 +6318,64 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
 # endif
 #endif
 
-//    pThis->ILeds.pfnQueryStatusLed = vgaPortQueryStatusLed;
+    pThis->ILeds.pfnQueryStatusLed = vgaPortQueryStatusLed;
 
     RT_ZERO(pThis->Led3D);
     pThis->Led3D.u32Magic = PDMLED_MAGIC;
 
     /*
      * We use our own critical section to avoid unncessary pointer indirections
-     * in interface methods (as we all as for historical reasons).
+     * in interface methods (as well as for historical reasons).
      */
     rc = PDMDevHlpCritSectInit(pDevIns, &pThis->CritSect, RT_SRC_POS, "VGA#%u", iInstance);
     AssertRCReturn(rc, rc);
     rc = PDMDevHlpSetDeviceCritSect(pDevIns, &pThis->CritSect);
     AssertRCReturn(rc, rc);
+
+    rc = PDMDevHlpCritSectInit(pDevIns, &pThis->CritSectIRQ, RT_SRC_POS, "VGA#%u_IRQ", iInstance);
+    AssertRCReturn(rc, rc);
+
+    /*
+     * PCI device registration.
+     */
+    rc = PDMDevHlpPCIRegister(pDevIns, &pThis->Dev);
+    if (RT_FAILURE(rc))
+        return rc;
+    /*AssertMsg(pThis->Dev.uDevFn == 16 || iInstance != 0, ("pThis->Dev.uDevFn=%d\n", pThis->Dev.uDevFn));*/
+    if (pThis->Dev.uDevFn != 16 && iInstance == 0)
+        Log(("!!WARNING!!: pThis->dev.uDevFn=%d (ignore if testcase or not started by Main)\n", pThis->Dev.uDevFn));
+
+#ifdef VBOX_WITH_VMSVGA
+    if (pThis->fVMSVGAEnabled)
+    {
+        /* Register the io command ports. */
+        rc = PDMDevHlpPCIIORegionRegister (pDevIns, 0 /* iRegion */, 0x10, PCI_ADDRESS_SPACE_IO, vmsvgaR3IORegionMap);
+        if (RT_FAILURE (rc))
+            return rc;
+        /* VMware's MetalKit doesn't like PCI_ADDRESS_SPACE_MEM_PREFETCH */
+        rc = PDMDevHlpPCIIORegionRegister(pDevIns, 1 /* iRegion */, pThis->vram_size,
+                                          PCI_ADDRESS_SPACE_MEM /* PCI_ADDRESS_SPACE_MEM_PREFETCH */, vgaR3IORegionMap);
+        if (RT_FAILURE(rc))
+            return rc;
+        rc = PDMDevHlpPCIIORegionRegister(pDevIns, 2 /* iRegion */, pThis->svga.cbFIFO,
+                                          PCI_ADDRESS_SPACE_MEM /* PCI_ADDRESS_SPACE_MEM_PREFETCH */, vmsvgaR3IORegionMap);
+        if (RT_FAILURE(rc))
+            return rc;
+        pThis->Dev.pfnRegionLoadChangeHookR3 = vgaR3PciRegionLoadChangeHook;
+    }
+    else
+#endif /* VBOX_WITH_VMSVGA */
+    {
+#ifdef VBOX_WITH_VMSVGA
+        int iPCIRegionVRAM = (pThis->fVMSVGAEnabled) ? 1 : 0;
+#else
+        int iPCIRegionVRAM = 0;
+#endif
+        rc = PDMDevHlpPCIIORegionRegister(pDevIns, iPCIRegionVRAM, pThis->vram_size,
+                                          PCI_ADDRESS_SPACE_MEM_PREFETCH, vgaR3IORegionMap);
+        if (RT_FAILURE(rc))
+            return rc;
+    }
 
     /*
      * Allocate the VRAM and map the first 512KB of it into GC so we can speed up VGA support.
@@ -6043,29 +6388,30 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
         /*
          * Allocate and initialize the FIFO MMIO2 memory.
          */
-        rc = PDMDevHlpMMIO2Register(pDevIns, 2 /*iRegion*/, VMSVGA_FIFO_SIZE, 0 /*fFlags*/, (void **)&pThis->svga.pFIFOR3, "VMSVGA-FIFO");
+        rc = PDMDevHlpMMIO2Register(pDevIns, &pThis->Dev, 2 /*iRegion*/, pThis->svga.cbFIFO,
+                                    0 /*fFlags*/, (void **)&pThis->svga.pFIFOR3, "VMSVGA-FIFO");
         if (RT_FAILURE(rc))
             return PDMDevHlpVMSetError(pDevIns, rc, RT_SRC_POS,
-                                        N_("Failed to allocate %u bytes of memory for the VMSVGA device"), VMSVGA_FIFO_SIZE);
+                                        N_("Failed to allocate %u bytes of memory for the VMSVGA device"), pThis->svga.cbFIFO);
         pThis->svga.pFIFOR0 = (RTR0PTR)pThis->svga.pFIFOR3;
-        pThis->svga.cbFIFO  = VMSVGA_FIFO_SIZE;
     }
 #else
     int iPCIRegionVRAM = 0;
 #endif
-    rc = PDMDevHlpMMIO2Register(pDevIns, iPCIRegionVRAM, pThis->vram_size, 0, (void **)&pThis->vram_ptrR3, "VRam");
+    rc = PDMDevHlpMMIO2Register(pDevIns, &pThis->Dev, iPCIRegionVRAM, pThis->vram_size, 0, (void **)&pThis->vram_ptrR3, "VRam");
     AssertLogRelMsgRCReturn(rc, ("PDMDevHlpMMIO2Register(%#x,) -> %Rrc\n", pThis->vram_size, rc), rc);
     pThis->vram_ptrR0 = (RTR0PTR)pThis->vram_ptrR3; /** @todo @bugref{1865} Map parts into R0 or just use PGM access (Mac only). */
 
     if (pThis->fGCEnabled)
     {
         RTRCPTR pRCMapping = 0;
-        rc = PDMDevHlpMMHyperMapMMIO2(pDevIns, iPCIRegionVRAM, 0 /* off */,  VGA_MAPPING_SIZE, "VGA VRam", &pRCMapping);
+        rc = PDMDevHlpMMHyperMapMMIO2(pDevIns, &pThis->Dev, iPCIRegionVRAM, 0 /* off */,  VGA_MAPPING_SIZE,
+                                      "VGA VRam", &pRCMapping);
         AssertLogRelMsgRCReturn(rc, ("PDMDevHlpMMHyperMapMMIO2(%#x,) -> %Rrc\n", VGA_MAPPING_SIZE, rc), rc);
         pThis->vram_ptrRC = pRCMapping;
-# ifdef VBOX_WITH_VMSVGA
+#ifdef VBOX_WITH_VMSVGA
         /* Don't need a mapping in RC */
-# endif
+#endif
     }
 
 #if defined(VBOX_WITH_2X_4GB_ADDR_SPACE)
@@ -6079,13 +6425,24 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
         if (pThis->fVMSVGAEnabled)
         {
             RTR0PTR pR0Mapping = 0;
-            rc = PDMDevHlpMMIO2MapKernel(pDevIns, 2 /* iRegion */, 0 /* off */,  VMSVGA_FIFO_SIZE, "VMSVGA-FIFO", &pR0Mapping);
-            AssertLogRelMsgRCReturn(rc, ("PDMDevHlpMapMMIO2IntoR0(%#x,) -> %Rrc\n", VMSVGA_FIFO_SIZE, rc), rc);
+            rc = PDMDevHlpMMIO2MapKernel(pDevIns, 2 /* iRegion */, 0 /* off */,  pThis->svga.cbFIFO, "VMSVGA-FIFO", &pR0Mapping);
+            AssertLogRelMsgRCReturn(rc, ("PDMDevHlpMapMMIO2IntoR0(%#x,) -> %Rrc\n", pThis->svga.cbFIFO, rc), rc);
             pThis->svga.pFIFOR0 = pR0Mapping;
         }
 # endif
     }
 #endif
+
+    /*
+     * Register access handler types.
+     */
+    rc = PGMR3HandlerPhysicalTypeRegister(pVM, PGMPHYSHANDLERKIND_WRITE,
+                                          vgaLFBAccessHandler,
+                                          g_DeviceVga.szR0Mod, "vgaLFBAccessHandler", "vgaLbfAccessPfHandler",
+                                          g_DeviceVga.szRCMod, "vgaLFBAccessHandler", "vgaLbfAccessPfHandler",
+                                          "VGA LFB", &pThis->hLfbAccessHandlerType);
+    AssertRCReturn(rc, rc);
+
 
     /*
      * Register I/O ports.
@@ -6270,15 +6627,15 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
         /*
          * Allocate buffer for the VGA BIOS ROM data.
          */
-        pThis->pu8VgaBios = (uint8_t *)PDMDevHlpMMHeapAlloc(pDevIns, pThis->cbVgaBios);
-        if (pThis->pu8VgaBios)
+        pThis->pbVgaBios = (uint8_t *)PDMDevHlpMMHeapAlloc(pDevIns, pThis->cbVgaBios);
+        if (pThis->pbVgaBios)
         {
-            rc = RTFileRead(FileVgaBios, pThis->pu8VgaBios, pThis->cbVgaBios, NULL);
+            rc = RTFileRead(FileVgaBios, pThis->pbVgaBios, pThis->cbVgaBios, NULL);
             if (RT_FAILURE(rc))
             {
                 AssertMsgFailed(("RTFileRead(,,%d,NULL) -> %Rrc\n", pThis->cbVgaBios, rc));
-                MMR3HeapFree(pThis->pu8VgaBios);
-                pThis->pu8VgaBios = NULL;
+                PDMDevHlpMMHeapFree(pDevIns, pThis->pbVgaBios);
+                pThis->pbVgaBios = NULL;
             }
             rc = VINF_SUCCESS;
         }
@@ -6286,7 +6643,7 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
             rc = VERR_NO_MEMORY;
     }
     else
-        pThis->pu8VgaBios = NULL;
+        pThis->pbVgaBios = NULL;
 
     /* cleanup */
     if (FileVgaBios != NIL_RTFILE)
@@ -6294,25 +6651,45 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
 
     /* If we were unable to get the data from file for whatever reason, fall
        back to the built-in ROM image. */
-    const uint8_t  *pu8VgaBiosBinary;
+    const uint8_t  *pbVgaBiosBinary;
     uint64_t        cbVgaBiosBinary;
     uint32_t        fFlags = 0;
-    if (pThis->pu8VgaBios == NULL)
+    if (pThis->pbVgaBios == NULL)
     {
-        pu8VgaBiosBinary = g_abVgaBiosBinary;
-        cbVgaBiosBinary  = g_cbVgaBiosBinary;
-        fFlags           = PGMPHYS_ROM_FLAGS_PERMANENT_BINARY;
+        CPUMMICROARCH enmMicroarch = pVM ? pVM->cpum.ro.GuestFeatures.enmMicroarch : kCpumMicroarch_Intel_P6;
+        if (   enmMicroarch == kCpumMicroarch_Intel_8086
+            || enmMicroarch == kCpumMicroarch_Intel_80186
+            || enmMicroarch == kCpumMicroarch_NEC_V20
+            || enmMicroarch == kCpumMicroarch_NEC_V30)
+        {
+            pbVgaBiosBinary = g_abVgaBiosBinary8086;
+            cbVgaBiosBinary = g_cbVgaBiosBinary8086;
+            LogRel(("VGA: Using the 8086 BIOS image!\n"));
+        }
+        else if (enmMicroarch == kCpumMicroarch_Intel_80286)
+        {
+            pbVgaBiosBinary = g_abVgaBiosBinary286;
+            cbVgaBiosBinary = g_cbVgaBiosBinary286;
+            LogRel(("VGA: Using the 286 BIOS image!\n"));
+        }
+        else
+        {
+            pbVgaBiosBinary = g_abVgaBiosBinary386;
+            cbVgaBiosBinary = g_cbVgaBiosBinary386;
+            LogRel(("VGA: Using the 386+ BIOS image.\n"));
+        }
+        fFlags          = PGMPHYS_ROM_FLAGS_PERMANENT_BINARY;
     }
     else
     {
-        pu8VgaBiosBinary = pThis->pu8VgaBios;
-        cbVgaBiosBinary  = pThis->cbVgaBios;
+        pbVgaBiosBinary = pThis->pbVgaBios;
+        cbVgaBiosBinary = pThis->cbVgaBios;
     }
 
-    AssertReleaseMsg(g_cbVgaBiosBinary <= _64K && g_cbVgaBiosBinary >= 32*_1K, ("g_cbVgaBiosBinary=%#x\n", g_cbVgaBiosBinary));
-    AssertReleaseMsg(RT_ALIGN_Z(g_cbVgaBiosBinary, PAGE_SIZE) == g_cbVgaBiosBinary, ("g_cbVgaBiosBinary=%#x\n", g_cbVgaBiosBinary));
+    AssertReleaseMsg(cbVgaBiosBinary <= _64K && cbVgaBiosBinary >= 32*_1K, ("cbVgaBiosBinary=%#x\n", cbVgaBiosBinary));
+    AssertReleaseMsg(RT_ALIGN_Z(cbVgaBiosBinary, PAGE_SIZE) == cbVgaBiosBinary, ("cbVgaBiosBinary=%#x\n", cbVgaBiosBinary));
     /* Note! Because of old saved states we'll always register at least 36KB of ROM. */
-    rc = PDMDevHlpROMRegister(pDevIns, 0x000c0000, RT_MAX(cbVgaBiosBinary, 36*_1K), pu8VgaBiosBinary, cbVgaBiosBinary,
+    rc = PDMDevHlpROMRegister(pDevIns, 0x000c0000, RT_MAX(cbVgaBiosBinary, 36*_1K), pbVgaBiosBinary, cbVgaBiosBinary,
                               fFlags, "VGA BIOS");
     if (RT_FAILURE(rc))
         return rc;
@@ -6324,37 +6701,6 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
                                 NULL,          vgaR3LiveExec, NULL,
                                 vgaR3SavePrep, vgaR3SaveExec, vgaR3SaveDone,
                                 NULL,          vgaR3LoadExec, vgaR3LoadDone);
-    if (RT_FAILURE(rc))
-        return rc;
-
-    /*
-     * PCI device registration.
-     */
-    rc = PDMDevHlpPCIRegister(pDevIns, &pThis->Dev);
-    if (RT_FAILURE(rc))
-        return rc;
-    /*AssertMsg(pThis->Dev.devfn == 16 || iInstance != 0, ("pThis->Dev.devfn=%d\n", pThis->Dev.devfn));*/
-    if (pThis->Dev.devfn != 16 && iInstance == 0)
-        Log(("!!WARNING!!: pThis->dev.devfn=%d (ignore if testcase or not started by Main)\n", pThis->Dev.devfn));
-
-#ifdef VBOX_WITH_VMSVGA
-    if (pThis->fVMSVGAEnabled)
-    {
-        /* Register the io command ports. */
-        rc = PDMDevHlpPCIIORegionRegister (pDevIns, 0 /* iRegion */, 0x10, PCI_ADDRESS_SPACE_IO, vmsvgaR3IORegionMap);
-        if (RT_FAILURE (rc))
-            return rc;
-        /* VMware's MetalKit doesn't like PCI_ADDRESS_SPACE_MEM_PREFETCH */
-        rc = PDMDevHlpPCIIORegionRegister(pDevIns, 1 /* iRegion */, pThis->vram_size, PCI_ADDRESS_SPACE_MEM /* PCI_ADDRESS_SPACE_MEM_PREFETCH */, vgaR3IORegionMap);
-        if (RT_FAILURE(rc))
-            return rc;
-        rc = PDMDevHlpPCIIORegionRegister(pDevIns, 2 /* iRegion */, VMSVGA_FIFO_SIZE, PCI_ADDRESS_SPACE_MEM /* PCI_ADDRESS_SPACE_MEM_PREFETCH */, vmsvgaR3IORegionMap);
-        if (RT_FAILURE(rc))
-            return rc;
-    }
-    else
-#endif /* VBOX_WITH_VMSVGA */
-    rc = PDMDevHlpPCIIORegionRegister(pDevIns, iPCIRegionVRAM, pThis->vram_size, PCI_ADDRESS_SPACE_MEM_PREFETCH, vgaR3IORegionMap);
     if (RT_FAILURE(rc))
         return rc;
 
@@ -6379,8 +6725,6 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
      */
     rc = CFGMR3QueryBoolDef(pCfg, "RealRetrace", &pThis->fRealRetrace, false);
     AssertLogRelRCReturn(rc, rc);
-
-#ifdef VBE_NEW_DYN_LIST
 
     uint16_t maxBiosXRes;
     rc = CFGMR3QueryU16Def(pCfg, "MaxBiosXRes", &maxBiosXRes, UINT16_MAX);
@@ -6411,18 +6755,14 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
      */
     AssertRelease(sizeof(VBEHEADER) + cb < 65536);
     pThis->cbVBEExtraData = (uint16_t)(sizeof(VBEHEADER) + cb);
-    pThis->pu8VBEExtraData = (uint8_t *)PDMDevHlpMMHeapAllocZ(pDevIns, pThis->cbVBEExtraData);
-    if (!pThis->pu8VBEExtraData)
+    pThis->pbVBEExtraData = (uint8_t *)PDMDevHlpMMHeapAllocZ(pDevIns, pThis->cbVBEExtraData);
+    if (!pThis->pbVBEExtraData)
         return VERR_NO_MEMORY;
 
-    pVBEDataHdr = (PVBEHEADER)pThis->pu8VBEExtraData;
+    pVBEDataHdr = (PVBEHEADER)pThis->pbVBEExtraData;
     pVBEDataHdr->u16Signature = VBEHEADER_MAGIC;
     pVBEDataHdr->cbData = cb;
 
-# ifndef VRAM_SIZE_FIX
-    pCurMode = memcpy(pVBEDataHdr + 1, &mode_info_list, sizeof(mode_info_list));
-    pCurMode = (ModeInfoListItem *)((uintptr_t)pCurMode + sizeof(mode_info_list));
-# else  /* VRAM_SIZE_FIX defined */
     pCurMode = (ModeInfoListItem *)(pVBEDataHdr + 1);
     for (i = 0; i < MODE_INFO_SIZE; i++)
     {
@@ -6443,7 +6783,6 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
         vgaAdjustModeInfo(pThis, pCurMode);
         pCurMode++;
     }
-# endif  /* VRAM_SIZE_FIX defined */
 
     /*
      * Copy default modes with subtracted YResolution.
@@ -6452,14 +6791,6 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
     {
         ModeInfoListItem *pDefMode = mode_info_list;
         Log(("vgaR3Construct: cyReduction=%u\n", cyReduction));
-# ifndef VRAM_SIZE_FIX
-        for (i = 0; i < MODE_INFO_SIZE; i++, pCurMode++, pDefMode++)
-        {
-            *pCurMode = *pDefMode;
-            pCurMode->mode += 0x30;
-            pCurMode->info.YResolution -= cyReduction;
-        }
-# else  /* VRAM_SIZE_FIX defined */
         for (i = 0; i < MODE_INFO_SIZE; i++, pDefMode++)
         {
             uint32_t pixelWidth, reqSize;
@@ -6478,7 +6809,6 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
             pCurMode->info.YResolution -= cyReduction;
             pCurMode++;
         }
-# endif  /* VRAM_SIZE_FIX defined */
     }
 
 
@@ -6487,7 +6817,7 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
      */
     if (cCustomModes)
     {
-        uint16_t u16CurMode = 0x160;
+        uint16_t u16CurMode = VBE_VBOX_MODE_CUSTOM1;
         for (i = 1; i <= cCustomModes; i++)
         {
             char szExtraDataKey[sizeof("CustomVideoModeXX")];
@@ -6504,25 +6834,27 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
 
                 cParams = sscanf(pszExtraData, "%ux%ux%u", &cx, &cy, &cBits);
                 if (    cParams != 3
-                    ||  (cBits != 16 && cBits != 24 && cBits != 32))
+                    ||  (cBits != 8 && cBits != 16 && cBits != 24 && cBits != 32))
                 {
                     AssertMsgFailed(("Configuration error: Invalid mode data '%s' for '%s'! cBits=%d\n", pszExtraData, szExtraDataKey, cBits));
                     return VERR_VGA_INVALID_CUSTOM_MODE;
                 }
                 cbPitch = calc_line_pitch(cBits, cx);
-# ifdef VRAM_SIZE_FIX
                 if (cy * cbPitch >= pThis->vram_size)
                 {
                     AssertMsgFailed(("Configuration error: custom video mode %dx%dx%dbits is too large for the virtual video memory of %dMb.  Please increase the video memory size.\n",
                                      cx, cy, cBits, pThis->vram_size / _1M));
                     return VERR_VGA_INVALID_CUSTOM_MODE;
                 }
-# endif  /* VRAM_SIZE_FIX defined */
                 MMR3HeapFree(pszExtraData);
 
                 /* Use defaults from max@bpp mode. */
                 switch (cBits)
                 {
+                    case 8:
+                        u16DefMode = VBE_VESA_MODE_1024X768X8;
+                        break;
+
                     case 16:
                         u16DefMode = VBE_VESA_MODE_1024X768X565;
                         break;
@@ -6578,7 +6910,6 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
     rc = PDMDevHlpIOPortRegister(pDevIns, VBE_EXTRA_PORT, 1, NULL, vbeIOPortWriteVBEExtra, vbeIOPortReadVBEExtra, NULL, NULL, "VBE BIOS Extra Data");
     if (RT_FAILURE(rc))
         return rc;
-#endif /* VBE_NEW_DYN_LIST */
 
     /*
      * Register I/O Port for the BIOS Logo.
@@ -6633,13 +6964,16 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
         return PDMDEV_SET_ERROR(pDevIns, rc,
                                 N_("Configuration error: Querying \"ShowBootMenu\" as integer failed"));
 
-#if defined(DEBUG) && !defined(DEBUG_sunlover)
+#if defined(DEBUG) && !defined(DEBUG_sunlover) && !defined(DEBUG_michael)
     /* Disable the logo abd menu if all default settings. */
     if (   LogoHdr.fu8FadeIn
         && LogoHdr.fu8FadeOut
         && LogoHdr.u16LogoMillies == 0
         && LogoHdr.fu8ShowBootMenu == 2)
-        LogoHdr.fu8FadeIn = LogoHdr.fu8FadeOut = LogoHdr.fu8ShowBootMenu = 0;
+    {
+        LogoHdr.fu8FadeIn = LogoHdr.fu8FadeOut = 0;
+        LogoHdr.u16LogoMillies = 500;
+    }
 #endif
 
     /* Delay the logo a little bit */
@@ -6704,16 +7038,24 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
 
     /*
      * Allocate buffer for the logo data.
-     * RT_MAX() is applied to let us fall back to default logo on read failure.
+     * Let us fall back to default logo on read failure.
      */
-    pThis->cbLogo = sizeof(LogoHdr) + LogoHdr.cbLogo;
-    pThis->pu8Logo = (uint8_t *)PDMDevHlpMMHeapAlloc(pDevIns, RT_MAX(pThis->cbLogo, g_cbVgaDefBiosLogo + sizeof(LogoHdr)));
-    if (pThis->pu8Logo)
+    pThis->cbLogo = LogoHdr.cbLogo;
+    if (g_cbVgaDefBiosLogo)
+        pThis->cbLogo = g_cbVgaDefBiosLogo;
+#ifndef VBOX_OSE
+    if (g_cbVgaDefBiosLogoNY)
+        pThis->cbLogo = g_cbVgaDefBiosLogoNY;
+#endif
+    pThis->cbLogo += sizeof(LogoHdr);
+
+    pThis->pbLogo = (uint8_t *)PDMDevHlpMMHeapAlloc(pDevIns, pThis->cbLogo);
+    if (pThis->pbLogo)
     {
         /*
          * Write the logo header.
          */
-        PLOGOHDR pLogoHdr = (PLOGOHDR)pThis->pu8Logo;
+        PLOGOHDR pLogoHdr = (PLOGOHDR)pThis->pbLogo;
         *pLogoHdr = LogoHdr;
 
         /*
@@ -6734,7 +7076,23 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
         if (   !pThis->pszLogoFile
             || RT_FAILURE(rc))
         {
-            memcpy(pLogoHdr + 1, g_abVgaDefBiosLogo, LogoHdr.cbLogo);
+#ifndef VBOX_OSE
+            RTTIMESPEC Now;
+            RTTimeLocalNow(&Now);
+            RTTIME T;
+            RTTimeLocalExplode(&T, &Now);
+            bool fSuppressNewYearSplash = false;
+            rc = CFGMR3QueryBoolDef(pCfg, "SuppressNewYearSplash", &fSuppressNewYearSplash, true);
+            if (   !fSuppressNewYearSplash
+                && (T.u16YearDay > 353 || T.u16YearDay < 10))
+            {
+                pLogoHdr->cbLogo = LogoHdr.cbLogo = g_cbVgaDefBiosLogoNY;
+                memcpy(pLogoHdr + 1, g_abVgaDefBiosLogoNY, LogoHdr.cbLogo);
+                pThis->fBootMenuInverse = true;
+            }
+            else
+#endif
+                memcpy(pLogoHdr + 1, g_abVgaDefBiosLogo, LogoHdr.cbLogo);
             rc = vbeParseBitmap(pThis);
             if (RT_FAILURE(rc))
                 AssertReleaseMsgFailed(("Parsing of internal bitmap failed! vbeParseBitmap() -> %Rrc\n", rc));
@@ -6783,9 +7141,44 @@ static DECLCALLBACK(int)   vgaR3Construct(PPDMDEVINS pDevIns, int iInstance, PCF
 
     /* Init latched access mask. */
     pThis->uMaskLatchAccess = 0x3ff;
+
+    if (RT_SUCCESS(rc))
+    {
+        PPDMIBASE  pBase;
+        /*
+         * Attach status driver (optional).
+         */
+        rc = PDMDevHlpDriverAttach(pDevIns, PDM_STATUS_LUN, &pThis->IBase, &pBase, "Status Port");
+        if (RT_SUCCESS(rc))
+            pThis->pLedsConnector = PDMIBASE_QUERY_INTERFACE(pBase, PDMILEDCONNECTORS);
+        else if (rc == VERR_PDM_NO_ATTACHED_DRIVER)
+        {
+            Log(("%s/%d: warning: no driver attached to LUN #0!\n", pDevIns->pReg->szName, pDevIns->iInstance));
+            rc = VINF_SUCCESS;
+        }
+        else
+        {
+            AssertMsgFailed(("Failed to attach to status driver. rc=%Rrc\n", rc));
+            rc = PDMDEV_SET_ERROR(pDevIns, rc, N_("VGA cannot attach to status driver"));
+        }
+    }
     return rc;
 }
 
+static DECLCALLBACK(void) vgaR3PowerOn(PPDMDEVINS pDevIns)
+{
+    PVGASTATE pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
+#ifdef VBOX_WITH_VMSVGA
+    vmsvgaR3PowerOn(pDevIns);
+#endif
+    VBVAOnResume(pThis);
+}
+
+static DECLCALLBACK(void) vgaR3Resume(PPDMDEVINS pDevIns)
+{
+    PVGASTATE pThis = PDMINS_2_DATA(pDevIns, PVGASTATE);
+    VBVAOnResume(pThis);
+}
 
 /**
  * The device registration structure.
@@ -6797,7 +7190,7 @@ const PDMDEVREG g_DeviceVga =
     /* szName */
     "vga",
     /* szRCMod */
-    "VBoxDDGC.gc",
+    "VBoxDDRC.rc",
     /* szR0Mod */
     "VBoxDDR0.r0",
     /* pszDescription */
@@ -6819,17 +7212,13 @@ const PDMDEVREG g_DeviceVga =
     /* pfnMemSetup */
     NULL,
     /* pfnPowerOn */
-#ifdef VBOX_WITH_VMSVGA
-    vmsvgaR3PowerOn,
-#else
-    NULL,
-#endif
+    vgaR3PowerOn,
     /* pfnReset */
     vgaR3Reset,
     /* pfnSuspend */
     NULL,
     /* pfnResume */
-    NULL,
+    vgaR3Resume,
     /* pfnAttach */
     vgaAttach,
     /* pfnDetach */

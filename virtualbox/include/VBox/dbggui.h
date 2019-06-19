@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,18 +27,20 @@
 #define ___VBox_dbggui_h
 
 #include <VBox/types.h>
-#if defined(RT_OS_WINDOWS)
-# include <VirtualBox.h>
-#else
-# include <VirtualBox_XPCOM.h>
-#endif
 
 
 RT_C_DECLS_BEGIN
 
 /** @defgroup grp_dbggui    VirtualBox Debugger GUI
+ * @ingroup grp_dbg
  * @{
  */
+
+#ifdef RT_OS_WINDOWS
+struct ISession;
+#else
+class ISession;
+#endif
 
 /** Pointer to the debugger GUI instance structure. */
 typedef struct DBGGUI *PDBGGUI;
@@ -88,7 +90,7 @@ typedef DBGGUIVT const *PCDBGGUIVT;
  *                      Optional.
  */
 DBGDECL(int) DBGGuiCreate(ISession *pSession, PDBGGUI *ppGui, PCDBGGUIVT *ppGuiVT);
-/** @copydoc DBGGuiCreate. */
+/** @copydoc DBGGuiCreate */
 typedef DECLCALLBACK(int) FNDBGGUICREATE(ISession *pSession, PDBGGUI *ppGui, PCDBGGUIVT *ppGuiVT);
 /** Pointer to DBGGuiCreate. */
 typedef FNDBGGUICREATE *PFNDBGGUICREATE;
@@ -103,7 +105,7 @@ typedef FNDBGGUICREATE *PFNDBGGUICREATE;
  *                      Optional.
  */
 DBGDECL(int) DBGGuiCreateForVM(PUVM pUVM, PDBGGUI *ppGui, PCDBGGUIVT *ppGuiVT);
-/** @copydoc DBGGuiCreateForVM. */
+/** @copydoc DBGGuiCreateForVM */
 typedef DECLCALLBACK(int) FNDBGGUICREATEFORVM(PUVM pUVM, PDBGGUI *ppGui, PCDBGGUIVT *ppGuiVT);
 /** Pointer to DBGGuiCreateForVM. */
 typedef FNDBGGUICREATEFORVM *PFNDBGGUICREATEFORVM;

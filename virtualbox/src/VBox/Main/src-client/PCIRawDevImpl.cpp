@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,11 +15,12 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include "Logging.h"
+#define LOG_GROUP LOG_GROUP_DEV_PCI_RAW
+#include "LoggingNew.h"
+
 #include "PCIRawDevImpl.h"
 #include "PCIDeviceAttachmentImpl.h"
 #include "ConsoleImpl.h"
-#include "MachineImpl.h"
 
 // generated header for events
 #include "VBoxEvents.h"
@@ -67,7 +68,7 @@ DECLCALLBACK(void *) PCIRawDev::drvQueryInterface(PPDMIBASE pInterface, const ch
 
 
 /**
- * @interface_method_impl{PDMIPCIRAWUP,pfnPciDeviceConstructComplete}
+ * @interface_method_impl{PDMIPCIRAWCONNECTOR,pfnDeviceConstructComplete}
  */
 DECLCALLBACK(int) PCIRawDev::drvDeviceConstructComplete(PPDMIPCIRAWCONNECTOR pInterface, const char *pcszName,
                                                         uint32_t uHostPCIAddress, uint32_t uGuestPCIAddress,
@@ -75,11 +76,11 @@ DECLCALLBACK(int) PCIRawDev::drvDeviceConstructComplete(PPDMIPCIRAWCONNECTOR pIn
 {
     PDRVMAINPCIRAWDEV pThis = RT_FROM_CPP_MEMBER(pInterface, DRVMAINPCIRAWDEV, IConnector);
     Console *pConsole = pThis->pPCIRawDev->getParent();
-    const ComPtr<IMachine>& machine = pConsole->machine();
+    const ComPtr<IMachine>& machine = pConsole->i_machine();
     ComPtr<IVirtualBox> vbox;
 
     HRESULT hrc = machine->COMGETTER(Parent)(vbox.asOutParam());
-    Assert(SUCCEEDED(hrc));
+    Assert(SUCCEEDED(hrc)); NOREF(hrc);
 
     ComPtr<IEventSource> es;
     hrc = vbox->COMGETTER(EventSource)(es.asOutParam());
@@ -98,17 +99,9 @@ DECLCALLBACK(int) PCIRawDev::drvDeviceConstructComplete(PPDMIPCIRAWCONNECTOR pIn
     if (RT_FAILURE(rc))
         msg = BstrFmt("runtime error %Rrc", rc);
 
-    fireHostPCIDevicePlugEvent(es, bstrId.raw(), true /* plugged */, RT_SUCCESS(rc) /* success */, pda, msg.raw());
+    fireHostPCIDevicePlugEvent(es, bstrId.raw(), true /* plugged */, RT_SUCCESS_NP(rc) /* success */, pda, msg.raw());
 
     return VINF_SUCCESS;
-}
-
-
-/**
- * @interface_method_impl{PDMDRVREG,pfnReset}
- */
-DECLCALLBACK(void) PCIRawDev::drvReset(PPDMDRVINS pDrvIns)
-{
 }
 
 
@@ -130,6 +123,7 @@ DECLCALLBACK(void) PCIRawDev::drvDestruct(PPDMDRVINS pDrvIns)
  */
 DECLCALLBACK(int) PCIRawDev::drvConstruct(PPDMDRVINS pDrvIns, PCFGMNODE pCfgHandle, uint32_t fFlags)
 {
+    RT_NOREF(fFlags);
     PDMDRV_CHECK_VERSIONS_RETURN(pDrvIns);
     PDRVMAINPCIRAWDEV pThis = PDMINS_2_DATA(pDrvIns, PDRVMAINPCIRAWDEV);
 
@@ -204,7 +198,7 @@ const PDMDRVREG PCIRawDev::DrvReg =
     /* pfnPowerOn */
     NULL,
     /* pfnReset */
-    PCIRawDev::drvReset,
+    NULL,
     /* pfnSuspend */
     NULL,
     /* pfnResume */

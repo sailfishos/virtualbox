@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -18,7 +18,7 @@
 #ifndef ___VBOX_CREDPROV_FACTORY_H___
 #define ___VBOX_CREDPROV_FACTORY_H___
 
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 class VBoxCredProvFactory : public IClassFactory
 {
@@ -46,7 +46,7 @@ public:
 
 private:
     LONG m_cRefs;
-    friend HRESULT VBoxCredentialProviderCreate(REFCLSID classID, REFIID interfaceID, void **ppv);
+    friend HRESULT VBoxCredentialProviderCreate(REFCLSID classID, REFIID interfaceID, void **ppvInterface);
 };
 #endif /* !___VBOX_CREDPROV_FACTORY_H___ */
 

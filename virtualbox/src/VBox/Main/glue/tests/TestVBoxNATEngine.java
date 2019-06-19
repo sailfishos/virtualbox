@@ -1,10 +1,11 @@
 /* $Id: TestVBoxNATEngine.java $ */
-
-/* Small sample/testcase which demonstrates that the same source code can
- * be used to connect to the webservice and (XP)COM APIs. */
+/*!file
+ * Small sample/testcase which demonstrates that the same source code can
+ * be used to connect to the webservice and (XP)COM APIs.
+ */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -14,7 +15,8 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-import org.virtualbox_4_3.*;
+
+import org.virtualbox_5_0.*;
 import java.util.List;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -28,7 +30,7 @@ public class TestVBoxNATEngine
         boolean inaccessible = false;
         /* different chipsets might have different number of attachments */
         ChipsetType chipsetType = vm.getChipsetType();
-        INetworkAdapter adapters[] = 
+        INetworkAdapter adapters[] =
             new INetworkAdapter[
                     vbox.getSystemProperties().getMaxNetworkAdapters(chipsetType).intValue()];
 
@@ -39,13 +41,13 @@ public class TestVBoxNATEngine
              * Dump adapters and if it's got NAT attachment
              * dump it settings
              */
-                
+
             for (int nidx = 0; nidx < adapters.length; ++nidx)
             {
                 /* select available and NATs only. */
                 adapters[nidx] = vm.getNetworkAdapter(new Long(nidx));
                 INetworkAdapter n = adapters[nidx];
-                    
+
                 if (n == null)
                     continue;
                 NetworkAttachmentType attachmentType = n.getAttachmentType();
@@ -66,7 +68,7 @@ public class TestVBoxNATEngine
                         String pfAttributes[] = pf.split(",");
                         /* name,proto,hostip,host,hostport,guestip,guestport */
                         nat.removeRedirect(pfAttributes[0]);
-                        nat.addRedirect("", 
+                        nat.addRedirect("",
                                         NATProtocol.fromValue(new Integer(pfAttributes[1]).longValue()),
                                         pfAttributes[2],
                                         new Integer(
@@ -77,19 +79,24 @@ public class TestVBoxNATEngine
 
                 }
             }
-                
+
         }
         catch (VBoxException e)
         {
             name = "<inaccessible>";
             inaccessible = true;
-        }            
+        }
+
+        // process system event queue
+        mgr.waitForEvents(0);
     }
 
     static void testStart(VirtualBoxManager mgr, IVirtualBox vbox, IMachine vm)
     {
         System.out.println("\nAttempting to start VM '" + vm.getName() + "'");
         mgr.startVm(vm.getName(), null, 7000);
+        // process system event queue
+        mgr.waitForEvents(0);
     }
 
     public TestVBoxNATEngine(String[] args)
@@ -151,7 +158,6 @@ public class TestVBoxNATEngine
                     {
                         testEnumeration(mgr, vbox, vm);
                         testStart(mgr, vbox, vm);
-                        //testEvents(mgr, vbox.getEventSource());
                     }
                     System.out.println("done, press Enter...");
                     int ch = System.in.read();
@@ -166,6 +172,9 @@ public class TestVBoxNATEngine
             {
                 e.printStackTrace();
             }
+
+        // process system event queue
+        mgr.waitForEvents(0);
 
         if (ws)
             {

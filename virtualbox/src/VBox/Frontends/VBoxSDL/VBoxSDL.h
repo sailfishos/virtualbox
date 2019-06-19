@@ -1,3 +1,4 @@
+/* $Id: VBoxSDL.h $ */
 /** @file
  *
  * VBox frontends: VBoxSDL (simple frontend based on SDL):
@@ -5,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,17 +20,26 @@
 #ifndef __H_VBOXSDL
 #define __H_VBOXSDL
 
+#include <iprt/cdefs.h>
 #ifdef RT_OS_WINDOWS /** @todo check why we need to do this on windows. */
 /* convince SDL to not overload main() */
-#define _SDL_main_h
+# define _SDL_main_h
 #endif
+
 /* include this first so Windows.h get's in before our stuff. */
+#ifdef _MSC_VER
+# pragma warning(push)
+# pragma warning(disable: 4121) /* warning C4121: 'SDL_SysWMmsg' : alignment of a member was sensitive to packing*/
+#endif
 #include <SDL.h>
+#ifdef _MSC_VER
+# pragma warning(pop)
+#endif
 
 /** custom SDL event for display update handling */
 #define SDL_USER_EVENT_UPDATERECT         (SDL_USEREVENT + 4)
-/** custom SDL event for resize handling */
-#define SDL_USER_EVENT_RESIZE             (SDL_USEREVENT + 5)
+/** custom SDL event for changing the guest resolution */
+#define SDL_USER_EVENT_NOTIFYCHANGE       (SDL_USEREVENT + 5)
 /** custom SDL for XPCOM event queue processing */
 #define SDL_USER_EVENT_XPCOM_EVENTQUEUE   (SDL_USEREVENT + 6)
 /** custom SDL event for updating the titlebar */
@@ -72,4 +82,10 @@ void PushNotifyUpdateEvent(SDL_Event *event);
 #endif
 int  PushSDLEventForSure(SDL_Event *event);
 
-#endif // __H_VBOXSDL
+#ifdef RT_OS_DARWIN
+RT_C_DECLS_BEGIN
+void *VBoxSDLGetDarwinWindowId(void);
+RT_C_DECLS_END
+#endif
+
+#endif

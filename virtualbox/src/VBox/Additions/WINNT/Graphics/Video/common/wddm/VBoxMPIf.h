@@ -1,11 +1,9 @@
 /* $Id: VBoxMPIf.h $ */
-
 /** @file
- * VBox WDDM Miniport driver
+ * VBox WDDM Miniport driver.
  *
- * Contains base definitions of constants & structures used
- * to control & perform rendering,
- * such as DMA commands types, allocation types, escape codes, etc.
+ * Contains base definitions of constants & structures used to control & perform
+ * rendering, such as DMA commands types, allocation types, escape codes, etc.
  * used by both miniport & display drivers.
  *
  * The latter uses these and only these defs to communicate with the former
@@ -13,7 +11,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -27,36 +25,36 @@
 #ifndef ___VBoxMPIf_h___
 #define ___VBoxMPIf_h___
 
-#include <VBox/VBoxVideo.h>
+#include <VBoxVideo.h>
 #include "../../../../include/VBoxDisplay.h"
 #include "../VBoxVideoTools.h"
-#include <VBox/VBoxUhgsmi.h>
-#include <VBox/VBoxGuest2.h>
+#include <VBoxUhgsmi.h>
+#include <VBox/VBoxGuestCoreTypes.h> /* for VBGLIOCHGCMCALL */
 
 /* One would increase this whenever definitions in this file are changed */
 #define VBOXVIDEOIF_VERSION 20
 
-#define VBOXWDDM_NODE_ID_SYSTEM           0
-#define VBOXWDDM_NODE_ID_3D               (VBOXWDDM_NODE_ID_SYSTEM)
-#define VBOXWDDM_NODE_ID_3D_KMT           (VBOXWDDM_NODE_ID_3D)
-#define VBOXWDDM_NODE_ID_2D_VIDEO         (VBOXWDDM_NODE_ID_3D_KMT+1)
-#define VBOXWDDM_NUM_NODES                (VBOXWDDM_NODE_ID_2D_VIDEO+1)
+#define VBOXWDDM_NODE_ID_SYSTEM             0
+#define VBOXWDDM_NODE_ID_3D                 (VBOXWDDM_NODE_ID_SYSTEM)
+#define VBOXWDDM_NODE_ID_3D_KMT             (VBOXWDDM_NODE_ID_3D)
+#define VBOXWDDM_NODE_ID_2D_VIDEO           (VBOXWDDM_NODE_ID_3D_KMT + 1)
+#define VBOXWDDM_NUM_NODES                  (VBOXWDDM_NODE_ID_2D_VIDEO + 1)
 
-#define VBOXWDDM_ENGINE_ID_SYSTEM         0
+#define VBOXWDDM_ENGINE_ID_SYSTEM           0
 #if (VBOXWDDM_NODE_ID_3D == VBOXWDDM_NODE_ID_SYSTEM)
-# define VBOXWDDM_ENGINE_ID_3D            (VBOXWDDM_ENGINE_ID_SYSTEM+1)
+# define VBOXWDDM_ENGINE_ID_3D              (VBOXWDDM_ENGINE_ID_SYSTEM + 1)
 #else
-# define VBOXWDDM_ENGINE_ID_3D            0
+# define VBOXWDDM_ENGINE_ID_3D              0
 #endif
 #if (VBOXWDDM_NODE_ID_3D_KMT == VBOXWDDM_NODE_ID_3D)
-# define VBOXWDDM_ENGINE_ID_3D_KMT     VBOXWDDM_ENGINE_ID_3D
+# define VBOXWDDM_ENGINE_ID_3D_KMT          VBOXWDDM_ENGINE_ID_3D
 #else
-# define VBOXWDDM_ENGINE_ID_3D_KMT     0
+# define VBOXWDDM_ENGINE_ID_3D_KMT          0
 #endif
 #if (VBOXWDDM_NODE_ID_2D_VIDEO == VBOXWDDM_NODE_ID_3D)
-# define VBOXWDDM_ENGINE_ID_2D_VIDEO       VBOXWDDM_ENGINE_ID_3D
+# define VBOXWDDM_ENGINE_ID_2D_VIDEO        VBOXWDDM_ENGINE_ID_3D
 #else
-# define VBOXWDDM_ENGINE_ID_2D_VIDEO       0
+# define VBOXWDDM_ENGINE_ID_2D_VIDEO        0
 #endif
 
 
@@ -303,7 +301,7 @@ typedef struct VBOXWDDM_RECTS_INFO
     RECT aRects[1];
 } VBOXWDDM_RECTS_INFO, *PVBOXWDDM_RECTS_INFO;
 
-#define VBOXWDDM_RECTS_INFO_SIZE4CRECTS(_cRects) (RT_OFFSETOF(VBOXWDDM_RECTS_INFO, aRects[(_cRects)]))
+#define VBOXWDDM_RECTS_INFO_SIZE4CRECTS(_cRects) (RT_UOFFSETOF_DYN(VBOXWDDM_RECTS_INFO, aRects[(_cRects)]))
 #define VBOXWDDM_RECTS_INFO_SIZE(_pRects) (VBOXVIDEOCM_CMD_RECTS_SIZE4CRECTS((_pRects)->cRects))
 
 typedef enum
@@ -347,7 +345,7 @@ typedef struct VBOXVIDEOCM_CMD_RECTS_HDR
     VBOXVIDEOCM_CMD_RECTS_INTERNAL Data;
 } VBOXVIDEOCM_CMD_RECTS_HDR, *PVBOXVIDEOCM_CMD_RECTS_HDR;
 
-#define VBOXVIDEOCM_CMD_RECTS_INTERNAL_SIZE4CRECTS(_cRects) (RT_OFFSETOF(VBOXVIDEOCM_CMD_RECTS_INTERNAL, Cmd.RectsInfo.aRects[(_cRects)]))
+#define VBOXVIDEOCM_CMD_RECTS_INTERNAL_SIZE4CRECTS(_cRects) (RT_UOFFSETOF_DYN(VBOXVIDEOCM_CMD_RECTS_INTERNAL, Cmd.RectsInfo.aRects[(_cRects)]))
 #define VBOXVIDEOCM_CMD_RECTS_INTERNAL_SIZE(_pCmd) (VBOXVIDEOCM_CMD_RECTS_INTERNAL_SIZE4CRECTS((_pCmd)->cRects))
 
 typedef struct VBOXWDDM_GETVBOXVIDEOCMCMD_HDR
@@ -489,7 +487,7 @@ typedef struct VBOXDISPIFESCAPE_SETALLOCHOSTID
 typedef struct VBOXDISPIFESCAPE_CRHGSMICTLCON_CALL
 {
     VBOXDISPIFESCAPE EscapeHdr;
-    VBoxGuestHGCMCallInfo CallInfo;
+    VBGLIOCHGCMCALL CallInfo;
 } VBOXDISPIFESCAPE_CRHGSMICTLCON_CALL, *PVBOXDISPIFESCAPE_CRHGSMICTLCON_CALL;
 
 /* query info func */
@@ -500,6 +498,10 @@ typedef struct VBOXWDDM_QI
     uint32_t cInfos;
     VBOXVHWA_INFO aInfos[VBOX_VIDEO_MAX_SCREENS];
 } VBOXWDDM_QI;
+
+/** Convert a given FourCC code to a D3DDDIFORMAT enum. */
+#define VBOXWDDM_D3DDDIFORMAT_FROM_FOURCC(_a, _b, _c, _d) \
+    ((D3DDDIFORMAT)MAKEFOURCC(_a, _b, _c, _d))
 
 /* submit cmd func */
 DECLINLINE(D3DDDIFORMAT) vboxWddmFmtNoAlphaFormat(D3DDDIFORMAT enmFormat)
@@ -522,6 +524,10 @@ DECLINLINE(D3DDDIFORMAT) vboxWddmFmtNoAlphaFormat(D3DDDIFORMAT enmFormat)
 /* tooling */
 DECLINLINE(UINT) vboxWddmCalcBitsPerPixel(D3DDDIFORMAT enmFormat)
 {
+#ifdef _MSC_VER
+# pragma warning(push)
+# pragma warning(disable:4063) /* VBOXWDDM_D3DDDIFORMAT_FROM_FOURCC('Y', 'V', '1', '2'): isn't part of the enum */
+#endif
     switch (enmFormat)
     {
         case D3DDDIFMT_R8G8B8:
@@ -547,9 +553,10 @@ DECLINLINE(UINT) vboxWddmCalcBitsPerPixel(D3DDDIFORMAT enmFormat)
         case D3DDDIFMT_A2R10G10B10:
             return 32;
         case D3DDDIFMT_A16B16G16R16:
-// Floating-point formats are not implemented in Chromium.
-//        case D3DDDIFMT_A16B16G16R16F:
+        case D3DDDIFMT_A16B16G16R16F:
             return 64;
+        case D3DDDIFMT_A32B32G32R32F:
+            return 128;
         case D3DDDIFMT_A8P8:
             return 16;
         case D3DDDIFMT_P8:
@@ -599,11 +606,15 @@ DECLINLINE(UINT) vboxWddmCalcBitsPerPixel(D3DDDIFORMAT enmFormat)
         case D3DDDIFMT_R16F:
             return 16;
         case D3DDDIFMT_YUY2: /* 4 bytes per 2 pixels. */
+        case VBOXWDDM_D3DDDIFORMAT_FROM_FOURCC('Y', 'V', '1', '2'):
             return 16;
         default:
             AssertBreakpoint();
             return 0;
     }
+#ifdef _MSC_VER
+# pragma warning(pop)
+#endif
 }
 
 DECLINLINE(uint32_t) vboxWddmFormatToFourcc(D3DDDIFORMAT enmFormat)

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGF
 #include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/selm.h>
@@ -34,7 +35,6 @@
 #include <VBox/param.h>
 #include <VBox/vmm/vm.h>
 #include <VBox/vmm/uvm.h>
-#include "internal/pgm.h"
 
 #include <VBox/log.h>
 #include <iprt/assert.h>
@@ -43,9 +43,9 @@
 #include <iprt/ctype.h>
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Structure used when disassembling and instructions in DBGF.
  * This is used so the reader function can get the stuff it needs.
@@ -54,9 +54,9 @@ typedef struct
 {
     /** The core structure. */
     DISCPUSTATE     Cpu;
-    /** Pointer to the VM. */
+    /** The cross context VM structure. */
     PVM             pVM;
-    /** Pointer to the VMCPU. */
+    /** The cross context virtual CPU structure. */
     PVMCPU          pVCpu;
     /** The address space for resolving symbol. */
     RTDBGAS         hDbgAs;
@@ -87,9 +87,9 @@ typedef struct
 } DBGFDISASSTATE, *PDBGFDISASSTATE;
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static FNDISREADBYTES dbgfR3DisasInstrRead;
 
 
@@ -98,8 +98,8 @@ static FNDISREADBYTES dbgfR3DisasInstrRead;
  * Calls the disassembler with the proper reader functions and such for disa
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
- * @param   pVCpu       Pointer to the VMCPU.
+ * @param   pVM         The cross context VM structure.
+ * @param   pVCpu       The cross context virtual CPU structure.
  * @param   pSelInfo    The selector info.
  * @param   enmMode     The guest paging mode.
  * @param   fFlags      DBGF_DISAS_FLAGS_XXX.
@@ -132,6 +132,7 @@ static int dbgfR3DisasInstrFirst(PVM pVM, PVMCPU pVCpu, PDBGFSELINFO pSelInfo, P
     {
         default:
             AssertFailed();
+            RT_FALL_THRU();
         case DBGF_DISAS_FLAGS_DEFAULT_MODE:
             enmCpuMode   = pState->f64Bits
                          ? DISCPUMODE_64BIT
@@ -322,12 +323,12 @@ static DECLCALLBACK(int) dbgfR3DisasInstrRead(PDISCPUSTATE pDis, uint8_t offInst
 
 
 /**
- * @copydoc FNDISGETSYMBOL
+ * @callback_method_impl{FNDISGETSYMBOL}
  */
-static DECLCALLBACK(int) dbgfR3DisasGetSymbol(PCDISCPUSTATE pCpu, uint32_t u32Sel, RTUINTPTR uAddress,
+static DECLCALLBACK(int) dbgfR3DisasGetSymbol(PCDISCPUSTATE pDis, uint32_t u32Sel, RTUINTPTR uAddress,
                                               char *pszBuf, size_t cchBuf, RTINTPTR *poff, void *pvUser)
 {
-    PDBGFDISASSTATE pState   = (PDBGFDISASSTATE)pCpu;
+    PDBGFDISASSTATE pState   = (PDBGFDISASSTATE)pDis;
     PCDBGFSELINFO   pSelInfo = (PCDBGFSELINFO)pvUser;
 
     /*
@@ -400,8 +401,8 @@ static DECLCALLBACK(int) dbgfR3DisasGetSymbol(PCDISCPUSTATE pCpu, uint32_t u32Se
  * address, internal worker executing on the EMT of the specified virtual CPU.
  *
  * @returns VBox status code.
- * @param       pVM             Pointer to the VM.
- * @param       pVCpu           Pointer to the VMCPU.
+ * @param       pVM             The cross context VM structure.
+ * @param       pVCpu           The cross context virtual CPU structure.
  * @param       Sel             The code selector. This used to determine the 32/16 bit ness and
  *                              calculation of the actual instruction address.
  * @param       pGCPtr          Pointer to the variable holding the code address
@@ -411,10 +412,11 @@ static DECLCALLBACK(int) dbgfR3DisasGetSymbol(PCDISCPUSTATE pCpu, uint32_t u32Se
  * @param       pszOutput       Output buffer.
  * @param       cbOutput        Size of the output buffer.
  * @param       pcbInstr        Where to return the size of the instruction.
+ * @param       pDisState       Where to store the disassembler state into.
  */
 static DECLCALLBACK(int)
 dbgfR3DisasInstrExOnVCpu(PVM pVM, PVMCPU pVCpu, RTSEL Sel, PRTGCPTR pGCPtr, uint32_t fFlags,
-                         char *pszOutput, uint32_t cbOutput, uint32_t *pcbInstr)
+                         char *pszOutput, uint32_t cbOutput, uint32_t *pcbInstr, PDBGFDISSTATE pDisState)
 {
     VMCPU_ASSERT_EMT(pVCpu);
     RTGCPTR GCPtr = *pGCPtr;
@@ -493,7 +495,7 @@ dbgfR3DisasInstrExOnVCpu(PVM pVM, PVMCPU pVCpu, RTSEL Sel, PRTGCPTR pGCPtr, uint
         SelInfo.Sel                     = Sel;
         SelInfo.SelGate                 = 0;
         SelInfo.GCPtrBase               = 0;
-        SelInfo.cbLimit                 = ~0;
+        SelInfo.cbLimit                 = ~(RTGCUINTPTR)0;
         SelInfo.fFlags                  = PGMMODE_IS_LONG_MODE(enmMode)
                                         ? DBGFSELINFO_FLAGS_LONG_MODE
                                         : enmMode != PGMMODE_REAL
@@ -535,7 +537,7 @@ dbgfR3DisasInstrExOnVCpu(PVM pVM, PVMCPU pVCpu, RTSEL Sel, PRTGCPTR pGCPtr, uint
         SelInfo.Sel                     = Sel;
         SelInfo.SelGate                 = 0;
         SelInfo.GCPtrBase               = Sel * 16;
-        SelInfo.cbLimit                 = ~0;
+        SelInfo.cbLimit                 = ~(RTGCUINTPTR)0;
         SelInfo.fFlags                  = DBGFSELINFO_FLAGS_REAL_MODE;
         SelInfo.u.Raw.au32[0]           = 0;
         SelInfo.u.Raw.au32[1]           = 0;
@@ -668,10 +670,65 @@ dbgfR3DisasInstrExOnVCpu(PVM pVM, PVMCPU pVCpu, RTSEL Sel, PRTGCPTR pGCPtr, uint
     if (pcbInstr)
         *pcbInstr = State.Cpu.cbInstr;
 
+    if (pDisState)
+    {
+        pDisState->pCurInstr = State.Cpu.pCurInstr;
+        pDisState->cbInstr   = State.Cpu.cbInstr;
+        pDisState->Param1    = State.Cpu.Param1;
+        pDisState->Param2    = State.Cpu.Param2;
+        pDisState->Param3    = State.Cpu.Param3;
+        pDisState->Param4    = State.Cpu.Param4;
+    }
+
     dbgfR3DisasInstrDone(&State);
     return VINF_SUCCESS;
 }
 
+
+/**
+ * Disassembles the one instruction according to the specified flags and address
+ * returning part of the disassembler state.
+ *
+ * @returns VBox status code.
+ * @param   pUVM            The user mode VM handle.
+ * @param   idCpu           The ID of virtual CPU.
+ * @param   pAddr           The code address.
+ * @param   fFlags          Flags controlling where to start and how to format.
+ *                          A combination of the DBGF_DISAS_FLAGS_* \#defines.
+ * @param   pszOutput       Output buffer.  This will always be properly
+ *                          terminated if @a cbOutput is greater than zero.
+ * @param   cbOutput        Size of the output buffer.
+ * @param   pDisState       The disassembler state to fill in.
+ *
+ * @remarks May have to switch to the EMT of the virtual CPU in order to do
+ *          address conversion.
+ */
+DECLHIDDEN(int) dbgfR3DisasInstrStateEx(PUVM pUVM, VMCPUID idCpu, PDBGFADDRESS pAddr, uint32_t fFlags,
+                                        char *pszOutput, uint32_t cbOutput, PDBGFDISSTATE pDisState)
+{
+    AssertReturn(cbOutput > 0, VERR_INVALID_PARAMETER);
+    *pszOutput = '\0';
+    UVM_ASSERT_VALID_EXT_RETURN(pUVM, VERR_INVALID_VM_HANDLE);
+    PVM pVM = pUVM->pVM;
+    VM_ASSERT_VALID_EXT_RETURN(pVM, VERR_INVALID_VM_HANDLE);
+    AssertReturn(idCpu < pUVM->cCpus, VERR_INVALID_CPU_ID);
+    AssertReturn(!(fFlags & ~DBGF_DISAS_FLAGS_VALID_MASK), VERR_INVALID_PARAMETER);
+    AssertReturn((fFlags & DBGF_DISAS_FLAGS_MODE_MASK) <= DBGF_DISAS_FLAGS_64BIT_MODE, VERR_INVALID_PARAMETER);
+
+    /*
+     * Optimize the common case where we're called on the EMT of idCpu since
+     * we're using this all the time when logging.
+     */
+    int     rc;
+    PVMCPU  pVCpu = VMMGetCpu(pVM);
+    if (    pVCpu
+        &&  pVCpu->idCpu == idCpu)
+        rc = dbgfR3DisasInstrExOnVCpu(pVM, pVCpu, pAddr->Sel, &pAddr->off, fFlags, pszOutput, cbOutput, NULL, pDisState);
+    else
+        rc = VMR3ReqPriorityCallWait(pVM, idCpu, (PFNRT)dbgfR3DisasInstrExOnVCpu, 9,
+                                     pVM, VMMGetCpuById(pVM, idCpu), pAddr->Sel, &pAddr->off, fFlags, pszOutput, cbOutput, NULL, pDisState);
+    return rc;
+}
 
 /**
  * Disassembles the one instruction according to the specified flags and address.
@@ -712,10 +769,10 @@ VMMR3DECL(int) DBGFR3DisasInstrEx(PUVM pUVM, VMCPUID idCpu, RTSEL Sel, RTGCPTR G
     PVMCPU  pVCpu = VMMGetCpu(pVM);
     if (    pVCpu
         &&  pVCpu->idCpu == idCpu)
-        rc = dbgfR3DisasInstrExOnVCpu(pVM, pVCpu, Sel, &GCPtr, fFlags, pszOutput, cbOutput, pcbInstr);
+        rc = dbgfR3DisasInstrExOnVCpu(pVM, pVCpu, Sel, &GCPtr, fFlags, pszOutput, cbOutput, pcbInstr, NULL);
     else
-        rc = VMR3ReqPriorityCallWait(pVM, idCpu, (PFNRT)dbgfR3DisasInstrExOnVCpu, 8,
-                                     pVM, VMMGetCpuById(pVM, idCpu), Sel, &GCPtr, fFlags, pszOutput, cbOutput, pcbInstr);
+        rc = VMR3ReqPriorityCallWait(pVM, idCpu, (PFNRT)dbgfR3DisasInstrExOnVCpu, 9,
+                                     pVM, VMMGetCpuById(pVM, idCpu), Sel, &GCPtr, fFlags, pszOutput, cbOutput, pcbInstr, NULL);
     return rc;
 }
 
@@ -725,7 +782,7 @@ VMMR3DECL(int) DBGFR3DisasInstrEx(PUVM pUVM, VMCPUID idCpu, RTSEL Sel, RTGCPTR G
  * All registers and data will be displayed. Addresses will be attempted resolved to symbols.
  *
  * @returns VBox status code.
- * @param   pVCpu           Pointer to the VMCPU.
+ * @param   pVCpu           The cross context virtual CPU structure.
  * @param   pszOutput       Output buffer.  This will always be properly
  *                          terminated if @a cbOutput is greater than zero.
  * @param   cbOutput        Size of the output buffer.
@@ -741,7 +798,7 @@ VMMR3_INT_DECL(int) DBGFR3DisasInstrCurrent(PVMCPU pVCpu, char *pszOutput, uint3
     return dbgfR3DisasInstrExOnVCpu(pVCpu->pVMR3, pVCpu, 0, &GCPtr,
                                     DBGF_DISAS_FLAGS_CURRENT_GUEST | DBGF_DISAS_FLAGS_DEFAULT_MODE
                                     | DBGF_DISAS_FLAGS_ANNOTATE_PATCHED,
-                                    pszOutput, cbOutput, NULL);
+                                    pszOutput, cbOutput, NULL, NULL);
 }
 
 
@@ -750,7 +807,7 @@ VMMR3_INT_DECL(int) DBGFR3DisasInstrCurrent(PVMCPU pVCpu, char *pszOutput, uint3
  * All registers and data will be displayed. Addresses will be attempted resolved to symbols.
  *
  * @returns VBox status code.
- * @param   pVCpu           Pointer to the VMCPU.
+ * @param   pVCpu           The cross context virtual CPU structure.
  * @param   pszPrefix       Short prefix string to the disassembly string. (optional)
  * @thread  EMT(pVCpu)
  */
@@ -780,11 +837,14 @@ VMMR3DECL(int) DBGFR3DisasInstrCurrentLogInternal(PVMCPU pVCpu, const char *pszP
  * Addresses will be attempted resolved to symbols.
  *
  * @returns VBox status code.
- * @param   pVCpu           Pointer to the VMCPU, defaults to CPU 0 if NULL.
- * @param   Sel             The code selector. This used to determine the 32/16 bit-ness and
- *                          calculation of the actual instruction address.
- * @param   GCPtr           The code address relative to the base of Sel.
- * @param   pszPrefix       Short prefix string to the disassembly string. (optional)
+ * @param   pVCpu       The cross context virtual CPU structure of the calling
+ *                      EMT.
+ * @param   Sel         The code selector. This used to determine the 32/16
+ *                      bit-ness and calculation of the actual instruction
+ *                      address.
+ * @param   GCPtr       The code address relative to the base of Sel.
+ * @param   pszPrefix   Short prefix string to the disassembly string.
+ *                      (optional)
  * @thread  EMT(pVCpu)
  */
 VMMR3DECL(int) DBGFR3DisasInstrLogInternal(PVMCPU pVCpu, RTSEL Sel, RTGCPTR GCPtr, const char *pszPrefix)
@@ -794,7 +854,7 @@ VMMR3DECL(int) DBGFR3DisasInstrLogInternal(PVMCPU pVCpu, RTSEL Sel, RTGCPTR GCPt
     char szBuf[256];
     RTGCPTR GCPtrTmp = GCPtr;
     int rc = dbgfR3DisasInstrExOnVCpu(pVCpu->pVMR3, pVCpu, Sel, &GCPtrTmp, DBGF_DISAS_FLAGS_DEFAULT_MODE,
-                                      &szBuf[0], sizeof(szBuf), NULL);
+                                      &szBuf[0], sizeof(szBuf), NULL, NULL);
     if (RT_FAILURE(rc))
         RTStrPrintf(szBuf, sizeof(szBuf), "DBGFR3DisasInstrLog(, %RTsel, %RGv) failed with rc=%Rrc\n", Sel, GCPtr, rc);
     if (pszPrefix && *pszPrefix)

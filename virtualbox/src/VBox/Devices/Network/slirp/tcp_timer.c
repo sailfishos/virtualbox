@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -158,12 +158,12 @@ static struct tcpcb *
 tcp_timers(PNATState pData, register struct tcpcb *tp, int timer)
 {
     register int rexmt;
-    int fUninitiolizedTemplate = 0;
+    int fUninitializedTemplate = 0;
 
     LogFlowFunc(("ENTER: tp:%R[tcpcb793], timer:%d\n", tp, timer));
-    fUninitiolizedTemplate = RT_BOOL((   tp->t_template.ti_src.s_addr == INADDR_ANY
+    fUninitializedTemplate = RT_BOOL((   tp->t_template.ti_src.s_addr == INADDR_ANY
                                       || tp->t_template.ti_dst.s_addr == INADDR_ANY));
-    if (fUninitiolizedTemplate)
+    if (fUninitializedTemplate)
     {
         tp = tcp_drop(pData, tp, 0);
         return tp;

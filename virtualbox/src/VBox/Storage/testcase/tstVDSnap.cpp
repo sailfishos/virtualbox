@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -74,26 +74,28 @@ typedef struct VDDISKSEG
     uint8_t                   *pbDataDiff;
 } VDDISKSEG, *PVDDISKSEG;
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** The error count. */
 unsigned g_cErrors = 0;
 /** Global RNG state. */
 RTRAND   g_hRand;
 
-static void tstVDError(void *pvUser, int rc, RT_SRC_POS_DECL,
-                       const char *pszFormat, va_list va)
+static DECLCALLBACK(void) tstVDError(void *pvUser, int rc, RT_SRC_POS_DECL, const char *pszFormat, va_list va)
 {
+    RT_NOREF1(pvUser);
     g_cErrors++;
-    RTPrintf("tstVD: Error %Rrc at %s:%u (%s): ", rc, RT_SRC_POS_ARGS);
+    RTPrintf("tstVDSnap: Error %Rrc at %s:%u (%s): ", rc, RT_SRC_POS_ARGS);
     RTPrintfV(pszFormat, va);
     RTPrintf("\n");
 }
 
-static int tstVDMessage(void *pvUser, const char *pszFormat, va_list va)
+static DECLCALLBACK(int) tstVDMessage(void *pvUser, const char *pszFormat, va_list va)
 {
-    RTPrintf("tstVD: ");
+    RT_NOREF1(pvUser);
+    RTPrintf("tstVDSnap: ");
     RTPrintfV(pszFormat, va);
     return VINF_SUCCESS;
 }
@@ -122,9 +124,9 @@ static void tstVDSnapSegmentsDice(PVDSNAPTEST pTest, PVDDISKSEG paDiskSeg, uint3
     }
 }
 
-static int tstVDSnapWrite(PVBOXHDD pVD, PVDDISKSEG paDiskSegments,
-                          uint32_t cDiskSegments, uint64_t cbDisk, bool fInit)
+static int tstVDSnapWrite(PVDISK pVD, PVDDISKSEG paDiskSegments, uint32_t cDiskSegments, uint64_t cbDisk, bool fInit)
 {
+    RT_NOREF1(cbDisk);
     int rc = VINF_SUCCESS;
 
     for (uint32_t i = 0; i < cDiskSegments; i++)
@@ -149,8 +151,9 @@ static int tstVDSnapWrite(PVBOXHDD pVD, PVDDISKSEG paDiskSegments,
     return rc;
 }
 
-static int tstVDSnapReadVerify(PVBOXHDD pVD, PVDDISKSEG paDiskSegments, uint32_t cDiskSegments, uint64_t cbDisk)
+static int tstVDSnapReadVerify(PVDISK pVD, PVDDISKSEG paDiskSegments, uint32_t cDiskSegments, uint64_t cbDisk)
 {
+    RT_NOREF1(cbDisk);
     int rc = VINF_SUCCESS;
     uint8_t *pbBuf = (uint8_t *)RTMemAlloc(_1M);
 
@@ -214,7 +217,7 @@ static int tstVDSnapReadVerify(PVBOXHDD pVD, PVDDISKSEG paDiskSegments, uint32_t
 static int tstVDOpenCreateWriteMerge(PVDSNAPTEST pTest)
 {
     int rc;
-    PVBOXHDD pVD = NULL;
+    PVDISK pVD = NULL;
     VDGEOMETRY       PCHS = { 0, 0, 0 };
     VDGEOMETRY       LCHS = { 0, 0, 0 };
     PVDINTERFACE     pVDIfs = NULL;
@@ -253,6 +256,13 @@ static int tstVDOpenCreateWriteMerge(PVDSNAPTEST pTest)
     uint64_t cbDisk = 0;
 
     paDiskSeg = (PVDDISKSEG)RTMemAllocZ(cDiskSegments * sizeof(VDDISKSEG));
+    if (!paDiskSeg)
+    {
+        RTPrintf("Failed to allocate memory for random disk segments\n");
+        g_cErrors++;
+        return VERR_NO_MEMORY;
+    }
+
     for (unsigned i = 0; i < cDiskSegments; i++)
     {
         paDiskSeg[i].off    = cbDisk;
@@ -274,6 +284,8 @@ static int tstVDOpenCreateWriteMerge(PVDSNAPTEST pTest)
         { \
             if (pbTestPattern) \
                 RTMemFree(pbTestPattern); \
+            if (paDiskSeg) \
+                RTMemFree(paDiskSeg); \
             VDDestroy(pVD); \
             g_cErrors++; \
             return rc; \
@@ -386,6 +398,8 @@ static int tstVDOpenCreateWriteMerge(PVDSNAPTEST pTest)
     VDDumpImages(pVD);
 
     VDDestroy(pVD);
+    if (paDiskSeg)
+        RTMemFree(paDiskSeg);
     if (pbTestPattern)
         RTMemFree(pbTestPattern);
 

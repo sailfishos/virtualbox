@@ -1,12 +1,10 @@
 /* $Id: UIAnimationFramework.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIAnimationFramework class implementation
+ * VBox Qt GUI - UIAnimationFramework class implementation.
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,14 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Qt includes: */
-#include <QWidget>
-#include <QStateMachine>
-#include <QPropertyAnimation>
-#include <QSignalTransition>
+# include <QWidget>
+# include <QStateMachine>
+# include <QPropertyAnimation>
+# include <QSignalTransition>
 
 /* GUI includes: */
-#include "UIAnimationFramework.h"
+# include "UIAnimationFramework.h"
+
+/* Other VBox includes: */
+# include "iprt/assert.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 /* static */
 UIAnimation* UIAnimation::installPropertyAnimation(QWidget *pTarget, const char *pszPropertyName,
@@ -68,14 +76,19 @@ UIAnimation::UIAnimation(QWidget *pParent, const char *pszPropertyName,
 
 void UIAnimation::prepare()
 {
+    /* Make sure parent asigned: */
+    AssertPtrReturnVoid(parent());
+
     /* Prepare animation-machine: */
     m_pAnimationMachine = new QStateMachine(this);
     /* Create 'start' state: */
     m_pStateStart = new QState(m_pAnimationMachine);
-    connect(m_pStateStart, SIGNAL(propertiesAssigned()), this, SIGNAL(sigStateEnteredStart()));
+    m_pStateStart->assignProperty(parent(), "AnimationState", QString("Start"));
+    connect(m_pStateStart, &QState::propertiesAssigned, this, &UIAnimation::sigStateEnteredStart);
     /* Create 'final' state: */
     m_pStateFinal = new QState(m_pAnimationMachine);
-    connect(m_pStateFinal, SIGNAL(propertiesAssigned()), this, SIGNAL(sigStateEnteredFinal()));
+    m_pStateFinal->assignProperty(parent(), "AnimationState", QString("Final"));
+    connect(m_pStateFinal, &QState::propertiesAssigned, this, &UIAnimation::sigStateEnteredFinal);
 
     /* Prepare 'forward' animation: */
     m_pForwardAnimation = new QPropertyAnimation(parent(), m_pszPropertyName, m_pAnimationMachine);
@@ -88,8 +101,10 @@ void UIAnimation::prepare()
 
     /* Prepare state-transitions: */
     QSignalTransition *pStartToFinal = m_pStateStart->addTransition(parent(), m_pszSignalForward, m_pStateFinal);
+    AssertPtrReturnVoid(pStartToFinal);
     pStartToFinal->addAnimation(m_pForwardAnimation);
     QSignalTransition *pFinalToStart = m_pStateFinal->addTransition(parent(), m_pszSignalReverse, m_pStateStart);
+    AssertPtrReturnVoid(pFinalToStart);
     pFinalToStart->addAnimation(m_pReverseAnimation);
 
     /* Fetch animation-borders: */

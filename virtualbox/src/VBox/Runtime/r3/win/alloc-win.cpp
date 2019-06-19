@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,12 +25,12 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 /*#define USE_VIRTUAL_ALLOC*/
 #define LOG_GROUP RTLOGGROUP_MEM
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 #include <iprt/alloc.h>
 #include <iprt/assert.h>
@@ -43,8 +43,10 @@
 #endif
 
 
-RTDECL(void *) RTMemExecAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemExecAllocTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
+    RT_NOREF_PV(pszTag);
+
     /*
      * Allocate first.
      */
@@ -70,15 +72,19 @@ RTDECL(void *) RTMemExecAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
 }
 
 
-RTDECL(void)    RTMemExecFree(void *pv, size_t cb) RT_NO_THROW
+RTDECL(void)    RTMemExecFree(void *pv, size_t cb) RT_NO_THROW_DEF
 {
+    RT_NOREF_PV(cb);
+
     if (pv)
         free(pv);
 }
 
 
-RTDECL(void *) RTMemPageAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemPageAllocTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
 {
+    RT_NOREF_PV(pszTag);
+
 #ifdef USE_VIRTUAL_ALLOC
     void *pv = VirtualAlloc(NULL, RT_ALIGN_Z(cb, PAGE_SIZE), MEM_COMMIT, PAGE_READWRITE);
 #else
@@ -89,8 +95,37 @@ RTDECL(void *) RTMemPageAllocTag(size_t cb, const char *pszTag) RT_NO_THROW
 }
 
 
-RTDECL(void *) RTMemPageAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
+RTDECL(void *) RTMemPageAllocExTag(size_t cb, uint32_t fFlags, const char *pszTag) RT_NO_THROW_DEF
 {
+    size_t const cbAligned = RT_ALIGN_Z(cb, PAGE_SIZE);
+    RT_NOREF_PV(pszTag);
+    AssertReturn(!(fFlags & ~RTMEMPAGEALLOC_F_VALID_MASK), NULL);
+
+#ifdef USE_VIRTUAL_ALLOC
+    void *pv = VirtualAlloc(NULL, cbAligned, MEM_COMMIT, PAGE_READWRITE);
+#else
+    void *pv = _aligned_malloc(cbAligned, PAGE_SIZE);
+#endif
+    AssertMsgReturn(pv, ("cb=%d lasterr=%d\n", cb, GetLastError()), NULL);
+
+    if (fFlags & RTMEMPAGEALLOC_F_ADVISE_LOCKED)
+    {
+        BOOL const fOkay = VirtualLock(pv, cbAligned);
+        AssertMsg(fOkay, ("pv=%p cb=%d lasterr=%d\n", pv, cb, GetLastError()));
+        NOREF(fOkay);
+    }
+
+    if (fFlags & RTMEMPAGEALLOC_F_ZERO)
+        RT_BZERO(pv, cbAligned);
+
+    return pv;
+}
+
+
+RTDECL(void *) RTMemPageAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW_DEF
+{
+    RT_NOREF_PV(pszTag);
+
 #ifdef USE_VIRTUAL_ALLOC
     void *pv = VirtualAlloc(NULL, RT_ALIGN_Z(cb, PAGE_SIZE), MEM_COMMIT, PAGE_READWRITE);
 #else
@@ -106,8 +141,10 @@ RTDECL(void *) RTMemPageAllocZTag(size_t cb, const char *pszTag) RT_NO_THROW
 }
 
 
-RTDECL(void) RTMemPageFree(void *pv, size_t cb) RT_NO_THROW
+RTDECL(void) RTMemPageFree(void *pv, size_t cb) RT_NO_THROW_DEF
 {
+    RT_NOREF_PV(cb);
+
     if (pv)
     {
 #ifdef USE_VIRTUAL_ALLOC
@@ -120,7 +157,7 @@ RTDECL(void) RTMemPageFree(void *pv, size_t cb) RT_NO_THROW
 }
 
 
-RTDECL(int) RTMemProtect(void *pv, size_t cb, unsigned fProtect) RT_NO_THROW
+RTDECL(int) RTMemProtect(void *pv, size_t cb, unsigned fProtect) RT_NO_THROW_DEF
 {
     /*
      * Validate input.

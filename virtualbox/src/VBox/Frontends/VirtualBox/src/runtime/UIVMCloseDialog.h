@@ -1,11 +1,10 @@
+/* $Id: UIVMCloseDialog.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIVMCloseDialog class declaration
+ * VBox Qt GUI - UIVMCloseDialog class declaration.
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,10 +21,9 @@
 /* GUI includes: */
 #include "QIWithRetranslateUI.h"
 #include "QIDialog.h"
-#include "UIDefs.h"
+#include "UIExtraDataDefs.h"
 
 /* Forward declarations: */
-enum MachineCloseAction;
 class CMachine;
 class QLabel;
 class QRadioButton;
@@ -45,6 +43,9 @@ public:
     /* API: Validation stuff: */
     bool isValid() const { return m_fValid; }
 
+    /* API: Pixmap stuff: */
+    void setPixmap(const QPixmap &pixmap);
+
 private slots:
 
     /* Handler: Update stuff: */
@@ -55,9 +56,9 @@ private slots:
 
 private:
 
-    /* API: Pixmap stuff: */
-    void setPixmap(const QPixmap &pixmap);
-
+    /* API: Detach-button stuff: */
+    void setDetachButtonEnabled(bool fEnabled);
+    void setDetachButtonVisible(bool fVisible);
     /* API: Save-button stuff: */
     void setSaveButtonEnabled(bool fEnabled);
     void setSaveButtonVisible(bool fVisible);
@@ -86,6 +87,8 @@ private:
     /* Widgets: */
     QLabel *m_pIcon;
     QLabel *m_pLabel;
+    QLabel *m_pDetachIcon;
+    QRadioButton *m_pDetachRadio;
     QLabel *m_pSaveIcon;
     QRadioButton *m_pSaveRadio;
     QLabel *m_pShutdownIcon;

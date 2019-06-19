@@ -1,12 +1,10 @@
 /* $Id: UINetworkManagerIndicator.cpp $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UINetworkManagerIndicator stuff implementation
+ * VBox Qt GUI - UINetworkManagerIndicator stuff implementation.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,23 +15,31 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/* Local includes: */
-#include "UINetworkManagerIndicator.h"
-#include "UINetworkRequest.h"
-#include "VBoxGlobal.h"
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+/* GUI includes: */
+# include "UINetworkManagerIndicator.h"
+# include "UINetworkRequest.h"
+# include "UIIconPool.h"
+# include "VBoxGlobal.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UINetworkManagerIndicator::UINetworkManagerIndicator()
 {
     /* Assign state icons: */
-    setStateIcon(UINetworkManagerIndicatorState_Idle, QPixmap(":/nw_16px.png"));
-    setStateIcon(UINetworkManagerIndicatorState_Loading, QPixmap(":/nw_loading_16px.png"));
-    setStateIcon(UINetworkManagerIndicatorState_Error, QPixmap(":/nw_error_16px.png"));
+    setStateIcon(UINetworkManagerIndicatorState_Idle, UIIconPool::iconSet(":/download_manager_16px.png"));
+    setStateIcon(UINetworkManagerIndicatorState_Loading, UIIconPool::iconSet(":/download_manager_loading_16px.png"));
+    setStateIcon(UINetworkManagerIndicatorState_Error, UIIconPool::iconSet(":/download_manager_error_16px.png"));
 
     /* Translate content: */
     retranslateUi();
 }
 
-void UINetworkManagerIndicator::addNetworkRequest(UINetworkRequest *pNetworkRequest)
+void UINetworkManagerIndicator::sltAddNetworkManagerIndicatorDescription(UINetworkRequest *pNetworkRequest)
 {
     /* Make sure network-request is really exists: */
     AssertMsg(pNetworkRequest, ("Invalid network-request passed!"));
@@ -45,22 +51,22 @@ void UINetworkManagerIndicator::addNetworkRequest(UINetworkRequest *pNetworkRequ
     m_data.append(UINetworkRequestData(pNetworkRequest->description(), 0, 0));
 
     /* Prepare network-request listeners: */
-    connect(pNetworkRequest, SIGNAL(sigStarted(const QUuid &)),
-            this, SLOT(sltSetProgressToStarted(const QUuid &)));
-    connect(pNetworkRequest, SIGNAL(sigCanceled(const QUuid &)),
-            this, SLOT(sltSetProgressToCanceled(const QUuid &)));
-    connect(pNetworkRequest, SIGNAL(sigFinished(const QUuid &)),
-            this, SLOT(sltSetProgressToFinished(const QUuid &)));
-    connect(pNetworkRequest, SIGNAL(sigFailed(const QUuid &, const QString &)),
-            this, SLOT(sltSetProgressToFailed(const QUuid &, const QString &)));
-    connect(pNetworkRequest, SIGNAL(sigProgress(const QUuid &, qint64, qint64)),
-            this, SLOT(sltSetProgress(const QUuid &, qint64, qint64)));
+    connect(pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QUuid&)>(&UINetworkRequest::sigStarted),
+            this, &UINetworkManagerIndicator::sltSetProgressToStarted);
+    connect(pNetworkRequest, &UINetworkRequest::sigCanceled,
+            this, &UINetworkManagerIndicator::sltSetProgressToCanceled);
+    connect(pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QUuid&)>(&UINetworkRequest::sigFinished),
+            this, &UINetworkManagerIndicator::sltSetProgressToFinished);
+    connect(pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QUuid&, const QString &)>(&UINetworkRequest::sigFailed),
+            this, &UINetworkManagerIndicator::sltSetProgressToFailed);
+    connect(pNetworkRequest, static_cast<void(UINetworkRequest::*)(const QUuid&, qint64, qint64)>(&UINetworkRequest::sigProgress),
+            this, &UINetworkManagerIndicator::sltSetProgress);
 
     /* Update appearance: */
     recalculateIndicatorState();
 }
 
-void UINetworkManagerIndicator::removeNetworkRequest(const QUuid &uuid)
+void UINetworkManagerIndicator::sldRemoveNetworkManagerIndicatorDescription(const QUuid &uuid)
 {
     /* Make sure network-request still registered: */
     AssertMsg(m_ids.contains(uuid), ("Network-request already unregistered!"));

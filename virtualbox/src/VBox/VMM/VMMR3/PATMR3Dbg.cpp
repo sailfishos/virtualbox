@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PATM
 #include <VBox/vmm/patm.h>
 #include <VBox/vmm/dbgf.h>
@@ -33,9 +34,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Adds a structure member to a debug (pseudo) module as a symbol. */
 #define ADD_MEMBER(a_hDbgMod, a_Struct, a_Member, a_pszName) \
         do { \
@@ -58,7 +59,7 @@
 /**
  * Called by PATMR3Init.
  *
- * @param   pVM                 The cross context VM structure.
+ * @param   pVM         The cross context VM structure.
  */
 void patmR3DbgInit(PVM pVM)
 {
@@ -69,7 +70,7 @@ void patmR3DbgInit(PVM pVM)
 /**
  * Called by PATMR3Term.
  *
- * @param   pVM                 The cross context VM structure.
+ * @param   pVM         The cross context VM structure.
  */
 void patmR3DbgTerm(PVM pVM)
 {
@@ -84,7 +85,7 @@ void patmR3DbgTerm(PVM pVM)
 /**
  * Called by when the patch memory is reinitialized.
  *
- * @param   pVM                 The cross context VM structure.
+ * @param   pVM         The cross context VM structure.
  */
 void patmR3DbgReset(PVM pVM)
 {
@@ -171,7 +172,7 @@ static size_t patmR3DbgDescribePatchAsSymbol(PPATMPATCHREC pPatchRec, char *pszN
 /**
  * Called when a new patch is added or when first populating the address space.
  *
- * @param   pVM                 The cross context VM structure.
+ * @param   pVM                The cross context VM structure.
  * @param   pPatchRec           The patch record.
  */
 void patmR3DbgAddPatch(PVM pVM, PPATMPATCHREC pPatchRec)
@@ -219,8 +220,8 @@ void patmR3DbgAddPatch(PVM pVM, PPATMPATCHREC pPatchRec)
  * Enumeration callback used by patmR3DbgAddPatches
  *
  * @returns 0 (continue enum)
- * @param   pNode               The patch record node.
- * @param   pvUser              The cross context VM structure.
+ * @param   pNode       The patch record node.
+ * @param   pvUser      The cross context VM structure.
  */
 static DECLCALLBACK(int) patmR3DbgAddPatchCallback(PAVLOU32NODECORE pNode, void *pvUser)
 {
@@ -232,18 +233,18 @@ static DECLCALLBACK(int) patmR3DbgAddPatchCallback(PAVLOU32NODECORE pNode, void 
 /**
  * Populates an empty "patches" (hDbgModPatchMem) module with patch symbols.
  *
- * @param   pVM                 The cross context VM structure.
- * @param   hDbgMod             The debug module handle.
+ * @param   pVM         The cross context VM structure.
+ * @param   hDbgMod     The debug module handle.
  */
 static void patmR3DbgAddPatches(PVM pVM, RTDBGMOD hDbgMod)
 {
     /*
      * Global functions and a start marker.
      */
-    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperCallGC, PATMLookupAndCallRecord.size, "PATMLookupAndCall");
-    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperRetGC,  PATMRetFunctionRecord.size,   "PATMRetFunction");
-    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperJumpGC, PATMLookupAndJumpRecord.size, "PATMLookupAndJump");
-    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperIretGC, PATMIretFunctionRecord.size,  "PATMIretFunction");
+    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperCallGC, g_patmLookupAndCallRecord.cbFunction, "PATMLookupAndCall");
+    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperRetGC,  g_patmRetFunctionRecord.cbFunction,   "PATMRetFunction");
+    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperJumpGC, g_patmLookupAndJumpRecord.cbFunction, "PATMLookupAndJump");
+    ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pfnHelperIretGC, g_patmIretFunctionRecord.cbFunction,  "PATMIretFunction");
 
     ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pPatchMemGC, 0,  "PatchMemStart");
     ADD_FUNC(hDbgMod, pVM->patm.s.pPatchMemGC, pVM->patm.s.pGCStackGC, PATM_STACK_TOTAL_SIZE, "PATMStack");
@@ -261,8 +262,8 @@ static void patmR3DbgAddPatches(PVM pVM, RTDBGMOD hDbgMod)
  * Called by dbgfR3AsLazyPopulate when DBGF_AS_RC or DBGF_AS_RC_AND_GC_GLOBAL is
  * accessed for the first time.
  *
- * @param   pVM                 The cross context VM structure.
- * @param   hDbgAs              The DBGF_AS_RC address space handle.
+ * @param   pVM         The cross context VM structure.
+ * @param   hDbgAs      The DBGF_AS_RC address space handle.
  */
 VMMR3_INT_DECL(void) PATMR3DbgPopulateAddrSpace(PVM pVM, RTDBGAS hDbgAs)
 {
@@ -293,7 +294,7 @@ VMMR3_INT_DECL(void) PATMR3DbgPopulateAddrSpace(PVM pVM, RTDBGAS hDbgAs)
         ADD_MEMBER(hDbgMod, PATMGCSTATE, Restore.eFlags,            "Restore.eFlags");
         ADD_MEMBER(hDbgMod, PATMGCSTATE, Restore.uFlags,            "Restore.uFlags");
 
-        rc = RTDbgAsModuleLink(hDbgAs, hDbgMod, pVM->patm.s.pGCStateGC, 0 /*fFlags/*/);
+        rc = RTDbgAsModuleLink(hDbgAs, hDbgMod, pVM->patm.s.pGCStateGC, 0 /*fFlags*/);
         AssertLogRelRC(rc);
         RTDbgModRelease(hDbgMod);
     }
@@ -307,7 +308,7 @@ VMMR3_INT_DECL(void) PATMR3DbgPopulateAddrSpace(PVM pVM, RTDBGAS hDbgAs)
     {
         ADD_FUNC(hDbgMod, pVM->patm.s.pStatsGC, pVM->patm.s.pStatsGC, PATM_STAT_MEMSIZE, "PATMMemStatsStart");
 
-        rc = RTDbgAsModuleLink(hDbgAs, hDbgMod, pVM->patm.s.pStatsGC, 0 /*fFlags/*/);
+        rc = RTDbgAsModuleLink(hDbgAs, hDbgMod, pVM->patm.s.pStatsGC, 0 /*fFlags*/);
         AssertLogRelRC(rc);
         RTDbgModRelease(hDbgMod);
     }
@@ -321,7 +322,7 @@ VMMR3_INT_DECL(void) PATMR3DbgPopulateAddrSpace(PVM pVM, RTDBGAS hDbgAs)
         pVM->patm.s.hDbgModPatchMem = hDbgMod;
         patmR3DbgAddPatches(pVM, hDbgMod);
 
-        rc = RTDbgAsModuleLink(hDbgAs, hDbgMod, pVM->patm.s.pPatchMemGC, 0 /*fFlags/*/);
+        rc = RTDbgAsModuleLink(hDbgAs, hDbgMod, pVM->patm.s.pPatchMemGC, 0 /*fFlags*/);
         AssertLogRelRC(rc);
     }
 }
@@ -330,14 +331,13 @@ VMMR3_INT_DECL(void) PATMR3DbgPopulateAddrSpace(PVM pVM, RTDBGAS hDbgAs)
 /**
  * Annotates an instruction if patched.
  *
- * @param   pVM                 The VM handle.
- * @param   RCPtr               The instruction address.
- * @param   cbInstr             The instruction length.
- * @param   pszBuf              The output buffer.  This will be an empty string
- *                              if the instruction wasn't patched.  If it's
- *                              patched, it will hold a symbol-like string
- *                              describing the patch.
- * @param   cbBuf               The size of the output buffer.
+ * @param   pVM         The cross context VM structure.
+ * @param   RCPtr       The instruction address.
+ * @param   cbInstr     The instruction length.
+ * @param   pszBuf      The output buffer.  This will be an empty string if the
+ *                      instruction wasn't patched.  If it's patched, it will
+ *                      hold a symbol-like string describing the patch.
+ * @param   cbBuf       The size of the output buffer.
  */
 VMMR3_INT_DECL(void) PATMR3DbgAnnotatePatchedInstruction(PVM pVM, RTRCPTR RCPtr, uint8_t cbInstr, char *pszBuf, size_t cbBuf)
 {

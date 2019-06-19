@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_FS
 #include <sys/statvfs.h>
 #include <errno.h>
@@ -152,7 +152,11 @@ RTR3DECL(int) RTFsQueryProperties(const char *pszFsPath, PRTFSPROPERTIES pProper
              * Calc/fake the returned values.
              */
             pProperties->cbMaxComponent = StatVFS.f_namemax;
+#if defined(RT_OS_OS2) || defined(RT_OS_WINDOWS)
+            pProperties->fCaseSensitive = false;
+#else
             pProperties->fCaseSensitive = true;
+#endif
             pProperties->fCompressed = false;
             pProperties->fFileCompression = false;
             pProperties->fReadOnly = !!(StatVFS.f_flag & ST_RDONLY);
@@ -167,6 +171,17 @@ RTR3DECL(int) RTFsQueryProperties(const char *pszFsPath, PRTFSPROPERTIES pProper
     LogFlow(("RTFsQueryProperties(%p:{%s}, %p:{.cbMaxComponent=%u, .fReadOnly=%RTbool}): returns %Rrc\n",
              pszFsPath, pszFsPath, pProperties, pProperties->cbMaxComponent, pProperties->fReadOnly, rc));
     return rc;
+}
+
+
+RTR3DECL(bool) RTFsIsCaseSensitive(const char *pszFsPath)
+{
+    RT_NOREF_PV(pszFsPath);
+#if defined(RT_OS_OS2) || defined(RT_OS_WINDOWS)
+    return false;
+#else
+    return true;
+#endif
 }
 
 

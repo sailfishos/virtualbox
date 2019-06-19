@@ -1,11 +1,10 @@
+/* $Id: UIWizardExportAppPageBasic2.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardExportAppPageBasic2 class declaration
+ * VBox Qt GUI - UIWizardExportAppPageBasic2 class declaration.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DBGC
 #include <VBox/dbg.h>
 #include <VBox/err.h>
@@ -29,22 +30,24 @@
 #include <iprt/string.h>
 #include <iprt/ctype.h>
 
+#include <stdio.h>
+
 #include "DBGCInternal.h"
 
 /** Rewrite in progress.  */
 #define BETTER_ARGUMENT_MATCHING
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Bitmap where set bits indicates the characters the may start an operator name. */
 static uint32_t g_bmOperatorChars[256 / (4*8)];
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, PDBGCVAR pArg);
 static int dbgcProcessArguments(PDBGC pDbgc, const char *pszCmdOrFunc,
                                 uint32_t const cArgsMin, uint32_t const cArgsMax,
@@ -416,6 +419,8 @@ static int dbgcEvalSubUnaryAny(PDBGC pDbgc, char *pszExpr, size_t cchExpr, PDBGC
 static int dbgcEvalSubCall(PDBGC pDbgc, char *pszFuncNm, size_t cchFuncNm, bool fExternal, char *pszArgs, size_t cchArgs,
                            DBGCVARCAT enmCategory, PDBGCVAR pResult)
 {
+    RT_NOREF1(enmCategory);
+
     /*
      * Lookup the function.
      */
@@ -567,6 +572,7 @@ static int dbgcEvalSubUnary(PDBGC pDbgc, char *pszExpr, size_t cchExpr, DBGCVARC
  *
  * @param   pDbgc       Debugger console instance data.
  * @param   pszExpr     The expression string.
+ * @param   cchExpr     The size of the expression string.
  * @param   enmCategory The target category for the result.
  * @param   pResult     Where to store the result of the expression evaluation.
  */
@@ -827,7 +833,7 @@ static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, 
         case DBGCVAR_CAT_POINTER_NUMBER_NO_RANGE:
             if (pArg->enmRangeType != DBGCVAR_RANGE_NONE)
                 return VERR_DBGC_PARSE_NO_RANGE_ALLOWED;
-            /* fallthru */
+            RT_FALL_THRU();
         case DBGCVAR_CAT_POINTER:
         case DBGCVAR_CAT_POINTER_NUMBER:
             switch (pArg->enmType)
@@ -870,7 +876,7 @@ static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, 
                     return VINF_SUCCESS;
 
                 default:
-                    AssertMsgFailedReturn(("Invalid type %d\n"), VERR_DBGC_PARSE_INCORRECT_ARG_TYPE);
+                    AssertMsgFailedReturn(("Invalid type %d\n", pArg->enmType), VERR_DBGC_PARSE_INCORRECT_ARG_TYPE);
             }
             break;                      /* (not reached) */
 
@@ -882,7 +888,7 @@ static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, 
         case DBGCVAR_CAT_GC_POINTER_NO_RANGE:
             if (pArg->enmRangeType != DBGCVAR_RANGE_NONE)
                 return VERR_DBGC_PARSE_NO_RANGE_ALLOWED;
-            /* fallthru */
+            RT_FALL_THRU();
         case DBGCVAR_CAT_GC_POINTER:
             switch (pArg->enmType)
             {
@@ -924,7 +930,7 @@ static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, 
                 }
 
                 default:
-                    AssertMsgFailedReturn(("Invalid type %d\n"), VERR_DBGC_PARSE_INCORRECT_ARG_TYPE);
+                    AssertMsgFailedReturn(("Invalid type %d\n", pArg->enmType), VERR_DBGC_PARSE_INCORRECT_ARG_TYPE);
             }
             break;                      /* (not reached) */
 
@@ -936,7 +942,7 @@ static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, 
         case DBGCVAR_CAT_NUMBER_NO_RANGE:
             if (pArg->enmRangeType != DBGCVAR_RANGE_NONE)
                 return VERR_DBGC_PARSE_NO_RANGE_ALLOWED;
-            /* fallthru */
+            RT_FALL_THRU();
         case DBGCVAR_CAT_NUMBER:
             switch (pArg->enmType)
             {
@@ -971,7 +977,7 @@ static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, 
                 }
 
                 default:
-                    AssertMsgFailedReturn(("Invalid type %d\n"), VERR_DBGC_PARSE_INCORRECT_ARG_TYPE);
+                    AssertMsgFailedReturn(("Invalid type %d\n", pArg->enmType), VERR_DBGC_PARSE_INCORRECT_ARG_TYPE);
             }
             break;                      /* (not reached) */
 
@@ -1037,7 +1043,7 @@ static int dbgcCheckAndTypePromoteArgument(PDBGC pDbgc, DBGCVARCAT enmCategory, 
  * @param   cArgsMax        See DBGCCMD::cArgsMax and DBGCFUNC::cArgsMax.
  * @param   paVarDescs      See DBGCCMD::paVarDescs and DBGCFUNC::paVarDescs.
  * @param   cVarDescs       See DBGCCMD::cVarDescs and DBGCFUNC::cVarDescs.
- * @param   pszArg          Pointer to the arguments to parse.
+ * @param   pszArgs         Pointer to the arguments to parse.
  * @param   piArg           Where to return the index of the first argument in
  *                          DBGC::aArgs. Always set. Caller must restore DBGC::iArg
  *                          to this value when done, even on failure.
@@ -1050,6 +1056,7 @@ static int dbgcProcessArguments(PDBGC pDbgc, const char *pszCmdOrFunc,
                                 PCDBGCVARDESC const paVarDescs, uint32_t const cVarDescs,
                                 char *pszArgs, unsigned *piArg, unsigned *pcArgs)
 {
+    RT_NOREF1(pszCmdOrFunc);
     Log2(("dbgcProcessArguments: pszCmdOrFunc=%s pszArgs='%s'\n", pszCmdOrFunc, pszArgs));
 
     /*
@@ -1434,7 +1441,7 @@ int dbgcEvalCommand(PDBGC pDbgc, char *pszCmd, size_t cchCmd, bool fNoExecute)
                 break;
             case VERR_DBGC_PARSE_NO_MEMORY:
                 rc = DBGCCmdHlpPrintf(&pDbgc->CmdHlp,
-                    "Error: Out memory in the regular heap! Expect odd stuff to happen...\n", cArgs);
+                    "Error: Out memory in the regular heap! Expect odd stuff to happen...\n");
                 break;
             case VERR_DBGC_PARSE_INCORRECT_ARG_TYPE:
                 rc = DBGCCmdHlpPrintf(&pDbgc->CmdHlp,
@@ -1476,6 +1483,81 @@ int dbgcEvalCommand(PDBGC pDbgc, char *pszCmd, size_t cchCmd, bool fNoExecute)
         }
     }
 
+    return rc;
+}
+
+
+/**
+ * Loads the script in @a pszFilename and executes the commands within.
+ *
+ * @returns VBox status code.  Will complain about error to console.
+ * @param   pDbgc       Debugger console instance data.
+ * @param   pszFilename The path to the script file.
+ * @param   fAnnounce   Whether to announce the script.
+ */
+int dbgcEvalScript(PDBGC pDbgc, const char *pszFilename, bool fAnnounce)
+{
+    FILE *pFile = fopen(pszFilename, "r");
+    if (!pFile)
+        return DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "Failed to open '%s'.\n", pszFilename);
+    if (fAnnounce)
+        DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "Running script '%s'...\n", pszFilename);
+
+    /*
+     * Execute it line by line.
+     */
+    int rc = VINF_SUCCESS;
+    unsigned iLine = 0;
+    char szLine[8192];
+    while (fgets(szLine, sizeof(szLine), pFile))
+    {
+        /* check that the line isn't too long. */
+        char *pszEnd = strchr(szLine, '\0');
+        if (pszEnd == &szLine[sizeof(szLine) - 1])
+        {
+            rc = DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "runscript error: Line #%u is too long\n", iLine);
+            break;
+        }
+        iLine++;
+
+        /* strip leading blanks and check for comment / blank line. */
+        char *psz = RTStrStripL(szLine);
+        if (    *psz == '\0'
+            ||  *psz == '\n'
+            ||  *psz == '#')
+            continue;
+
+        /* strip trailing blanks and check for empty line (\r case). */
+        while (     pszEnd > psz
+               &&   RT_C_IS_SPACE(pszEnd[-1])) /* RT_C_IS_SPACE includes \n and \r normally. */
+            *--pszEnd = '\0';
+
+        /** @todo check for Control-C / Cancel at this point... */
+
+        /*
+         * Execute the command.
+         *
+         * This is a bit wasteful with scratch space btw., can fix it later.
+         * The whole return code crap should be fixed too, so that it's possible
+         * to know whether a command succeeded (RT_SUCCESS()) or failed, and
+         * more importantly why it failed.
+         */
+        /** @todo optimize this.   */
+        rc = pDbgc->CmdHlp.pfnExec(&pDbgc->CmdHlp, "%s", psz);
+        if (RT_FAILURE(rc))
+        {
+            if (rc == VERR_BUFFER_OVERFLOW)
+                rc = DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "runscript error: Line #%u is too long (exec overflowed)\n", iLine);
+            break;
+        }
+        if (rc == VWRN_DBGC_CMD_PENDING)
+        {
+            rc = DBGCCmdHlpPrintf(&pDbgc->CmdHlp, "runscript error: VWRN_DBGC_CMD_PENDING on line #%u, script terminated\n", iLine);
+            break;
+        }
+    }
+
+    fclose(pFile);
     return rc;
 }
 

@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -30,13 +30,18 @@
 #include <iprt/stdarg.h>
 #ifdef _MSC_VER
 # if _MSC_VER >= 1400
+#  pragma warning(push)
+#  pragma warning(disable:4668) /* Several incorrect __cplusplus uses. */
+#  pragma warning(disable:4255) /* Incorrect __slwpcb prototype. */
 #  include <intrin.h>
+#  pragma warning(pop)
 # endif
 #endif
 
 RT_C_DECLS_BEGIN
 
 /** @defgroup grp_stam     The Statistics Manager API
+ * @ingroup grp_vmm
  * @{
  */
 
@@ -342,7 +347,7 @@ typedef enum STAMUNIT
 #endif
 
 
-/** @def STAM_REL_U16_INC
+/** @def STAM_REL_U16_ADD
  * Increments a uint16_t sample by a value.
  *
  * @param   pCounter    Pointer to the uint16_t variable to operate on.
@@ -354,7 +359,7 @@ typedef enum STAMUNIT
 #else
 # define STAM_REL_U16_ADD(pCounter, Addend) do { } while (0)
 #endif
-/** @def STAM_U16_INC
+/** @def STAM_U16_ADD
  * Increments a uint16_t sample by a value.
  *
  * @param   pCounter    Pointer to the uint16_t variable to operate on.
@@ -636,7 +641,7 @@ typedef const STAMPROFILE *PCSTAMPROFILE;
 /** @def STAM_REL_PROFILE_ADD_PERIOD
  * Adds a period.
  *
- * @param   pProfileAdv     Pointer to the STAMPROFILEADV structure to operate on.
+ * @param   pProfile        Pointer to the STAMPROFILE structure to operate on.
  * @param   cTicksInPeriod  The number of tick (or whatever) of the preiod
  *                          being added.  This is only referenced once.
  */
@@ -657,7 +662,7 @@ typedef const STAMPROFILE *PCSTAMPROFILE;
 /** @def STAM_PROFILE_ADD_PERIOD
  * Adds a period.
  *
- * @param   pProfileAdv     Pointer to the STAMPROFILEADV structure to operate on.
+ * @param   pProfile        Pointer to the STAMPROFILE structure to operate on.
  * @param   cTicksInPeriod  The number of tick (or whatever) of the preiod
  *                          being added.  This is only referenced once.
  */
@@ -902,8 +907,9 @@ typedef const STAMPROFILEADV *PCSTAMPROFILEADV;
  * Samples the stop time of a profiling period (if running) and updates the
  * sample.
  *
- * @param   pProfileAdv Pointer to the STAMPROFILEADV structure to operate on.
- * @param   Prefix      Identifier prefix used to internal variables.
+ * @param   pProfileAdv1    Pointer to the STAMPROFILEADV structure to stop.
+ * @param   pProfileAdv2    Pointer to the STAMPROFILEADV structure to start.
+ * @param   Prefix          Identifier prefix used to internal variables.
  */
 #ifdef VBOX_WITH_STATISTICS
 # define STAM_PROFILE_ADV_STOP_START(pProfileAdv1, pProfileAdv2, Prefix) \
@@ -1097,7 +1103,6 @@ typedef const STAMRATIOU32 *PCSTAMRATIOU32;
 
 
 /** @defgroup grp_stam_r3   The STAM Host Context Ring 3 API
- * @ingroup grp_stam
  * @{
  */
 
@@ -1111,7 +1116,7 @@ VMMR3DECL(int)  STAMR3Register(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVI
 /** @def STAM_REL_REG
  * Registers a statistics sample.
  *
- * @param   pVM         VM Handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   pszName     Sample name. The name is on this form "/<component>/<sample>".
@@ -1125,7 +1130,7 @@ VMMR3DECL(int)  STAMR3Register(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVI
 /** @def STAM_REG
  * Registers a statistics sample if statistics are enabled.
  *
- * @param   pVM         VM Handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   pszName     Sample name. The name is on this form "/<component>/<sample>".
@@ -1139,7 +1144,7 @@ VMMR3DECL(int)  STAMR3Register(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVI
 /** @def STAM_REL_REG_USED
  * Registers a statistics sample which only shows when used.
  *
- * @param   pVM         VM Handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   pszName     Sample name. The name is on this form "/<component>/<sample>".
@@ -1153,7 +1158,7 @@ VMMR3DECL(int)  STAMR3Register(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVI
 /** @def STAM_REG_USED
  * Registers a statistics sample which only shows when used, if statistics are enabled.
  *
- * @param   pVM         VM Handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    Pointer to the sample.
  * @param   enmType     Sample type. This indicates what pvSample is pointing at.
  * @param   pszName     Sample name. The name is on this form "/<component>/<sample>".
@@ -1165,17 +1170,17 @@ VMMR3DECL(int)  STAMR3Register(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVI
     STAM_STATS({ STAM_REL_REG_USED(pVM, pvSample, enmType, pszName, enmUnit, pszDesc); })
 
 VMMR3DECL(int)  STAMR3RegisterFU(PUVM pUVM, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
-                                 const char *pszDesc, const char *pszName, ...);
+                                 const char *pszDesc, const char *pszName, ...) RT_IPRT_FORMAT_ATTR(7, 8);
 VMMR3DECL(int)  STAMR3RegisterF(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
-                                const char *pszDesc, const char *pszName, ...);
+                                const char *pszDesc, const char *pszName, ...) RT_IPRT_FORMAT_ATTR(7, 8);
 VMMR3DECL(int)  STAMR3RegisterVU(PUVM pUVM, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
-                                 const char *pszDesc, const char *pszName, va_list args);
+                                 const char *pszDesc, const char *pszName, va_list args) RT_IPRT_FORMAT_ATTR(7, 0);
 VMMR3DECL(int)  STAMR3RegisterV(PVM pVM, void *pvSample, STAMTYPE enmType, STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
-                                const char *pszDesc, const char *pszName, va_list args);
+                                const char *pszDesc, const char *pszName, va_list args) RT_IPRT_FORMAT_ATTR(7, 0);
 
 /**
  * Resets the sample.
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    The sample registered using STAMR3RegisterCallback.
  */
 typedef void FNSTAMR3CALLBACKRESET(PVM pVM, void *pvSample);
@@ -1185,7 +1190,7 @@ typedef FNSTAMR3CALLBACKRESET *PFNSTAMR3CALLBACKRESET;
 /**
  * Prints the sample into the buffer.
  *
- * @param   pVM         The VM handle.
+ * @param   pVM         The cross context VM structure.
  * @param   pvSample    The sample registered using STAMR3RegisterCallback.
  * @param   pszBuf      The buffer to print into.
  * @param   cchBuf      The size of the buffer.
@@ -1196,13 +1201,13 @@ typedef FNSTAMR3CALLBACKPRINT *PFNSTAMR3CALLBACKPRINT;
 
 VMMR3DECL(int)  STAMR3RegisterCallback(PVM pVM, void *pvSample, STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
                                        PFNSTAMR3CALLBACKRESET pfnReset, PFNSTAMR3CALLBACKPRINT pfnPrint,
-                                       const char *pszDesc, const char *pszName, ...);
+                                       const char *pszDesc, const char *pszName, ...) RT_IPRT_FORMAT_ATTR(8, 9);
 VMMR3DECL(int)  STAMR3RegisterCallbackV(PVM pVM, void *pvSample, STAMVISIBILITY enmVisibility, STAMUNIT enmUnit,
                                         PFNSTAMR3CALLBACKRESET pfnReset, PFNSTAMR3CALLBACKPRINT pfnPrint,
-                                        const char *pszDesc, const char *pszName, va_list args);
+                                        const char *pszDesc, const char *pszName, va_list args) RT_IPRT_FORMAT_ATTR(8, 0);
 VMMR3DECL(int)  STAMR3Deregister(PUVM pUVM, const char *pszPat);
-VMMR3DECL(int)  STAMR3DeregisterF(PUVM pUVM, const char *pszPatFmt, ...);
-VMMR3DECL(int)  STAMR3DeregisterV(PUVM pUVM, const char *pszPatFmt, va_list va);
+VMMR3DECL(int)  STAMR3DeregisterF(PUVM pUVM, const char *pszPatFmt, ...) RT_IPRT_FORMAT_ATTR(2, 3);
+VMMR3DECL(int)  STAMR3DeregisterV(PUVM pUVM, const char *pszPatFmt, va_list va) RT_IPRT_FORMAT_ATTR(2, 0);
 VMMR3DECL(int)  STAMR3DeregisterByAddr(PUVM pUVM, void *pvSample);
 
 VMMR3DECL(int)  STAMR3Reset(PUVM pUVM, const char *pszPat);

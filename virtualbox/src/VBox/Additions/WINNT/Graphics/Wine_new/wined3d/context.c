@@ -791,7 +791,7 @@ static BOOL context_set_gl_context(struct wined3d_context *ctx)
 
     if (backup || !wglMakeCurrent(ctx->hdc, ctx->glCtx))
 #else
-    if (!wglMakeCurrent(ctx->swapchain->hDC, ctx->glCtx))
+    if (!wglMakeCurrent(swapchain->hDC, ctx->glCtx))
 #endif
     {
 #ifndef VBOX_WITH_WDDM
@@ -803,7 +803,7 @@ static BOOL context_set_gl_context(struct wined3d_context *ctx)
                 ctx->glCtx, ctx->hdc, GetLastError());
 #else
         WARN("Failed to make GL context %p current on device context %p, last error %#x.\n",
-                ctx->glCtx, ctx->swapchain->hDC, GetLastError());
+                ctx->glCtx, swapchain->hDC, GetLastError());
 #endif
         ctx->valid = 0;
         WARN("Trying fallback to the backup window.\n");
@@ -1341,7 +1341,7 @@ BOOL context_set_current(struct wined3d_context *ctx)
 }
 
 #if defined(VBOX_WINE_WITH_SINGLE_CONTEXT) || defined(VBOX_WINE_WITH_SINGLE_SWAPCHAIN_CONTEXT)
-void context_clear_on_thread_detach()
+void context_clear_on_thread_detach(void)
 {
     /* In theory, we should do context_set_current(NULL) here,
      * but since it may result in calling a context dtor, it should be done under wined3d lock.
@@ -1627,7 +1627,10 @@ struct wined3d_context *context_create(struct wined3d_swapchain *swapchain,
     const struct wined3d_format *color_format;
     struct wined3d_context *ret;
     BOOL auxBuffers = FALSE;
-    HGLRC ctx, share_ctx;
+    HGLRC ctx;
+#ifndef VBOX
+    HGLRC share_ctx;
+#endif
     int pixel_format;
     unsigned int s;
     int swap_interval;

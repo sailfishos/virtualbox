@@ -1,12 +1,10 @@
 /* $Id: UIWizard.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizard class implementation
+ * VBox Qt GUI - UIWizard class implementation.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,16 +15,26 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QAbstractButton>
-#include <QLayout>
-#include <qmath.h>
+# include <QAbstractButton>
+# include <QLayout>
 
 /* Local includes: */
-#include "UIWizard.h"
-#include "UIWizardPage.h"
-#include "VBoxGlobal.h"
-#include "QIRichTextLabel.h"
+# include "UIIconPool.h"
+# include "UIWizard.h"
+# include "UIWizardPage.h"
+# include "VBoxGlobal.h"
+# include "QIRichTextLabel.h"
+# include "UIExtraDataManager.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+#include <qmath.h>
+
 
 void UIWizard::sltCurrentIdChanged(int iId)
 {
@@ -36,7 +44,7 @@ void UIWizard::sltCurrentIdChanged(int iId)
     if (iId == 0)
         fIsHideShowDescriptionButtonAvailable = true;
     /* But first-run wizard has no such button anyway: */
-    if (m_type == UIWizardType_FirstRun)
+    if (m_type == WizardType_FirstRun)
         fIsHideShowDescriptionButtonAvailable = false;
     /* Set a flag for hide/show description button finally: */
     setOption(QWizard::HaveCustomButton1, fIsHideShowDescriptionButtonAvailable);
@@ -50,61 +58,39 @@ void UIWizard::sltCustomButtonClicked(int iId)
         /* Cleanup: */
         cleanup();
 
-        /* Compose wizard's name: */
-        QString strWizardName = nameForType(m_type);
-        /* Load mode settings: */
-        QStringList wizards = vboxGlobal().virtualBox().GetExtraDataStringList(GUI_HideDescriptionForWizards);
-
-        /* Switch mode: */
+        /* Toggle mode: */
         switch (m_mode)
         {
-            case UIWizardMode_Basic:
-            {
-                m_mode = UIWizardMode_Expert;
-                if (!wizards.contains(strWizardName))
-                    wizards << strWizardName;
-                break;
-            }
-            case UIWizardMode_Expert:
-            {
-                m_mode = UIWizardMode_Basic;
-                if (wizards.contains(strWizardName))
-                    wizards.removeAll(strWizardName);
-                break;
-            }
-            default:
-            {
-                AssertMsgFailed(("Invalid mode: %d", m_mode));
-                break;
-            }
+            case WizardMode_Basic:  m_mode = WizardMode_Expert; break;
+            case WizardMode_Expert: m_mode = WizardMode_Basic;  break;
+            default: AssertMsgFailed(("Invalid mode: %d", m_mode)); break;
         }
-
-        /* Save mode settings: */
-        vboxGlobal().virtualBox().SetExtraDataStringList(GUI_HideDescriptionForWizards, wizards);
+        /* Save mode: */
+        gEDataManager->setModeForWizardType(m_type, m_mode);
 
         /* Prepare: */
         prepare();
     }
 }
 
-UIWizard::UIWizard(QWidget *pParent, UIWizardType type, UIWizardMode mode)
+UIWizard::UIWizard(QWidget *pParent, WizardType type, WizardMode mode /* = WizardMode_Auto */)
     : QIWithRetranslateUI<QWizard>(pParent)
     , m_type(type)
-    , m_mode(mode == UIWizardMode_Auto ? loadModeForType(m_type) : mode)
+    , m_mode(mode == WizardMode_Auto ? gEDataManager->modeForWizardType(m_type) : mode)
 {
-#ifdef Q_WS_WIN
+#ifdef VBOX_WS_WIN
     /* Hide window icon: */
     setWindowIcon(QIcon());
-#endif /* Q_WS_WIN */
+#endif /* VBOX_WS_WIN */
 
-#ifdef Q_WS_MAC
+#ifdef VBOX_WS_MAC
     /* Since wizards are now represented as Mac OS X Sheets
      * we would like to have possibility to cancel them. */
     setOption(QWizard::NoCancelButton, false);
     /* I'm really not sure why there shouldn't be any default button on Mac OS X.
      * This prevents the using of Enter to jump to the next page. */
     setOptions(options() ^ QWizard::NoDefaultButton);
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 
     /* All our wizards would like to have window-modality,
      * Under Mac OS it will be represented as Mac OS Sheet. */
@@ -120,8 +106,14 @@ void UIWizard::retranslateUi()
     /* Translate basic/expert button: */
     switch (m_mode)
     {
-        case UIWizardMode_Basic: setButtonText(QWizard::CustomButton1, tr("Hide Description")); break;
-        case UIWizardMode_Expert: setButtonText(QWizard::CustomButton1, tr("Show Description")); break;
+        case WizardMode_Basic:
+            setButtonText(QWizard::CustomButton1, tr("&Expert Mode"));
+            button(QWizard::CustomButton1)->setToolTip(tr("Switch to <nobr><b>Expert Mode</b></nobr>, a one-page dialog for experienced users."));
+            break;
+        case WizardMode_Expert:
+            setButtonText(QWizard::CustomButton1, tr("&Guided Mode"));
+            button(QWizard::CustomButton1)->setToolTip(tr("Switch to <nobr><b>Guided Mode</b></nobr>, a step-by-step dialog with detailed explanations."));
+            break;
         default: AssertMsgFailed(("Invalid mode: %d", m_mode)); break;
     }
 }
@@ -178,17 +170,17 @@ void UIWizard::cleanup()
         delete pWizardPage;
     }
 
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
     /* Cleanup watermark: */
     if (!m_strWatermarkName.isEmpty())
         setPixmap(QWizard::WatermarkPixmap, QPixmap());
-#endif /* !Q_WS_MAC */
+#endif /* !VBOX_WS_MAC */
 }
 
 void UIWizard::resizeToGoldenRatio()
 {
     /* Check if wizard is in basic or expert mode: */
-    if (m_mode == UIWizardMode_Expert)
+    if (m_mode == WizardMode_Expert)
     {
         /* Unfortunately QWizard hides some of useful API in private part,
          * and also have few layouting bugs which could be easy fixed
@@ -255,19 +247,26 @@ void UIWizard::resizeToGoldenRatio()
         /* Get current wizard width and height: */
         int iCurrentWizardWidth = width();
         int iCurrentWizardHeight = height();
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
+        /* Calculate metric and ratio: */
+        const int iIconMetric = QApplication::style()->pixelMetric(QStyle::PM_LargeIconSize);
+        const double dRatio = (double)iIconMetric / 32;
+        /* Load pixmap to icon first: */
+        QIcon icon = UIIconPool::iconSet(m_strWatermarkName);
+        QSize size = icon.availableSizes().value(0, QSize(145, 290));
+        size *= dRatio;
         /* We should take into account watermark like its assigned already: */
-        QPixmap watermarkPixmap(m_strWatermarkName);
-        int iWatermarkWidth = watermarkPixmap.width();
+        QPixmap watermarkPixmap(icon.pixmap(size));
+        const int iWatermarkWidth = watermarkPixmap.width() * dRatio;
         iCurrentWizardWidth += iWatermarkWidth;
-#endif /* !Q_WS_MAC */
+#endif /* !VBOX_WS_MAC */
         /* Calculating nearest to 'golden ratio' label width: */
         int iGoldenRatioWidth = (int)qSqrt(ratio() * iCurrentWizardWidth * iCurrentWizardHeight);
         int iProposedLabelWidth = iGoldenRatioWidth - iMarginsLength;
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
         /* We should take into account watermark like its assigned already: */
         iProposedLabelWidth -= iWatermarkWidth;
-#endif /* !Q_WS_MAC */
+#endif /* !VBOX_WS_MAC */
 
         /* Choose maximum between current and proposed label width: */
         int iNewLabelWidth = qMax(iCurrentLabelWidth, iProposedLabelWidth);
@@ -277,23 +276,23 @@ void UIWizard::resizeToGoldenRatio()
         resizeAccordingLabelWidth(iNewLabelWidth);
     }
 
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
     /* Really assign watermark: */
     if (!m_strWatermarkName.isEmpty())
         assignWatermarkHelper();
-#endif /* !Q_WS_MAC */
+#endif /* !VBOX_WS_MAC */
 }
 
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
 void UIWizard::assignWatermark(const QString &strWatermark)
 {
     if (wizardStyle() != QWizard::AeroStyle
-# ifdef Q_WS_WIN
+# ifdef VBOX_WS_WIN
         /* There is a Qt bug about Windows7 do NOT match conditions for 'aero' wizard-style,
          * so its silently fallbacks to 'modern' one without any notification,
          * so QWizard::wizardStyle() returns QWizard::ModernStyle, while using aero, at least partially. */
         && QSysInfo::windowsVersion() != QSysInfo::WV_WINDOWS7
-# endif /* Q_WS_WIN */
+# endif /* VBOX_WS_WIN */
         )
         m_strWatermarkName = strWatermark;
 }
@@ -381,7 +380,7 @@ double UIWizard::ratio()
     /* Default value: */
     double dRatio = 1.6;
 
-#ifdef Q_WS_WIN
+#ifdef VBOX_WS_WIN
     switch (wizardStyle())
     {
         case QWizard::ClassicStyle:
@@ -400,21 +399,21 @@ double UIWizard::ratio()
         default:
             break;
     }
-#endif /* Q_WS_WIN */
+#endif /* VBOX_WS_WIN */
 
     switch (m_type)
     {
-        case UIWizardType_CloneVM:
+        case WizardType_CloneVM:
             dRatio -= 0.4;
             break;
-        case UIWizardType_NewVD:
-        case UIWizardType_CloneVD:
+        case WizardType_NewVD:
+        case WizardType_CloneVD:
             dRatio += 0.1;
             break;
-        case UIWizardType_ExportAppliance:
+        case WizardType_ExportAppliance:
             dRatio += 0.3;
             break;
-        case UIWizardType_FirstRun:
+        case WizardType_FirstRun:
             dRatio += 0.3;
             break;
         default:
@@ -425,7 +424,7 @@ double UIWizard::ratio()
     return dRatio;
 }
 
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
 int UIWizard::proposedWatermarkHeight()
 {
     /* We should calculate suitable height for watermark pixmap,
@@ -441,7 +440,7 @@ int UIWizard::proposedWatermarkHeight()
 
     /* Acquire wizard-layout top-margin: */
     int iTopMargin = 0;
-    if (m_mode == UIWizardMode_Basic)
+    if (m_mode == WizardMode_Basic)
     {
         if (wizardStyle() == QWizard::ModernStyle)
             iTopMargin = pStyle->pixelMetric(QStyle::PM_LayoutTopMargin);
@@ -449,7 +448,7 @@ int UIWizard::proposedWatermarkHeight()
 
     /* Acquire wizard-header height: */
     int iTitleHeight = 0;
-    if (m_mode == UIWizardMode_Basic)
+    if (m_mode == WizardMode_Basic)
     {
         /* We have no direct access to QWizardHeader inside QWizard private data...
          * From Qt sources it seems title font is hardcoded as current font point-size + 4: */
@@ -461,7 +460,7 @@ int UIWizard::proposedWatermarkHeight()
 
     /* Acquire spacing between wizard-header and wizard-page: */
     int iMarginBetweenTitleAndPage = 0;
-    if (m_mode == UIWizardMode_Basic)
+    if (m_mode == WizardMode_Basic)
     {
         /* We have no direct access to margin between QWizardHeader and wizard-pages...
          * From Qt sources it seems its hardcoded as just 7 pixels: */
@@ -486,8 +485,15 @@ int UIWizard::proposedWatermarkHeight()
 
 void UIWizard::assignWatermarkHelper()
 {
+    /* Calculate metric and ratio: */
+    const int iIconMetric = QApplication::style()->pixelMetric(QStyle::PM_LargeIconSize);
+    const double dRatio = (double)iIconMetric / 32;
+    /* Load pixmap to icon first: */
+    QIcon icon = UIIconPool::iconSet(m_strWatermarkName);
+    QSize size = icon.availableSizes().value(0, QSize(145, 290));
+    size *= dRatio;
     /* Create initial watermark: */
-    QPixmap pixWaterMark(m_strWatermarkName);
+    QPixmap pixWaterMark(icon.pixmap(size));
     /* Convert watermark to image which
      * allows to manage pixel data directly: */
     QImage imgWatermark = pixWaterMark.toImage();
@@ -524,36 +530,5 @@ void UIWizard::assignWatermarkHelper()
     QPixmap pixWatermarkNew = QPixmap::fromImage(imgWatermarkNew);
     setPixmap(QWizard::WatermarkPixmap, pixWatermarkNew);
 }
-#endif /* !Q_WS_MAC */
-
-/* static */
-QString UIWizard::nameForType(UIWizardType type)
-{
-    QString strName;
-    switch (type)
-    {
-        case UIWizardType_NewVM: strName = "NewVM"; break;
-        case UIWizardType_CloneVM: strName = "CloneVM"; break;
-        case UIWizardType_ExportAppliance: strName = "ExportAppliance"; break;
-        case UIWizardType_ImportAppliance: strName = "ImportAppliance"; break;
-        case UIWizardType_FirstRun: strName = "FirstRun"; break;
-        case UIWizardType_NewVD: strName = "NewVD"; break;
-        case UIWizardType_CloneVD: strName = "CloneVD"; break;
-    }
-    return strName;
-}
-
-/* static */
-UIWizardMode UIWizard::loadModeForType(UIWizardType type)
-{
-    /* Some wizard use only basic mode: */
-    if (type == UIWizardType_FirstRun)
-        return UIWizardMode_Basic;
-    /* Get mode from extra-data: */
-    QStringList wizards = vboxGlobal().virtualBox().GetExtraDataStringList(GUI_HideDescriptionForWizards);
-    if (wizards.contains(nameForType(type)))
-        return UIWizardMode_Expert;
-    /* Return mode: */
-    return UIWizardMode_Basic;
-}
+#endif /* !VBOX_WS_MAC */
 

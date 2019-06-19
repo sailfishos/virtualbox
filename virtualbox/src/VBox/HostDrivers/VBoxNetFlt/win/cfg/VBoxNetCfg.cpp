@@ -3,7 +3,7 @@
  * VBoxNetCfg.cpp - Network Configuration API.
  */
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -12,21 +12,28 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 #include "VBox/VBoxNetCfg-win.h"
 #include "VBox/VBoxDrvCfg-win.h"
 
 #define _WIN32_DCOM
 
-#include <iphlpapi.h>
-
 #include <devguid.h>
 #include <stdio.h>
 #include <regstr.h>
-#include <shlobj.h>
+#include <iprt/win/shlobj.h>
 #include <cfgmgr32.h>
 #include <tchar.h>
-#include <objbase.h>
+#include <iprt/win/objbase.h>
 
 #include <crtdbg.h>
 #include <stdlib.h>
@@ -34,6 +41,12 @@
 
 #include <Wbemidl.h>
 #include <comdef.h>
+
+#include <iprt/win/winsock2.h>
+#include <iprt/win/ws2tcpip.h>
+#include <ws2ipdef.h>
+#include <iprt/win/netioapi.h>
+#include <iprt/win/iphlpapi.h>
 
 
 #ifndef Assert   /** @todo r=bird: where would this be defined? */
@@ -55,6 +68,46 @@ static VOID DoLogging(LPCSTR szString, ...);
 
 #define VBOX_NETCFG_LOCK_TIME_OUT     5000  /** @todo r=bird: What does this do? */
 
+#define VBOXNETCFGWIN_NETADP_ID L"sun_VBoxNetAdp"
+
+/*
+* Wrappers for HelpAPI functions
+*/
+typedef void FNINITIALIZEIPINTERFACEENTRY( _Inout_ PMIB_IPINTERFACE_ROW row);
+typedef FNINITIALIZEIPINTERFACEENTRY *PFNINITIALIZEIPINTERFACEENTRY;
+
+typedef NETIOAPI_API FNGETIPINTERFACEENTRY( _Inout_ PMIB_IPINTERFACE_ROW row);
+typedef FNGETIPINTERFACEENTRY *PFNGETIPINTERFACEENTRY;
+
+typedef NETIOAPI_API FNSETIPINTERFACEENTRY( _Inout_ PMIB_IPINTERFACE_ROW row);
+typedef FNSETIPINTERFACEENTRY *PFNSETIPINTERFACEENTRY;
+
+static  PFNINITIALIZEIPINTERFACEENTRY   g_pfnInitializeIpInterfaceEntry = NULL;
+static  PFNGETIPINTERFACEENTRY          g_pfnGetIpInterfaceEntry        = NULL;
+static  PFNSETIPINTERFACEENTRY          g_pfnSetIpInterfaceEntry        = NULL;
+
+
+/*
+* Forward declaration for using vboxNetCfgWinSetupMetric()
+*/
+HRESULT vboxNetCfgWinSetupMetric(IN NET_LUID* pLuid);
+HRESULT vboxNetCfgWinGetInterfaceLUID(IN HKEY hKey, OUT NET_LUID* pLUID);
+
+
+/*
+ * For some weird reason we do not want to use IPRT here, hence the following
+ * function provides a replacement for BstrFmt.
+ */
+static bstr_t bstr_printf(const char *cszFmt, ...)
+{
+    char szBuffer[4096];
+    szBuffer[sizeof(szBuffer) - 1] = 0; /* Make sure the string will be null-terminated */
+    va_list va;
+    va_start(va, cszFmt);
+    _vsnprintf(szBuffer, sizeof(szBuffer) - 1, cszFmt, va);
+    va_end(va);
+    return bstr_t(szBuffer);
+}
 
 static HRESULT vboxNetCfgWinINetCfgLock(IN INetCfg *pNetCfg,
                                         IN LPCWSTR pszwClientDescription,
@@ -239,20 +292,16 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinGetComponentByGuid(IN INetCfg *pNc,
 
 static HRESULT vboxNetCfgWinQueryInstaller(IN INetCfg *pNetCfg, IN const GUID *pguidClass, INetCfgClassSetup **ppSetup)
 {
-    NonStandardLogFlow(("vboxNetCfgWinQueryInstaller: enter \n"));
     HRESULT hr = pNetCfg->QueryNetCfgClass(pguidClass, IID_INetCfgClassSetup, (void**)ppSetup);
     if (FAILED(hr))
         NonStandardLogFlow(("QueryNetCfgClass failed, hr (0x%x)\n", hr));
-    NonStandardLogFlow(("vboxNetCfgWinQueryInstaller: leave \n"));
     return hr;
 }
 
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinInstallComponent(IN INetCfg *pNetCfg, IN LPCWSTR pszwComponentId, IN const GUID *pguidClass,
                                                           OUT INetCfgComponent **ppComponent)
 {
-    NonStandardLogFlow(("VBoxNetCfgWinInstallComponent: enter \n"));
     INetCfgClassSetup *pSetup;
-
     HRESULT hr = vboxNetCfgWinQueryInstaller(pNetCfg, pguidClass, &pSetup);
     if (FAILED(hr))
     {
@@ -263,15 +312,75 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinInstallComponent(IN INetCfg *pNetCfg, I
     OBO_TOKEN Token;
     ZeroMemory(&Token, sizeof (Token));
     Token.Type = OBO_USER;
+    INetCfgComponent* pTempComponent = NULL;
 
     hr = pSetup->Install(pszwComponentId, &Token,
                          0,    /* IN DWORD dwSetupFlags */
                          0,    /* IN DWORD dwUpgradeFromBuildNo */
                          NULL, /* IN LPCWSTR pszwAnswerFile */
                          NULL, /* IN LPCWSTR pszwAnswerSections */
-                         ppComponent);
+                         &pTempComponent);
     if (SUCCEEDED(hr))
     {
+        if (pTempComponent != NULL)
+        {
+            HKEY hkey = (HKEY)INVALID_HANDLE_VALUE;
+            HRESULT res;
+
+            /*
+            *   Set default metric value of interface to fix multicast issue
+            *   See @bugref{6379} for details.
+            */
+            res = pTempComponent->OpenParamKey(&hkey);
+
+            /* Set default metric value for host-only interface only */
+            if (   SUCCEEDED(res)
+                && hkey != INVALID_HANDLE_VALUE
+                && wcsnicmp(pszwComponentId, VBOXNETCFGWIN_NETADP_ID, 256) == 0)
+            {
+                NET_LUID luid;
+                res = vboxNetCfgWinGetInterfaceLUID(hkey, &luid);
+
+                /* Close the key as soon as possible. See @bugref{7973}. */
+                RegCloseKey (hkey);
+                hkey = (HKEY)INVALID_HANDLE_VALUE;
+
+                if (FAILED(res))
+                {
+                    /*
+                     *   The setting of Metric is not very important functionality,
+                     *   So we will not break installation process due to this error.
+                     */
+                    NonStandardLogFlow(("VBoxNetCfgWinInstallComponent Warning! "
+                                        "vboxNetCfgWinGetInterfaceLUID failed, default metric "
+                                        "for new interface will not be set, hr (0x%x)\n", res));
+                }
+                else
+                {
+                    res = vboxNetCfgWinSetupMetric(&luid);
+                    if (FAILED(res))
+                    {
+                        /*
+                         *   The setting of Metric is not very important functionality,
+                         *   So we will not break installation process due to this error.
+                         */
+                        NonStandardLogFlow(("VBoxNetCfgWinInstallComponent Warning! "
+                                            "vboxNetCfgWinSetupMetric failed, default metric "
+                                            "for new interface will not be set, hr (0x%x)\n", res));
+                    }
+                }
+            }
+            if (hkey != INVALID_HANDLE_VALUE)
+            {
+                RegCloseKey (hkey);
+                hkey = (HKEY)INVALID_HANDLE_VALUE;
+            }
+            if (ppComponent != NULL)
+                *ppComponent = pTempComponent;
+            else
+                pTempComponent->Release();
+        }
+
         /* ignore the apply failure */
         HRESULT tmpHr = pNetCfg->Apply();
         Assert(tmpHr == S_OK);
@@ -282,8 +391,6 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinInstallComponent(IN INetCfg *pNetCfg, I
         NonStandardLogFlow(("Install failed, hr (0x%x)\n", hr));
 
     pSetup->Release();
-
-    NonStandardLogFlow(("VBoxNetCfgWinInstallComponent: leave \n"));
     return hr;
 }
 
@@ -291,7 +398,6 @@ static HRESULT vboxNetCfgWinInstallInfAndComponent(IN INetCfg *pNetCfg, IN LPCWS
                                                    IN LPCWSTR const *apInfPaths, IN UINT cInfPaths,
                                                    OUT INetCfgComponent **ppComponent)
 {
-    NonStandardLogFlow(("vboxNetCfgWinInstallInfAndComponent: enter \n"));
     HRESULT hr = S_OK;
     UINT cFilesProcessed = 0;
 
@@ -306,7 +412,6 @@ static HRESULT vboxNetCfgWinInstallInfAndComponent(IN INetCfg *pNetCfg, IN LPCWS
             NonStandardLogFlow(("VBoxNetCfgWinInfInstall failed, hr (0x%x)\n", hr));
             break;
         }
-        NonStandardLogFlow(("Installing INF file \"%ws\" has been done \n", apInfPaths[cFilesProcessed]));
     }
 
     if (SUCCEEDED(hr))
@@ -333,7 +438,6 @@ static HRESULT vboxNetCfgWinInstallInfAndComponent(IN INetCfg *pNetCfg, IN LPCWS
         NonStandardLogFlow(("Rollback complete\n"));
     }
 
-    NonStandardLogFlow(("vboxNetCfgWinInstallInfAndComponent: leave \n"));
     return hr;
 }
 
@@ -428,8 +532,9 @@ static HRESULT vboxNetCfgWinEnumNetCfgComponents(IN INetCfg *pNetCfg,
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinGenHostonlyConnectionName(PCWSTR DevName, WCHAR *pBuf, PULONG pcbBuf);
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRenameConnection(LPWSTR pGuid, PCWSTR NewName);
 
-static BOOL vboxNetCfgWinRemoveAllNetDevicesOfIdCallback(HDEVINFO hDevInfo, PSP_DEVINFO_DATA pDev, PVOID pContext)
+static BOOL vboxNetCfgWinRemoveAllNetDevicesOfIdCallback(HDEVINFO hDevInfo, PSP_DEVINFO_DATA pDev, PVOID pvContext)
 {
+    RT_NOREF1(pvContext);
     SP_REMOVEDEVICE_PARAMS rmdParams;
     memset(&rmdParams, 0, sizeof(SP_REMOVEDEVICE_PARAMS));
     rmdParams.ClassInstallHeader.cbSize = sizeof(SP_CLASSINSTALL_HEADER);
@@ -441,6 +546,7 @@ static BOOL vboxNetCfgWinRemoveAllNetDevicesOfIdCallback(HDEVINFO hDevInfo, PSP_
     {
         if (SetupDiSetSelectedDevice(hDevInfo, pDev))
         {
+#ifndef VBOXNETCFG_DELAYEDRENAME
             /* Figure out NetCfgInstanceId. */
             HKEY hKey = SetupDiOpenDevRegKey(hDevInfo,
                                              pDev,
@@ -501,6 +607,7 @@ static BOOL vboxNetCfgWinRemoveAllNetDevicesOfIdCallback(HDEVINFO hDevInfo, PSP_
 
                 RegCloseKey(hKey);
             }
+#endif /* VBOXNETCFG_DELAYEDRENAME */
 
             if (SetupDiCallClassInstaller(DIF_REMOVE, hDevInfo, pDev))
             {
@@ -602,9 +709,9 @@ static BOOL vboxNetCfgWinPropChangeAllNetDevicesOfIdCallback(HDEVINFO hDevInfo, 
     return TRUE;
 }
 
-typedef BOOL (*VBOXNETCFGWIN_NETENUM_CALLBACK) (HDEVINFO hDevInfo, PSP_DEVINFO_DATA pDev, PVOID pContext);
+typedef BOOL (*PFNVBOXNETCFGWINNETENUMCALLBACK)(HDEVINFO hDevInfo, PSP_DEVINFO_DATA pDev, PVOID pContext);
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinEnumNetDevices(LPCWSTR pwszPnPId,
-                                                        VBOXNETCFGWIN_NETENUM_CALLBACK callback, PVOID pContext)
+                                                        PFNVBOXNETCFGWINNETENUMCALLBACK pfnCallback, PVOID pvContext)
 {
     NonStandardLogFlow(("VBoxNetCfgWinEnumNetDevices: Searching for: %S\n", pwszPnPId));
 
@@ -618,7 +725,7 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinEnumNetDevices(LPCWSTR pwszPnPId,
                                                NULL             /* IN PVOID Reserved */);
     if (hDevInfo != INVALID_HANDLE_VALUE)
     {
-        DWORD winEr;
+        DWORD winEr = NO_ERROR;
 
         DWORD dwDevId = 0;
         size_t cPnPId = wcslen(pwszPnPId);
@@ -694,11 +801,12 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinEnumNetDevices(LPCWSTR pwszPnPId,
 
             if (cCurId >= cPnPId)
             {
-                NonStandardLogFlow(("!wcsnicmp(pCurId = (%S), pwszPnPId = (%S), cPnPId = (%d))", pCurId, pwszPnPId, cPnPId));
+                NonStandardLogFlow(("!wcsnicmp(pCurId = (%S), pwszPnPId = (%S), cPnPId = (%d))\n", pCurId, pwszPnPId, cPnPId));
+
                 pCurId += cCurId - cPnPId;
                 if (!wcsnicmp(pCurId, pwszPnPId, cPnPId))
                 {
-                    if (!callback(hDevInfo, &Dev, pContext))
+                    if (!pfnCallback(hDevInfo, &Dev, pvContext))
                         break;
                 }
             }
@@ -734,7 +842,8 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinPropChangeAllNetDevicesOfId(IN LPCWSTR 
     VBOXNECTFGWINPROPCHANGE Pc;
     Pc.enmPcType = enmPcType;
     Pc.hr = S_OK;
-    NonStandardLogFlow(("Calling VBoxNetCfgWinEnumNetDevices with lpszPnPId =(%S) and vboxNetCfgWinPropChangeAllNetDevicesOfIdCallback", lpszPnPId));
+    NonStandardLogFlow(("Calling VBoxNetCfgWinEnumNetDevices with lpszPnPId =(%S) and vboxNetCfgWinPropChangeAllNetDevicesOfIdCallback\n", lpszPnPId));
+
     HRESULT hr = VBoxNetCfgWinEnumNetDevices(lpszPnPId, vboxNetCfgWinPropChangeAllNetDevicesOfIdCallback, &Pc);
     if (!SUCCEEDED(hr))
     {
@@ -1044,7 +1153,6 @@ static HRESULT netIfWinFindAdapterClassById(IWbemServices * pSvc, const GUID * p
 static HRESULT netIfWinIsHostOnly(IWbemClassObject * pAdapterConfig, BOOL * pbIsHostOnly)
 {
     VARIANT vtServiceName;
-    BOOL bIsHostOnly = FALSE;
     VariantInit(&vtServiceName);
 
     HRESULT hr = pAdapterConfig->Get(L"ServiceName", 0 /*lFlags*/, &vtServiceName, NULL /*pvtType*/, NULL /*plFlavor*/);
@@ -1124,6 +1232,7 @@ static HRESULT netIfWinGetIpSettings(IWbemClassObject * pAdapterConfig, ULONG *p
     return hr;
 }
 
+#if 0 /* unused */
 
 static HRESULT netIfWinHasIpSettings(IWbemClassObject * pAdapterConfig, SAFEARRAY * pCheckIp, SAFEARRAY * pCheckMask, bool *pFound)
 {
@@ -1198,6 +1307,8 @@ static HRESULT netIfWinWaitIpSettings(IWbemServices *pSvc, const GUID * pGuid, S
 
     return hr;
 }
+
+#endif /* unused */
 
 static HRESULT netIfWinCreateIWbemServices(IWbemServices ** ppSvc)
 {
@@ -1304,7 +1415,7 @@ static HRESULT netIfExecMethod(IWbemServices * pSvc, IWbemClassObject *pClass, B
 
 static HRESULT netIfWinCreateIpArray(SAFEARRAY **ppArray, in_addr* aIp, UINT cIp)
 {
-    HRESULT hr;
+    HRESULT hr = S_OK; /* MSC maybe used uninitialized */
     SAFEARRAY * pIpArray = SafeArrayCreateVector(VT_BSTR, 0, cIp);
     if (pIpArray)
     {
@@ -1334,6 +1445,7 @@ static HRESULT netIfWinCreateIpArray(SAFEARRAY **ppArray, in_addr* aIp, UINT cIp
     return hr;
 }
 
+#if 0 /* unused */
 static HRESULT netIfWinCreateIpArrayV4V6(SAFEARRAY **ppArray, BSTR Ip)
 {
     HRESULT hr;
@@ -1360,6 +1472,7 @@ static HRESULT netIfWinCreateIpArrayV4V6(SAFEARRAY **ppArray, BSTR Ip)
 
     return hr;
 }
+#endif
 
 
 static HRESULT netIfWinCreateIpArrayVariantV4(VARIANT * pIpAddresses, in_addr* aIp, UINT cIp)
@@ -1376,6 +1489,7 @@ static HRESULT netIfWinCreateIpArrayVariantV4(VARIANT * pIpAddresses, in_addr* a
     return hr;
 }
 
+#if 0 /* unused */
 static HRESULT netIfWinCreateIpArrayVariantV4V6(VARIANT * pIpAddresses, BSTR Ip)
 {
     HRESULT hr;
@@ -1389,8 +1503,9 @@ static HRESULT netIfWinCreateIpArrayVariantV4V6(VARIANT * pIpAddresses, BSTR Ip)
     }
     return hr;
 }
+#endif
 
-static HRESULT netIfWinEnableStatic(IWbemServices * pSvc, const GUID * pGuid, BSTR ObjPath, VARIANT * pIp, VARIANT * pMask)
+static HRESULT netIfWinEnableStatic(IWbemServices *pSvc, const GUID *pGuid, BSTR ObjPath, VARIANT *pIp, VARIANT *pMask)
 {
     ComPtr<IWbemClassObject> pClass;
     BSTR ClassName = SysAllocString(L"Win32_NetworkAdapterConfiguration");
@@ -1417,16 +1532,17 @@ static HRESULT netIfWinEnableStatic(IWbemServices * pSvc, const GUID * pGuid, BS
                     int winEr = varReturnValue.uintVal;
                     switch (winEr)
                     {
-                    case 0:
+                        case 0:
                         {
                             hr = S_OK;
 //                            bool bFound;
 //                            HRESULT tmpHr = netIfWinWaitIpSettings(pSvc, pGuid, pIp->parray, pMask->parray, 180, &bFound);
+                            NOREF(pGuid);
+                            break;
                         }
-                        break;
-                    default:
-                        hr = HRESULT_FROM_WIN32( winEr );
-                        break;
+                        default:
+                            hr = HRESULT_FROM_WIN32( winEr );
+                            break;
                     }
                 }
             }
@@ -1457,6 +1573,8 @@ static HRESULT netIfWinEnableStaticV4(IWbemServices * pSvc, const GUID * pGuid, 
     }
     return hr;
 }
+
+#if 0 /* unused */
 
 static HRESULT netIfWinEnableStaticV4V6(IWbemServices * pSvc, const GUID * pGuid, BSTR ObjPath, BSTR Ip, BSTR Mask)
 {
@@ -1546,6 +1664,8 @@ static HRESULT netIfWinSetGatewaysV4V6(IWbemServices * pSvc, BSTR ObjPath, BSTR 
     }
     return hr;
 }
+
+#endif /* unused */
 
 static HRESULT netIfWinEnableDHCP(IWbemServices * pSvc, BSTR ObjPath)
 {
@@ -1696,7 +1816,7 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinIsDhcpEnabled(const GUID * pGuid, BOOL 
 
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinEnableStaticIpConfig(IN const GUID *pGuid, IN ULONG ip, IN ULONG mask)
 {
-    NonStandardLogFlow(("VBoxNetCfgWinEnableStaticIpConfig: ip=0x%x mask=0x%x", ip, mask));
+    NonStandardLogFlow(("VBoxNetCfgWinEnableStaticIpConfig: ip=0x%x mask=0x%x\n", ip, mask));
     ComPtr<IWbemServices> pSvc;
     HRESULT hr = netIfWinCreateIWbemServices(pSvc.asOutParam());
     if (SUCCEEDED(hr))
@@ -1743,7 +1863,7 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinEnableStaticIpConfig(IN const GUID *pGu
         }
     }
 
-    NonStandardLogFlow(("VBoxNetCfgWinEnableStaticIpConfig: returns 0x%x", hr));
+    NonStandardLogFlow(("VBoxNetCfgWinEnableStaticIpConfig: returns 0x%x\n", hr));
     return hr;
 }
 
@@ -1786,7 +1906,7 @@ static HRESULT netIfEnableStaticIpConfigV6(const GUID *pGuid, IN_BSTR aIPV6Addre
 static HRESULT netIfEnableStaticIpConfigV6(const GUID *pGuid, IN_BSTR aIPV6Address, ULONG aIPV6MaskPrefixLength)
 {
     RTNETADDRIPV6 Mask;
-    int rc = prefixLength2IPv6Address(aIPV6MaskPrefixLength, &Mask);
+    int rc = RTNetPrefixToMaskIPv6(aIPV6MaskPrefixLength, &Mask);
     if (RT_SUCCESS(rc))
     {
         Bstr maskStr = composeIPv6Address(&Mask);
@@ -1878,6 +1998,35 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinDhcpRediscover(IN const GUID *pGuid)
     return hr;
 }
 
+static const char *vboxNetCfgWinAddrToStr(char *pszBuf, LPSOCKADDR pAddr)
+{
+    switch (pAddr->sa_family)
+    {
+        case AF_INET:
+            sprintf(pszBuf, "%d.%d.%d.%d",
+                    ((PSOCKADDR_IN)pAddr)->sin_addr.S_un.S_un_b.s_b1,
+                    ((PSOCKADDR_IN)pAddr)->sin_addr.S_un.S_un_b.s_b2,
+                    ((PSOCKADDR_IN)pAddr)->sin_addr.S_un.S_un_b.s_b3,
+                    ((PSOCKADDR_IN)pAddr)->sin_addr.S_un.S_un_b.s_b4);
+            break;
+        case AF_INET6:
+            sprintf(pszBuf, "%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x:%02x%02x",
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[0], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[1],
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[2], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[3],
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[4], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[5],
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[6], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[7],
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[8], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[9],
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[10], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[11],
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[12], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[13],
+                 ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[14], ((PSOCKADDR_IN6)pAddr)->sin6_addr.s6_addr[15]);
+            break;
+        default:
+            strcpy(pszBuf, "unknown");
+            break;
+    }
+    return pszBuf;
+}
+
 typedef bool (*PFNVBOXNETCFG_IPSETTINGS_CALLBACK) (ULONG ip, ULONG mask, PVOID pContext);
 
 static void vboxNetCfgWinEnumIpConfig(PIP_ADAPTER_ADDRESSES pAddresses, PFNVBOXNETCFG_IPSETTINGS_CALLBACK pfnCallback, PVOID pContext)
@@ -1885,53 +2034,40 @@ static void vboxNetCfgWinEnumIpConfig(PIP_ADAPTER_ADDRESSES pAddresses, PFNVBOXN
     PIP_ADAPTER_ADDRESSES pAdapter;
     for (pAdapter = pAddresses; pAdapter; pAdapter = pAdapter->Next)
     {
-        PIP_ADAPTER_UNICAST_ADDRESS pAddr = pAdapter->FirstUnicastAddress;
-        PIP_ADAPTER_PREFIX pPrefix = pAdapter->FirstPrefix;
+        char szBuf[80];
 
-        if (pAddr && pPrefix)
+        NonStandardLogFlow(("+- Enumerating adapter '%ls' %s\n", pAdapter->FriendlyName, pAdapter->AdapterName));
+        for (PIP_ADAPTER_PREFIX pPrefix = pAdapter->FirstPrefix; pPrefix; pPrefix = pPrefix->Next)
         {
-            do
+            const char *pcszAddress = vboxNetCfgWinAddrToStr(szBuf, pPrefix->Address.lpSockaddr);
+            /* We are concerned with IPv4 only, ignore the rest. */
+            if (pPrefix->Address.lpSockaddr->sa_family != AF_INET)
             {
-                bool fIPFound, fMaskFound;
-                fIPFound = fMaskFound = false;
-                ULONG ip, mask;
-                for (; pAddr && !fIPFound; pAddr = pAddr->Next)
-                {
-                    switch (pAddr->Address.lpSockaddr->sa_family)
-                    {
-                        case AF_INET:
-                            fIPFound = true;
-                            memcpy(&ip,
-                                    &((struct sockaddr_in *)pAddr->Address.lpSockaddr)->sin_addr.s_addr,
-                                    sizeof(ip));
-                            break;
-//                            case AF_INET6:
-//                                break;
-                    }
-                }
-
-                for (; pPrefix && !fMaskFound; pPrefix = pPrefix->Next)
-                {
-                    switch (pPrefix->Address.lpSockaddr->sa_family)
-                    {
-                        case AF_INET:
-                            if (!pPrefix->PrefixLength || pPrefix->PrefixLength > 31) /* in case the ip helper API is queried while NetCfg write lock is held */
-                                break;                                               /* the address values can contain illegal values */
-                            fMaskFound = true;
-                            mask = (~(((ULONG)~0) >> pPrefix->PrefixLength));
-                            mask = htonl(mask);
-                            break;
-//                            case AF_INET6:
-//                                break;
-                    }
-                }
-
-                if (!fIPFound || !fMaskFound)
-                    break;
-
-                if (!pfnCallback(ip, mask, pContext))
-                    return;
-            } while (true);
+                NonStandardLogFlow(("| +- %s %d: not IPv4, ignoring\n", pcszAddress, pPrefix->PrefixLength));
+                continue;
+            }
+            /* Ignore invalid prefixes as well as host addresses. */
+            if (pPrefix->PrefixLength < 1 || pPrefix->PrefixLength > 31)
+            {
+                NonStandardLogFlow(("| +- %s %d: host or broadcast, ignoring\n", pcszAddress, pPrefix->PrefixLength));
+                continue;
+            }
+            /* Ignore multicast and beyond. */
+            ULONG ip = ((struct sockaddr_in *)pPrefix->Address.lpSockaddr)->sin_addr.s_addr;
+            if ((ip & 0xF0) > 224)
+            {
+                NonStandardLogFlow(("| +- %s %d: multicast, ignoring\n", pcszAddress, pPrefix->PrefixLength));
+                continue;
+            }
+            ULONG mask = htonl((~(((ULONG)~0) >> pPrefix->PrefixLength)));
+            bool fContinue = pfnCallback(ip, mask, pContext);
+            if (!fContinue)
+            {
+                NonStandardLogFlow(("| +- %s %d: CONFLICT!\n", pcszAddress, pPrefix->PrefixLength));
+                return;
+            }
+            else
+                NonStandardLogFlow(("| +- %s %d: no conflict, moving on\n", pcszAddress, pPrefix->PrefixLength));
         }
     }
 }
@@ -1967,10 +2103,9 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinGenHostOnlyNetworkNetworkIp(OUT PULONG 
     DWORD dwRc;
     HRESULT hr = S_OK;
     /*
-     * Most of the hosts probably have less than 10 adapters,
-     * so we'll mostly succeed from the first attempt.
+     * MSDN recommends to pre-allocate a 15KB buffer.
      */
-    ULONG uBufLen = sizeof(IP_ADAPTER_ADDRESSES) * 10;
+    ULONG uBufLen = 15 * 1024;
     PIP_ADAPTER_ADDRESSES pAddresses = (PIP_ADAPTER_ADDRESSES)malloc(uBufLen);
     if (!pAddresses)
         return HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY);
@@ -1997,10 +2132,13 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinGenHostOnlyNetworkNetworkIp(OUT PULONG 
         {
             ULONG ipProbe = rand()*255/RAND_MAX;
             ipProbe = ip192168 | (ipProbe << 16);
+            unsigned char *a = (unsigned char *)&ipProbe;
+            NonStandardLogFlow(("probing %d.%d.%d.%d\n", a[0], a[1], a[2], a[3]));
             IPPROBE_INIT(&Context, ipProbe);
             vboxNetCfgWinEnumIpConfig(pAddresses, vboxNetCfgWinIpProbeCallback, &Context);
             if (!Context.bConflict)
             {
+                NonStandardLogFlow(("found unused net %d.%d.%d.%d\n", a[0], a[1], a[2], a[3]));
                 *pNetIp = ipProbe;
                 *pNetMask = inet_addr("255.255.255.0");
                 break;
@@ -2065,7 +2203,7 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetFltUninstall(IN INetCfg *pNc)
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetFltInstall(IN INetCfg *pNc,
                                                        IN LPCWSTR const *apInfFullPaths, IN UINT cInfFullPaths)
 {
-    HRESULT hr = S_OK;
+    HRESULT hr = vboxNetCfgWinNetFltUninstall(pNc, SUOI_FORCEDELETE);
     if (SUCCEEDED(hr))
     {
         NonStandardLog("NetFlt will be installed ...\n");
@@ -2078,20 +2216,120 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetFltInstall(IN INetCfg *pNc,
     return hr;
 }
 
-#define VBOXNETCFGWIN_NETADP_ID L"sun_VBoxNetAdp"
-static HRESULT vboxNetCfgWinNetAdpUninstall(IN INetCfg *pNc, DWORD InfRmFlags)
+static HRESULT vboxNetCfgWinNetAdpUninstall(IN INetCfg *pNc, LPCWSTR pwszId, DWORD InfRmFlags)
 {
-    HRESULT hr = S_OK;
+    NOREF(pNc);
     NonStandardLog("Finding NetAdp driver package and trying to uninstall it ...\n");
 
-    VBoxDrvCfgInfUninstallAllF(L"Net", VBOXNETCFGWIN_NETADP_ID, InfRmFlags);
-    NonStandardLog("NetAdp driver package has been uninstalled \n");
+    VBoxDrvCfgInfUninstallAllF(L"Net", pwszId, InfRmFlags);
+    NonStandardLog("NetAdp is not installed currently\n");
+    return S_OK;
+}
+
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetAdpUninstall(IN INetCfg *pNc, IN LPCWSTR pwszId)
+{
+    return vboxNetCfgWinNetAdpUninstall(pNc, pwszId, SUOI_FORCEDELETE);
+}
+
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetAdpInstall(IN INetCfg *pNc,
+                                                       IN LPCWSTR const pInfFullPath)
+{
+    NonStandardLog("NetAdp will be installed ...\n");
+    HRESULT hr = vboxNetCfgWinInstallInfAndComponent(pNc, VBOXNETCFGWIN_NETADP_ID,
+                                             &GUID_DEVCLASS_NET,
+                                             &pInfFullPath,
+                                             1,
+                                             NULL);
     return hr;
 }
 
-VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetAdpUninstall(IN INetCfg *pNc)
+#define VBOXNETCFGWIN_NETLWF_ID    L"oracle_VBoxNetLwf"
+
+static HRESULT vboxNetCfgWinNetLwfUninstall(IN INetCfg *pNc, DWORD InfRmFlags)
 {
-    return vboxNetCfgWinNetAdpUninstall(pNc, SUOI_FORCEDELETE);
+    INetCfgComponent * pNcc = NULL;
+    HRESULT hr = pNc->FindComponent(VBOXNETCFGWIN_NETLWF_ID, &pNcc);
+    if (hr == S_OK)
+    {
+        NonStandardLog("NetLwf is installed currently, uninstalling ...\n");
+
+        hr = VBoxNetCfgWinUninstallComponent(pNc, pNcc);
+
+        pNcc->Release();
+    }
+    else if (hr == S_FALSE)
+    {
+        NonStandardLog("NetLwf is not installed currently\n");
+        hr = S_OK;
+    }
+    else
+    {
+        NonStandardLogFlow(("FindComponent failed, hr (0x%x)\n", hr));
+        hr = S_OK;
+    }
+
+    VBoxDrvCfgInfUninstallAllF(L"NetService", VBOXNETCFGWIN_NETLWF_ID, InfRmFlags);
+
+    return hr;
+}
+
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetLwfUninstall(IN INetCfg *pNc)
+{
+    return vboxNetCfgWinNetLwfUninstall(pNc, 0);
+}
+
+static void VBoxNetCfgWinFilterLimitWorkaround(void)
+{
+    /*
+     * Need to check if the system has a limit of installed filter drivers. If it
+     * has, bump the limit to 14, which the maximum value supported by Windows 7.
+     * Note that we only touch the limit if it is set to the default value (8).
+     * See @bugref{7899}.
+     */
+    HKEY hNetKey;
+    DWORD dwMaxNumFilters = 0;
+    DWORD cbMaxNumFilters = sizeof(dwMaxNumFilters);
+    LONG hr = RegOpenKeyEx(HKEY_LOCAL_MACHINE,
+                           _T("SYSTEM\\CurrentControlSet\\Control\\Network"),
+                           0, KEY_QUERY_VALUE | KEY_SET_VALUE, &hNetKey);
+    if (SUCCEEDED(hr))
+    {
+        hr = RegQueryValueEx(hNetKey, _T("MaxNumFilters"), NULL, NULL,
+                             (LPBYTE)&dwMaxNumFilters, &cbMaxNumFilters);
+        if (SUCCEEDED(hr) && cbMaxNumFilters == sizeof(dwMaxNumFilters) && dwMaxNumFilters == 8)
+        {
+            dwMaxNumFilters = 14;
+            hr = RegSetValueEx(hNetKey, _T("MaxNumFilters"), 0, REG_DWORD,
+                             (LPBYTE)&dwMaxNumFilters, sizeof(dwMaxNumFilters));
+            if (SUCCEEDED(hr))
+                NonStandardLog("Adjusted the installed filter limit to 14...\n");
+            else
+                NonStandardLog("Failed to set MaxNumFilters, error code 0x%x\n", hr);
+        }
+        RegCloseKey(hNetKey);
+    }
+    else
+    {
+        NonStandardLog("Failed to open network key, error code 0x%x\n", hr);
+    }
+
+}
+
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinNetLwfInstall(IN INetCfg *pNc,
+                                                       IN LPCWSTR const pInfFullPath)
+{
+    HRESULT hr = vboxNetCfgWinNetLwfUninstall(pNc, SUOI_FORCEDELETE);
+    if (SUCCEEDED(hr))
+    {
+        VBoxNetCfgWinFilterLimitWorkaround();
+        NonStandardLog("NetLwf will be installed ...\n");
+        hr = vboxNetCfgWinInstallInfAndComponent(pNc, VBOXNETCFGWIN_NETLWF_ID,
+                                                 &GUID_DEVCLASS_NETSERVICE,
+                                                 &pInfFullPath,
+                                                 1,
+                                                 NULL);
+    }
+    return hr;
 }
 
 #define VBOX_CONNECTION_NAME L"VirtualBox Host-Only Network"
@@ -2099,7 +2337,6 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinGenHostonlyConnectionName(PCWSTR DevNam
 {
     const WCHAR * pSuffix = wcsrchr( DevName, L'#' );
     ULONG cbSize = sizeof(VBOX_CONNECTION_NAME);
-    ULONG cbSufSize = 0;
 
     if (pSuffix)
     {
@@ -2125,6 +2362,7 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinGenHostonlyConnectionName(PCWSTR DevNam
 
 static BOOL vboxNetCfgWinAdjustHostOnlyNetworkInterfacePriority(IN INetCfg *pNc, IN INetCfgComponent *pNcc, PVOID pContext)
 {
+    RT_NOREF1(pNc);
     INetCfgComponentBindings *pNetCfgBindings;
     GUID *pGuid = (GUID*)pContext;
 
@@ -2173,6 +2411,25 @@ static BOOL vboxNetCfgWinAdjustHostOnlyNetworkInterfacePriority(IN INetCfg *pNc,
                                             if (FAILED(hr))
                                                 NonStandardLogFlow(("Unable to move interface, hr (0x%x)\n", hr));
                                             bFoundIface = true;
+                                            /*
+                                             * Enable binding paths for host-only adapters bound to bridged filter
+                                             * (see @bugref{8140}).
+                                             */
+                                            HRESULT hr2;
+                                            LPWSTR pwszHwId = NULL;
+                                            if ((hr2 = pNcc->GetId(&pwszHwId)) != S_OK)
+                                                NonStandardLogFlow(("Failed to get HW ID, hr (0x%x)\n", hr2));
+                                            else if (_wcsnicmp(pwszHwId, VBOXNETCFGWIN_NETLWF_ID,
+                                                               sizeof(VBOXNETCFGWIN_NETLWF_ID)/2))
+                                                NonStandardLogFlow(("Ignoring component %ls\n", pwszHwId));
+                                            else if ((hr2 = pNetCfgBindPath->IsEnabled()) != S_FALSE)
+                                                NonStandardLogFlow(("Already enabled binding path, hr (0x%x)\n", hr2));
+                                            else if ((hr2 = pNetCfgBindPath->Enable(TRUE)) != S_OK)
+                                                NonStandardLogFlow(("Failed to enable binding path, hr (0x%x)\n", hr2));
+                                            else
+                                                NonStandardLogFlow(("Enabled binding path\n"));
+                                            if (pwszHwId)
+                                                CoTaskMemFree(pwszHwId);
                                         }
                                     }
                                     pNetCfgCompo->Release();
@@ -2368,12 +2625,14 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRenameConnection (LPWSTR pGuid, PCWSTR 
     if (1) { \
         hrc = E_FAIL; \
         NonStandardLog strAndArgs; \
+        bstrError = bstr_printf strAndArgs; \
         break; \
     } else do {} while (0)
 
 VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const GUID *pGUID, OUT BSTR *pErrMsg)
 {
     HRESULT hrc = S_OK;
+    bstr_t bstrError;
 
     do
     {
@@ -2439,7 +2698,6 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const
         do
         {
             BOOL ok;
-            DWORD ret = 0;
             GUID netGuid;
             SP_DEVINFO_DATA DeviceInfoData;
             DWORD index = 0;
@@ -2450,20 +2708,20 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const
             DeviceInfoData.cbSize = sizeof (SP_DEVINFO_DATA);
 
             /* copy the net class GUID */
-            memcpy (&netGuid, &GUID_DEVCLASS_NET, sizeof (GUID_DEVCLASS_NET));
+            memcpy(&netGuid, &GUID_DEVCLASS_NET, sizeof (GUID_DEVCLASS_NET));
 
             /* return a device info set contains all installed devices of the Net class */
-            hDeviceInfo = SetupDiGetClassDevs (&netGuid, NULL, NULL, DIGCF_PRESENT);
+            hDeviceInfo = SetupDiGetClassDevs(&netGuid, NULL, NULL, DIGCF_PRESENT);
 
             if (hDeviceInfo == INVALID_HANDLE_VALUE)
-                SetErrBreak (("SetupDiGetClassDevs failed (0x%08X)", GetLastError()));
+                SetErrBreak(("SetupDiGetClassDevs failed (0x%08X)", GetLastError()));
 
             /* enumerate the driver info list */
             while (TRUE)
             {
                 TCHAR *deviceHwid;
 
-                ok = SetupDiEnumDeviceInfo (hDeviceInfo, index, &DeviceInfoData);
+                ok = SetupDiEnumDeviceInfo(hDeviceInfo, index, &DeviceInfoData);
 
                 if (!ok)
                 {
@@ -2477,13 +2735,13 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const
                 }
 
                 /* try to get the hardware ID registry property */
-                ok = SetupDiGetDeviceRegistryProperty (hDeviceInfo,
-                                                       &DeviceInfoData,
-                                                       SPDRP_HARDWAREID,
-                                                       NULL,
-                                                       NULL,
-                                                       0,
-                                                       &size);
+                ok = SetupDiGetDeviceRegistryProperty(hDeviceInfo,
+                                                      &DeviceInfoData,
+                                                      SPDRP_HARDWAREID,
+                                                      NULL,
+                                                      NULL,
+                                                      0,
+                                                      &size);
                 if (!ok)
                 {
                     if (GetLastError() != ERROR_INSUFFICIENT_BUFFER)
@@ -2492,17 +2750,17 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const
                         continue;
                     }
 
-                    deviceHwid = (TCHAR *) malloc (size);
-                    ok = SetupDiGetDeviceRegistryProperty (hDeviceInfo,
-                                                           &DeviceInfoData,
-                                                           SPDRP_HARDWAREID,
-                                                           NULL,
-                                                           (PBYTE)deviceHwid,
-                                                           size,
-                                                           NULL);
+                    deviceHwid = (TCHAR *) malloc(size);
+                    ok = SetupDiGetDeviceRegistryProperty(hDeviceInfo,
+                                                          &DeviceInfoData,
+                                                          SPDRP_HARDWAREID,
+                                                          NULL,
+                                                          (PBYTE)deviceHwid,
+                                                          size,
+                                                          NULL);
                     if (!ok)
                     {
-                        free (deviceHwid);
+                        free(deviceHwid);
                         deviceHwid = NULL;
                         index++;
                         continue;
@@ -2517,9 +2775,9 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const
 
                 for (TCHAR *t = deviceHwid;
                      t && *t && t < &deviceHwid[size / sizeof(TCHAR)];
-                     t += _tcslen (t) + 1)
+                     t += _tcslen(t) + 1)
                 {
-                    if (!_tcsicmp (DRIVERHWID, t))
+                    if (!_tcsicmp(DRIVERHWID, t))
                     {
                           /* get the device instance ID */
                           TCHAR devId[MAX_DEVICE_ID_LEN];
@@ -2573,16 +2831,57 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRemoveHostOnlyNetworkInterface(IN const
     }
     while (0);
 
+    if (pErrMsg && bstrError.length())
+        *pErrMsg = bstrError.Detach();
+
     return hrc;
 }
 
-VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinUpdateHostOnlyNetworkInterface(LPCWSTR pcsxwInf, BOOL *pbRebootRequired)
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinUpdateHostOnlyNetworkInterface(LPCWSTR pcsxwInf, BOOL *pbRebootRequired, LPCWSTR pcsxwId)
 {
-    return VBoxDrvCfgDrvUpdate(DRIVERHWID, pcsxwInf, pbRebootRequired);
+    return VBoxDrvCfgDrvUpdate(pcsxwId, pcsxwInf, pbRebootRequired);
 }
 
-VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWSTR pInfPath, IN bool bIsInfPathFile,
-                                                                        OUT GUID *pGuid, OUT BSTR *lppszName, OUT BSTR *pErrMsg)
+static const char *vboxNetCfgWinGetStateText(DWORD dwState)
+{
+    switch (dwState)
+    {
+        case SERVICE_STOPPED: return "is not running";
+        case SERVICE_STOP_PENDING: return "is stopping";
+        case SERVICE_CONTINUE_PENDING: return "continue is pending";
+        case SERVICE_PAUSE_PENDING: return "pause is pending";
+        case SERVICE_PAUSED: return "is paused";
+        case SERVICE_RUNNING: return "is running";
+        case SERVICE_START_PENDING: return "is starting";
+    }
+    return "state is invalid";
+}
+
+static DWORD vboxNetCfgWinGetNetSetupState(SC_HANDLE hService)
+{
+    SERVICE_STATUS status;
+    status.dwCurrentState = SERVICE_RUNNING;
+    if (hService) {
+        if (QueryServiceStatus(hService, &status))
+            NonStandardLogFlow(("NetSetupSvc %s\n", vboxNetCfgWinGetStateText(status.dwCurrentState)));
+        else
+            NonStandardLogFlow(("QueryServiceStatus failed (0x%x)\n", GetLastError()));
+    }
+    return status.dwCurrentState;
+}
+
+DECLINLINE(bool) vboxNetCfgWinIsNetSetupRunning(SC_HANDLE hService)
+{
+    return vboxNetCfgWinGetNetSetupState(hService) == SERVICE_RUNNING;
+}
+
+DECLINLINE(bool) vboxNetCfgWinIsNetSetupStopped(SC_HANDLE hService)
+{
+    return vboxNetCfgWinGetNetSetupState(hService) == SERVICE_STOPPED;
+}
+
+static HRESULT vboxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWSTR pInfPath, IN bool bIsInfPathFile,
+                                                           OUT GUID *pGuid, OUT BSTR *lppszName, OUT BSTR *pErrMsg)
 {
     HRESULT hrc = S_OK;
 
@@ -2590,14 +2889,16 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
     SP_DEVINFO_DATA DeviceInfoData;
     PVOID pQueueCallbackContext = NULL;
     DWORD ret = 0;
-    BOOL found = FALSE;
     BOOL registered = FALSE;
     BOOL destroyList = FALSE;
     WCHAR pWCfgGuidString [50];
     WCHAR DevName[256];
+    HKEY hkey = (HKEY)INVALID_HANDLE_VALUE;
+    bstr_t bstrError;
 
     do
     {
+        BOOL found = FALSE;
         GUID netGuid;
         SP_DRVINFO_DATA DriverInfoData;
         SP_DEVINSTALL_PARAMS DeviceInstallParams;
@@ -2609,7 +2910,6 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
          * of the VBoxNetAdp driver. */
         DWORD detailBuf [2048];
 
-        HKEY hkey = NULL;
         DWORD cbSize;
         DWORD dwValueType;
 
@@ -2869,23 +3169,95 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
             SetErrBreak (("SetupDiCallClassInstaller (DIF_INSTALLDEVICE) failed (0x%08X)",
                           GetLastError()));
 
-        /* Figure out NetCfgInstanceId */
-        hkey = SetupDiOpenDevRegKey(hDeviceInfo,
-                                    &DeviceInfoData,
-                                    DICS_FLAG_GLOBAL,
-                                    0,
-                                    DIREG_DRV,
-                                    KEY_READ);
+        /* Query the instance ID; on Windows 10, the registry key may take a short
+         * while to appear. Microsoft recommends waiting for up to 5 seconds, but
+         * we want to be on the safe side, so let's wait for 20 seconds. Waiting
+         * longer is harmful as network setup service will shut down after a period
+         * of inactivity.
+         */
+        for (int retries = 0; retries < 2 * 20; ++retries)
+        {
+            Sleep(500); /* half second */
+
+            /* Figure out NetCfgInstanceId */
+            hkey = SetupDiOpenDevRegKey(hDeviceInfo,
+                                        &DeviceInfoData,
+                                        DICS_FLAG_GLOBAL,
+                                        0,
+                                        DIREG_DRV,
+                                        KEY_READ);
+            if (hkey == INVALID_HANDLE_VALUE)
+                break;
+
+            cbSize = sizeof(pWCfgGuidString);
+            ret = RegQueryValueExW (hkey, L"NetCfgInstanceId", NULL,
+                                   &dwValueType, (LPBYTE) pWCfgGuidString, &cbSize);
+            /* As long as the return code is FILE_NOT_FOUND, sleep and retry. */
+            if (ret != ERROR_FILE_NOT_FOUND)
+                break;
+
+            RegCloseKey (hkey);
+            hkey = (HKEY)INVALID_HANDLE_VALUE;
+        }
+
+        if (ret == ERROR_FILE_NOT_FOUND)
+        {
+            hrc = E_ABORT;
+            break;
+        }
+
+        /*
+         * We need to check 'hkey' after we check 'ret' to distinguish the case
+         * of failed SetupDiOpenDevRegKey from the case when we timed out.
+         */
         if (hkey == INVALID_HANDLE_VALUE)
             SetErrBreak(("SetupDiOpenDevRegKey failed (0x%08X)", GetLastError()));
 
-        cbSize = sizeof(pWCfgGuidString);
-        DWORD ret;
-        ret = RegQueryValueExW (hkey, L"NetCfgInstanceId", NULL,
-                               &dwValueType, (LPBYTE) pWCfgGuidString, &cbSize);
+        if (ret != ERROR_SUCCESS)
+            SetErrBreak(("Querying NetCfgInstanceId failed (0x%08X)", ret));
 
+        NET_LUID luid;
+        HRESULT hSMRes = vboxNetCfgWinGetInterfaceLUID(hkey, &luid);
+
+        /* Close the key as soon as possible. See @bugref{7973}. */
         RegCloseKey (hkey);
+        hkey = (HKEY)INVALID_HANDLE_VALUE;
 
+        if (FAILED(hSMRes))
+        {
+            /*
+            *   The setting of Metric is not very important functionality,
+            *   So we will not break installation process due to this error.
+            */
+            NonStandardLogFlow(("vboxNetCfgWinCreateHostOnlyNetworkInterface Warning! "
+                                "vboxNetCfgWinGetInterfaceLUID failed, default metric "
+                                "for new interface will not be set, hr (0x%x)\n", hSMRes));
+        }
+        else
+        {
+            /*
+             *   Set default metric value of interface to fix multicast issue
+             *   See @bugref{6379} for details.
+             */
+            hSMRes = vboxNetCfgWinSetupMetric(&luid);
+            if (FAILED(hSMRes))
+            {
+                /*
+                 *   The setting of Metric is not very important functionality,
+                 *   So we will not break installation process due to this error.
+                 */
+                NonStandardLogFlow(("vboxNetCfgWinCreateHostOnlyNetworkInterface Warning! "
+                                    "vboxNetCfgWinSetupMetric failed, default metric "
+                                    "for new interface will not be set, hr (0x%x)\n", hSMRes));
+            }
+        }
+
+
+#ifndef VBOXNETCFG_DELAYEDRENAME
+        /*
+         * We need to query the device name after we have succeeded in querying its
+         * instance ID to avoid similar waiting-and-retrying loop (see @bugref{7973}).
+         */
         if (!SetupDiGetDeviceRegistryPropertyW(hDeviceInfo, &DeviceInfoData,
                                                SPDRP_FRIENDLYNAME , /* IN DWORD Property,*/
                                                NULL, /*OUT PDWORD PropertyRegDataType, OPTIONAL*/
@@ -2913,12 +3285,21 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
                                               err));
             }
         }
+#else /* !VBOXNETCFG_DELAYEDRENAME */
+        /* Re-use DevName for device instance id retrieval. */
+        if (!SetupDiGetDeviceInstanceId(hDeviceInfo, &DeviceInfoData, DevName, RT_ELEMENTS(DevName), &cbSize))
+            SetErrBreak (("SetupDiGetDeviceInstanceId failed (0x%08X)",
+                          GetLastError()));
+#endif /* !VBOXNETCFG_DELAYEDRENAME */
     }
     while (0);
 
     /*
      * cleanup
      */
+    if (hkey != INVALID_HANDLE_VALUE)
+        RegCloseKey (hkey);
+
     if (pQueueCallbackContext)
         SetupTermDefaultQueueCallback(pQueueCallbackContext);
 
@@ -2928,7 +3309,7 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
         if (ret != 0 && registered)
             SetupDiCallClassInstaller(DIF_REMOVE, hDeviceInfo, &DeviceInfoData);
 
-        found = SetupDiDeleteDeviceInfo(hDeviceInfo, &DeviceInfoData);
+        SetupDiDeleteDeviceInfo(hDeviceInfo, &DeviceInfoData);
 
         /* destroy the driver info list */
         if (destroyList)
@@ -2941,13 +3322,17 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
     /* return the network connection GUID on success */
     if (SUCCEEDED(hrc))
     {
-        WCHAR ConnectoinName[128];
-        ULONG cbName = sizeof(ConnectoinName);
+        HRESULT hr;
+        INetCfg *pNetCfg = NULL;
+        LPWSTR lpszApp = NULL;
+#ifndef VBOXNETCFG_DELAYEDRENAME
+        WCHAR ConnectionName[128];
+        ULONG cbName = sizeof(ConnectionName);
 
-        HRESULT hr = VBoxNetCfgWinGenHostonlyConnectionName(DevName, ConnectoinName, &cbName);
+        hr = VBoxNetCfgWinGenHostonlyConnectionName(DevName, ConnectionName, &cbName);
         if (SUCCEEDED(hr))
-            hr = VBoxNetCfgWinRenameConnection(pWCfgGuidString, ConnectoinName);
-
+            hr = VBoxNetCfgWinRenameConnection(pWCfgGuidString, ConnectionName);
+#endif
         if (lppszName)
         {
             *lppszName = SysAllocString((const OLECHAR *) DevName);
@@ -2965,11 +3350,9 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
                 NonStandardLogFlow(("CLSIDFromString failed, hrc (0x%x)\n", hrc));
         }
 
-        INetCfg *pNetCfg = NULL;
-        LPWSTR lpszApp = NULL;
         hr = VBoxNetCfgWinQueryINetCfg(&pNetCfg, TRUE, L"VirtualBox Host-Only Creation",
                                        30 * 1000, /* on Vista we often get 6to4svc.dll holding the lock, wait for 30 sec.  */
-                                       /* TODO: special handling for 6to4svc.dll ???, i.e. several retrieves */
+                                       /** @todo special handling for 6to4svc.dll ???, i.e. several retrieves */
                                        &lpszApp);
         if (hr == S_OK)
         {
@@ -3006,8 +3389,289 @@ VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWS
         else
             NonStandardLogFlow(("VBoxNetCfgWinQueryINetCfg failed, hr 0x%x\n", hr));
     }
+
+    if (pErrMsg && bstrError.length())
+        *pErrMsg = bstrError.Detach();
+
     return hrc;
 }
+
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinCreateHostOnlyNetworkInterface(IN LPCWSTR pInfPath, IN bool bIsInfPathFile,
+                                                                        OUT GUID *pGuid, OUT BSTR *lppszName, OUT BSTR *pErrMsg)
+{
+    HRESULT hrc = vboxNetCfgWinCreateHostOnlyNetworkInterface(pInfPath, bIsInfPathFile, pGuid, lppszName, pErrMsg);
+    if (hrc == E_ABORT)
+    {
+        NonStandardLogFlow(("Timed out while waiting for NetCfgInstanceId, try again immediately...\n"));
+        /*
+         * This is the first time we fail to obtain NetCfgInstanceId, let us
+         * retry it once. It is needed to handle the situation when network
+         * setup fails to recognize the arrival of our device node while it
+         * is busy removing another host-only interface, and it gets stuck
+         * with no matching network interface created for our device node.
+         * See @bugref{7973} for details.
+         */
+        hrc = vboxNetCfgWinCreateHostOnlyNetworkInterface(pInfPath, bIsInfPathFile, pGuid, lppszName, pErrMsg);
+        if (hrc == E_ABORT)
+        {
+            NonStandardLogFlow(("Timed out again while waiting for NetCfgInstanceId, try again after a while...\n"));
+            /*
+             * This is the second time we fail to obtain NetCfgInstanceId, let us
+             * retry it once more. This time we wait to network setup service
+             * to go down before retrying. Hopefully it will resolve all error
+             * conditions. See @bugref{7973} for details.
+             */
+
+            SC_HANDLE hSCM = NULL;
+            SC_HANDLE hService = NULL;
+
+            hSCM = OpenSCManager(NULL, NULL, GENERIC_READ);
+            if (hSCM)
+            {
+                hService = OpenService(hSCM, _T("NetSetupSvc"), GENERIC_READ);
+                if (hService)
+                {
+                    for (int retries = 0; retries < 60 && !vboxNetCfgWinIsNetSetupStopped(hService); ++retries)
+                        Sleep(1000);
+                    CloseServiceHandle(hService);
+                    hrc = vboxNetCfgWinCreateHostOnlyNetworkInterface(pInfPath, bIsInfPathFile, pGuid, lppszName, pErrMsg);
+                }
+                else
+                    NonStandardLogFlow(("OpenService failed (0x%x)\n", GetLastError()));
+                CloseServiceHandle(hSCM);
+            }
+            else
+                NonStandardLogFlow(("OpenSCManager failed (0x%x)", GetLastError()));
+            /* Give up and report the error. */
+            if (hrc == E_ABORT)
+            {
+                if (pErrMsg)
+                {
+                    bstr_t bstrError = bstr_printf("Querying NetCfgInstanceId failed (0x%08X)", ERROR_FILE_NOT_FOUND);
+                    *pErrMsg = bstrError.Detach();
+                }
+                hrc = E_FAIL;
+            }
+        }
+    }
+    return hrc;
+}
+
+
+HRESULT vboxLoadIpHelpFunctions(HINSTANCE& pIpHlpInstance)
+{
+    Assert(pIpHlpInstance != NULL);
+
+    pIpHlpInstance = loadSystemDll("Iphlpapi.dll");
+    if (pIpHlpInstance == NULL)
+        return E_FAIL;
+
+    g_pfnInitializeIpInterfaceEntry =
+        (PFNINITIALIZEIPINTERFACEENTRY)GetProcAddress(pIpHlpInstance, "InitializeIpInterfaceEntry");
+    Assert(g_pfnInitializeIpInterfaceEntry);
+
+    if (g_pfnInitializeIpInterfaceEntry)
+    {
+        g_pfnGetIpInterfaceEntry =
+            (PFNGETIPINTERFACEENTRY)GetProcAddress(pIpHlpInstance, "GetIpInterfaceEntry");
+        Assert(g_pfnGetIpInterfaceEntry);
+    }
+
+    if (g_pfnGetIpInterfaceEntry)
+    {
+        g_pfnSetIpInterfaceEntry =
+            (PFNSETIPINTERFACEENTRY)GetProcAddress(pIpHlpInstance, "SetIpInterfaceEntry");
+        Assert(g_pfnSetIpInterfaceEntry);
+    }
+
+    if (g_pfnInitializeIpInterfaceEntry == NULL)
+    {
+        FreeLibrary(pIpHlpInstance);
+        pIpHlpInstance = NULL;
+        return E_FAIL;
+    }
+
+    return S_OK;
+}
+
+
+HRESULT vboxNetCfgWinGetLoopbackMetric(OUT int* Metric)
+{
+    HRESULT rc = S_OK;
+    MIB_IPINTERFACE_ROW row;
+
+    Assert(g_pfnInitializeIpInterfaceEntry != NULL);
+    Assert(g_pfnGetIpInterfaceEntry != NULL);
+
+    g_pfnInitializeIpInterfaceEntry(&row);
+    row.Family = AF_INET;
+    row.InterfaceLuid.Info.IfType = IF_TYPE_SOFTWARE_LOOPBACK;
+
+    rc = g_pfnGetIpInterfaceEntry(&row);
+    if (rc != NO_ERROR)
+        return HRESULT_FROM_WIN32(rc);
+
+    *Metric = row.Metric;
+
+    return rc;
+}
+
+
+HRESULT vboxNetCfgWinSetInterfaceMetric(
+    IN NET_LUID* pInterfaceLuid,
+    IN DWORD metric)
+{
+    MIB_IPINTERFACE_ROW newRow;
+
+    Assert(g_pfnInitializeIpInterfaceEntry != NULL);
+    Assert(g_pfnSetIpInterfaceEntry != NULL);
+
+    g_pfnInitializeIpInterfaceEntry(&newRow);
+    // identificate the interface to change
+    newRow.InterfaceLuid = *pInterfaceLuid;
+    newRow.Family = AF_INET;
+    // changed settings
+    newRow.UseAutomaticMetric = false;
+    newRow.Metric = metric;
+
+    // change settings
+    return HRESULT_FROM_WIN32(g_pfnSetIpInterfaceEntry(&newRow));
+}
+
+
+HRESULT vboxNetCfgWinGetInterfaceLUID(IN HKEY hKey, OUT NET_LUID* pLUID)
+{
+    HRESULT res = S_OK;
+    DWORD luidIndex = 0;
+    DWORD ifType = 0;
+    DWORD cbSize = sizeof(luidIndex);
+    DWORD dwValueType = REG_DWORD;
+
+    if (pLUID == NULL)
+        return E_INVALIDARG;
+
+    res = RegQueryValueExW(hKey, L"NetLuidIndex", NULL,
+        &dwValueType, (LPBYTE)&luidIndex, &cbSize);
+    if (res != 0)
+        return HRESULT_FROM_WIN32(res);
+
+    cbSize = sizeof(ifType);
+    dwValueType = REG_DWORD;
+    res = RegQueryValueExW(hKey, L"*IfType", NULL,
+        &dwValueType, (LPBYTE)&ifType, &cbSize);
+    if (res != 0)
+        return HRESULT_FROM_WIN32(res);
+
+    ZeroMemory(pLUID, sizeof(NET_LUID));
+    pLUID->Info.IfType = ifType;
+    pLUID->Info.NetLuidIndex = luidIndex;
+
+    return res;
+}
+
+
+HRESULT vboxNetCfgWinSetupMetric(IN NET_LUID* pLuid)
+{
+    HINSTANCE hModule = NULL;
+    HRESULT rc = vboxLoadIpHelpFunctions(hModule);
+    if (SUCCEEDED(rc))
+    {
+        int loopbackMetric;
+        rc = vboxNetCfgWinGetLoopbackMetric(&loopbackMetric);
+        if (SUCCEEDED(rc))
+            rc = vboxNetCfgWinSetInterfaceMetric(pLuid, loopbackMetric - 1);
+    }
+
+    g_pfnInitializeIpInterfaceEntry = NULL;
+    g_pfnSetIpInterfaceEntry = NULL;
+    g_pfnGetIpInterfaceEntry = NULL;
+
+    FreeLibrary(hModule);
+    return rc;
+}
+#ifdef VBOXNETCFG_DELAYEDRENAME
+VBOXNETCFGWIN_DECL(HRESULT) VBoxNetCfgWinRenameHostOnlyConnection(IN const GUID *pGuid, IN LPCWSTR pwszId, OUT BSTR *pDevName)
+{
+    HRESULT hr = S_OK;
+    WCHAR wszDevName[256];
+    WCHAR wszConnectionNewName[128];
+    ULONG cbName = sizeof(wszConnectionNewName);
+
+    HDEVINFO hDevInfo = SetupDiCreateDeviceInfoList(&GUID_DEVCLASS_NET, NULL);
+    if (hDevInfo != INVALID_HANDLE_VALUE)
+    {
+        SP_DEVINFO_DATA DevInfoData;
+
+        DevInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+        if (SetupDiOpenDeviceInfo(hDevInfo, pwszId, NULL, 0, &DevInfoData))
+        {
+            DWORD err = ERROR_SUCCESS;
+            if (!SetupDiGetDeviceRegistryPropertyW(hDevInfo, &DevInfoData,
+                                                   SPDRP_FRIENDLYNAME, NULL,
+                                                   (PBYTE)wszDevName, RT_ELEMENTS(wszDevName), NULL))
+            {
+                err = GetLastError();
+                if (err == ERROR_INVALID_DATA)
+                {
+                    err = SetupDiGetDeviceRegistryPropertyW(hDevInfo, &DevInfoData,
+                                                            SPDRP_DEVICEDESC, NULL,
+                                                            (PBYTE)wszDevName, RT_ELEMENTS(wszDevName), NULL)
+                        ? ERROR_SUCCESS
+                        : GetLastError();
+                }
+            }
+            if (err == ERROR_SUCCESS)
+            {
+                hr = VBoxNetCfgWinGenHostonlyConnectionName(wszDevName, wszConnectionNewName, &cbName);
+                if (SUCCEEDED(hr))
+                {
+                    WCHAR wszGuid[50];
+                    int cbWGuid = StringFromGUID2(*pGuid, wszGuid, RT_ELEMENTS(wszGuid));
+                    if (cbWGuid)
+                    {
+                        hr = VBoxNetCfgWinRenameConnection(wszGuid, wszConnectionNewName);
+                        if (FAILED(hr))
+                            NonStandardLogFlow(("VBoxNetCfgWinRenameHostOnlyConnection: VBoxNetCfgWinRenameConnection failed (0x%x)\n", hr));
+                    }
+                    else
+                    {
+                        err = GetLastError();
+                        hr = HRESULT_FROM_WIN32(err);
+                        if (SUCCEEDED(hr))
+                            hr = E_FAIL;
+                        NonStandardLogFlow(("StringFromGUID2 failed err=%u, hr=0x%x\n", err, hr));
+                    }
+                }
+                else
+                    NonStandardLogFlow(("VBoxNetCfgWinRenameHostOnlyConnection: VBoxNetCfgWinGenHostonlyConnectionName failed (0x%x)\n", hr));
+                if (SUCCEEDED(hr) && pDevName)
+                {
+                    *pDevName = SysAllocString((const OLECHAR *)wszDevName);
+                    if (!*pDevName)
+                    {
+                        NonStandardLogFlow(("SysAllocString failed\n"));
+                        hr = HRESULT_FROM_WIN32(ERROR_NOT_ENOUGH_MEMORY);
+                    }
+                }
+            }
+            else
+            {
+                hr = HRESULT_FROM_WIN32(err);
+                NonStandardLogFlow(("VBoxNetCfgWinRenameHostOnlyConnection: SetupDiGetDeviceRegistryPropertyW failed (0x%x)\n", err));
+            }
+        }
+        else
+        {
+            DWORD err = GetLastError();
+            hr = HRESULT_FROM_WIN32(err);
+            NonStandardLogFlow(("VBoxNetCfgWinRenameHostOnlyConnection: SetupDiOpenDeviceInfo failed (0x%x)\n", err));
+        }
+        SetupDiDestroyDeviceInfoList(hDevInfo);
+    }
+
+    return hr;
+}
+#endif /* VBOXNETCFG_DELAYEDRENAME */
 
 #undef SetErrBreak
 

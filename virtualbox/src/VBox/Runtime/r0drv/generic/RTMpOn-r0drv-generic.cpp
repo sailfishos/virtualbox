@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2010 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/mp.h>
 #include "internal/iprt.h"
 
@@ -42,6 +42,13 @@ RTDECL(int) RTMpOnAll(PFNRTMPWORKER pfnWorker, void *pvUser1, void *pvUser2)
     return VERR_NOT_SUPPORTED;
 }
 RT_EXPORT_SYMBOL(RTMpOnAll);
+
+
+RTDECL(bool) RTMpOnAllIsConcurrentSafe(void)
+{
+    return false;
+}
+RT_EXPORT_SYMBOL(RTMpOnAllIsConcurrentSafe);
 
 
 RTDECL(int) RTMpOnOthers(PFNRTMPWORKER pfnWorker, void *pvUser1, void *pvUser2)
@@ -63,4 +70,24 @@ RTDECL(int) RTMpOnSpecific(RTCPUID idCpu, PFNRTMPWORKER pfnWorker, void *pvUser1
     return VERR_NOT_SUPPORTED;
 }
 RT_EXPORT_SYMBOL(RTMpOnSpecific);
+
+
+RTDECL(int) RTMpOnPair(RTCPUID idCpu1, RTCPUID idCpu2, PFNRTMPWORKER pfnWorker, void *pvUser1, void *pvUser2)
+{
+    NOREF(idCpu1);
+    NOREF(idCpu2);
+    NOREF(pfnWorker);
+    NOREF(pvUser1);
+    NOREF(pvUser2);
+    return VERR_NOT_SUPPORTED;
+}
+RT_EXPORT_SYMBOL(RTMpOnPair);
+
+
+
+RTDECL(bool) RTMpOnPairIsConcurrentExecSupported(void)
+{
+    return false;
+}
+RT_EXPORT_SYMBOL(RTMpOnPairIsConcurrentExecSupported);
 

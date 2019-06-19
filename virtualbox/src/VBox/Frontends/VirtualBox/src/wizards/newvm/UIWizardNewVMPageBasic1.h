@@ -1,11 +1,10 @@
+/* $Id: UIWizardNewVMPageBasic1.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardNewVMPageBasic1 class declaration
+ * VBox Qt GUI - UIWizardNewVMPageBasic1 class declaration.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -43,16 +42,19 @@ protected:
     bool createMachineFolder();
     bool cleanupMachineFolder();
 
-    /* Stuff for 'machineFolder' field: */
+    /** Returns the machine folder value. */
     QString machineFolder() const { return m_strMachineFolder; }
+    /** Defines the @a strMachineFolder value. */
     void setMachineFolder(const QString &strMachineFolder) { m_strMachineFolder = strMachineFolder; }
 
-    /* Stuff for 'machineBaseName' field: */
+    /** Returns the machine base-name value. */
     QString machineBaseName() const { return m_strMachineBaseName; }
+    /** Defines the @a strMachineBaseName value. */
     void setMachineBaseName(const QString &strMachineBaseName) { m_strMachineBaseName = strMachineBaseName; }
 
-    /* Variables: */
+    /** Holds the machine folder value. */
     QString m_strMachineFolder;
+    /** Holds the machine base-name value. */
     QString m_strMachineBaseName;
 
     /* Widgets: */

@@ -1,11 +1,10 @@
+/* $Id: UIGDetailsGroup.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetailsGroup class declaration
+ * VBox Qt GUI - UIGDetailsGroup class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -68,6 +67,9 @@ private:
         GroupData_Spacing
     };
 
+    /** Returns the description of the item. */
+    virtual QString description() const /* override */ { return QString(); }
+
     /* Data provider: */
     QVariant data(int iKey) const;
 
@@ -80,7 +82,6 @@ private:
 
     /* Helpers: Prepare stuff: */
     void prepareConnections();
-    void loadSettings();
 
     /* Helpers: Layout stuff: */
     void updateGeometry();
@@ -95,7 +96,6 @@ private:
     QList<UIVMItem*> m_machineItems;
     UIBuildStep *m_pBuildStep;
     QString m_strGroupId;
-    QStringList m_settings;
 
     /* Friends: */
     friend class UIGDetailsModel;

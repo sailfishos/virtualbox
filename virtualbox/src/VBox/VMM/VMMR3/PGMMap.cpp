@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PGM
 #include <VBox/vmm/dbgf.h>
 #include <VBox/vmm/pgm.h>
@@ -33,9 +33,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifndef PGM_WITHOUT_MAPPINGS
 static void pgmR3MapClearPDEs(PVM pVM, PPGMMAPPING pMap, unsigned iOldPDE);
 static void pgmR3MapSetPDEs(PVM pVM, PPGMMAPPING pMap, unsigned iNewPDE);
@@ -51,7 +51,7 @@ static void pgmR3MapIntermediateDoOne(PVM pVM, uintptr_t uAddress, RTHCPHYS HCPh
  * Creates a page table based mapping in GC.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   GCPtr           Virtual Address. (Page table aligned!)
  * @param   cb              Size of the range. Must be a 4MB aligned!
  * @param   fFlags          PGMR3MAPPT_FLAGS_UNMAPPABLE or 0.
@@ -66,13 +66,11 @@ VMMR3DECL(int) PGMR3MapPT(PVM pVM, RTGCPTR GCPtr, uint32_t cb, uint32_t fFlags, 
 
     /*
      * Validate input.
+     * Note! The lower limit (1 MB) matches how pgmR3PhysMMIOExCreate works.
      */
     Assert(!fFlags || fFlags == PGMR3MAPPT_FLAGS_UNMAPPABLE);
-    if (cb < _2M || cb > 64 * _1M)
-    {
-        AssertMsgFailed(("Serious? cb=%d\n", cb));
-        return VERR_INVALID_PARAMETER;
-    }
+    AssertMsgReturn(cb >= _1M && cb <= _64M, ("Seriously? cb=%d (%#x)\n", cb, cb), VERR_OUT_OF_RANGE);
+
     cb = RT_ALIGN_32(cb, _4M);
     RTGCPTR GCPtrLast = GCPtr + cb - 1;
 
@@ -126,9 +124,9 @@ VMMR3DECL(int) PGMR3MapPT(PVM pVM, RTGCPTR GCPtr, uint32_t cb, uint32_t fFlags, 
     PPGMMAPPING pNew;
     int rc;
     if (fFlags & PGMR3MAPPT_FLAGS_UNMAPPABLE)
-        rc = MMHyperAlloc(           pVM, RT_OFFSETOF(PGMMAPPING, aPTs[cPTs]), 0, MM_TAG_PGM_MAPPINGS, (void **)&pNew);
+        rc = MMHyperAlloc(           pVM, RT_UOFFSETOF_DYN(PGMMAPPING, aPTs[cPTs]), 0, MM_TAG_PGM_MAPPINGS, (void **)&pNew);
     else
-        rc = MMR3HyperAllocOnceNoRel(pVM, RT_OFFSETOF(PGMMAPPING, aPTs[cPTs]), 0, MM_TAG_PGM_MAPPINGS, (void **)&pNew);
+        rc = MMR3HyperAllocOnceNoRel(pVM, RT_UOFFSETOF_DYN(PGMMAPPING, aPTs[cPTs]), 0, MM_TAG_PGM_MAPPINGS, (void **)&pNew);
     if (RT_FAILURE(rc))
         return rc;
     pNew->GCPtr         = GCPtr;
@@ -220,7 +218,7 @@ VMMR3DECL(int) PGMR3MapPT(PVM pVM, RTGCPTR GCPtr, uint32_t cb, uint32_t fFlags, 
  * Removes a page table based mapping.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   GCPtr   Virtual Address. (Page table aligned!)
  *
  * @remarks Don't call this without passing PGMR3MAPPT_FLAGS_UNMAPPABLE to
@@ -296,7 +294,7 @@ VMMR3DECL(int)  PGMR3UnmapPT(PVM pVM, RTGCPTR GCPtr)
  * We're talking 32-bit PDEs here.
  *
  * @returns true/false.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   iPD         The first PDE in the range.
  * @param   cPTs        The number of PDEs in the range.
  */
@@ -320,7 +318,7 @@ DECLINLINE(bool) pgmR3AreIntermediatePDEsUnused(PVM pVM, unsigned iPD, unsigned 
  *
  * The mapping *must* be in the list.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pMapping        The mapping to unlink.
  */
 static void pgmR3MapUnlink(PVM pVM, PPGMMAPPING pMapping)
@@ -352,7 +350,7 @@ static void pgmR3MapUnlink(PVM pVM, PPGMMAPPING pMapping)
 /**
  * Links the mapping.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   pMapping        The mapping to linked.
  */
 static void pgmR3MapLink(PVM pVM, PPGMMAPPING pMapping)
@@ -399,7 +397,7 @@ static void pgmR3MapLink(PVM pVM, PPGMMAPPING pMapping)
  * intermediate paging structures, relocating all the mappings in the process.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @thread  EMT(0)
  */
 VMMR3DECL(int) PGMR3FinalizeMappings(PVM pVM)
@@ -485,7 +483,7 @@ VMMR3DECL(int) PGMR3FinalizeMappings(PVM pVM)
  * put next to one another.
  *
  * @returns VBox status code.
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   pcb     Where to store the size.
  */
 VMMR3DECL(int) PGMR3MappingsSize(PVM pVM, uint32_t *pcb)
@@ -494,6 +492,8 @@ VMMR3DECL(int) PGMR3MappingsSize(PVM pVM, uint32_t *pcb)
 #ifndef PGM_WITHOUT_MAPPINGS
     for (PPGMMAPPING pCur = pVM->pgm.s.pMappingsR3; pCur; pCur = pCur->pNextR3)
         cb += pCur->cb;
+#else
+    RT_NOREF(pVM);
 #endif
 
     *pcb = cb;
@@ -507,7 +507,7 @@ VMMR3DECL(int) PGMR3MappingsSize(PVM pVM, uint32_t *pcb)
  * Fixates the guest context mappings in a range reserved from the Guest OS.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtrBase   The address of the reserved range of guest memory.
  * @param   cb          The size of the range starting at GCPtrBase.
  */
@@ -533,7 +533,10 @@ VMMR3DECL(int) PGMR3MappingsFix(PVM pVM, RTGCPTR GCPtrBase, uint32_t cb)
 
         return pgmR3MappingsFixInternal(pVM, GCPtrBase, cb);
     }
-#endif /* !PGM_WITHOUT_MAPPINGS */
+
+#else  /* PGM_WITHOUT_MAPPINGS */
+    RT_NOREF(pVM, GCPtrBase, cb);
+#endif /* PGM_WITHOUT_MAPPINGS */
 
     Assert(HMIsEnabled(pVM));
     return VINF_SUCCESS;
@@ -547,7 +550,7 @@ VMMR3DECL(int) PGMR3MappingsFix(PVM pVM, RTGCPTR GCPtrBase, uint32_t cb)
  * (This does not perform a SyncCR3 before the fixation like PGMR3MappingsFix.)
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   GCPtrBase   The address of the reserved range of guest memory.
  * @param   cb          The size of the range starting at GCPtrBase.
  */
@@ -691,7 +694,7 @@ int pgmR3MappingsFixInternal(PVM pVM, RTGCPTR GCPtrBase, uint32_t cb)
  * take place afterwards.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  */
 VMMR3DECL(int) PGMR3MappingsUnfix(PVM pVM)
 {
@@ -720,7 +723,7 @@ VMMR3DECL(int) PGMR3MappingsUnfix(PVM pVM)
  * Checks if the mappings needs re-fixing after a restore.
  *
  * @returns true if they need, false if not.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  */
 VMMR3DECL(bool) PGMR3MappingsNeedReFixing(PVM pVM)
 {
@@ -737,7 +740,7 @@ VMMR3DECL(bool) PGMR3MappingsNeedReFixing(PVM pVM)
  * address (for identity mapping).
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   Addr        Intermediate context address of the mapping.
  * @param   HCPhys      Start of the range of physical pages. This must be entriely below 4GB!
  * @param   cbPages     Number of bytes to map.
@@ -802,7 +805,7 @@ VMMR3DECL(int) PGMR3MapIntermediate(PVM pVM, RTUINTPTR Addr, RTHCPHYS HCPhys, un
  * Validates that there are no conflicts for this mapping into the intermediate context.
  *
  * @returns VBox status code.
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   uAddress        Address of the mapping.
  * @param   cPages          Number of pages.
  * @param   pPTDefault      Pointer to the default page table for this mapping.
@@ -884,7 +887,7 @@ static int pgmR3MapIntermediateCheckOne(PVM pVM, uintptr_t uAddress, unsigned cP
 /**
  * Sets up the intermediate page tables for a verified mapping.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   uAddress        Address of the mapping.
  * @param   HCPhys          The physical address of the page range.
  * @param   cPages          Number of pages.
@@ -941,7 +944,7 @@ static void pgmR3MapIntermediateDoOne(PVM pVM, uintptr_t uAddress, RTHCPHYS HCPh
 /**
  * Clears all PDEs involved with the mapping in the shadow and intermediate page tables.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pMap        Pointer to the mapping in question.
  * @param   iOldPDE     The index of the 32-bit PDE corresponding to the base of the mapping.
  */
@@ -981,7 +984,7 @@ static void pgmR3MapClearPDEs(PVM pVM, PPGMMAPPING pMap, unsigned iOldPDE)
 /**
  * Sets all PDEs involved with the mapping in the shadow and intermediate page tables.
  *
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pMap        Pointer to the mapping in question.
  * @param   iNewPDE     The index of the 32-bit PDE corresponding to the base of the mapping.
  */
@@ -1036,7 +1039,7 @@ static void pgmR3MapSetPDEs(PVM pVM, PPGMMAPPING pMap, unsigned iNewPDE)
 /**
  * Relocates a mapping to a new address.
  *
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pMapping            The mapping to relocate.
  * @param   GCPtrOldMapping     The address of the start of the old mapping.
  *                              NIL_RTGCPTR if not currently mapped.
@@ -1158,7 +1161,7 @@ bool pgmR3MapIsKnownConflictAddress(PPGMMAPPING pMapping, RTGCPTR GCPtr)
  * the Guest OS page tables. (32 bits version)
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pMapping            The mapping which conflicts.
  * @param   pPDSrc              The page directory of the guest OS.
  * @param   GCPtrOldMapping     The address of the start of the current mapping.
@@ -1225,6 +1228,26 @@ int pgmR3SyncPTResolveConflict(PVM pVM, PPGMMAPPING pMapping, PX86PD pPDSrc, RTG
     }
 
     STAM_PROFILE_STOP(&pVM->pgm.s.CTX_SUFF(pStats)->StatR3ResolveConflict, a);
+#ifdef DEBUG_bird
+    /*
+     * Ended up here frequently recently with an NT4.0 VM (using SMP kernel).
+     *
+     * The problem is when enabling large pages (i.e. updating CR4) using the
+     * _Ki386EnableCurrentLargePage@8 assembly routine (address 0x801c97ad-9).
+     * The routine loads a sparsely popuplated page tables with identiy mappings
+     * of its own code, most entries are whatever ExAllocatePool returned, which
+     * is documented as undefined but all 0xffffffff in this case.  Once loaded,
+     * it jumps to the physical code address, disables paging, set CR4.PSE=1,
+     * re-enables paging, restore the original page table and returns successfully.
+     *
+     * Theory: if CSAM/PATM patches the pushf;cli;mov eax,cr3; sequence, at the
+     * start of that function we're apparently in trouble, if CSAM/PATM doesn't
+     * we're switching back to REM and doing disabling of paging there instead.
+     *
+     * Normal PD: CR3=00030000; Problematic identity mapped PD: CR3=0x5fa000.
+     */
+    DBGFSTOP(pVM);
+#endif
     AssertMsgFailed(("Failed to relocate page table mapping '%s' from %#x! (cPTs=%d)\n", pMapping->pszDesc, GCPtrOldMapping, cPTs));
     return VERR_PGM_NO_HYPERVISOR_ADDRESS;
 }
@@ -1235,7 +1258,7 @@ int pgmR3SyncPTResolveConflict(PVM pVM, PPGMMAPPING pMapping, PX86PD pPDSrc, RTG
  * the Guest OS page tables. (PAE bits version)
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pMapping            The mapping which conflicts.
  * @param   GCPtrOldMapping     The address of the start of the current mapping.
  */
@@ -1327,8 +1350,8 @@ int pgmR3SyncPTResolveConflictPAE(PVM pVM, PPGMMAPPING pMapping, RTGCPTR GCPtrOl
  * since we don't necessarily know how to convert that physical address
  * to a HC virtual one.
  *
- * @returns VBox status.
- * @param   pVM         Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM         The cross context VM structure.
  * @param   pvDst       The destination address (HC of course).
  * @param   GCPtrSrc    The source address (GC virtual address).
  * @param   cb          Number of bytes to read.
@@ -1409,6 +1432,7 @@ VMMR3DECL(int) PGMR3MapRead(PVM pVM, void *pvDst, RTGCPTR GCPtrSrc, size_t cb)
 /**
  * Info callback for 'pgmhandlers'.
  *
+ * @param   pVM         The cross context VM structure.
  * @param   pHlp        The output helpers.
  * @param   pszArgs     The arguments. phys or virt.
  */

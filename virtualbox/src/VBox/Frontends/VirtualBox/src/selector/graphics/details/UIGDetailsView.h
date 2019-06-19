@@ -1,11 +1,10 @@
+/* $Id: UIGDetailsView.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetailsView class declaration
+ * VBox Qt GUI - UIGDetailsView class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -19,11 +18,15 @@
 #ifndef __UIGDetailsView_h__
 #define __UIGDetailsView_h__
 
-/* Qt includes: */
-#include <QGraphicsView>
+/* GUI includes: */
+#include "QIGraphicsView.h"
+#include "QIWithRetranslateUI.h"
+
+/* Forward declarations: */
+class UIGDetails;
 
 /* Graphics details-view: */
-class UIGDetailsView : public QGraphicsView
+class UIGDetailsView : public QIWithRetranslateUI<QIGraphicsView>
 {
     Q_OBJECT;
 
@@ -34,8 +37,12 @@ signals:
 
 public:
 
-    /* Constructor: */
-    UIGDetailsView(QWidget *pParent);
+    /** Constructs a details-view passing @a pParent to the base-class.
+      * @param  pParent  Brings the details container to embed into. */
+    UIGDetailsView(UIGDetails *pParent);
+
+    /** Returns the details reference. */
+    UIGDetails *details() const { return m_pDetails; }
 
 private slots:
 
@@ -45,6 +52,9 @@ private slots:
 
 private:
 
+    /** Handles translation event. */
+    virtual void retranslateUi() /* override */;
+
     /* Helper: Prepare stuff: */
     void preparePalette();
 
@@ -53,6 +63,9 @@ private:
 
     /* Helper: Update stuff: */
     void updateSceneRect();
+
+    /** Holds the details reference. */
+    UIGDetails *m_pDetails;
 
     /* Variables: */
     int m_iMinimumWidthHint;

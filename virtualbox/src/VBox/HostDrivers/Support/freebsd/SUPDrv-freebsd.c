@@ -28,9 +28,10 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_SUP_DRV
 /* Deal with conflicts first. */
 #include <sys/param.h>
@@ -63,23 +64,24 @@
 # define VBOXDRV_PERM 0666
 #endif
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 static int VBoxDrvFreeBSDModuleEvent(struct module *pMod, int enmEventType, void *pvArg);
 static int VBoxDrvFreeBSDLoad(void);
 static int VBoxDrvFreeBSDUnload(void);
 
 static d_open_t     VBoxDrvFreeBSDOpenUsr;
 static d_open_t     VBoxDrvFreeBSDOpenSys;
-static void         VBoxDrvFreeBSDDtr(void *pData);
+static void         vboxdrvFreeBSDDtr(void *pvData);
 static d_ioctl_t    VBoxDrvFreeBSDIOCtl;
 static int          VBoxDrvFreeBSDIOCtlSlow(PSUPDRVSESSION pSession, u_long ulCmd, caddr_t pvData, struct thread *pTd);
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Module info structure used by the kernel.
  */
@@ -222,12 +224,13 @@ static int VBoxDrvFreeBSDUnload(void)
  *
  * @returns 0 on success, errno on failure.
  *          EBUSY if the device is used by someone else.
- * @param   pDev        The device node.
- * @param   fOpen       The open flags.
- * @param   pTd         The thread.
- * @param   iDevType    ???
+ * @param   pDev            The device node.
+ * @param   fOpen           The open flags.
+ * @param   iDevType        Some device type thing we don't use.
+ * @param   pTd             The thread.
+ * @param   fUnrestricted   Set if opening /dev/vboxdrv, clear if /dev/vboxdrvu.
  */
-static int vboxdrvFreeBSDOpenCommon(struct cdev *pDev, int fOpen, int iDevtype, struct thread *pTd, bool fUnrestricted)
+static int vboxdrvFreeBSDOpenCommon(struct cdev *pDev, int fOpen, int iDevType, struct thread *pTd, bool fUnrestricted)
 {
     PSUPDRVSESSION pSession;
     int rc;
@@ -250,7 +253,7 @@ static int vboxdrvFreeBSDOpenCommon(struct cdev *pDev, int fOpen, int iDevtype, 
         /** @todo get (r)uid and (r)gid.
         pSession->Uid = stuff;
         pSession->Gid = stuff; */
-        devfs_set_cdevpriv(pSession, VBoxDrvFreeBSDDtr);
+        rc = devfs_set_cdevpriv(pSession, vboxdrvFreeBSDDtr); Assert(rc == 0);
         Log(("VBoxDrvFreeBSDOpen: pSession=%p\n", pSession));
         ASMAtomicIncU32(&g_cUsers);
         return 0;
@@ -261,32 +264,29 @@ static int vboxdrvFreeBSDOpenCommon(struct cdev *pDev, int fOpen, int iDevtype, 
 
 
 /** For vboxdrv. */
-static int VBoxDrvFreeBSDOpenSys(struct cdev *pDev, int fOpen, int iDevtype, struct thread *pTd)
+static int VBoxDrvFreeBSDOpenSys(struct cdev *pDev, int fOpen, int iDevType, struct thread *pTd)
 {
-    return vboxdrvFreeBSDOpenCommon(pDev, fOpen, iDevtype, pTd, true);
+    return vboxdrvFreeBSDOpenCommon(pDev, fOpen, iDevType, pTd, true);
 }
 
 
 /** For vboxdrvu. */
-static int VBoxDrvFreeBSDOpenUsr(struct cdev *pDev, int fOpen, int iDevtype, struct thread *pTd)
+static int VBoxDrvFreeBSDOpenUsr(struct cdev *pDev, int fOpen, int iDevType, struct thread *pTd)
 {
-    return vboxdrvFreeBSDOpenCommon(pDev, fOpen, iDevtype, pTd, false);
+    return vboxdrvFreeBSDOpenCommon(pDev, fOpen, iDevType, pTd, false);
 }
 
 
 /**
- * Close a file device previously opened by VBoxDrvFreeBSDOpen
+ * Close a file device previously opened by VBoxDrvFreeBSDOpen.
  *
  * @returns 0 on success.
- * @param   pDev        The device.
- * @param   fFile       The file descriptor flags.
- * @param   DevType     The device type (CHR.
- * @param   pTd         The calling thread.
+ * @param   pvData      The session being closed.
  */
-static void VBoxDrvFreeBSDDtr(void *pData)
+static void vboxdrvFreeBSDDtr(void *pvData)
 {
-    PSUPDRVSESSION pSession = pData;
-    Log(("VBoxDrvFreeBSDDtr: pSession=%p\n", pSession));
+    PSUPDRVSESSION pSession = pvData;
+    Log(("vboxdrvFreeBSDDtr: pSession=%p\n", pSession));
 
     /*
      * Close the session.
@@ -466,7 +466,7 @@ static int VBoxDrvFreeBSDIOCtlSlow(PSUPDRVSESSION pSession, u_long ulCmd, caddr_
  * The SUPDRV IDC entry point.
  *
  * @returns VBox status code, see supdrvIDC.
- * @param   iReq        The request code.
+ * @param   uReq        The request code.
  * @param   pReq        The request.
  */
 int VBOXCALL SUPDrvFreeBSDIDC(uint32_t uReq, PSUPDRVIDCREQHDR pReq)
@@ -539,6 +539,19 @@ bool VBOXCALL  supdrvOSGetForcedAsyncTscMode(PSUPDRVDEVEXT pDevExt)
 }
 
 
+bool VBOXCALL  supdrvOSAreCpusOfflinedOnSuspend(void)
+{
+    /** @todo verify this. */
+    return false;
+}
+
+
+bool VBOXCALL  supdrvOSAreTscDeltasInSync(void)
+{
+    return false;
+}
+
+
 int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
 {
     NOREF(pDevExt); NOREF(pImage); NOREF(pszFilename);
@@ -546,15 +559,10 @@ int  VBOXCALL   supdrvOSLdrOpen(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, c
 }
 
 
-void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv,
+                                           const uint8_t *pbImageBits, const char *pszSymbol)
 {
-    NOREF(pDevExt); NOREF(pImage);
-}
-
-
-int  VBOXCALL   supdrvOSLdrValidatePointer(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, void *pv, const uint8_t *pbImageBits)
-{
-    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits);
+    NOREF(pDevExt); NOREF(pImage); NOREF(pv); NOREF(pbImageBits); NOREF(pszSymbol);
     return VERR_NOT_SUPPORTED;
 }
 
@@ -570,6 +578,51 @@ void VBOXCALL   supdrvOSLdrUnload(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
 {
     NOREF(pDevExt); NOREF(pImage);
 }
+
+
+void VBOXCALL   supdrvOSLdrNotifyOpened(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage, const char *pszFilename)
+{
+    NOREF(pDevExt); NOREF(pImage); NOREF(pszFilename);
+}
+
+
+void VBOXCALL   supdrvOSLdrNotifyUnloaded(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage)
+{
+    NOREF(pDevExt); NOREF(pImage);
+}
+
+
+int  VBOXCALL   supdrvOSLdrQuerySymbol(PSUPDRVDEVEXT pDevExt, PSUPDRVLDRIMAGE pImage,
+                                       const char *pszSymbol, size_t cchSymbol, void **ppvSymbol)
+{
+    RT_NOREF(pDevExt, pImage, pszSymbol, cchSymbol, ppvSymbol);
+    return VERR_WRONG_ORDER;
+}
+
+
+#ifdef SUPDRV_WITH_MSR_PROBER
+
+int VBOXCALL    supdrvOSMsrProberRead(uint32_t uMsr, RTCPUID idCpu, uint64_t *puValue)
+{
+    NOREF(uMsr); NOREF(idCpu); NOREF(puValue);
+    return VERR_NOT_SUPPORTED;
+}
+
+
+int VBOXCALL    supdrvOSMsrProberWrite(uint32_t uMsr, RTCPUID idCpu, uint64_t uValue)
+{
+    NOREF(uMsr); NOREF(idCpu); NOREF(uValue);
+    return VERR_NOT_SUPPORTED;
+}
+
+
+int VBOXCALL    supdrvOSMsrProberModify(RTCPUID idCpu, PSUPMSRPROBER pReq)
+{
+    NOREF(idCpu); NOREF(pReq);
+    return VERR_NOT_SUPPORTED;
+}
+
+#endif /* SUPDRV_WITH_MSR_PROBER */
 
 
 SUPR0DECL(int) SUPR0Printf(const char *pszFormat, ...)
@@ -588,9 +641,6 @@ SUPR0DECL(int) SUPR0Printf(const char *pszFormat, ...)
 }
 
 
-/**
- * Returns configuration flags of the host kernel.
- */
 SUPR0DECL(uint32_t) SUPR0GetKernelFeatures(void)
 {
     return 0;

@@ -1,9 +1,10 @@
+/* $Id: service.cpp $ */
 /** @file
- * Shared Folders: Host service entry points.
+ * Shared Folders - Host service entry points.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -31,7 +32,7 @@
 #define SHFL_SSM_VERSION                    3
 
 
-/* Shared Folders Host Service.
+/** @page pg_shfl_svc   Shared Folders Host Service
  *
  * Shared Folders map a host file system to guest logical filesystem.
  * A mapping represents 'host name'<->'guest name' translation and a root
@@ -77,16 +78,15 @@ static DECLCALLBACK(int) svcUnload (void *)
     int rc = VINF_SUCCESS;
 
     Log(("svcUnload\n"));
+    vbsfFreeHandleTable();
 
     return rc;
 }
 
 static DECLCALLBACK(int) svcConnect (void *, uint32_t u32ClientID, void *pvClient)
 {
+    RT_NOREF2(u32ClientID, pvClient);
     int rc = VINF_SUCCESS;
-
-    NOREF(u32ClientID);
-    NOREF(pvClient);
 
     Log(("SharedFolders host service: connected, u32ClientID = %u\n", u32ClientID));
 
@@ -95,6 +95,7 @@ static DECLCALLBACK(int) svcConnect (void *, uint32_t u32ClientID, void *pvClien
 
 static DECLCALLBACK(int) svcDisconnect (void *, uint32_t u32ClientID, void *pvClient)
 {
+    RT_NOREF1(u32ClientID);
     int rc = VINF_SUCCESS;
     SHFLCLIENTDATA *pClient = (SHFLCLIENTDATA *)pvClient;
 
@@ -113,6 +114,7 @@ static DECLCALLBACK(int) svcDisconnect (void *, uint32_t u32ClientID, void *pvCl
 static DECLCALLBACK(int) svcSaveState(void *, uint32_t u32ClientID, void *pvClient, PSSMHANDLE pSSM)
 {
 #ifndef UNITTEST  /* Read this as not yet tested */
+    RT_NOREF1(u32ClientID);
     SHFLCLIENTDATA *pClient = (SHFLCLIENTDATA *)pvClient;
 
     Log(("SharedFolders host service: saving state, u32ClientID = %u\n", u32ClientID));
@@ -168,6 +170,8 @@ static DECLCALLBACK(int) svcSaveState(void *, uint32_t u32ClientID, void *pvClie
         }
     }
 
+#else
+    RT_NOREF3(u32ClientID, pvClient, pSSM);
 #endif
     return VINF_SUCCESS;
 }
@@ -175,6 +179,7 @@ static DECLCALLBACK(int) svcSaveState(void *, uint32_t u32ClientID, void *pvClie
 static DECLCALLBACK(int) svcLoadState(void *, uint32_t u32ClientID, void *pvClient, PSSMHANDLE pSSM)
 {
 #ifndef UNITTEST  /* Read this as not yet tested */
+    RT_NOREF1(u32ClientID);
     uint32_t        nrMappings;
     SHFLCLIENTDATA *pClient = (SHFLCLIENTDATA *)pvClient;
     uint32_t        len, version;
@@ -274,7 +279,7 @@ static DECLCALLBACK(int) svcLoadState(void *, uint32_t u32ClientID, void *pvClie
             rc = vbsfMappingLoaded (&mapping, i);
             if (RT_FAILURE(rc))
             {
-                LogRel(("SharedFolders: %Rrc loading %d [%ls] -> [%s]\n",
+                LogRel(("SharedFolders host service: %Rrc loading %d [%ls] -> [%s]\n",
                         rc, i, pMapName->String.ucs2, pszFolderName));
             }
 
@@ -285,12 +290,15 @@ static DECLCALLBACK(int) svcLoadState(void *, uint32_t u32ClientID, void *pvClie
         }
     }
     Log(("SharedFolders host service: successfully loaded state\n"));
+#else
+    RT_NOREF3(u32ClientID, pvClient, pSSM);
 #endif
     return VINF_SUCCESS;
 }
 
 static DECLCALLBACK(void) svcCall (void *, VBOXHGCMCALLHANDLE callHandle, uint32_t u32ClientID, void *pvClient, uint32_t u32Function, uint32_t cParms, VBOXHGCMSVCPARM paParms[])
 {
+    RT_NOREF1(u32ClientID);
     int rc = VINF_SUCCESS;
 
     Log(("SharedFolders host service: svcCall: u32ClientID = %u, fn = %u, cParms = %u, pparms = %p\n", u32ClientID, u32Function, cParms, paParms));
@@ -299,10 +307,8 @@ static DECLCALLBACK(void) svcCall (void *, VBOXHGCMCALLHANDLE callHandle, uint32
 
     bool fAsynchronousProcessing = false;
 
-#ifdef DEBUG
-    uint32_t i;
-
-    for (i = 0; i < cParms; i++)
+#ifdef LOG_ENABLED
+    for (uint32_t i = 0; i < cParms; i++)
     {
         /** @todo parameters other than 32 bit */
         Log(("    pparms[%d]: type %u, value %u\n", i, paParms[i].type, paParms[i].u.uint32));
@@ -681,7 +687,7 @@ static DECLCALLBACK(void) svcCall (void *, VBOXHGCMCALLHANDLE callHandle, uint32
                 }
                 else if (flags & SHFL_LOCK_WAIT)
                 {
-                    /* @todo This should be properly implemented by the shared folders service.
+                    /** @todo This should be properly implemented by the shared folders service.
                      *       The service thread must never block. If an operation requires
                      *       blocking, it must be processed by another thread and when it is
                      *       completed, the another thread must call
@@ -1301,7 +1307,7 @@ static DECLCALLBACK(int) svcHostCall (void *, uint32_t u32Function, uint32_t cPa
     case SHFL_FN_ADD_MAPPING:
     {
         Log(("SharedFolders host service: svcCall: SHFL_FN_ADD_MAPPING\n"));
-        LogRel(("SharedFolders host service: adding host mapping\n"));
+        LogRel(("SharedFolders host service: Adding host mapping\n"));
         /* Verify parameter count and types. */
         if (   (cParms != SHFL_CPARMS_ADD_MAPPING)
            )
@@ -1339,28 +1345,36 @@ static DECLCALLBACK(int) svcHostCall (void *, uint32_t u32Function, uint32_t cPa
                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_CREATE_SYMLINKS) ? "true" : "false",
                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_MISSING) ? "true" : "false"));
 
-                /* Execute the function. */
-                rc = vbsfMappingsAdd(pFolderName, pMapName,
-                                     RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_WRITABLE),
-                                     RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_AUTOMOUNT),
-                                     RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_CREATE_SYMLINKS),
-                                     RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_MISSING));
+                char *pszFolderName;
+                rc = RTUtf16ToUtf8(pFolderName->String.ucs2, &pszFolderName);
+
                 if (RT_SUCCESS(rc))
                 {
-                    /* Update parameters.*/
-                    ; /* none */
+                    /* Execute the function. */
+                    rc = vbsfMappingsAdd(pszFolderName, pMapName,
+                                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_WRITABLE),
+                                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_AUTOMOUNT),
+                                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_CREATE_SYMLINKS),
+                                         RT_BOOL(fFlags & SHFL_ADD_MAPPING_F_MISSING),
+                                         /* fPlaceholder = */ false);
+                    if (RT_SUCCESS(rc))
+                    {
+                        /* Update parameters.*/
+                        ; /* none */
+                    }
+                    RTStrFree(pszFolderName);
                 }
             }
         }
         if (RT_FAILURE(rc))
-            LogRel(("SharedFolders host service: adding host mapping failed with rc=%Rrc\n", rc));
+            LogRel(("SharedFolders host service: Adding host mapping failed with rc=%Rrc\n", rc));
         break;
     }
 
     case SHFL_FN_REMOVE_MAPPING:
     {
         Log(("SharedFolders host service: svcCall: SHFL_FN_REMOVE_MAPPING\n"));
-        LogRel(("SharedFolders host service: removing host mapping '%ls'\n",
+        LogRel(("SharedFolders host service: Removing host mapping '%ls'\n",
                 ((SHFLSTRING *)paParms[0].u.pointer.addr)->String.ucs2));
 
         /* Verify parameter count and types. */
@@ -1396,7 +1410,7 @@ static DECLCALLBACK(int) svcHostCall (void *, uint32_t u32Function, uint32_t cPa
             }
         }
         if (RT_FAILURE(rc))
-            LogRel(("SharedFolders host service: removing host mapping failed with rc=%Rrc\n", rc));
+            LogRel(("SharedFolders host service: Removing host mapping failed with rc=%Rrc\n", rc));
         break;
     }
 
@@ -1453,7 +1467,7 @@ extern "C" DECLCALLBACK(DECLEXPORT(int)) VBoxHGCMSvcLoad (VBOXHGCMSVCFNTABLE *pt
 
     if (!VALID_PTR(ptable))
     {
-        LogRelFunc(("SharedFolders host service: bad value of ptable (%p)\n", ptable));
+        LogRelFunc(("SharedFolders host service: Bad value of ptable (%p)\n", ptable));
         rc = VERR_INVALID_PARAMETER;
     }
     else
@@ -1464,7 +1478,7 @@ extern "C" DECLCALLBACK(DECLEXPORT(int)) VBoxHGCMSvcLoad (VBOXHGCMSVCFNTABLE *pt
         if (    ptable->cbSize != sizeof (VBOXHGCMSVCFNTABLE)
             ||  ptable->u32Version != VBOX_HGCM_SVC_VERSION)
         {
-            LogRelFunc(("SharedFolders host service: version mismatch while loading: ptable->cbSize = %u (should be %u), ptable->u32Version = 0x%08X (should be 0x%08X)\n",
+            LogRelFunc(("SharedFolders host service: Version mismatch while loading: ptable->cbSize = %u (should be %u), ptable->u32Version = 0x%08X (should be 0x%08X)\n",
                         ptable->cbSize, sizeof (VBOXHGCMSVCFNTABLE), ptable->u32Version, VBOX_HGCM_SVC_VERSION));
             rc = VERR_VERSION_MISMATCH;
         }

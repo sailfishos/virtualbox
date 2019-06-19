@@ -1,12 +1,10 @@
+/* $Id: vbsfhlp.c $ */
 /** @file
- *
- * VirtualBox Windows Guest Shared Folders
- *
- * File System Driver system helpers
+ * VirtualBox Windows Guest Shared Folders - File System Driver system helpers
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,8 +15,8 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-#include <ntifs.h>
-#include <ntdddisk.h>
+#include <iprt/nt/nt.h> /* includes ntifs.h and wdm.h */
+#include <iprt/win/ntdddisk.h>
 
 #include "vbsfhlp.h"
 
@@ -26,7 +24,7 @@
 static int s_iAllocRefCount = 0;
 #endif
 
-void vbsfHlpSleep (ULONG ulMillies)
+void vbsfHlpSleep(ULONG ulMillies)
 {
     KEVENT event;
     LARGE_INTEGER dueTime;
@@ -45,7 +43,7 @@ void vbsfHlpSleep (ULONG ulMillies)
  * @param   fMode       IRT file attributes
  *
  */
-uint32_t VBoxToNTFileAttributes (uint32_t fMode)
+uint32_t VBoxToNTFileAttributes(uint32_t fMode)
 {
     uint32_t FileAttributes = 0;
 
@@ -86,7 +84,7 @@ uint32_t VBoxToNTFileAttributes (uint32_t fMode)
  * @param   fMode       IRT file attributes
  *
  */
-uint32_t NTToVBoxFileAttributes (uint32_t fMode)
+uint32_t NTToVBoxFileAttributes(uint32_t fMode)
 {
     uint32_t FileAttributes = 0;
 
@@ -119,7 +117,7 @@ uint32_t NTToVBoxFileAttributes (uint32_t fMode)
     return FileAttributes;
 }
 
-NTSTATUS vbsfHlpCreateDriveLetter (WCHAR Letter, UNICODE_STRING *pDeviceName)
+NTSTATUS vbsfHlpCreateDriveLetter(WCHAR Letter, UNICODE_STRING *pDeviceName)
 {
     UNICODE_STRING driveName;
     RtlInitUnicodeString(&driveName,L"\\??\\_:" );
@@ -127,10 +125,10 @@ NTSTATUS vbsfHlpCreateDriveLetter (WCHAR Letter, UNICODE_STRING *pDeviceName)
     /* Replace '_' with actual drive letter */
     driveName.Buffer[driveName.Length/sizeof(WCHAR) - 2] = Letter;
 
-    return IoCreateSymbolicLink (&driveName, pDeviceName);
+    return IoCreateSymbolicLink(&driveName, pDeviceName);
 }
 
-NTSTATUS vbsfHlpDeleteDriveLetter (WCHAR Letter)
+NTSTATUS vbsfHlpDeleteDriveLetter(WCHAR Letter)
 {
     UNICODE_STRING driveName;
     RtlInitUnicodeString(&driveName,L"\\??\\_:" );
@@ -138,7 +136,7 @@ NTSTATUS vbsfHlpDeleteDriveLetter (WCHAR Letter)
     /* Replace '_' with actual drive letter */
     driveName.Buffer[driveName.Length/sizeof(WCHAR) - 2] = Letter;
 
-    return IoDeleteSymbolicLink (&driveName);
+    return IoDeleteSymbolicLink(&driveName);
 }
 
     /**
@@ -148,7 +146,7 @@ NTSTATUS vbsfHlpDeleteDriveLetter (WCHAR Letter)
      * @param   vboxRC          VBox error code
      *
      */
-NTSTATUS VBoxErrorToNTStatus (int vboxRC)
+NTSTATUS VBoxErrorToNTStatus(int vboxRC)
 {
     NTSTATUS Status;
 
@@ -230,7 +228,7 @@ NTSTATUS VBoxErrorToNTStatus (int vboxRC)
         break;
 
     default:
-        /* @todo error handling */
+        /** @todo error handling */
         Status = STATUS_INVALID_PARAMETER;
         Log(("Unexpected vbox error %Rrc\n",
              vboxRC));
@@ -239,7 +237,7 @@ NTSTATUS VBoxErrorToNTStatus (int vboxRC)
     return Status;
 }
 
-PVOID vbsfAllocNonPagedMem (ULONG ulSize)
+PVOID vbsfAllocNonPagedMem(ULONG ulSize)
 {
     PVOID pMemory = NULL;
 
@@ -268,7 +266,7 @@ PVOID vbsfAllocNonPagedMem (ULONG ulSize)
     return pMemory;
 }
 
-void vbsfFreeNonPagedMem (PVOID lpMem)
+void vbsfFreeNonPagedMem(PVOID lpMem)
 {
 #ifdef DEBUG
     s_iAllocRefCount = s_iAllocRefCount - 1;
@@ -311,7 +309,8 @@ int RTLogBackdoorPrintf1(const char *pszFormat, ...)
 }
 #endif
 
-#if defined(DEBUG) || defined (LOG_ENABLED)
+#if defined(DEBUG) || defined(LOG_ENABLED)
+
 static PCHAR PnPMinorFunctionString(LONG MinorFunction)
 {
     switch (MinorFunction)
@@ -369,67 +368,123 @@ static PCHAR PnPMinorFunctionString(LONG MinorFunction)
 
 PCHAR MajorFunctionString(UCHAR MajorFunction, LONG MinorFunction)
 {
-    switch (MinorFunction)
+    switch (MajorFunction)
     {
-    case IRP_MJ_CREATE:
-        return "IRP_MJ_CREATE";
-    case IRP_MJ_CREATE_NAMED_PIPE:
-        return "IRP_MJ_CREATE_NAMED_PIPE";
-    case IRP_MJ_CLOSE:
-        return "IRP_MJ_CLOSE";
-    case IRP_MJ_READ:
-        return "IRP_MJ_READ";
-    case IRP_MJ_WRITE:
-        return "IRP_MJ_WRITE";
-    case IRP_MJ_QUERY_INFORMATION:
-        return "IRP_MJ_QUERY_INFORMATION";
-    case IRP_MJ_SET_INFORMATION:
-        return "IRP_MJ_SET_INFORMATION";
-    case IRP_MJ_QUERY_EA:
-        return "IRP_MJ_QUERY_EA";
-    case IRP_MJ_SET_EA:
-        return "IRP_MJ_SET_EA";
-    case IRP_MJ_FLUSH_BUFFERS:
-        return "IRP_MJ_FLUSH_BUFFERS";
-    case IRP_MJ_QUERY_VOLUME_INFORMATION:
-        return "IRP_MJ_QUERY_VOLUME_INFORMATION";
-    case IRP_MJ_SET_VOLUME_INFORMATION:
-        return "IRP_MJ_SET_VOLUME_INFORMATION";
-    case IRP_MJ_DIRECTORY_CONTROL:
-        return "IRP_MJ_DIRECTORY_CONTROL";
-    case IRP_MJ_FILE_SYSTEM_CONTROL:
-        return "IRP_MJ_FILE_SYSTEM_CONTROL";
-    case IRP_MJ_DEVICE_CONTROL:
-        return "IRP_MJ_DEVICE_CONTROL";
-    case IRP_MJ_INTERNAL_DEVICE_CONTROL:
-        return "IRP_MJ_INTERNAL_DEVICE_CONTROL";
-    case IRP_MJ_SHUTDOWN:
-        return "IRP_MJ_SHUTDOWN";
-    case IRP_MJ_LOCK_CONTROL:
-        return "IRP_MJ_LOCK_CONTROL";
-    case IRP_MJ_CLEANUP:
-        return "IRP_MJ_CLEANUP";
-    case IRP_MJ_CREATE_MAILSLOT:
-        return "IRP_MJ_CREATE_MAILSLOT";
-    case IRP_MJ_QUERY_SECURITY:
-        return "IRP_MJ_QUERY_SECURITY";
-    case IRP_MJ_SET_SECURITY:
-        return "IRP_MJ_SET_SECURITY";
-    case IRP_MJ_POWER:
-        return "IRP_MJ_POWER";
-    case IRP_MJ_SYSTEM_CONTROL:
-        return "IRP_MJ_SYSTEM_CONTROL";
-    case IRP_MJ_DEVICE_CHANGE:
-        return "IRP_MJ_DEVICE_CHANGE";
-    case IRP_MJ_QUERY_QUOTA:
-        return "IRP_MJ_QUERY_QUOTA";
-    case IRP_MJ_SET_QUOTA:
-        return "IRP_MJ_SET_QUOTA";
-    case IRP_MJ_PNP:
-        return PnPMinorFunctionString(MinorFunction);
+        case IRP_MJ_CREATE:
+            return "IRP_MJ_CREATE";
+        case IRP_MJ_CREATE_NAMED_PIPE:
+            return "IRP_MJ_CREATE_NAMED_PIPE";
+        case IRP_MJ_CLOSE:
+            return "IRP_MJ_CLOSE";
+        case IRP_MJ_READ:
+            return "IRP_MJ_READ";
+        case IRP_MJ_WRITE:
+            return "IRP_MJ_WRITE";
+        case IRP_MJ_QUERY_INFORMATION:
+            return "IRP_MJ_QUERY_INFORMATION";
+        case IRP_MJ_SET_INFORMATION:
+            return "IRP_MJ_SET_INFORMATION";
+        case IRP_MJ_QUERY_EA:
+            return "IRP_MJ_QUERY_EA";
+        case IRP_MJ_SET_EA:
+            return "IRP_MJ_SET_EA";
+        case IRP_MJ_FLUSH_BUFFERS:
+            return "IRP_MJ_FLUSH_BUFFERS";
+        case IRP_MJ_QUERY_VOLUME_INFORMATION:
+            return "IRP_MJ_QUERY_VOLUME_INFORMATION";
+        case IRP_MJ_SET_VOLUME_INFORMATION:
+            return "IRP_MJ_SET_VOLUME_INFORMATION";
+        case IRP_MJ_DIRECTORY_CONTROL:
+            return "IRP_MJ_DIRECTORY_CONTROL";
+        case IRP_MJ_FILE_SYSTEM_CONTROL:
+            return "IRP_MJ_FILE_SYSTEM_CONTROL";
+        case IRP_MJ_DEVICE_CONTROL:
+            return "IRP_MJ_DEVICE_CONTROL";
+        case IRP_MJ_INTERNAL_DEVICE_CONTROL:
+            return "IRP_MJ_INTERNAL_DEVICE_CONTROL";
+        case IRP_MJ_SHUTDOWN:
+            return "IRP_MJ_SHUTDOWN";
+        case IRP_MJ_LOCK_CONTROL:
+            return "IRP_MJ_LOCK_CONTROL";
+        case IRP_MJ_CLEANUP:
+            return "IRP_MJ_CLEANUP";
+        case IRP_MJ_CREATE_MAILSLOT:
+            return "IRP_MJ_CREATE_MAILSLOT";
+        case IRP_MJ_QUERY_SECURITY:
+            return "IRP_MJ_QUERY_SECURITY";
+        case IRP_MJ_SET_SECURITY:
+            return "IRP_MJ_SET_SECURITY";
+        case IRP_MJ_POWER:
+            return "IRP_MJ_POWER";
+        case IRP_MJ_SYSTEM_CONTROL:
+            return "IRP_MJ_SYSTEM_CONTROL";
+        case IRP_MJ_DEVICE_CHANGE:
+            return "IRP_MJ_DEVICE_CHANGE";
+        case IRP_MJ_QUERY_QUOTA:
+            return "IRP_MJ_QUERY_QUOTA";
+        case IRP_MJ_SET_QUOTA:
+            return "IRP_MJ_SET_QUOTA";
+        case IRP_MJ_PNP:
+            return PnPMinorFunctionString(MinorFunction);
 
-    default:
-        return "unknown_pnp_irp";
+        default:
+            return "unknown_pnp_irp";
     }
 }
-#endif
+
+#endif /* DEBUG || LOG_ENABLED */
+
+/** Allocate and initialize a SHFLSTRING from a UNICODE string.
+ *
+ *  @param ppShflString Where to store the pointer to the allocated SHFLSTRING structure.
+ *                      The structure must be deallocated with vbsfFreeNonPagedMem.
+ *  @param pwc          The UNICODE string. If NULL then SHFL is only allocated.
+ *  @param cb           Size of the UNICODE string in bytes without the trailing nul.
+ *
+ *  @return Status code.
+ */
+NTSTATUS vbsfShflStringFromUnicodeAlloc(PSHFLSTRING *ppShflString, const WCHAR *pwc, uint16_t cb)
+{
+    NTSTATUS Status = STATUS_SUCCESS;
+
+    PSHFLSTRING pShflString;
+    ULONG ulShflStringSize;
+
+    /* Calculate length required for the SHFL structure: header + chars + nul. */
+    ulShflStringSize = SHFLSTRING_HEADER_SIZE + cb + sizeof(WCHAR);
+    pShflString = (PSHFLSTRING)vbsfAllocNonPagedMem(ulShflStringSize);
+    if (pShflString)
+    {
+        if (ShflStringInitBuffer(pShflString, ulShflStringSize))
+        {
+            if (pwc)
+            {
+                RtlCopyMemory(pShflString->String.ucs2, pwc, cb);
+                pShflString->String.ucs2[cb / sizeof(WCHAR)] = 0;
+                pShflString->u16Length = cb; /* without terminating null */
+                AssertMsg(pShflString->u16Length + sizeof(WCHAR) == pShflString->u16Size,
+                          ("u16Length %d, u16Size %d\n", pShflString->u16Length, pShflString->u16Size));
+            }
+            else
+            {
+                RtlZeroMemory(pShflString->String.ucs2, cb + sizeof(WCHAR));
+                pShflString->u16Length = 0; /* without terminating null */
+                AssertMsg(pShflString->u16Size >= sizeof(WCHAR),
+                          ("u16Size %d\n", pShflString->u16Size));
+            }
+
+            *ppShflString = pShflString;
+        }
+        else
+        {
+            vbsfFreeNonPagedMem(pShflString);
+            Status = STATUS_INSUFFICIENT_RESOURCES;
+        }
+    }
+    else
+    {
+        Status = STATUS_INSUFFICIENT_RESOURCES;
+    }
+
+    return Status;
+}

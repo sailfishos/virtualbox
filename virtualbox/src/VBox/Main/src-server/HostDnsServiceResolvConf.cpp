@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2014 Oracle Corporation
+ * Copyright (C) 2014-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -46,7 +46,10 @@ typedef int socklen_t;
 
 struct HostDnsServiceResolvConf::Data
 {
-    Data(const char *fileName):resolvConfFilename(fileName){};
+    Data(const char *fileName)
+        : resolvConfFilename(fileName)
+    {
+    };
 
     std::string resolvConfFilename;
 };
@@ -66,11 +69,11 @@ HostDnsServiceResolvConf::~HostDnsServiceResolvConf()
     }
 }
 
-HRESULT HostDnsServiceResolvConf::init(const char *aResolvConfFileName)
+HRESULT HostDnsServiceResolvConf::init(HostDnsMonitorProxy *proxy, const char *aResolvConfFileName)
 {
     m = new Data(aResolvConfFileName);
 
-    HostDnsMonitor::init();
+    HostDnsMonitor::init(proxy);
 
     readResolvConf();
 
@@ -106,3 +109,4 @@ HRESULT HostDnsServiceResolvConf::readResolvConf()
 
     return S_OK;
 }
+

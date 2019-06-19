@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,24 +24,25 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/thread.h>
 #include <iprt/stream.h>
 #include <iprt/initterm.h>
 #include <iprt/err.h>
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static unsigned volatile g_cErrors = 0;
 
 
-static DECLCALLBACK(int) tstThread1ReturnImmediately(RTTHREAD Thread, void *pvUser)
+static DECLCALLBACK(int) tstThread1ReturnImmediately(RTTHREAD hSelf, void *pvUser)
 {
-    NOREF(pvUser);
+    RT_NOREF_PV(hSelf); RT_NOREF_PV(pvUser);
     return VINF_SUCCESS;
 }
 

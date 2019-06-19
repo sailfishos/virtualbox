@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -19,21 +19,10 @@ SUB_DEPTH = ../../../..
 include $(KBUILD_PATH)/subheader.kmk
 
 #
-# vditool - useful too for manipulating VDIs, but now pretty obsolete and
-# probably will go away soon. Testcase only now.
-#
-if defined(VBOX_WITH_TESTCASES) || defined(VBOX_WITH_VDITOOL)
- PROGRAMS += vditool
-  vditool_TEMPLATE = VBOXR3TSTEXE
-  vditool_LIBS     = $(LIB_DDU)
-  vditool_SOURCES  = vditool.cpp
-endif
-
-#
 # Basic testcases for the VD code.
 #
 ifdef VBOX_WITH_TESTCASES
- PROGRAMS += tstVD tstVD-2 tstVDCopy tstVDSnap tstVDShareable
+ PROGRAMS += tstVD tstVD-2 tstVDSnap tstVDFill
 
  tstVD_TEMPLATE = VBOXR3TSTEXE
  tstVD_SOURCES = tstVD.cpp
@@ -43,9 +32,9 @@ ifdef VBOX_WITH_TESTCASES
  tstVD-2_SOURCES  = tstVD-2.cpp
  tstVD-2_LIBS = $(LIB_DDU)
 
- tstVDCopy_TEMPLATE = VBOXR3TSTEXE
- tstVDCopy_SOURCES  = tstVDCopy.cpp
- tstVDCopy_LIBS = $(LIB_DDU)
+ tstVDFill_TEMPLATE = VBOXR3TSTEXE
+ tstVDFill_SOURCES  = tstVDFill.cpp
+ tstVDFill_LIBS = $(LIB_DDU)
 
  PROGRAMS += tstVDIo
 
@@ -65,7 +54,7 @@ ifdef VBOX_WITH_TESTCASES
 
  # 1=name, 2=filter
  TSTVDIO_GEN_TEST_MACRO = 'TSTVDIOTESTENTRY const g_a$(1)[] =' '{' \
-	$(foreach testnm,$(filter $(2),$(TSTVDIO_BUILTIN_TEST_NAMES)), '    TSTVDIOTESTENTRY_GEN(g_ab$(testnm)),') \
+	$(foreach testnm,$(filter $(2),$(TSTVDIO_BUILTIN_TEST_NAMES)), '    TSTVDIOTESTENTRY_GEN($(testnm), g_ab$(testnm)),') \
 	'};' 'unsigned const g_c$(1) = RT_ELEMENTS(g_a$(1));' '' ''
 
  $$(TSTVDIO_BUILTIN_TESTS_FILE): $(MAKEFILE_CURRENT) \
@@ -74,10 +63,10 @@ ifdef VBOX_WITH_TESTCASES
 		| $$(dir $$@)
 	$(QUIET)$(RM) -f -- $@ $@.vd
 	$(QUIET)$(APPEND) -n "$@" \
-      	'' \
-      	'#include "BuiltinTests.h"' \
-               ''
-	$(foreach test,$(TSTVDIO_BUILTIN_TESTS), $(NLTAB)$(VBOX_BIN2C) -ascii --append \
+		'' \
+		'#include "BuiltinTests.h"' \
+		''
+	$(foreach test,$(TSTVDIO_BUILTIN_TESTS), $(NLTAB)$(VBOX_BIN2C) -ascii --append --no-size \
 		"$(firstword $(subst =,$(SP) ,$(test)))" \
 		"$(TSTVDIO_PATH_TESTS)/$(lastword $(subst =,$(SP) ,$(test)))" \
 		"$@")
@@ -115,13 +104,6 @@ ifdef VBOX_WITH_TESTCASES
   	$(PATH_STAGE_LIB)/StorageDbgLib$(VBOX_SUFF_LIB)
  endif
 
- tstVDSetUuid_TEMPLATE = VBOXR3TSTEXE
- tstVDSetUuid_LIBS = $(LIB_DDU)
-
- tstVDShareable_TEMPLATE = VBOXR3TSTEXE
- tstVDShareable_LIBS = $(LIB_DDU)
- tstVDShareable_SOURCES = tstVDShareable.cpp
-
  tstVDSnap_TEMPLATE = VBOXR3TSTEXE
  tstVDSnap_LIBS = $(LIB_DDU)
  tstVDSnap_SOURCES  = tstVDSnap.cpp
@@ -138,6 +120,7 @@ if defined(VBOX_WITH_TESTCASES) || defined(VBOX_WITH_VBOX_IMG)
  vbox-img_SOURCES = \
 	vbox-img.cpp \
 	../VD.cpp \
+	../VDPlugin.cpp \
 	../VDVfs.cpp \
 	../VDI.cpp \
 	../VMDK.cpp \
@@ -149,6 +132,8 @@ if defined(VBOX_WITH_TESTCASES) || defined(VBOX_WITH_VBOX_IMG)
 	../QED.cpp \
 	../QCOW.cpp \
 	../VHDX.cpp \
+	../CUE.cpp \
+	../VISO.cpp \
 	../VCICache.cpp \
 	../VDIfVfs.cpp
  vbox-img_SOURCES.win = \
@@ -177,6 +162,47 @@ if defined(VBOX_WITH_TESTCASES) || defined(VBOX_WITH_VBOX_IMG)
   vbox-img_LIBS += kstat
  endif
 
+endif
+
+if    defined(VBOX_WITH_TESTCASES) && defined(VBOX_WITH_PLUGIN_CRYPT) \
+   && defined(VBOX_WITH_EXTPACK_PUEL) && defined(VBOX_WITH_EXTPACK_PUEL_BUILD) \
+   && defined(VBOX_WITH_VDKEYSTOREMGR)
+ PROGRAMS += vdkeystoremgr
+
+ #
+ # vdkeystoremgr - static because it migth be used as at standalone tool.
+ #
+ vdkeystoremgr_TEMPLATE = VBoxR3Static
+ vdkeystoremgr_DEFS += IN_VBOXDDU IN_VBOXDDU_STATIC VBOX_HDD_NO_DYNAMIC_BACKENDS
+ vdkeystoremgr_SOURCES = \
+	vdkeystoremgr.cpp \
+	../VDKeyStore.cpp
+ vdkeystoremgr_SOURCES.win = \
+	vdkeystoremgr_SOURCES.rc
+ vdkeystoremgr_LIBS = \
+	$(VBOX_LIB_RUNTIME_STATIC) \
+	$(PATH_STAGE_LIB)/SUPR3$(VBOX_SUFF_LIB)
+ if1of ($(KBUILD_TARGET),os2 win)
+  vdkeystoremgr_LIBS += \
+	$(PATH_STAGE_LIB)/VBox-liblzf-static$(VBOX_SUFF_LIB) \
+	$(PATH_STAGE_LIB)/VBox-zlib-static$(VBOX_SUFF_LIB)
+ else
+  vdkeystoremgr_LIBS += \
+	$(PATH_STAGE_LIB)/VBox-liblzf$(VBOX_SUFF_LIB) \
+	$(SDK_VBOX_ZLIB_LIBS)
+ endif
+ ifeq ($(KBUILD_TARGET),linux)
+   vdkeystoremgr_LIBS += crypt
+  ifdef SDK_VBOX_LIBXML2_LIBS
+   vdkeystoremgr_LIBS += xml2
+  endif
+ else if1of ($(KBUILD_TARGET),darwin freebsd)
+  vdkeystoremgr_LIBS += iconv
+ else ifeq ($(KBUILD_TARGET),win)
+  vdkeystoremgr_SDKS.win = VBOX_NTDLL
+ else ifeq ($(KBUILD_TARGET),solaris)
+  vdkeystoremgr_LIBS += kstat
+ endif
 endif
 
 include $(FILE_KBUILD_SUB_FOOTER)

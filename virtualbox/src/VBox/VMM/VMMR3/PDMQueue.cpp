@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM_QUEUE
 #include "PDMInternal.h"
 #include <VBox/vmm/pdm.h>
@@ -36,9 +36,9 @@
 #include <iprt/thread.h>
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 DECLINLINE(void)            pdmR3QueueFreeItem(PPDMQUEUE pQueue, PPDMQUEUEITEMCORE pItem);
 static bool                 pdmR3QueueFlush(PPDMQUEUE pQueue);
 static DECLCALLBACK(void)   pdmR3QueueTimer(PVM pVM, PTMTIMER pTimer, void *pvUser);
@@ -48,8 +48,8 @@ static DECLCALLBACK(void)   pdmR3QueueTimer(PVM pVM, PTMTIMER pTimer, void *pvUs
 /**
  * Internal worker for the queue creation apis.
  *
- * @returns VBox status.
- * @param   pVM                 Pointer to the VM.
+ * @returns VBox status code.
+ * @param   pVM                 The cross context VM structure.
  * @param   cbItem              Item size.
  * @param   cItems              Number of items.
  * @param   cMilliesInterval    Number of milliseconds between polling the queue.
@@ -73,7 +73,7 @@ static int pdmR3QueueCreate(PVM pVM, size_t cbItem, uint32_t cItems, uint32_t cM
      * Align the item size and calculate the structure size.
      */
     cbItem = RT_ALIGN(cbItem, sizeof(RTUINTPTR));
-    size_t cb = cbItem * cItems + RT_ALIGN_Z(RT_OFFSETOF(PDMQUEUE, aFreeItems[cItems + PDMQUEUE_FREE_SLACK]), 16);
+    size_t cb = cbItem * cItems + RT_ALIGN_Z(RT_UOFFSETOF_DYN(PDMQUEUE, aFreeItems[cItems + PDMQUEUE_FREE_SLACK]), 16);
     PPDMQUEUE pQueue;
     int rc;
     if (fRZEnabled)
@@ -99,7 +99,7 @@ static int pdmR3QueueCreate(PVM pVM, size_t cbItem, uint32_t cItems, uint32_t cM
     //pQueue->pPendingRC = NULL;
     pQueue->iFreeHead = cItems;
     //pQueue->iFreeTail = 0;
-    PPDMQUEUEITEMCORE pItem = (PPDMQUEUEITEMCORE)((char *)pQueue + RT_ALIGN_Z(RT_OFFSETOF(PDMQUEUE, aFreeItems[cItems + PDMQUEUE_FREE_SLACK]), 16));
+    PPDMQUEUEITEMCORE pItem = (PPDMQUEUEITEMCORE)((char *)pQueue + RT_ALIGN_Z(RT_UOFFSETOF_DYN(PDMQUEUE, aFreeItems[cItems + PDMQUEUE_FREE_SLACK]), 16));
     for (unsigned i = 0; i < cItems; i++, pItem = (PPDMQUEUEITEMCORE)((char *)pItem + cbItem))
     {
         pQueue->aFreeItems[i].pItemR3 = pItem;
@@ -192,7 +192,7 @@ static int pdmR3QueueCreate(PVM pVM, size_t cbItem, uint32_t cItems, uint32_t cM
  * Create a queue with a device owner.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pDevIns             Device instance.
  * @param   cbItem              Size a queue item.
  * @param   cItems              Number of items in the queue.
@@ -233,7 +233,7 @@ VMMR3_INT_DECL(int) PDMR3QueueCreateDevice(PVM pVM, PPDMDEVINS pDevIns, size_t c
 
         *ppQueue = pQueue;
         Log(("PDM: Created device queue %p; cbItem=%d cItems=%d cMillies=%d pfnCallback=%p pDevIns=%p\n",
-             cbItem, cItems, cMilliesInterval, pfnCallback, pDevIns));
+             pQueue, cbItem, cItems, cMilliesInterval, pfnCallback, pDevIns));
     }
     return rc;
 }
@@ -243,7 +243,7 @@ VMMR3_INT_DECL(int) PDMR3QueueCreateDevice(PVM pVM, PPDMDEVINS pDevIns, size_t c
  * Create a queue with a driver owner.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   pDrvIns             Driver instance.
  * @param   cbItem              Size a queue item.
  * @param   cItems              Number of items in the queue.
@@ -279,7 +279,7 @@ VMMR3_INT_DECL(int) PDMR3QueueCreateDriver(PVM pVM, PPDMDRVINS pDrvIns, size_t c
 
         *ppQueue = pQueue;
         Log(("PDM: Created driver queue %p; cbItem=%d cItems=%d cMillies=%d pfnCallback=%p pDrvIns=%p\n",
-             cbItem, cItems, cMilliesInterval, pfnCallback, pDrvIns));
+             pQueue, cbItem, cItems, cMilliesInterval, pfnCallback, pDrvIns));
     }
     return rc;
 }
@@ -289,7 +289,7 @@ VMMR3_INT_DECL(int) PDMR3QueueCreateDriver(PVM pVM, PPDMDRVINS pDrvIns, size_t c
  * Create a queue with an internal owner.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   cbItem              Size a queue item.
  * @param   cItems              Number of items in the queue.
  * @param   cMilliesInterval    Number of milliseconds between polling the queue.
@@ -324,7 +324,7 @@ VMMR3_INT_DECL(int) PDMR3QueueCreateInternal(PVM pVM, size_t cbItem, uint32_t cI
 
         *ppQueue = pQueue;
         Log(("PDM: Created internal queue %p; cbItem=%d cItems=%d cMillies=%d pfnCallback=%p\n",
-             cbItem, cItems, cMilliesInterval, pfnCallback));
+             pQueue, cbItem, cItems, cMilliesInterval, pfnCallback));
     }
     return rc;
 }
@@ -334,7 +334,7 @@ VMMR3_INT_DECL(int) PDMR3QueueCreateInternal(PVM pVM, size_t cbItem, uint32_t cI
  * Create a queue with an external owner.
  *
  * @returns VBox status code.
- * @param   pVM                 Pointer to the VM.
+ * @param   pVM                 The cross context VM structure.
  * @param   cbItem              Size a queue item.
  * @param   cItems              Number of items in the queue.
  * @param   cMilliesInterval    Number of milliseconds between polling the queue.
@@ -369,7 +369,7 @@ VMMR3_INT_DECL(int) PDMR3QueueCreateExternal(PVM pVM, size_t cbItem, uint32_t cI
 
         *ppQueue = pQueue;
         Log(("PDM: Created external queue %p; cbItem=%d cItems=%d cMillies=%d pfnCallback=%p pvUser=%p\n",
-             cbItem, cItems, cMilliesInterval, pfnCallback, pvUser));
+             pQueue, cbItem, cItems, cMilliesInterval, pfnCallback, pvUser));
     }
     return rc;
 }
@@ -472,7 +472,7 @@ VMMR3_INT_DECL(int) PDMR3QueueDestroy(PPDMQUEUE pQueue)
  * Destroy a all queues owned by the specified device.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pDevIns     Device instance.
  * @thread  Emulation thread only.
  */
@@ -524,7 +524,7 @@ VMMR3_INT_DECL(int) PDMR3QueueDestroyDevice(PVM pVM, PPDMDEVINS pDevIns)
  * Destroy a all queues owned by the specified driver.
  *
  * @returns VBox status code.
- * @param   pVM         Pointer to the VM.
+ * @param   pVM         The cross context VM structure.
  * @param   pDrvIns     Driver instance.
  * @thread  Emulation thread only.
  */
@@ -575,7 +575,7 @@ VMMR3_INT_DECL(int) PDMR3QueueDestroyDriver(PVM pVM, PPDMDRVINS pDrvIns)
 /**
  * Relocate the queues.
  *
- * @param   pVM             Pointer to the VM.
+ * @param   pVM             The cross context VM structure.
  * @param   offDelta        The relocation delta.
  */
 void pdmR3QueueRelocate(PVM pVM, RTGCINTPTR offDelta)
@@ -630,7 +630,7 @@ void pdmR3QueueRelocate(PVM pVM, RTGCINTPTR offDelta)
  * Flush pending queues.
  * This is a forced action callback.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @thread  Emulation thread only.
  */
 VMMR3_INT_DECL(void) PDMR3QueueFlushAll(PVM pVM)
@@ -861,7 +861,7 @@ DECLINLINE(void) pdmR3QueueFreeItem(PPDMQUEUE pQueue, PPDMQUEUEITEMCORE pItem)
  * Timer handler for PDM queues.
  * This is called by for a single queue.
  *
- * @param   pVM     Pointer to the VM.
+ * @param   pVM     The cross context VM structure.
  * @param   pTimer  Pointer to timer.
  * @param   pvUser  Pointer to the queue.
  */

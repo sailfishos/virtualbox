@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -51,6 +51,20 @@ DECLHIDDEN(size_t) rtstrFormatRt(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, co
                                  int cchWidth, int cchPrecision, unsigned fFlags, char chArgSize);
 DECLHIDDEN(size_t) rtstrFormatType(PFNRTSTROUTPUT pfnOutput, void *pvArgOutput, const char **ppszFormat, va_list *pArgs,
                                    int cchWidth, int cchPrecision, unsigned fFlags, char chArgSize);
+
+/**
+ * Format kernel address into @a pszBuf.
+ *
+ * @returns Number of bytes returned.
+ * @param   pszBuf          The return buffer.
+ * @param   cbBuf           The buffer size.
+ * @param   uPtr            The ring-0 pointer value.
+ * @param   cchWidth        The specified width, -1 if not given.
+ * @param   cchPrecision    The specified precision.
+ * @param   fFlags          Format flags, RTSTR_F_XXX.
+ */
+DECLHIDDEN(size_t) rtStrFormatKernelAddress(char *pszBuf, size_t cbBuf, RTR0INTPTR uPtr, signed int cchWidth,
+                                            signed int cchPrecision, unsigned int fFlags);
 
 #ifdef RT_WITH_ICONV_CACHE
 DECLHIDDEN(void) rtStrIconvCacheInit(struct RTTHREADINT *pThread);

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,12 +13,22 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
-#define LOG_GROUP LOG_GROUP_VBGD
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
+#define LOG_GROUP LOG_GROUP_VGDRV
 /*
  * Deal with conflicts first.
  * PVM - BSD mess, that FreeBSD has correct a long time ago.
@@ -32,13 +42,14 @@
 
 #include <VBox/version.h>
 #include <iprt/asm.h>
-#include <iprt/initterm.h>
 #include <iprt/assert.h>
-#include <iprt/spinlock.h>
-#include <iprt/semaphore.h>
+#include <iprt/initterm.h>
+#include <iprt/mem.h>
 #include <iprt/process.h>
-#include <iprt/alloc.h>
 #include <iprt/power.h>
+#include <iprt/semaphore.h>
+#include <iprt/spinlock.h>
+#include <iprt/string.h>
 #include <VBox/err.h>
 #include <VBox/log.h>
 
@@ -59,9 +70,9 @@
 #include "VBoxGuestInternal.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /** The system device node name. */
 #define DEVICE_NAME_SYS     "vboxguest"
@@ -69,29 +80,28 @@
 #define DEVICE_NAME_USR     "vboxguestu"
 
 
-
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 RT_C_DECLS_BEGIN
-static kern_return_t    VbgdDarwinStart(struct kmod_info *pKModInfo, void *pvData);
-static kern_return_t    VbgdDarwinStop(struct kmod_info *pKModInfo, void *pvData);
-static int              VbgdDarwinCharDevRemove(void);
+static kern_return_t    vgdrvDarwinStart(struct kmod_info *pKModInfo, void *pvData);
+static kern_return_t    vgdrvDarwinStop(struct kmod_info *pKModInfo, void *pvData);
+static int              vgdrvDarwinCharDevRemove(void);
 
-static int              VbgdDarwinOpen(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess);
-static int              VbgdDarwinClose(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess);
-static int              VbgdDarwinIOCtlSlow(PVBOXGUESTSESSION pSession, u_long iCmd, caddr_t pData, struct proc *pProcess);
-static int              VbgdDarwinIOCtl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess);
+static int              vgdrvDarwinOpen(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess);
+static int              vgdrvDarwinClose(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess);
+static int              vgdrvDarwinIOCtlSlow(PVBOXGUESTSESSION pSession, u_long iCmd, caddr_t pData, struct proc *pProcess);
+static int              vgdrvDarwinIOCtl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess);
 
-static int              VbgdDarwinErr2DarwinErr(int rc);
+static int              vgdrvDarwinErr2DarwinErr(int rc);
 
-static IOReturn         VbgdDarwinSleepHandler(void *pvTarget, void *pvRefCon, UInt32 uMessageType, IOService *pProvider, void *pvMessageArgument, vm_size_t argSize);
+static IOReturn         vgdrvDarwinSleepHandler(void *pvTarget, void *pvRefCon, UInt32 uMessageType, IOService *pProvider, void *pvMessageArgument, vm_size_t argSize);
 RT_C_DECLS_END
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * The service class for handling the VMMDev PCI device.
  *
@@ -110,10 +120,14 @@ private:
     bool disableVmmDevInterrupts(void);
     bool isVmmDev(IOPCIDevice *pIOPCIDevice);
 
+protected:
+    IOWorkLoop                *m_pWorkLoop;
+
 public:
     virtual bool start(IOService *pProvider);
     virtual void stop(IOService *pProvider);
     virtual bool terminate(IOOptionBits fOptions);
+    IOWorkLoop * getWorkLoop();
 };
 
 OSDefineMetaClassAndStructors(org_virtualbox_VBoxGuest, IOService);
@@ -146,9 +160,9 @@ OSDefineMetaClassAndStructors(org_virtualbox_VBoxGuestClient, IOUserClient);
 
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /**
  * Declare the module stuff.
  */
@@ -157,8 +171,8 @@ extern kern_return_t _start(struct kmod_info *pKModInfo, void *pvData);
 extern kern_return_t _stop(struct kmod_info *pKModInfo, void *pvData);
 
 KMOD_EXPLICIT_DECL(VBoxGuest, VBOX_VERSION_STRING, _start, _stop)
-DECLHIDDEN(kmod_start_func_t *) _realmain = VbgdDarwinStart;
-DECLHIDDEN(kmod_stop_func_t *)  _antimain = VbgdDarwinStop;
+DECLHIDDEN(kmod_start_func_t *) _realmain = vgdrvDarwinStart;
+DECLHIDDEN(kmod_stop_func_t *)  _antimain = vgdrvDarwinStop;
 DECLHIDDEN(int)                 _kext_apple_cc = __APPLE_CC__;
 RT_C_DECLS_END
 
@@ -173,19 +187,19 @@ static VBOXGUESTDEVEXT  g_DevExt;
  */
 static struct cdevsw    g_DevCW =
 {
-    /*.d_open     = */ VbgdDarwinOpen,
-    /*.d_close    = */ VbgdDarwinClose,
+    /*.d_open     = */ vgdrvDarwinOpen,
+    /*.d_close    = */ vgdrvDarwinClose,
     /*.d_read     = */ eno_rdwrt,
     /*.d_write    = */ eno_rdwrt,
-    /*.d_ioctl    = */ VbgdDarwinIOCtl,
+    /*.d_ioctl    = */ vgdrvDarwinIOCtl,
     /*.d_stop     = */ eno_stop,
     /*.d_reset    = */ eno_reset,
     /*.d_ttys     = */ NULL,
     /*.d_select   = */ eno_select,
     /*.d_mmap     = */ eno_mmap,
     /*.d_strategy = */ eno_strat,
-    /*.d_getc     = */ eno_getc,
-    /*.d_putc     = */ eno_putc,
+    /*.d_getc     = */ (void *)(uintptr_t)&enodev, //eno_getc,
+    /*.d_putc     = */ (void *)(uintptr_t)&enodev, //eno_putc,
     /*.d_type     = */ 0
 };
 
@@ -209,86 +223,86 @@ static bool volatile        g_fInstantiated     = 0;
 /** The notifier handle for the sleep callback handler. */
 static IONotifier          *g_pSleepNotifier    = NULL;
 
+/* States of atimic variable aimed to protect dynamic object allocation in SMP environment. */
+#define VBOXGUEST_OBJECT_UNINITIALIZED  (0)
+#define VBOXGUEST_OBJECT_INITIALIZING   (1)
+#define VBOXGUEST_OBJECT_INITIALIZED    (2)
+#define VBOXGUEST_OBJECT_INVALID        (3)
+/** Atomic variable used to protect work loop allocation when multiple threads attempt to obtain it. */
+static uint8_t volatile     g_fWorkLoopCreated  = VBOXGUEST_OBJECT_UNINITIALIZED;
 
 
 /**
  * Start the kernel module.
  */
-static kern_return_t    VbgdDarwinStart(struct kmod_info *pKModInfo, void *pvData)
+static kern_return_t    vgdrvDarwinStart(struct kmod_info *pKModInfo, void *pvData)
 {
-#ifdef DEBUG
-    printf("VbgdDarwinStart\n");
-#endif
+    RT_NOREF(pKModInfo, pvData);
 
     /*
      * Initialize IPRT.
      */
     int rc = RTR0Init(0);
-    if (RT_FAILURE(rc))
+    if (RT_SUCCESS(rc))
     {
-        printf("VBoxGuest: RTR0Init failed with rc=%d\n", rc);
-        return KMOD_RETURN_FAILURE;
+        Log(("VBoxGuest: driver loaded\n"));
+        return KMOD_RETURN_SUCCESS;
     }
 
-    return KMOD_RETURN_SUCCESS;
+    printf("VBoxGuest: RTR0Init failed with rc=%d\n", rc);
+    return KMOD_RETURN_FAILURE;
 }
 
 
-/* Register VBoxGuest char device */
-static int VbgdDarwinCharDevInit(void)
+/**
+ * Register VBoxGuest char device
+ */
+static int vgdrvDarwinCharDevInit(void)
 {
     int rc = RTSpinlockCreate(&g_Spinlock, RTSPINLOCK_FLAGS_INTERRUPT_SAFE, "VBoxGuestDarwin");
-    if (RT_FAILURE(rc))
+    if (RT_SUCCESS(rc))
     {
-        return KMOD_RETURN_FAILURE;
+        /*
+         * Registering ourselves as a character device.
+         */
+        g_iMajorDeviceNo = cdevsw_add(-1, &g_DevCW);
+        if (g_iMajorDeviceNo >= 0)
+        {
+            g_hDevFsDeviceSys = devfs_make_node(makedev(g_iMajorDeviceNo, 0), DEVFS_CHAR,
+                                                UID_ROOT, GID_WHEEL, 0666, DEVICE_NAME_SYS);
+            if (g_hDevFsDeviceSys != NULL)
+            {
+                /*
+                 * Register a sleep/wakeup notification callback.
+                 */
+                g_pSleepNotifier = registerPrioritySleepWakeInterest(&vgdrvDarwinSleepHandler, &g_DevExt, NULL);
+                if (g_pSleepNotifier != NULL)
+                {
+                    return KMOD_RETURN_SUCCESS;
+                }
+            }
+        }
+        vgdrvDarwinCharDevRemove();
     }
-
-    /*
-     * Registering ourselves as a character device.
-     */
-    g_iMajorDeviceNo = cdevsw_add(-1, &g_DevCW);
-    if (g_iMajorDeviceNo < 0)
-    {
-        VbgdDarwinCharDevRemove();
-        return KMOD_RETURN_FAILURE;
-    }
-
-    g_hDevFsDeviceSys = devfs_make_node(makedev(g_iMajorDeviceNo, 0), DEVFS_CHAR,
-                                        UID_ROOT, GID_WHEEL, 0666, DEVICE_NAME_SYS);
-    if (!g_hDevFsDeviceSys)
-    {
-        VbgdDarwinCharDevRemove();
-        return KMOD_RETURN_FAILURE;
-    }
-
-    /* Register a sleep/wakeup notification callback */
-    g_pSleepNotifier = registerPrioritySleepWakeInterest(&VbgdDarwinSleepHandler, &g_DevExt, NULL);
-    if (g_pSleepNotifier == NULL)
-    {
-        VbgdDarwinCharDevRemove();
-        return KMOD_RETURN_FAILURE;
-    }
-
-    return KMOD_RETURN_SUCCESS;
+    return KMOD_RETURN_FAILURE;
 }
 
 
 /**
  * Stop the kernel module.
  */
-static kern_return_t VbgdDarwinStop(struct kmod_info *pKModInfo, void *pvData)
+static kern_return_t vgdrvDarwinStop(struct kmod_info *pKModInfo, void *pvData)
 {
+    RT_NOREF(pKModInfo, pvData);
     RTR0TermForced();
-#ifdef DEBUG
-    printf("VbgdDarwinStop - done\n");
-#endif
+
+    printf("VBoxGuest: driver unloaded\n");
     return KMOD_RETURN_SUCCESS;
 }
 
 
 /* Unregister VBoxGuest char device */
-static int
-VbgdDarwinCharDevRemove(void)
+static int vgdrvDarwinCharDevRemove(void)
 {
     int rc = KMOD_RETURN_SUCCESS;
 
@@ -313,7 +327,7 @@ VbgdDarwinCharDevRemove(void)
     if (g_iMajorDeviceNo != -1)
     {
         int rc2 = cdevsw_remove(g_iMajorDeviceNo, &g_DevCW);
-        Assert(rc2 == g_iMajorDeviceNo);
+        Assert(rc2 == g_iMajorDeviceNo); NOREF(rc2);
         g_iMajorDeviceNo = -1;
     }
 
@@ -335,8 +349,10 @@ VbgdDarwinCharDevRemove(void)
  * @param   fDevType    ???.
  * @param   pProcess    The process issuing this request.
  */
-static int VbgdDarwinOpen(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess)
+static int vgdrvDarwinOpen(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess)
 {
+    RT_NOREF(fFlags,  fDevType);
+
     /*
      * Only two minor devices numbers are allowed.
      */
@@ -374,7 +390,7 @@ static int VbgdDarwinOpen(dev_t Dev, int fFlags, int fDevType, struct proc *pPro
         else
             rc = VERR_GENERAL_FAILURE;
 
-        RTSpinlockReleaseNoInts(g_Spinlock);
+        RTSpinlockRelease(g_Spinlock);
 #if MAC_OS_X_VERSION_MIN_REQUIRED >= 1050
         kauth_cred_unref(&pCred);
 #else  /* 10.4 */
@@ -386,17 +402,18 @@ static int VbgdDarwinOpen(dev_t Dev, int fFlags, int fDevType, struct proc *pPro
     else
         rc = VERR_INVALID_PARAMETER;
 
-    Log(("VbgdDarwinOpen: g_DevExt=%p pSession=%p rc=%d pid=%d\n", &g_DevExt, pSession, rc, proc_pid(pProcess)));
-    return VbgdDarwinErr2DarwinErr(rc);
+    Log(("vgdrvDarwinOpen: g_DevExt=%p pSession=%p rc=%d pid=%d\n", &g_DevExt, pSession, rc, proc_pid(pProcess)));
+    return vgdrvDarwinErr2DarwinErr(rc);
 }
 
 
 /**
  * Close device.
  */
-static int VbgdDarwinClose(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess)
+static int vgdrvDarwinClose(dev_t Dev, int fFlags, int fDevType, struct proc *pProcess)
 {
-    Log(("VbgdDarwinClose: pid=%d\n", (int)RTProcSelf()));
+    RT_NOREF(Dev, fFlags, fDevType, pProcess);
+    Log(("vgdrvDarwinClose: pid=%d\n", (int)RTProcSelf()));
     Assert(proc_pid(pProcess) == (int)RTProcSelf());
 
     /*
@@ -413,12 +430,13 @@ static int VbgdDarwinClose(dev_t Dev, int fFlags, int fDevType, struct proc *pPr
  * @returns Darwin for slow IOCtls and VBox status code for the fast ones.
  * @param   Dev         The device number (major+minor).
  * @param   iCmd        The IOCtl command.
- * @param   pData       Pointer to the data (if any it's a VBOXGUESTIOCTLDATA (kernel copy)).
+ * @param   pData     Pointer to the request data.
  * @param   fFlags      Flag saying we're a character device (like we didn't know already).
  * @param   pProcess    The process issuing this request.
  */
-static int VbgdDarwinIOCtl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess)
+static int vgdrvDarwinIOCtl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, struct proc *pProcess)
 {
+    RT_NOREF(Dev, fFlags);
     //const bool          fUnrestricted = minor(Dev) == 0;
     const RTPROCESS     Process = proc_pid(pProcess);
     const unsigned      iHash = SESSION_HASH(Process);
@@ -429,138 +447,155 @@ static int VbgdDarwinIOCtl(dev_t Dev, u_long iCmd, caddr_t pData, int fFlags, st
      */
     RTSpinlockAcquire(g_Spinlock);
     pSession = g_apSessionHashTab[iHash];
-    while (pSession && pSession->Process != Process /*later: && pSession->fUnrestricted == fUnrestricted*/ && pSession->fOpened)
+    while (pSession && pSession->Process != Process && (/*later: pSession->fUnrestricted != fUnrestricted ||*/  !pSession->fOpened))
         pSession = pSession->pNextHash;
-    RTSpinlockReleaseNoInts(g_Spinlock);
+    RTSpinlockRelease(g_Spinlock);
     if (!pSession)
     {
-        Log(("VBoxDrvDarwinIOCtl: WHAT?!? pSession == NULL! This must be a mistake... pid=%d iCmd=%#lx\n",
-             (int)Process, iCmd));
+        Log(("VBoxDrvDarwinIOCtl: WHAT?!? pSession == NULL! This must be a mistake... pid=%d iCmd=%#lx\n", (int)Process, iCmd));
         return EINVAL;
     }
 
     /*
-     * No high speed IOCtls here yet.
+     * Deal with the high-speed IOCtl.
      */
+    if (VBGL_IOCTL_IS_FAST(iCmd))
+        return VGDrvCommonIoCtlFast(iCmd, &g_DevExt, pSession);
 
-    return VbgdDarwinIOCtlSlow(pSession, iCmd, pData, pProcess);
+    return vgdrvDarwinIOCtlSlow(pSession, iCmd, pData, pProcess);
 }
 
 
 /**
- * Worker for VbgdDarwinIOCtl that takes the slow IOCtl functions.
+ * Worker for VBoxDrvDarwinIOCtl that takes the slow IOCtl functions.
  *
  * @returns Darwin errno.
  *
  * @param pSession  The session.
  * @param iCmd      The IOCtl command.
- * @param pData     Pointer to the kernel copy of the data buffer.
+ * @param pData     Pointer to the request data.
  * @param pProcess  The calling process.
  */
-static int VbgdDarwinIOCtlSlow(PVBOXGUESTSESSION pSession, u_long iCmd, caddr_t pData, struct proc *pProcess)
+static int vgdrvDarwinIOCtlSlow(PVBOXGUESTSESSION pSession, u_long iCmd, caddr_t pData, struct proc *pProcess)
 {
-    LogFlow(("VbgdDarwinIOCtlSlow: pSession=%p iCmd=%p pData=%p pProcess=%p\n", pSession, iCmd, pData, pProcess));
+    RT_NOREF(pProcess);
+    LogFlow(("vgdrvDarwinIOCtlSlow: pSession=%p iCmd=%p pData=%p pProcess=%p\n", pSession, iCmd, pData, pProcess));
 
 
     /*
      * Buffered or unbuffered?
      */
-    void *pvReqData;
+    PVBGLREQHDR pHdr;
     user_addr_t pUser = 0;
     void *pvPageBuf = NULL;
     uint32_t cbReq = IOCPARM_LEN(iCmd);
     if ((IOC_DIRMASK & iCmd) == IOC_INOUT)
     {
-        /*
-         * Raw buffered request data, common code validates it.
-         */
-        pvReqData = pData;
+        pHdr = (PVBGLREQHDR)pData;
+        if (RT_UNLIKELY(cbReq < sizeof(*pHdr)))
+        {
+            LogRel(("vgdrvDarwinIOCtlSlow: cbReq=%#x < %#x; iCmd=%#lx\n", cbReq, (int)sizeof(*pHdr), iCmd));
+            return EINVAL;
+        }
+        if (RT_UNLIKELY(pHdr->uVersion != VBGLREQHDR_VERSION))
+        {
+            LogRel(("vgdrvDarwinIOCtlSlow: bad uVersion=%#x; iCmd=%#lx\n", pHdr->uVersion, iCmd));
+            return EINVAL;
+        }
+        if (RT_UNLIKELY(   RT_MAX(pHdr->cbIn, pHdr->cbOut) != cbReq
+                        || pHdr->cbIn < sizeof(*pHdr)
+                        || (pHdr->cbOut < sizeof(*pHdr) && pHdr->cbOut != 0)))
+        {
+            LogRel(("vgdrvDarwinIOCtlSlow: max(%#x,%#x) != %#x; iCmd=%#lx\n", pHdr->cbIn, pHdr->cbOut, cbReq, iCmd));
+            return EINVAL;
+        }
     }
     else if ((IOC_DIRMASK & iCmd) == IOC_VOID && !cbReq)
     {
         /*
          * Get the header and figure out how much we're gonna have to read.
          */
-        VBGLBIGREQ Hdr;
+        VBGLREQHDR Hdr;
         pUser = (user_addr_t)*(void **)pData;
         int rc = copyin(pUser, &Hdr, sizeof(Hdr));
         if (RT_UNLIKELY(rc))
         {
-            Log(("VbgdDarwinIOCtlSlow: copyin(%llx,Hdr,) -> %#x; iCmd=%#lx\n", (unsigned long long)pUser, rc, iCmd));
+            LogRel(("vgdrvDarwinIOCtlSlow: copyin(%llx,Hdr,) -> %#x; iCmd=%#lx\n", (unsigned long long)pUser, rc, iCmd));
             return rc;
         }
-        if (RT_UNLIKELY(Hdr.u32Magic != VBGLBIGREQ_MAGIC))
+        if (RT_UNLIKELY(Hdr.uVersion != VBGLREQHDR_VERSION))
         {
-            Log(("VbgdDarwinIOCtlSlow: bad magic u32Magic=%#x; iCmd=%#lx\n", Hdr.u32Magic, iCmd));
+            LogRel(("vgdrvDarwinIOCtlSlow: bad uVersion=%#x; iCmd=%#lx\n", Hdr.uVersion, iCmd));
             return EINVAL;
         }
-        cbReq = Hdr.cbData;
-        if (RT_UNLIKELY(cbReq > _1M*16))
+        cbReq = RT_MAX(Hdr.cbIn, Hdr.cbOut);
+        if (RT_UNLIKELY(   Hdr.cbIn < sizeof(Hdr)
+                        || (Hdr.cbOut < sizeof(Hdr) && Hdr.cbOut != 0)
+                        || cbReq > _1M*16))
         {
-            Log(("VbgdDarwinIOCtlSlow: %#x; iCmd=%#lx\n", Hdr.cbData, iCmd));
+            LogRel(("vgdrvDarwinIOCtlSlow: max(%#x,%#x); iCmd=%#lx\n", Hdr.cbIn, Hdr.cbOut, iCmd));
             return EINVAL;
         }
-        pUser = Hdr.pvDataR3;
 
         /*
          * Allocate buffer and copy in the data.
          */
-        pvReqData = RTMemTmpAlloc(cbReq);
-        if (!pvReqData)
-            pvPageBuf = pvReqData = IOMallocAligned(RT_ALIGN_Z(cbReq, PAGE_SIZE), 8);
-        if (RT_UNLIKELY(!pvReqData))
+        pHdr = (PVBGLREQHDR)RTMemTmpAlloc(cbReq);
+        if (!pHdr)
+            pvPageBuf = pHdr = (PVBGLREQHDR)IOMallocAligned(RT_ALIGN_Z(cbReq, PAGE_SIZE), 8);
+        if (RT_UNLIKELY(!pHdr))
         {
-            Log(("VbgdDarwinIOCtlSlow: failed to allocate buffer of %d bytes; iCmd=%#lx\n", cbReq, iCmd));
+            LogRel(("vgdrvDarwinIOCtlSlow: failed to allocate buffer of %d bytes; iCmd=%#lx\n", cbReq, iCmd));
             return ENOMEM;
         }
-        rc = copyin(pUser, pvReqData, Hdr.cbData);
+        rc = copyin(pUser, pHdr, Hdr.cbIn);
         if (RT_UNLIKELY(rc))
         {
-            Log(("VbgdDarwinIOCtlSlow: copyin(%llx,%p,%#x) -> %#x; iCmd=%#lx\n",
-                 (unsigned long long)pUser, pvReqData, Hdr.cbData, rc, iCmd));
+            LogRel(("vgdrvDarwinIOCtlSlow: copyin(%llx,%p,%#x) -> %#x; iCmd=%#lx\n",
+                    (unsigned long long)pUser, pHdr, Hdr.cbIn, rc, iCmd));
             if (pvPageBuf)
                 IOFreeAligned(pvPageBuf, RT_ALIGN_Z(cbReq, PAGE_SIZE));
             else
-                RTMemTmpFree(pvReqData);
+                RTMemTmpFree(pHdr);
             return rc;
         }
+        if (Hdr.cbIn < cbReq)
+            RT_BZERO((uint8_t *)pHdr + Hdr.cbIn, cbReq - Hdr.cbIn);
     }
     else
     {
-        Log(("VbgdDarwinIOCtlSlow: huh? cbReq=%#x iCmd=%#lx\n", cbReq, iCmd));
+        Log(("vgdrvDarwinIOCtlSlow: huh? cbReq=%#x iCmd=%#lx\n", cbReq, iCmd));
         return EINVAL;
     }
 
     /*
      * Process the IOCtl.
      */
-    size_t cbReqRet = 0;
-    int rc = VBoxGuestCommonIOCtl(iCmd, &g_DevExt, pSession, pvReqData, cbReq, &cbReqRet);
-    if (RT_SUCCESS(rc))
+    int rc = VGDrvCommonIoCtl(iCmd, &g_DevExt, pSession, pHdr, cbReq);
+    if (RT_LIKELY(!rc))
     {
         /*
          * If not buffered, copy back the buffer before returning.
          */
         if (pUser)
         {
-            if (cbReqRet > cbReq)
+            uint32_t cbOut = pHdr->cbOut;
+            if (cbOut > cbReq)
             {
-                Log(("VbgdDarwinIOCtlSlow: too much output! %#x > %#x; uCmd=%#lx!\n", cbReqRet, cbReq, iCmd));
-                cbReqRet = cbReq;
+                LogRel(("vgdrvDarwinIOCtlSlow: too much output! %#x > %#x; uCmd=%#lx!\n", cbOut, cbReq, iCmd));
+                cbOut = cbReq;
             }
-            rc = copyout(pvReqData, pUser, cbReqRet);
+            rc = copyout(pHdr, pUser, cbOut);
             if (RT_UNLIKELY(rc))
-                Log(("VbgdDarwinIOCtlSlow: copyout(%p,%llx,%#x) -> %d; uCmd=%#lx!\n",
-                     pvReqData, (unsigned long long)pUser, cbReqRet, rc, iCmd));
+                LogRel(("vgdrvDarwinIOCtlSlow: copyout(%p,%llx,%#x) -> %d; uCmd=%#lx!\n",
+                        pHdr, (unsigned long long)pUser, cbOut, rc, iCmd));
 
             /* cleanup */
             if (pvPageBuf)
                 IOFreeAligned(pvPageBuf, RT_ALIGN_Z(cbReq, PAGE_SIZE));
             else
-                RTMemTmpFree(pvReqData);
+                RTMemTmpFree(pHdr);
         }
-        else
-            rc = 0;
     }
     else
     {
@@ -572,27 +607,63 @@ static int VbgdDarwinIOCtlSlow(PVBOXGUESTSESSION pSession, u_long iCmd, caddr_t 
             if (pvPageBuf)
                 IOFreeAligned(pvPageBuf, RT_ALIGN_Z(cbReq, PAGE_SIZE));
             else
-                RTMemTmpFree(pvReqData);
+                RTMemTmpFree(pHdr);
         }
 
-        Log(("VbgdDarwinIOCtlSlow: pid=%d iCmd=%lx pData=%p failed, rc=%d\n", proc_pid(pProcess), iCmd, (void *)pData, rc));
+        Log(("vgdrvDarwinIOCtlSlow: pid=%d iCmd=%lx pData=%p failed, rc=%d\n", proc_pid(pProcess), iCmd, (void *)pData, rc));
         rc = EINVAL;
     }
 
-    Log2(("VbgdDarwinIOCtlSlow: returns %d\n", rc));
+    Log2(("vgdrvDarwinIOCtlSlow: returns %d\n", rc));
     return rc;
 }
 
 
-/*
- * The VBoxGuest IDC entry points.
- *
- * This code is shared with the other unixy OSes.
+/**
+ * @note This code is duplicated on other platforms with variations, so please
+ *       keep them all up to date when making changes!
  */
-#include "VBoxGuestIDC-unix.c.h"
+int VBOXCALL VBoxGuestIDC(void *pvSession, uintptr_t uReq, PVBGLREQHDR pReqHdr, size_t cbReq)
+{
+    /*
+     * Simple request validation (common code does the rest).
+     */
+    int rc;
+    if (   RT_VALID_PTR(pReqHdr)
+        && cbReq >= sizeof(*pReqHdr))
+    {
+        /*
+         * All requests except the connect one requires a valid session.
+         */
+        PVBOXGUESTSESSION pSession = (PVBOXGUESTSESSION)pvSession;
+        if (pSession)
+        {
+            if (   RT_VALID_PTR(pSession)
+                && pSession->pDevExt == &g_DevExt)
+                rc = VGDrvCommonIoCtl(uReq, &g_DevExt, pSession, pReqHdr, cbReq);
+            else
+                rc = VERR_INVALID_HANDLE;
+        }
+        else if (uReq == VBGL_IOCTL_IDC_CONNECT)
+        {
+            rc = VGDrvCommonCreateKernelSession(&g_DevExt, &pSession);
+            if (RT_SUCCESS(rc))
+            {
+                rc = VGDrvCommonIoCtl(uReq, &g_DevExt, pSession, pReqHdr, cbReq);
+                if (RT_FAILURE(rc))
+                    VGDrvCommonCloseSession(&g_DevExt, pSession);
+            }
+        }
+        else
+            rc = VERR_INVALID_HANDLE;
+    }
+    else
+        rc = VERR_INVALID_POINTER;
+    return rc;
+}
 
 
-void VBoxGuestNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
+void VGDrvNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
 {
     NOREF(pDevExt);
 }
@@ -601,9 +672,11 @@ void VBoxGuestNativeISRMousePollEvent(PVBOXGUESTDEVEXT pDevExt)
 /**
  * Callback for blah blah blah.
  */
-IOReturn VbgdDarwinSleepHandler(void * /* pvTarget */, void *pvRefCon, UInt32 uMessageType, IOService * /* pProvider */, void * /* pvMessageArgument */, vm_size_t /* argSize */)
+static IOReturn vgdrvDarwinSleepHandler(void *pvTarget, void *pvRefCon, UInt32 uMessageType,
+                                        IOService *pProvider, void *pvMsgArg, vm_size_t cbMsgArg)
 {
-    LogFlow(("VBoxGuest: Got sleep/wake notice. Message type was %X\n", (uint)uMessageType));
+    RT_NOREF(pvTarget, pProvider, pvMsgArg, cbMsgArg);
+    LogFlow(("VBoxGuest: Got sleep/wake notice. Message type was %x\n", uMessageType));
 
     if (uMessageType == kIOMessageSystemWillSleep)
         RTPowerSignalEvent(RTPOWEREVENT_SUSPEND);
@@ -622,7 +695,7 @@ IOReturn VbgdDarwinSleepHandler(void * /* pvTarget */, void *pvRefCon, UInt32 uM
  * @returns corresponding darwin error code.
  * @param   rc      IPRT status code.
  */
-static int VbgdDarwinErr2DarwinErr(int rc)
+static int vgdrvDarwinErr2DarwinErr(int rc)
 {
     switch (rc)
     {
@@ -648,61 +721,110 @@ static int VbgdDarwinErr2DarwinErr(int rc)
  *
  */
 
+
 /**
- * Just a plug
+ * Lazy initialization of the m_pWorkLoop member.
+ *
+ * @returns m_pWorkLoop.
  */
-static void
-interruptHandler(OSObject *pOwner, IOInterruptEventSource *pSrc, int cInts)
+IOWorkLoop *org_virtualbox_VBoxGuest::getWorkLoop()
 {
-    NOREF(pOwner);
-    NOREF(pSrc);
-    NOREF(cInts);
+/** @todo r=bird: This is actually a classic RTOnce scenario, except it's
+ *        tied to a org_virtualbox_VBoxGuest instance.  */
+    /*
+     * Handle the case when work loop was not created yet.
+     */
+    if (ASMAtomicCmpXchgU8(&g_fWorkLoopCreated, VBOXGUEST_OBJECT_INITIALIZING, VBOXGUEST_OBJECT_UNINITIALIZED))
+    {
+        m_pWorkLoop = IOWorkLoop::workLoop();
+        if (m_pWorkLoop)
+        {
+            /* Notify the rest of threads about the fact that work
+             * loop was successully allocated and can be safely used */
+            Log(("VBoxGuest: created new work loop\n"));
+            ASMAtomicWriteU8(&g_fWorkLoopCreated, VBOXGUEST_OBJECT_INITIALIZED);
+        }
+        else
+        {
+            /* Notify the rest of threads about the fact that there was
+             * an error during allocation of a work loop */
+            Log(("VBoxGuest: failed to create new work loop!\n"));
+            ASMAtomicWriteU8(&g_fWorkLoopCreated, VBOXGUEST_OBJECT_UNINITIALIZED);
+        }
+    }
+    /*
+     * Handle the case when work loop is already create or
+     * in the process of being.
+     */
+    else
+    {
+        uint8_t fWorkLoopCreated = ASMAtomicReadU8(&g_fWorkLoopCreated);
+        while (fWorkLoopCreated == VBOXGUEST_OBJECT_INITIALIZING)
+        {
+            thread_block(0);
+            fWorkLoopCreated = ASMAtomicReadU8(&g_fWorkLoopCreated);
+        }
+        if (fWorkLoopCreated != VBOXGUEST_OBJECT_INITIALIZED)
+            Log(("VBoxGuest: No work loop!\n"));
+    }
+
+    return m_pWorkLoop;
 }
+
+
+/**
+ * Perform pending wake ups in work loop context.
+ */
+static void vgdrvDarwinDeferredIrqHandler(OSObject *pOwner, IOInterruptEventSource *pSrc, int cInts)
+{
+    NOREF(pOwner); NOREF(pSrc); NOREF(cInts);
+
+    VGDrvCommonWaitDoWakeUps(&g_DevExt);
+}
+
 
 /**
  * Callback triggered when interrupt occurs.
  */
-static bool
-checkForInterrupt(OSObject *pOwner, IOFilterInterruptEventSource *pSrc)
+static bool vgdrvDarwinDirectIrqHandler(OSObject *pOwner, IOFilterInterruptEventSource *pSrc)
 {
+    RT_NOREF(pOwner);
     if (!pSrc)
         return false;
 
-    bool fTaken = VBoxGuestCommonISR(&g_DevExt);
-    if (!fTaken)
-        printf("VBoxGuestCommonISR error\n");
+    bool fTaken = VGDrvCommonISR(&g_DevExt);
+    if (!fTaken) /** @todo r=bird: This looks bogus as we might actually be sharing interrupts with someone. */
+        Log(("VGDrvCommonISR error\n"));
 
     return fTaken;
 }
 
-bool
-org_virtualbox_VBoxGuest::setupVmmDevInterrupts(IOService *pProvider)
-{
-    IOWorkLoop *pWorkLoop = (IOWorkLoop *)getWorkLoop();
 
+bool org_virtualbox_VBoxGuest::setupVmmDevInterrupts(IOService *pProvider)
+{
+    IOWorkLoop *pWorkLoop = getWorkLoop();
     if (!pWorkLoop)
         return false;
 
     m_pInterruptSrc = IOFilterInterruptEventSource::filterInterruptEventSource(this,
-                                                                               &interruptHandler,
-                                                                               &checkForInterrupt,
+                                                                               &vgdrvDarwinDeferredIrqHandler,
+                                                                               &vgdrvDarwinDirectIrqHandler,
                                                                                pProvider);
-
-    if (kIOReturnSuccess != pWorkLoop->addEventSource(m_pInterruptSrc))
+    IOReturn rc = pWorkLoop->addEventSource(m_pInterruptSrc);
+    if (rc == kIOReturnSuccess)
     {
-        m_pInterruptSrc->disable();
-        m_pInterruptSrc->release();
-        m_pInterruptSrc = 0;
-        return false;
+        m_pInterruptSrc->enable();
+        return true;
     }
 
-    m_pInterruptSrc->enable();
-
-    return true;
+    m_pInterruptSrc->disable();
+    m_pInterruptSrc->release();
+    m_pInterruptSrc = NULL;
+    return false;
 }
 
-bool
-org_virtualbox_VBoxGuest::disableVmmDevInterrupts(void)
+
+bool org_virtualbox_VBoxGuest::disableVmmDevInterrupts(void)
 {
     IOWorkLoop *pWorkLoop = (IOWorkLoop *)getWorkLoop();
 
@@ -715,10 +837,11 @@ org_virtualbox_VBoxGuest::disableVmmDevInterrupts(void)
     m_pInterruptSrc->disable();
     pWorkLoop->removeEventSource(m_pInterruptSrc);
     m_pInterruptSrc->release();
-    m_pInterruptSrc = 0;
+    m_pInterruptSrc = NULL;
 
     return true;
 }
+
 
 bool org_virtualbox_VBoxGuest::isVmmDev(IOPCIDevice *pIOPCIDevice)
 {
@@ -742,15 +865,14 @@ bool org_virtualbox_VBoxGuest::isVmmDev(IOPCIDevice *pIOPCIDevice)
  */
 bool org_virtualbox_VBoxGuest::start(IOService *pProvider)
 {
-    if (!IOService::start(pProvider))
+    /*
+     * Low level initialization / device initialization should be performed only once.
+     */
+    if (!ASMAtomicCmpXchgBool(&g_fInstantiated, true, false))
         return false;
 
-    /* Low level initialization should be performed only once */
-    if (!ASMAtomicCmpXchgBool(&g_fInstantiated, true, false))
-    {
-        IOService::stop(pProvider);
+    if (!IOService::start(pProvider))
         return false;
-    }
 
     m_pIOPCIDevice = OSDynamicCast(IOPCIDevice, pProvider);
     if (m_pIOPCIDevice)
@@ -779,36 +901,36 @@ bool org_virtualbox_VBoxGuest::start(IOService *pProvider)
                         cbMMIO     = m_pMap->getLength();
                     }
 
-                    int rc = VBoxGuestInitDevExt(&g_DevExt,
-                                                 IOPortBase,
-                                                 pvMMIOBase,
-                                                 cbMMIO,
+                    int rc = VGDrvCommonInitDevExt(&g_DevExt,
+                                                   IOPortBase,
+                                                   pvMMIOBase,
+                                                   cbMMIO,
 #if ARCH_BITS == 64
-                                                 VBOXOSTYPE_MacOS_x64,
+                                                   VBOXOSTYPE_MacOS_x64,
 #else
-                                                 VBOXOSTYPE_MacOS,
+                                                   VBOXOSTYPE_MacOS,
 #endif
-                                                 0);
+                                                   0);
                     if (RT_SUCCESS(rc))
                     {
-                        rc = VbgdDarwinCharDevInit();
+                        rc = vgdrvDarwinCharDevInit();
                         if (rc == KMOD_RETURN_SUCCESS)
                         {
                             if (setupVmmDevInterrupts(pProvider))
                             {
                                 /* register the service. */
                                 registerService();
-                                LogRel(("VBoxGuest: Successfully started I/O kit class instance.\n"));
+                                LogRel(("VBoxGuest: IOService started\n"));
                                 return true;
                             }
 
                             LogRel(("VBoxGuest: Failed to set up interrupts\n"));
-                            VbgdDarwinCharDevRemove();
+                            vgdrvDarwinCharDevRemove();
                         }
                         else
                             LogRel(("VBoxGuest: Failed to initialize character device (rc=%d).\n", rc));
 
-                        VBoxGuestDeleteDevExt(&g_DevExt);
+                        VGDrvCommonDeleteDevExt(&g_DevExt);
                     }
                     else
                         LogRel(("VBoxGuest: Failed to initialize common code (rc=%d).\n", rc));
@@ -831,9 +953,7 @@ bool org_virtualbox_VBoxGuest::start(IOService *pProvider)
         LogRel(("VBoxGuest: Provider is not an instance of IOPCIDevice.\n"));
 
     ASMAtomicXchgBool(&g_fInstantiated, false);
-
     IOService::stop(pProvider);
-
     return false;
 }
 
@@ -843,16 +963,18 @@ bool org_virtualbox_VBoxGuest::start(IOService *pProvider)
  */
 void org_virtualbox_VBoxGuest::stop(IOService *pProvider)
 {
-    LogFlow(("org_virtualbox_VBoxGuest::stop([%p], %p)\n", this, pProvider));
+    /* Do not use Log*() here (in IOService instance) because its instance
+     * already terminated in BSD's module unload callback! */
+    Log(("org_virtualbox_VBoxGuest::stop([%p], %p)\n", this, pProvider));
 
     AssertReturnVoid(ASMAtomicReadBool(&g_fInstantiated));
 
     /* Low level termination should be performed only once */
     if (!disableVmmDevInterrupts())
-        LogRel(("vboxguest: unable to unregister interrupt handler\n"));
+        printf("VBoxGuest: unable to unregister interrupt handler\n");
 
-    VbgdDarwinCharDevRemove();
-    VBoxGuestDeleteDevExt(&g_DevExt);
+    vgdrvDarwinCharDevRemove();
+    VGDrvCommonDeleteDevExt(&g_DevExt);
 
     if (m_pMap)
     {
@@ -864,7 +986,7 @@ void org_virtualbox_VBoxGuest::stop(IOService *pProvider)
 
     ASMAtomicWriteBool(&g_fInstantiated, false);
 
-    LogRel(("vboxguest module unloaded\n"));
+    printf("VBoxGuest: IOService stopped\n");
 }
 
 
@@ -876,15 +998,23 @@ void org_virtualbox_VBoxGuest::stop(IOService *pProvider)
  */
 bool org_virtualbox_VBoxGuest::terminate(IOOptionBits fOptions)
 {
+    /* Do not use Log*() here (in IOService instance) because its instance
+     * already terminated in BSD's module unload callback! */
+#ifdef LOG_ENABLED
+    printf("org_virtualbox_VBoxGuest::terminate: reference_count=%d g_cSessions=%d (fOptions=%#x)\n",
+           KMOD_INFO_NAME.reference_count, ASMAtomicUoReadS32(&g_cSessions), fOptions);
+#endif
+
     bool fRc;
-    LogFlow(("org_virtualbox_VBoxGuest::terminate: reference_count=%d g_cSessions=%d (fOptions=%#x)\n",
-             KMOD_INFO_NAME.reference_count, ASMAtomicUoReadS32(&g_cSessions), fOptions));
     if (    KMOD_INFO_NAME.reference_count != 0
         ||  ASMAtomicUoReadS32(&g_cSessions))
         fRc = false;
     else
         fRc = IOService::terminate(fOptions);
-    LogFlow(("org_virtualbox_SupDrv::terminate: returns %d\n", fRc));
+
+#ifdef LOG_ENABLED
+    printf("org_virtualbox_SupDrv::terminate: returns %d\n", fRc);
+#endif
     return fRc;
 }
 
@@ -916,6 +1046,12 @@ bool org_virtualbox_VBoxGuestClient::initWithTask(task_t OwningTask, void *pvSec
 
     if (IOUserClient::initWithTask(OwningTask, pvSecurityId , u32Type))
     {
+        /*
+         * In theory we have to call task_reference() to make sure that the task is
+         * valid during the lifetime of this object. The pointer is only used to check
+         * for the context this object is called in though and never dereferenced
+         * or passed to anything which might, so we just skip this step.
+         */
         m_Task = OwningTask;
         m_pSession = NULL;
         m_pProvider = NULL;
@@ -946,7 +1082,7 @@ bool org_virtualbox_VBoxGuestClient::start(IOService *pProvider)
             /*
              * Create a new session.
              */
-            int rc = VBoxGuestCreateUserSession(&g_DevExt, &m_pSession);
+            int rc = VGDrvCommonCreateUserSession(&g_DevExt, &m_pSession);
             if (RT_SUCCESS(rc))
             {
                 m_pSession->fOpened = false;
@@ -984,7 +1120,7 @@ bool org_virtualbox_VBoxGuestClient::start(IOService *pProvider)
                 }
 
                 LogFlow(("org_virtualbox_VBoxGuestClient::start: already got a session for this process (%p)\n", pCur));
-                VBoxGuestCloseSession(&g_DevExt, m_pSession);
+                VGDrvCommonCloseSession(&g_DevExt, m_pSession);
             }
 
             m_pSession = NULL;
@@ -1006,7 +1142,7 @@ bool org_virtualbox_VBoxGuestClient::start(IOService *pProvider)
      * Find the session and remove it from the hash table.
      *
      * Note! Only one session per process. (Both start() and
-     * VbgdDarwinOpen makes sure this is so.)
+     * vgdrvDarwinOpen makes sure this is so.)
      */
     const unsigned  iHash = SESSION_HASH(Process);
     RTSpinlockAcquire(g_Spinlock);
@@ -1060,7 +1196,7 @@ bool org_virtualbox_VBoxGuestClient::start(IOService *pProvider)
     /*
      * Close the session.
      */
-    VBoxGuestCloseSession(&g_DevExt, pSession);
+    VGDrvCommonCloseSession(&g_DevExt, pSession);
 }
 
 

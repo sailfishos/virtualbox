@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2013 Oracle Corporation
+ * Copyright (C) 2013-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,9 +16,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define INCL_BASE
 #include <os2.h>
 #include <stdio.h>
@@ -42,7 +42,7 @@ static int usage(const char *argv0)
            "Tells the kernel to cache the specified DLLs in memory and close the\n"
            "files on disk, allowing new DLL versions to be installed.\n"
            "\n"
-           "Copyright (C) 2013 Oracle Corporation\n",
+           "Copyright (C) 2013-2016 Oracle Corporation\n",
            argv0);
     return 0;
 }
@@ -67,7 +67,7 @@ int main(int argc, char **argv)
             else if (   !strcmp(argv[i], "--version")
                      || !strcmp(argv[i], "-V") )
             {
-                printf("$Revision: 89639 $\n");
+                printf("$Revision: 118839 $\n");
                 return 0;
             }
             else
@@ -86,7 +86,7 @@ int main(int argc, char **argv)
                 printf("info: Successfully cached '%s'.\n", argv[i]);
             else
             {
-                fprintf(stderr, "error: DosReplaceModule failed with rc=%u on  '%s'.\n", rc, argv[i]);
+                fprintf(stderr, "error: DosReplaceModule failed with rc=%lu on  '%s'.\n", rc, argv[i]);
                 return 1;
             }
             cProcessed++;

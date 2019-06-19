@@ -1,10 +1,10 @@
-; $Id$
-; @file
+; $Id: VBoxGuestAdditionsNT4.nsh $
+;; @file
 ; VBoxGuestAdditionsNT4.nsh - Guest Additions installation for NT4.
 ;
 
 ;
-; Copyright (C) 2006-2013 Oracle Corporation
+; Copyright (C) 2006-2017 Oracle Corporation
 ;
 ; This file is part of VirtualBox Open Source Edition (OSE), as
 ; available from http://www.virtualbox.org. This file is free software;
@@ -113,24 +113,35 @@ Function NT4_CopyFiles
 
   SetOutPath "$INSTDIR"
   FILE "$%PATH_OUT%\bin\additions\VBoxGuestDrvInst.exe"
+  AccessControl::SetOnFile "$INSTDIR\VBoxGuestDrvInst.exe" "(BU)" "GenericRead"
   FILE "$%PATH_OUT%\bin\additions\RegCleanup.exe"
+  AccessControl::SetOnFile "$INSTDIR\RegCleanup.exe" "(BU)" "GenericRead"
 
   ; The files to install for NT 4, they go into the system directories
   SetOutPath "$SYSDIR"
   FILE "$%PATH_OUT%\bin\additions\VBoxDisp.dll"
+  AccessControl::SetOnFile "$SYSDIR\VBoxDisp.dll" "(BU)" "GenericRead"
   FILE "$%PATH_OUT%\bin\additions\VBoxTray.exe"
+  AccessControl::SetOnFile "$SYSDIR\VBoxTray.exe" "(BU)" "GenericRead"
   FILE "$%PATH_OUT%\bin\additions\VBoxHook.dll"
+  AccessControl::SetOnFile "$SYSDIR\VBoxHook.dll" "(BU)" "GenericRead"
   FILE "$%PATH_OUT%\bin\additions\VBoxControl.exe"
+  AccessControl::SetOnFile "$SYSDIR\VBoxControl.exe" "(BU)" "GenericRead"
 
   ; VBoxService
   FILE "$%PATH_OUT%\bin\additions\VBoxServiceNT.exe"
+  AccessControl::SetOnFile "$SYSDIR\VBoxServiceNT.exe" "(BU)" "GenericRead"
 
   ; The drivers into the "drivers" directory
   SetOutPath "$SYSDIR\drivers"
   FILE "$%PATH_OUT%\bin\additions\VBoxVideo.sys"
+  AccessControl::SetOnFile "$SYSDIR\drivers\VBoxVideo.sys" "(BU)" "GenericRead"
   FILE "$%PATH_OUT%\bin\additions\VBoxMouseNT.sys"
+  AccessControl::SetOnFile "$SYSDIR\drivers\VBoxMouseNT.sys" "(BU)" "GenericRead"
   FILE "$%PATH_OUT%\bin\additions\VBoxGuestNT.sys"
+  AccessControl::SetOnFile "$SYSDIR\drivers\VBoxGuestNT.sys" "(BU)" "GenericRead"
   ;FILE "$%PATH_OUT%\bin\additions\VBoxSFNT.sys" ; Shared Folders not available on NT4!
+  ;AccessControl::SetOnFile "$SYSDIR\drivers\VBoxSFNT.sys" "(BU)" "GenericRead"
 
 FunctionEnd
 
@@ -144,7 +155,7 @@ Function NT4_InstallFiles
   ; Bugfix: Set "Start" to 1, otherwise, VBoxGuest won't start on boot-up!
   ; Bugfix: Correct invalid "ImagePath" (\??\C:\WINNT\...)
   WriteRegDWORD HKLM "SYSTEM\CurrentControlSet\Services\VBoxGuest" "Start" 1
-  WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\VBoxGuest" "ImagePath" "System32\Drivers\VBoxGuestNT.sys"
+  WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\VBoxGuest" "ImagePath" "\SystemRoot\System32\DRIVERS\VBoxGuestNT.sys"
 
   ; Run VBoxTray when Windows NT starts
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VBoxTray" '"$SYSDIR\VBoxTray.exe"'
@@ -156,7 +167,7 @@ Function NT4_InstallFiles
 
   ; Create the VBoxService service
   ; No need to stop/remove the service here! Do this only on uninstallation!
-  ${CmdExecute} "$\"$INSTDIR\VBoxDrvInst.exe$\" service create $\"VBoxService$\" $\"VirtualBox Guest Additions Service$\" 16 2 $\"system32\VBoxServiceNT.exe$\" $\"Base$\"" "false"
+  ${CmdExecute} "$\"$INSTDIR\VBoxDrvInst.exe$\" service create $\"VBoxService$\" $\"VirtualBox Guest Additions Service$\" 16 2 $\"%SystemRoot%\system32\VBoxServiceNT.exe$\" $\"Base$\"" "false"
 
    ; Create the Shared Folders service ...
   ;nsSCM::Install /NOUNLOAD "VBoxSF" "VirtualBox Shared Folders" 1 1 "$SYSDIR\drivers\VBoxSFNT.sys" "Network" "" "" ""
@@ -200,7 +211,7 @@ Function NT4_Main
   Call NT4_SetVideoResolution
 
   ; Write mouse driver name to registry overwriting the default name
-  WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\i8042prt" "ImagePath" "System32\DRIVERS\VBoxMouseNT.sys"
+  WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\i8042prt" "ImagePath" "\SystemRoot\System32\DRIVERS\VBoxMouseNT.sys"
 
 FunctionEnd
 
@@ -253,7 +264,7 @@ Function ${un}NT4_Uninstall
   ; If we still got our driver stored in $0 then this will *never* work, so
   ; warn the user and set it to the default driver to not screw up NT4 here
   ${If} $0 == "System32\DRIVERS\VBoxMouseNT.sys"
-    WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\i8042prt" "ImagePath" "System32\DRIVERS\i8042prt.sys"
+    WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\i8042prt" "ImagePath" "\SystemRoot\System32\DRIVERS\i8042prt.sys"
     ${LogVerbose} "Old mouse driver is set to VBoxMouseNT.sys, defaulting to i8042prt.sys ..."
   ${Else}
     WriteRegStr HKLM "SYSTEM\CurrentControlSet\Services\i8042prt" "ImagePath" $0

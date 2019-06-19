@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -40,6 +40,8 @@ int main(int argc, char **argv)
      * Iterate arguments.
      */
     bool fLong      = false;
+    bool fTimes     = false;
+    bool fInode     = false;
     bool fShortName = false;
     bool fFiltered  = false;
     bool fQuiet     = false;
@@ -54,8 +56,14 @@ int main(int argc, char **argv)
                     case 'l':
                         fLong = true;
                         break;
+                    case 'i':
+                        fLong = fInode = true;
+                        break;
+                    case 't':
+                        fLong = fTimes = true;
+                        break;
                     case 's':
-                        fShortName = true;
+                        fLong = fShortName = true;
                         break;
                     case 'f':
                         fFiltered = true;
@@ -72,12 +80,12 @@ int main(int argc, char **argv)
         else
         {
             /* open */
-            PRTDIR pDir;
+            RTDIR hDir;
             int rc;
             if (!fFiltered)
-                rc = RTDirOpen(&pDir, argv[i]);
+                rc = RTDirOpen(&hDir, argv[i]);
             else
-                rc = RTDirOpenFiltered(&pDir, argv[i], RTDIRFILTER_WINNT, 0);
+                rc = RTDirOpenFiltered(&hDir, argv[i], RTDIRFILTER_WINNT, 0 /*fFlags*/);
             if (RT_SUCCESS(rc))
             {
                 /* list */
@@ -86,7 +94,7 @@ int main(int argc, char **argv)
                     for (;;)
                     {
                         RTDIRENTRY DirEntry;
-                        rc = RTDirRead(pDir, &DirEntry, NULL);
+                        rc = RTDirRead(hDir, &DirEntry, NULL);
                         if (RT_FAILURE(rc))
                             break;
                         if (!fQuiet)
@@ -117,7 +125,7 @@ int main(int argc, char **argv)
                     for (;;)
                     {
                         RTDIRENTRYEX DirEntry;
-                        rc = RTDirReadEx(pDir, &DirEntry, NULL, RTFSOBJATTRADD_UNIX, RTPATH_F_ON_LINK);
+                        rc = RTDirReadEx(hDir, &DirEntry, NULL, RTFSOBJATTRADD_UNIX, RTPATH_F_ON_LINK);
                         if (RT_FAILURE(rc))
                             break;
 
@@ -167,16 +175,22 @@ int main(int argc, char **argv)
                                      fMode & RTFS_DOS_NT_OFFLINE        ? 'O' : '-',
                                      fMode & RTFS_DOS_NT_NOT_CONTENT_INDEXED ? 'I' : '-',
                                      fMode & RTFS_DOS_NT_ENCRYPTED      ? 'E' : '-');
-                            RTPrintf(" %d %4d %4d %10lld %10lld %#llx %#llx %#llx %#llx",
+                            RTPrintf(" %d %4d %4d %10lld %10lld",
                                      DirEntry.Info.Attr.u.Unix.cHardlinks,
                                      DirEntry.Info.Attr.u.Unix.uid,
                                      DirEntry.Info.Attr.u.Unix.gid,
                                      DirEntry.Info.cbObject,
-                                     DirEntry.Info.cbAllocated,
-                                     DirEntry.Info.BirthTime,
-                                     DirEntry.Info.ChangeTime,
-                                     DirEntry.Info.ModificationTime,
-                                     DirEntry.Info.AccessTime);
+                                     DirEntry.Info.cbAllocated);
+                            if (fTimes)
+                                RTPrintf(" %#llx %#llx %#llx %#llx",
+                                         DirEntry.Info.BirthTime,
+                                         DirEntry.Info.ChangeTime,
+                                         DirEntry.Info.ModificationTime,
+                                         DirEntry.Info.AccessTime);
+
+                            if (fInode)
+                                RTPrintf(" %#x:%#018llx",
+                                         DirEntry.Info.Attr.u.Unix.INodeIdDevice, DirEntry.Info.Attr.u.Unix.INodeId);
                             if (fShortName)
                                 RTPrintf(" %2d %-12ls ", DirEntry.cwcShortName, DirEntry.wszShortName);
                             RTPrintf(" %2d %s\n", DirEntry.cbName, DirEntry.szName);
@@ -193,7 +207,7 @@ int main(int argc, char **argv)
                 }
 
                 /* close up */
-                rc = RTDirClose(pDir);
+                rc = RTDirClose(hDir);
                 if (RT_FAILURE(rc))
                 {
                     RTPrintf("tstDir: Failed to close dir! rc=%Rrc\n", rc);

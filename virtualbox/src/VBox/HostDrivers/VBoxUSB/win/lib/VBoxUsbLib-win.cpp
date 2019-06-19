@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2011-2012 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,13 +13,23 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_DRV_USBPROXY
-#include <windows.h>
+#include <iprt/win/windows.h>
 
 #include <VBox/sup.h>
 #include <VBox/types.h>
@@ -37,7 +47,7 @@
 #include <VBox/VBoxDrvCfg-win.h>
 #include <stdio.h>
 #pragma warning (disable:4200) /* shuts up the empty array member warnings */
-#include <setupapi.h>
+#include <iprt/win/setupapi.h>
 #include <usbdi.h>
 #include <hidsdi.h>
 
@@ -47,9 +57,10 @@
 # include <Dbt.h>
 #endif
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 typedef struct _USB_INTERFACE_DESCRIPTOR2
 {
     UCHAR  bLength;
@@ -96,9 +107,9 @@ typedef struct VBOXUSB_DEV
 } VBOXUSB_DEV, *PVBOXUSB_DEV;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static VBOXUSBGLOBALSTATE g_VBoxUsbGlobal;
 
 
@@ -111,8 +122,8 @@ int usbLibVuDeviceValidate(PVBOXUSB_DEV pVuDev)
 
     if (hOut == INVALID_HANDLE_VALUE)
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("CreateFile FAILED to open %s, winEr (%d)\n", pVuDev->szName, winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsgFailed(("CreateFile FAILED to open %s, dwErr (%d)\n", pVuDev->szName, dwErr));
         return VERR_GENERAL_FAILURE;
     }
 
@@ -128,8 +139,11 @@ int usbLibVuDeviceValidate(PVBOXUSB_DEV pVuDev)
             break;
         }
 
-        if (version.u32Major != USBDRV_MAJOR_VERSION
-                || version.u32Minor <  USBDRV_MINOR_VERSION)
+        if (   version.u32Major != USBDRV_MAJOR_VERSION
+#if USBDRV_MINOR_VERSION != 0
+            || version.u32Minor <  USBDRV_MINOR_VERSION
+#endif
+           )
         {
             AssertMsgFailed(("Invalid version %d:%d vs %d:%d\n", version.u32Major, version.u32Minor, USBDRV_MAJOR_VERSION, USBDRV_MINOR_VERSION));
             break;
@@ -181,8 +195,8 @@ static int usbLibVuDevicePopulate(PVBOXUSB_DEV pVuDev, HDEVINFO hDevInfo, PSP_DE
                                 &cbDbgRequired,
                                 &DevInfoData))
         {
-            DWORD winEr = GetLastError();
-            AssertMsgFailed(("SetupDiGetDeviceInterfaceDetail, cbRequired (%d), was (%d), winEr (%d)\n", cbDbgRequired, cbIfDetailData, winEr));
+            DWORD dwErr = GetLastError(); NOREF(dwErr);
+            AssertMsgFailed(("SetupDiGetDeviceInterfaceDetail, cbRequired (%d), was (%d), dwErr (%d)\n", cbDbgRequired, cbIfDetailData, dwErr));
             rc = VERR_GENERAL_FAILURE;
             break;
         }
@@ -195,8 +209,8 @@ static int usbLibVuDevicePopulate(PVBOXUSB_DEV pVuDev, HDEVINFO hDevInfo, PSP_DE
             sizeof (pVuDev->szDriverRegName),
             &cbDbgRequired))
         {
-            DWORD winEr = GetLastError();
-            AssertMsgFailed(("SetupDiGetDeviceRegistryPropertyA, cbRequired (%d), was (%d), winEr (%d)\n", cbDbgRequired, sizeof (pVuDev->szDriverRegName), winEr));
+            DWORD dwErr = GetLastError(); NOREF(dwErr);
+            AssertMsgFailed(("SetupDiGetDeviceRegistryPropertyA, cbRequired (%d), was (%d), dwErr (%d)\n", cbDbgRequired, sizeof (pVuDev->szDriverRegName), dwErr));
             rc = VERR_GENERAL_FAILURE;
             break;
         }
@@ -231,8 +245,8 @@ static int usbLibVuGetDevices(PVBOXUSB_DEV *ppVuDevs, uint32_t *pcVuDevs)
             );
     if (hDevInfo == INVALID_HANDLE_VALUE)
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("SetupDiGetClassDevs, winEr (%d)\n", winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsgFailed(("SetupDiGetClassDevs, dwErr (%d)\n", dwErr));
         return VERR_GENERAL_FAILURE;
     }
 
@@ -246,11 +260,11 @@ static int usbLibVuGetDevices(PVBOXUSB_DEV *ppVuDevs, uint32_t *pcVuDevs)
                             i,
                             &IfData))
         {
-            DWORD winEr = GetLastError();
-            if (winEr == ERROR_NO_MORE_ITEMS)
+            DWORD dwErr = GetLastError();
+            if (dwErr == ERROR_NO_MORE_ITEMS)
                 break;
 
-            AssertMsgFailed(("SetupDiEnumDeviceInterfaces, winEr (%d), resuming\n", winEr));
+            AssertMsgFailed(("SetupDiEnumDeviceInterfaces, dwErr (%d), resuming\n", dwErr));
             continue;
         }
 
@@ -279,29 +293,6 @@ static int usbLibVuGetDevices(PVBOXUSB_DEV *ppVuDevs, uint32_t *pcVuDevs)
     return VINF_SUCCESS;
 }
 
-static void usbLibDevFree(PUSBDEVICE pDevice)
-{
-    RTStrFree((char*)pDevice->pszAddress);
-    RTStrFree((char*)pDevice->pszHubName);
-    if (pDevice->pszManufacturer)
-        RTStrFree((char*)pDevice->pszManufacturer);
-    if (pDevice->pszProduct)
-        RTStrFree((char*)pDevice->pszProduct);
-    if (pDevice->pszSerialNumber)
-        RTStrFree((char*)pDevice->pszSerialNumber);
-    RTMemFree(pDevice);
-}
-
-static void usbLibDevFreeList(PUSBDEVICE pDevice)
-{
-    while (pDevice)
-    {
-        PUSBDEVICE pNext = pDevice->pNext;
-        usbLibDevFree(pDevice);
-        pDevice = pNext;
-    }
-}
-
 static int usbLibDevPopulate(PUSBDEVICE pDev, PUSB_NODE_CONNECTION_INFORMATION_EX pConInfo, ULONG iPort, LPCSTR lpszDrvKeyName, LPCSTR lpszHubName, PVBOXUSB_STRING_DR_ENTRY pDrList)
 {
     pDev->bcdUSB = pConInfo->DeviceDescriptor.bcdUSB;
@@ -319,45 +310,46 @@ static int usbLibDevPopulate(PUSBDEVICE pDev, PUSB_NODE_CONNECTION_INFORMATION_E
     else
         pDev->enmState = USBDEVICESTATE_USED_BY_HOST_CAPTURABLE;
     pDev->enmSpeed = USBDEVICESPEED_UNKNOWN;
-    pDev->pszAddress = RTStrDup(lpszDrvKeyName);
+    int rc = RTStrAPrintf((char **)&pDev->pszAddress, "%s", lpszDrvKeyName);
+    if (rc < 0)
+        return VERR_NO_MEMORY;
+    pDev->pszBackend = RTStrDup("host");
+    if (!pDev->pszBackend)
+    {
+        RTStrFree((char *)pDev->pszAddress);
+        return VERR_NO_STR_MEMORY;
+    }
     pDev->pszHubName = RTStrDup(lpszHubName);
     pDev->bNumConfigurations = 0;
     pDev->u64SerialHash = 0;
 
     for (; pDrList; pDrList = pDrList->pNext)
     {
-        char ** lppszString = NULL;
-        if (pConInfo->DeviceDescriptor.iManufacturer && pDrList->iDr == pConInfo->DeviceDescriptor.iManufacturer)
+        char **ppszString = NULL;
+        if (   pConInfo->DeviceDescriptor.iManufacturer
+            && pDrList->iDr == pConInfo->DeviceDescriptor.iManufacturer)
+            ppszString = (char **)&pDev->pszManufacturer;
+        else if (   pConInfo->DeviceDescriptor.iProduct
+                 && pDrList->iDr == pConInfo->DeviceDescriptor.iProduct)
+            ppszString = (char **)&pDev->pszProduct;
+        else if (   pConInfo->DeviceDescriptor.iSerialNumber
+                 && pDrList->iDr == pConInfo->DeviceDescriptor.iSerialNumber)
+            ppszString = (char **)&pDev->pszSerialNumber;
+        if (ppszString)
         {
-            lppszString = (char**)&pDev->pszManufacturer;
-        }
-        else if (pConInfo->DeviceDescriptor.iProduct && pDrList->iDr == pConInfo->DeviceDescriptor.iProduct)
-        {
-            lppszString = (char**)&pDev->pszProduct;
-        }
-        else if (pConInfo->DeviceDescriptor.iSerialNumber && pDrList->iDr == pConInfo->DeviceDescriptor.iSerialNumber)
-        {
-            lppszString = (char**)&pDev->pszSerialNumber;
-        }
+            rc = RTUtf16ToUtf8((PCRTUTF16)pDrList->StrDr.bString, ppszString);
+            if (RT_SUCCESS(rc))
+            {
+                Assert(*ppszString);
+                USBLibPurgeEncoding(*ppszString);
 
-        if (lppszString)
-        {
-/** @todo r=bird: This code is making bad asumptions that strings are sane and
- *  that stuff succeeds:
- *  http://vbox.innotek.de/pipermail/vbox-dev/2011-August/004516.html
- *
- *  */
-            int rc = RTUtf16ToUtf8((PCRTUTF16)pDrList->StrDr.bString, lppszString);
-            if (RT_FAILURE(rc))
+                if (pDrList->iDr == pConInfo->DeviceDescriptor.iSerialNumber)
+                    pDev->u64SerialHash = USBLibHashSerial(*ppszString);
+            }
+            else
             {
                 AssertMsgFailed(("RTUtf16ToUtf8 failed, rc (%d), resuming\n", rc));
-                continue;
-            }
-
-            Assert(lppszString);
-            if (pDrList->iDr == pConInfo->DeviceDescriptor.iSerialNumber)
-            {
-                pDev->u64SerialHash = USBLibHashSerial(pDev->pszSerialNumber);
+                *ppszString = NULL;
             }
         }
     }
@@ -379,8 +371,8 @@ static int usbLibDevStrDriverKeyGet(HANDLE hHub, ULONG iPort, LPSTR* plpszName)
     if (!DeviceIoControl(hHub, IOCTL_USB_GET_NODE_CONNECTION_DRIVERKEY_NAME, &Name, sizeof (Name), &Name, sizeof (Name), &cbReturned, NULL))
     {
 #ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("DeviceIoControl 1 fail winEr (%d)\n", winEr));
+        DWORD dwErr = GetLastError();
+        AssertMsgFailed(("DeviceIoControl 1 fail dwErr (%d)\n", dwErr));
 #endif
         return VERR_GENERAL_FAILURE;
     }
@@ -409,8 +401,8 @@ static int usbLibDevStrDriverKeyGet(HANDLE hHub, ULONG iPort, LPSTR* plpszName)
     }
     else
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("DeviceIoControl 2 fail winEr (%d)\n", winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsgFailed(("DeviceIoControl 2 fail dwErr (%d)\n", dwErr));
         rc = VERR_GENERAL_FAILURE;
     }
     RTMemFree(pName);
@@ -507,8 +499,8 @@ static int usbLibDevCfgDrGet(HANDLE hHub, ULONG iPort, ULONG iDr, PUSB_CONFIGURA
                                 pCfgDrRq, sizeof (Buf),
                                 &cbReturned, NULL))
     {
-        DWORD winEr = GetLastError();
-        LogRel((__FUNCTION__": DeviceIoControl 1 fail winEr (%d)\n", winEr));
+        DWORD dwErr = GetLastError();
+        LogRelFunc(("DeviceIoControl 1 fail dwErr (%d)\n", dwErr));
 #ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
         AssertFailed();
 #endif
@@ -544,8 +536,8 @@ static int usbLibDevCfgDrGet(HANDLE hHub, ULONG iPort, ULONG iDr, PUSB_CONFIGURA
                                     pRq, cbRq,
                                     &cbReturned, NULL))
         {
-            DWORD winEr = GetLastError();
-            LogRel((__FUNCTION__": DeviceIoControl 2 fail winEr (%d)\n", winEr));
+            DWORD dwErr = GetLastError();
+            LogRelFunc(("DeviceIoControl 2 fail dwErr (%d)\n", dwErr));
 #ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
             AssertFailed();
 #endif
@@ -581,63 +573,55 @@ static void usbLibDevCfgDrFree(PUSB_CONFIGURATION_DESCRIPTOR pDr)
 
 static int usbLibDevStrDrEntryGet(HANDLE hHub, ULONG iPort, ULONG iDr, USHORT idLang, PVBOXUSB_STRING_DR_ENTRY *ppList)
 {
-    char Buf[sizeof (USB_DESCRIPTOR_REQUEST) + MAXIMUM_USB_STRING_LENGTH];
-    PUSB_DESCRIPTOR_REQUEST pRq = (PUSB_DESCRIPTOR_REQUEST)Buf;
-    PUSB_STRING_DESCRIPTOR pDr = (PUSB_STRING_DESCRIPTOR)(Buf + sizeof (*pRq));
-    memset (&Buf, 0, sizeof (Buf));
+    char szBuf[sizeof (USB_DESCRIPTOR_REQUEST) + MAXIMUM_USB_STRING_LENGTH];
+    RT_ZERO(szBuf);
+
+    PUSB_DESCRIPTOR_REQUEST pRq = (PUSB_DESCRIPTOR_REQUEST)szBuf;
+    PUSB_STRING_DESCRIPTOR pDr = (PUSB_STRING_DESCRIPTOR)(szBuf + sizeof (*pRq));
+    RT_BZERO(pDr, sizeof(USB_STRING_DESCRIPTOR));
+
     pRq->ConnectionIndex = iPort;
     pRq->SetupPacket.wValue = (USB_STRING_DESCRIPTOR_TYPE << 8) | iDr;
     pRq->SetupPacket.wIndex = idLang;
-    pRq->SetupPacket.wLength = sizeof (Buf) - sizeof (*pRq);
+    pRq->SetupPacket.wLength = sizeof (szBuf) - sizeof (*pRq);
+
     DWORD cbReturned = 0;
-    if (!DeviceIoControl(hHub, IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION, pRq, sizeof (Buf),
-                                    pRq, sizeof (Buf),
-                                    &cbReturned, NULL))
+    if (!DeviceIoControl(hHub, IOCTL_USB_GET_DESCRIPTOR_FROM_NODE_CONNECTION, pRq, sizeof (szBuf),
+                         pRq, sizeof(szBuf),
+                         &cbReturned, NULL))
     {
-        DWORD winEr = GetLastError();
-        LogRel((__FUNCTION__": DeviceIoControl 1 fail winEr (%d)\n", winEr));
-#ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
-            AssertFailed();
-#endif
-        return VERR_GENERAL_FAILURE;
+        DWORD dwErr = GetLastError();
+        LogRel(("Getting USB descriptor failed with error %ld\n", dwErr));
+        return RTErrConvertFromWin32(dwErr);
     }
 
-    if (cbReturned < sizeof (*pDr) + 2)
-    {
-        AssertFailed();
-        return VERR_GENERAL_FAILURE;
-    }
-
-    if (!!(pDr->bLength % 2))
-    {
-        AssertFailed();
-        return VERR_GENERAL_FAILURE;
-    }
-
-    if (pDr->bLength != cbReturned - sizeof (*pRq))
-    {
-        AssertFailed();
-        return VERR_GENERAL_FAILURE;
-    }
-
+    /* Wrong descriptor type at the requested port index? Bail out. */
     if (pDr->bDescriptorType != USB_STRING_DESCRIPTOR_TYPE)
+        return VERR_NOT_FOUND;
+
+    /* Some more sanity checks. */
+    if (   (cbReturned < sizeof (*pDr) + 2)
+        || (!!(pDr->bLength % 2))
+        || (pDr->bLength != cbReturned - sizeof(*pRq)))
     {
-        AssertFailed();
-        return VERR_GENERAL_FAILURE;
+        AssertMsgFailed(("Sanity check failed for string descriptor: cbReturned=%RI32, cbDevReq=%zu, type=%RU8, len=%RU8, port=%RU32, index=%RU32, lang=%RU32\n",
+                         cbReturned, sizeof(*pRq), pDr->bDescriptorType, pDr->bLength, iPort, iDr, idLang));
+        return VERR_INVALID_PARAMETER;
     }
 
-    PVBOXUSB_STRING_DR_ENTRY pEntry = (PVBOXUSB_STRING_DR_ENTRY)RTMemAllocZ(sizeof (*pEntry) + pDr->bLength + 2);
-    Assert(pEntry);
+    PVBOXUSB_STRING_DR_ENTRY pEntry =
+        (PVBOXUSB_STRING_DR_ENTRY)RTMemAllocZ(sizeof(VBOXUSB_STRING_DR_ENTRY) + pDr->bLength + 2);
+    AssertPtr(pEntry);
     if (!pEntry)
-    {
-        return VERR_OUT_OF_RESOURCES;
-    }
+        return VERR_NO_MEMORY;
 
     pEntry->pNext = *ppList;
     pEntry->iDr = iDr;
     pEntry->idLang = idLang;
     memcpy(&pEntry->StrDr, pDr, pDr->bLength);
+
     *ppList = pEntry;
+
     return VINF_SUCCESS;
 }
 
@@ -667,16 +651,14 @@ static int usbLibDevStrDrEntryGetForLangs(HANDLE hHub, ULONG iPort, ULONG iDr, U
 
 static int usbLibDevStrDrEntryGetAll(HANDLE hHub, ULONG iPort, PUSB_DEVICE_DESCRIPTOR pDevDr, PUSB_CONFIGURATION_DESCRIPTOR pCfgDr, PVBOXUSB_STRING_DR_ENTRY *ppList)
 {
+    /* Read string descriptor zero to determine what languages are available. */
     int rc = usbLibDevStrDrEntryGet(hHub, iPort, 0, 0, ppList);
-#ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
-    AssertRC(rc);
-#endif
     if (RT_FAILURE(rc))
         return rc;
 
-    PUSB_STRING_DESCRIPTOR pLandStrDr = &(*ppList)->StrDr;
-    USHORT *pIdLang = pLandStrDr->bString;
-    ULONG cIdLang = (pLandStrDr->bLength - RT_OFFSETOF(USB_STRING_DESCRIPTOR, bString)) / sizeof (*pIdLang);
+    PUSB_STRING_DESCRIPTOR pLangStrDr = &(*ppList)->StrDr;
+    USHORT *pIdLang = pLangStrDr->bString;
+    ULONG cIdLang = (pLangStrDr->bLength - RT_OFFSETOF(USB_STRING_DESCRIPTOR, bString)) / sizeof (*pIdLang);
 
     if (pDevDr->iManufacturer)
     {
@@ -706,6 +688,10 @@ static int usbLibDevStrDrEntryGetAll(HANDLE hHub, ULONG iPort, PUSB_DEVICE_DESCR
             AssertFailed();
             break;
         }
+
+        /* This is invalid but was seen with a TerraTec Aureon 7.1 USB sound card. */
+        if (!pCmnDr->bLength)
+            break;
 
         switch (pCmnDr->bDescriptorType)
         {
@@ -754,7 +740,7 @@ static int usbLibDevGetHubPortDevices(HANDLE hHub, LPCSTR lpcszHubName, ULONG iP
     int rc = VINF_SUCCESS;
     char Buf[sizeof (USB_NODE_CONNECTION_INFORMATION_EX) + (sizeof (USB_PIPE_INFO) * 20)];
     PUSB_NODE_CONNECTION_INFORMATION_EX pConInfo = (PUSB_NODE_CONNECTION_INFORMATION_EX)Buf;
-    PUSB_PIPE_INFO paPipeInfo = (PUSB_PIPE_INFO)(Buf + sizeof (PUSB_NODE_CONNECTION_INFORMATION_EX));
+    //PUSB_PIPE_INFO paPipeInfo = (PUSB_PIPE_INFO)(Buf + sizeof (PUSB_NODE_CONNECTION_INFORMATION_EX));
     DWORD cbReturned = 0;
     memset(&Buf, 0, sizeof (Buf));
     pConInfo->ConnectionIndex = iPort;
@@ -763,8 +749,8 @@ static int usbLibDevGetHubPortDevices(HANDLE hHub, LPCSTR lpcszHubName, ULONG iP
                                   pConInfo, sizeof (Buf),
                                   &cbReturned, NULL))
     {
-        DWORD winEr = GetLastError();
-        AssertMsg(winEr == ERROR_DEVICE_NOT_CONNECTED, (__FUNCTION__": DeviceIoControl failed winEr (%d)\n", winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsg(dwErr == ERROR_DEVICE_NOT_CONNECTED, (__FUNCTION__": DeviceIoControl failed dwErr (%d)\n", dwErr));
         return VERR_GENERAL_FAILURE;
     }
 
@@ -813,14 +799,20 @@ static int usbLibDevGetHubPortDevices(HANDLE hHub, LPCSTR lpcszHubName, ULONG iP
     }
 
     PUSBDEVICE pDev = (PUSBDEVICE)RTMemAllocZ(sizeof (*pDev));
-    rc = usbLibDevPopulate(pDev, pConInfo, iPort, lpszName, lpcszHubName, pList);
-    AssertRC(rc);
-    if (RT_SUCCESS(rc))
+    if (RT_LIKELY(pDev))
     {
-        pDev->pNext = *ppDevs;
-        *ppDevs = pDev;
-        ++*pcDevs;
+        rc = usbLibDevPopulate(pDev, pConInfo, iPort, lpszName, lpcszHubName, pList);
+        if (RT_SUCCESS(rc))
+        {
+            pDev->pNext = *ppDevs;
+            *ppDevs = pDev;
+            ++*pcDevs;
+        }
+        else
+            RTMemFree(pDev);
     }
+    else
+        rc = VERR_NO_MEMORY;
 
     if (pCfgDr)
         usbLibDevCfgDrFree(pCfgDr);
@@ -832,7 +824,7 @@ static int usbLibDevGetHubPortDevices(HANDLE hHub, LPCSTR lpcszHubName, ULONG iP
     if (pList)
         usbLibDevStrDrEntryFreeList(pList);
 
-    return VINF_SUCCESS;
+    return rc;
 }
 
 static int usbLibDevGetHubDevices(LPCSTR lpszName, PUSBDEVICE *ppDevs, uint32_t *pcDevs)
@@ -872,6 +864,7 @@ static int usbLibDevGetHubDevices(LPCSTR lpszName, PUSBDEVICE *ppDevs, uint32_t 
 
         for (ULONG i = 1; i <= NodeInfo.u.HubInformation.HubDescriptor.bNumberOfPorts; ++i)
         {
+            /* Just skip devices for which we failed to create the device structure. */
             usbLibDevGetHubPortDevices(hDev, lpszName, i, ppDevs, pcDevs);
         }
     } while (0);
@@ -912,6 +905,7 @@ static int usbLibDevGetDevices(PUSBDEVICE *ppDevs, uint32_t *pcDevs)
     return VINF_SUCCESS;
 }
 
+#if 0 /* unused */
 static PUSBSUP_GET_DEVICES usbLibMonGetDevRqAlloc(uint32_t cDevs, PDWORD pcbRq)
 {
     DWORD cbRq = RT_OFFSETOF(USBSUP_GET_DEVICES, aDevices[cDevs]);
@@ -923,6 +917,7 @@ static PUSBSUP_GET_DEVICES usbLibMonGetDevRqAlloc(uint32_t cDevs, PDWORD pcbRq)
     *pcbRq = cbRq;
     return pRq;
 }
+#endif
 
 static int usbLibMonDevicesCmp(PUSBDEVICE pDev, PVBOXUSB_DEV pDevInfo)
 {
@@ -931,8 +926,9 @@ static int usbLibMonDevicesCmp(PUSBDEVICE pDev, PVBOXUSB_DEV pDevInfo)
     return iDiff;
 }
 
-static int usbLibMonDevicesUpdate(PVBOXUSBGLOBALSTATE pGlobal, PUSBDEVICE pDevs, uint32_t cDevs, PVBOXUSB_DEV pDevInfos, uint32_t cDevInfos)
+static int usbLibMonDevicesUpdate(PVBOXUSBGLOBALSTATE pGlobal, PUSBDEVICE pDevs, PVBOXUSB_DEV pDevInfos)
 {
+
     PUSBDEVICE pDevsHead = pDevs;
     for (; pDevInfos; pDevInfos = pDevInfos->pNext)
     {
@@ -959,10 +955,10 @@ static int usbLibMonDevicesUpdate(PVBOXUSBGLOBALSTATE pGlobal, PUSBDEVICE pDevs,
             DWORD cbReturned = 0;
             if (!DeviceIoControl(hDev, SUPUSB_IOCTL_GET_DEVICE, &Dev, sizeof (Dev), &Dev, sizeof (Dev), &cbReturned, NULL))
             {
-                 DWORD winEr = GetLastError();
-                 /* ERROR_DEVICE_NOT_CONNECTED -> device was removed just now */
 #ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
-                 AssertMsg(winEr == ERROR_DEVICE_NOT_CONNECTED, (__FUNCTION__": DeviceIoControl failed winEr (%d)\n", winEr));
+                 DWORD dwErr = GetLastError(); NOREF(dwErr);
+                 /* ERROR_DEVICE_NOT_CONNECTED -> device was removed just now */
+                 AssertMsg(dwErr == ERROR_DEVICE_NOT_CONNECTED, (__FUNCTION__": DeviceIoControl failed dwErr (%d)\n", dwErr));
 #endif
                  Log(("SUPUSB_IOCTL_GET_DEVICE: DeviceIoControl no longer connected\n"));
                  CloseHandle(hDev);
@@ -976,9 +972,9 @@ static int usbLibMonDevicesUpdate(PVBOXUSBGLOBALSTATE pGlobal, PUSBDEVICE pDevs,
             HVBOXUSBDEVUSR hDevice = Dev.hDevice;
             if (!DeviceIoControl(pGlobal->hMonitor, SUPUSBFLT_IOCTL_GET_DEVICE, &hDevice, sizeof (hDevice), &MonInfo, sizeof (MonInfo), &cbReturned, NULL))
             {
-                 DWORD winEr = GetLastError();
+                 DWORD dwErr = GetLastError(); NOREF(dwErr);
                  /* ERROR_DEVICE_NOT_CONNECTED -> device was removed just now */
-                 AssertMsgFailed(("Monitor DeviceIoControl failed winEr (%d)\n", winEr));
+                 AssertMsgFailed(("Monitor DeviceIoControl failed dwErr (%d)\n", dwErr));
                  Log(("SUPUSBFLT_IOCTL_GET_DEVICE: DeviceIoControl no longer connected\n"));
                  CloseHandle(hDev);
                  break;
@@ -994,8 +990,13 @@ static int usbLibMonDevicesUpdate(PVBOXUSBGLOBALSTATE pGlobal, PUSBDEVICE pDevs,
                     || MonInfo.enmState == USBDEVICESTATE_HELD_BY_PROXY
                     || MonInfo.enmState == USBDEVICESTATE_USED_BY_GUEST);
             pDevs->enmState = MonInfo.enmState;
-            /* The following is not 100% accurate but we only care about high-speed vs. non-high-speed */
-            pDevs->enmSpeed = Dev.fHiSpeed ? USBDEVICESPEED_HIGH : USBDEVICESPEED_FULL;
+            if (pDevs->bcdUSB >= 0x300)
+                /* USB3 spec guarantees this (9.6.1). */
+                pDevs->enmSpeed = USBDEVICESPEED_SUPER;
+            else
+                /* The following is not 100% accurate but we only care about high-speed vs. non-high-speed */
+                pDevs->enmSpeed = Dev.fHiSpeed ? USBDEVICESPEED_HIGH : USBDEVICESPEED_FULL;
+
             if (pDevs->enmState != USBDEVICESTATE_USED_BY_HOST)
             {
                 /* only set the interface name if device can be grabbed */
@@ -1007,7 +1008,7 @@ static int usbLibMonDevicesUpdate(PVBOXUSBGLOBALSTATE pGlobal, PUSBDEVICE pDevs,
             else
             {
                 /* dbg breakpoint */
-                Assert(0);
+                AssertFailed();
             }
 #endif
 
@@ -1034,7 +1035,7 @@ static int usbLibGetDevices(PVBOXUSBGLOBALSTATE pGlobal, PUSBDEVICE *ppDevs, uin
         AssertRC(rc);
         if (RT_SUCCESS(rc))
         {
-            rc = usbLibMonDevicesUpdate(pGlobal, *ppDevs, *pcDevs, pDevInfos, cDevInfos);
+            rc = usbLibMonDevicesUpdate(pGlobal, *ppDevs, pDevInfos);
             AssertRC(rc);
             usbLibVuFreeDevices(pDevInfos);
         }
@@ -1062,8 +1063,8 @@ static int usbLibStateWaitChange(PVBOXUSBGLOBALSTATE pGlobal, RTMSINTERVAL cMill
             return VERR_TIMEOUT;
         default:
         {
-            DWORD winEr = GetLastError();
-            AssertMsgFailed(("WaitForMultipleObjects failed, winEr (%d)\n", winEr));
+            DWORD dwErr = GetLastError(); NOREF(dwErr);
+            AssertMsgFailed(("WaitForMultipleObjects failed, dwErr (%d)\n", dwErr));
             return VERR_GENERAL_FAILURE;
         }
     }
@@ -1078,17 +1079,17 @@ USBLIB_DECL(int) USBLibWaitChange(RTMSINTERVAL msWaitTimeout)
 
 static int usbLibInterruptWaitChange(PVBOXUSBGLOBALSTATE pGlobal)
 {
-    BOOL bRc = SetEvent(pGlobal->hInterruptEvent);
-    if (!bRc)
+    BOOL fRc = SetEvent(pGlobal->hInterruptEvent);
+    if (!fRc)
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("SetEvent failed, winEr (%d)\n", winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsgFailed(("SetEvent failed, dwErr (%d)\n", dwErr));
         return VERR_GENERAL_FAILURE;
     }
     return VINF_SUCCESS;
 }
 
-USBLIB_DECL(int) USBLibInterruptWaitChange()
+USBLIB_DECL(int) USBLibInterruptWaitChange(void)
 {
     return usbLibInterruptWaitChange(&g_VBoxUsbGlobal);
 }
@@ -1130,8 +1131,8 @@ USBLIB_DECL(void *) USBLibAddFilter(PCUSBFILTER pFilter)
                 &FltAddRc, sizeof(FltAddRc),
                 &cbReturned, NULL))
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("DeviceIoControl failed with winEr (%d(\n", winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsgFailed(("DeviceIoControl failed with dwErr (%d(\n", dwErr));
         return NULL;
     }
 
@@ -1164,7 +1165,7 @@ USBLIB_DECL(void) USBLibRemoveFilter(void *pvId)
         AssertMsgFailed(("DeviceIoControl failed with LastError=%Rwa\n", GetLastError()));
 }
 
-USBLIB_DECL(int) USBLibRunFilters()
+USBLIB_DECL(int) USBLibRunFilters(void)
 {
     DWORD cbReturned = 0;
 
@@ -1175,9 +1176,9 @@ USBLIB_DECL(int) USBLibRunFilters()
                 NULL, 0,
                 &cbReturned, NULL))
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("DeviceIoControl failed with winEr (%d(\n", winEr));
-        return RTErrConvertFromWin32(winEr);
+        DWORD dwErr = GetLastError();
+        AssertMsgFailed(("DeviceIoControl failed with dwErr (%d(\n", dwErr));
+        return RTErrConvertFromWin32(dwErr);
     }
 
     return VINF_SUCCESS;
@@ -1188,6 +1189,7 @@ USBLIB_DECL(int) USBLibRunFilters()
 
 static VOID CALLBACK usbLibTimerCallback(__in PVOID lpParameter, __in BOOLEAN TimerOrWaitFired)
 {
+    RT_NOREF2(lpParameter, TimerOrWaitFired);
     SetEvent(g_VBoxUsbGlobal.hNotifyEvent);
 }
 
@@ -1203,8 +1205,8 @@ static void usbLibOnDeviceChange(void)
     {
         if (!DeleteTimerQueueTimer(g_VBoxUsbGlobal.hTimerQueue, g_VBoxUsbGlobal.hTimer, NULL))
         {
-            DWORD winEr = GetLastError();
-            AssertMsg(winEr == ERROR_IO_PENDING, ("DeleteTimerQueueTimer failed, winEr (%d)\n", winEr));
+            DWORD dwErr = GetLastError(); NOREF(dwErr);
+            AssertMsg(dwErr == ERROR_IO_PENDING, ("DeleteTimerQueueTimer failed, dwErr (%d)\n", dwErr));
         }
     }
 
@@ -1215,8 +1217,8 @@ static void usbLibOnDeviceChange(void)
                                0,
                                WT_EXECUTEONLYONCE))
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("CreateTimerQueueTimer failed, winEr (%d)\n", winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsgFailed(("CreateTimerQueueTimer failed, dwErr (%d)\n", dwErr));
 
         /* call it directly */
         usbLibTimerCallback(NULL, FALSE);
@@ -1242,8 +1244,11 @@ static LRESULT CALLBACK usbLibWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARA
                 usbLibOnDeviceChange();
             }
             break;
-        case WM_DESTROY:
-            return 0;
+         case WM_DESTROY:
+            {
+                PostQuitMessage(0);
+                return 0;
+            }
     }
     return DefWindowProc (hwnd, uMsg, wParam, lParam);
 }
@@ -1253,12 +1258,13 @@ static DWORD WINAPI usbLibMsgThreadProc(__in LPVOID lpParameter)
 {
     static LPCSTR   s_szVBoxUsbWndClassName = "VBoxUsbLibClass";
     const HINSTANCE hInstance               = (HINSTANCE)GetModuleHandle(NULL);
+    RT_NOREF1(lpParameter);
 
     Assert(g_VBoxUsbGlobal.hWnd == NULL);
     g_VBoxUsbGlobal.hWnd = NULL;
 
     /*
-     * Register the Window Class and the hitten window create.
+     * Register the Window Class and create the hidden window.
      */
     WNDCLASS wc;
     wc.style         = 0;
@@ -1296,16 +1302,13 @@ static DWORD WINAPI usbLibMsgThreadProc(__in LPVOID lpParameter)
          * The message pump.
          */
         MSG msg;
-        while (GetMessage(&msg, NULL, 0, 0))
+        BOOL fRet;
+        while ((fRet = GetMessage(&msg, NULL, 0, 0)) > 0)
         {
             TranslateMessage(&msg);
             DispatchMessage(&msg);
         }
-
-        /*
-         * Clean up.
-         */
-        DestroyWindow(g_VBoxUsbGlobal.hWnd);
+        Assert(fRet >= 0);
     }
 
     if (atomWindowClass != NULL)
@@ -1374,8 +1377,8 @@ USBLIB_DECL(int) USBLibInit(void)
                                                           NULL);
                     if (g_VBoxUsbGlobal.hMonitor == INVALID_HANDLE_VALUE)
                     {
-                        DWORD winEr = GetLastError();
-                        LogRel((__FUNCTION__": CreateFile failed winEr(%d)\n", winEr));
+                        DWORD dwErr = GetLastError();
+                        LogRelFunc(("CreateFile failed dwErr(%d)\n", dwErr));
                         rc = VERR_FILE_NOT_FOUND;
                     }
                 }
@@ -1400,7 +1403,10 @@ USBLIB_DECL(int) USBLibInit(void)
                                     &cbReturned, NULL))
                 {
                     if (   Version.u32Major == USBMON_MAJOR_VERSION
-                        && Version.u32Minor >= USBMON_MINOR_VERSION)
+#if USBMON_MINOR_VERSION != 0
+                        && Version.u32Minor >= USBMON_MINOR_VERSION
+#endif
+                        )
                     {
 #ifndef VBOX_USB_USE_DEVICE_NOTIFICATION
                         /*
@@ -1428,8 +1434,8 @@ USBLIB_DECL(int) USBLibInit(void)
                         }
                         else
                         {
-                            DWORD winEr = GetLastError();
-                            AssertMsgFailed(("SetEvent Ioctl failed, winEr (%d)\n", winEr));
+                            DWORD dwErr = GetLastError();
+                            AssertMsgFailed(("SetEvent Ioctl failed, dwErr (%d)\n", dwErr));
                             rc = VERR_VERSION_MISMATCH;
                         }
 #else
@@ -1464,7 +1470,7 @@ USBLIB_DECL(int) USBLibInit(void)
                                     /*
                                      * We're DONE!
                                      *
-                                     * Juse ensure that the event is set so the
+                                     * Just ensure that the event is set so the
                                      * first "wait change" request is processed.
                                      */
                                     SetEvent(g_VBoxUsbGlobal.hNotifyEvent);
@@ -1473,14 +1479,15 @@ USBLIB_DECL(int) USBLibInit(void)
 
                                 dwResult = WaitForSingleObject(g_VBoxUsbGlobal.hThread, INFINITE);
                                 Assert(dwResult == WAIT_OBJECT_0);
-                                BOOL bRc = CloseHandle(g_VBoxUsbGlobal.hThread);
-                                AssertMsg(bRc, ("CloseHandle for hThread failed winEr(%d)\n", GetLastError()));
+                                BOOL fRc = CloseHandle(g_VBoxUsbGlobal.hThread); NOREF(fRc);
+                                DWORD dwErr = GetLastError(); NOREF(dwErr);
+                                AssertMsg(fRc, ("CloseHandle for hThread failed dwErr(%d)\n", dwErr));
                                 g_VBoxUsbGlobal.hThread = INVALID_HANDLE_VALUE;
                             }
                             else
                             {
-                                DWORD winEr = GetLastError();
-                                AssertMsgFailed(("CreateThread failed, winEr (%d)\n", winEr));
+                                DWORD dwErr = GetLastError(); NOREF(dwErr);
+                                AssertMsgFailed(("CreateThread failed, dwErr (%d)\n", dwErr));
                                 rc = VERR_GENERAL_FAILURE;
                             }
 
@@ -1489,14 +1496,14 @@ USBLIB_DECL(int) USBLibInit(void)
                         }
                         else
                         {
-                            DWORD winEr = GetLastError();
-                            AssertMsgFailed(("CreateTimerQueue failed winEr(%d)\n", winEr));
+                            DWORD dwErr = GetLastError(); NOREF(dwErr);
+                            AssertMsgFailed(("CreateTimerQueue failed dwErr(%d)\n", dwErr));
                         }
 #endif
                     }
                     else
                     {
-                        LogRel((__FUNCTION__": USB Monitor driver version mismatch! driver=%u.%u library=%u.%u\n",
+                        LogRelFunc(("USB Monitor driver version mismatch! driver=%u.%u library=%u.%u\n",
                                 Version.u32Major, Version.u32Minor, USBMON_MAJOR_VERSION, USBMON_MINOR_VERSION));
 #ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
                         AssertFailed();
@@ -1506,8 +1513,8 @@ USBLIB_DECL(int) USBLibInit(void)
                 }
                 else
                 {
-                    DWORD winEr = GetLastError();
-                    AssertMsgFailed(("DeviceIoControl failed winEr(%d)\n", winEr));
+                    DWORD dwErr = GetLastError(); NOREF(dwErr);
+                    AssertMsgFailed(("DeviceIoControl failed dwErr(%d)\n", dwErr));
                     rc = VERR_VERSION_MISMATCH;
                 }
 
@@ -1516,7 +1523,7 @@ USBLIB_DECL(int) USBLibInit(void)
             }
             else
             {
-                LogRel((__FUNCTION__": USB Service not found\n"));
+                LogRelFunc(("USB Service not found\n"));
 #ifdef VBOX_WITH_ANNOYING_USB_ASSERTIONS
                 AssertFailed();
 #endif
@@ -1528,8 +1535,8 @@ USBLIB_DECL(int) USBLibInit(void)
         }
         else
         {
-            DWORD winEr = GetLastError();
-            AssertMsgFailed(("CreateEvent for InterruptEvent failed winEr(%d)\n", winEr));
+            DWORD dwErr = GetLastError(); NOREF(dwErr);
+            AssertMsgFailed(("CreateEvent for InterruptEvent failed dwErr(%d)\n", dwErr));
             rc = VERR_GENERAL_FAILURE;
         }
 
@@ -1538,8 +1545,8 @@ USBLIB_DECL(int) USBLibInit(void)
     }
     else
     {
-        DWORD winEr = GetLastError();
-        AssertMsgFailed(("CreateEvent for NotifyEvent failed winEr(%d)\n", winEr));
+        DWORD dwErr = GetLastError(); NOREF(dwErr);
+        AssertMsgFailed(("CreateEvent for NotifyEvent failed dwErr(%d)\n", dwErr));
         rc = VERR_GENERAL_FAILURE;
     }
 
@@ -1565,44 +1572,44 @@ USBLIB_DECL(int) USBLibTerm(void)
         return VINF_SUCCESS;
     }
 
-    BOOL bRc;
+    BOOL fRc;
 #ifdef VBOX_USB_USE_DEVICE_NOTIFICATION
-    bRc = PostMessage(g_VBoxUsbGlobal.hWnd, WM_QUIT, 0, 0);
-    AssertMsg(bRc, ("PostMessage for hWnd failed winEr(%d)\n", GetLastError()));
+    fRc = PostMessage(g_VBoxUsbGlobal.hWnd, WM_CLOSE, 0, 0);
+    AssertMsg(fRc, ("PostMessage for hWnd failed dwErr(%d)\n", GetLastError()));
 
     if (g_VBoxUsbGlobal.hThread != NULL)
     {
         DWORD dwResult = WaitForSingleObject(g_VBoxUsbGlobal.hThread, INFINITE);
-        Assert(dwResult == WAIT_OBJECT_0);
-        bRc = CloseHandle(g_VBoxUsbGlobal.hThread);
-        AssertMsg(bRc, ("CloseHandle for hThread failed winEr(%d)\n", GetLastError()));
+        Assert(dwResult == WAIT_OBJECT_0); NOREF(dwResult);
+        fRc = CloseHandle(g_VBoxUsbGlobal.hThread);
+        AssertMsg(fRc, ("CloseHandle for hThread failed dwErr(%d)\n", GetLastError()));
     }
 
     if (g_VBoxUsbGlobal.hTimer)
     {
-        bRc = DeleteTimerQueueTimer(g_VBoxUsbGlobal.hTimerQueue, g_VBoxUsbGlobal.hTimer,
+        fRc = DeleteTimerQueueTimer(g_VBoxUsbGlobal.hTimerQueue, g_VBoxUsbGlobal.hTimer,
                                     INVALID_HANDLE_VALUE); /* <-- to block until the timer is completed */
-        AssertMsg(bRc, ("DeleteTimerQueueTimer failed winEr(%d)\n", GetLastError()));
+        AssertMsg(fRc, ("DeleteTimerQueueTimer failed dwErr(%d)\n", GetLastError()));
     }
 
     if (g_VBoxUsbGlobal.hTimerQueue)
     {
-        bRc = DeleteTimerQueueEx(g_VBoxUsbGlobal.hTimerQueue,
+        fRc = DeleteTimerQueueEx(g_VBoxUsbGlobal.hTimerQueue,
                                  INVALID_HANDLE_VALUE); /* <-- to block until all timers are completed */
-        AssertMsg(bRc, ("DeleteTimerQueueEx failed winEr(%d)\n", GetLastError()));
+        AssertMsg(fRc, ("DeleteTimerQueueEx failed dwErr(%d)\n", GetLastError()));
     }
 #endif /* VBOX_USB_USE_DEVICE_NOTIFICATION */
 
-    bRc = CloseHandle(g_VBoxUsbGlobal.hMonitor);
-    AssertMsg(bRc, ("CloseHandle for hMonitor failed winEr(%d)\n", GetLastError()));
+    fRc = CloseHandle(g_VBoxUsbGlobal.hMonitor);
+    AssertMsg(fRc, ("CloseHandle for hMonitor failed dwErr(%d)\n", GetLastError()));
     g_VBoxUsbGlobal.hMonitor = INVALID_HANDLE_VALUE;
 
-    bRc = CloseHandle(g_VBoxUsbGlobal.hInterruptEvent);
-    AssertMsg(bRc, ("CloseHandle for hInterruptEvent failed lasterr=%u\n", GetLastError()));
+    fRc = CloseHandle(g_VBoxUsbGlobal.hInterruptEvent);
+    AssertMsg(fRc, ("CloseHandle for hInterruptEvent failed lasterr=%u\n", GetLastError()));
     g_VBoxUsbGlobal.hInterruptEvent = NULL;
 
-    bRc = CloseHandle(g_VBoxUsbGlobal.hNotifyEvent);
-    AssertMsg(bRc, ("CloseHandle for hNotifyEvent failed winEr(%d)\n", GetLastError()));
+    fRc = CloseHandle(g_VBoxUsbGlobal.hNotifyEvent);
+    AssertMsg(fRc, ("CloseHandle for hNotifyEvent failed dwErr(%d)\n", GetLastError()));
     g_VBoxUsbGlobal.hNotifyEvent = NULL;
 
     return VINF_SUCCESS;

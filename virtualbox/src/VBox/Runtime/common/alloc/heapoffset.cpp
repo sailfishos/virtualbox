@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_DEFAULT
 #include <iprt/heap.h>
 #include "internal/iprt.h"
@@ -42,9 +42,9 @@
 #include "internal/magics.h"
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to the heap anchor block. */
 typedef struct RTHEAPOFFSETINTERNAL *PRTHEAPOFFSETINTERNAL;
 /** Pointer to a heap block. */
@@ -164,9 +164,9 @@ AssertCompile(RTHEAPOFFSET_MIN_BLOCK >= sizeof(RTHEAPOFFSETFREE) - sizeof(RTHEAP
 #define RTHEAPOFFSET_ALIGNMENT  (sizeof(RTHEAPOFFSETBLOCK))
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_STRICT
 # define RTHEAPOFFSET_STRICT 1
 #endif
@@ -323,9 +323,9 @@ AssertCompile(RTHEAPOFFSET_MIN_BLOCK >= sizeof(RTHEAPOFFSETFREE) - sizeof(RTHEAP
     } while (0)
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef RTHEAPOFFSET_STRICT
 static void rtHeapOffsetAssertAll(PRTHEAPOFFSETINTERNAL pHeapInt);
 #endif
@@ -335,7 +335,7 @@ static void rtHeapOffsetFreeBlock(PRTHEAPOFFSETINTERNAL pHeapInt, PRTHEAPOFFSETB
 #ifdef RTHEAPOFFSET_STRICT
 
 /** Checked version of RTHEAPOFF_TO_PTR and RTHEAPOFF_TO_PTR_N. */
-DECLINLINE(void *) rtHeapOffCheckedOffToPtr(PRTHEAPOFFSETINTERNAL pHeapInt, uint32_t off, bool fNull)
+static void *rtHeapOffCheckedOffToPtr(PRTHEAPOFFSETINTERNAL pHeapInt, uint32_t off, bool fNull)
 {
     Assert(off || fNull);
     if (!off)
@@ -346,7 +346,7 @@ DECLINLINE(void *) rtHeapOffCheckedOffToPtr(PRTHEAPOFFSETINTERNAL pHeapInt, uint
 }
 
 /** Checked version of RTHEAPOFF_TO_OFF. */
-DECLINLINE(uint32_t) rtHeapOffCheckedPtrToOff(PRTHEAPOFFSETINTERNAL pHeapInt, void *pv)
+static uint32_t rtHeapOffCheckedPtrToOff(PRTHEAPOFFSETINTERNAL pHeapInt, void *pv)
 {
     if (!pv)
         return 0;
@@ -664,7 +664,7 @@ RTDECL(void) RTHeapOffsetFree(RTHEAPOFFSET hHeap, void *pv)
     pHeapInt = RTHEAPOFF_GET_ANCHOR(pBlock);
     ASSERT_BLOCK_USED(pHeapInt, pBlock);
     ASSERT_ANCHOR(pHeapInt);
-    Assert(pHeapInt == (PRTHEAPOFFSETINTERNAL)hHeap || !hHeap);
+    Assert(pHeapInt == (PRTHEAPOFFSETINTERNAL)hHeap || !hHeap); RT_NOREF_PV(hHeap);
 
 #ifdef RTHEAPOFFSET_FREE_POISON
     /*
@@ -858,7 +858,7 @@ RTDECL(size_t) RTHeapOffsetSize(RTHEAPOFFSET hHeap, void *pv)
     pHeapInt = RTHEAPOFF_GET_ANCHOR(pBlock);
     ASSERT_BLOCK_USED(pHeapInt, pBlock);
     ASSERT_ANCHOR(pHeapInt);
-    Assert(pHeapInt == (PRTHEAPOFFSETINTERNAL)hHeap || !hHeap);
+    Assert(pHeapInt == (PRTHEAPOFFSETINTERNAL)hHeap || !hHeap); RT_NOREF_PV(hHeap);
 
     /*
      * Calculate the block size.

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,12 +25,12 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #ifdef RT_OS_WINDOWS
-# include <winsock2.h>
-# include <ws2tcpip.h>
+# include <iprt/win/winsock2.h>
+# include <iprt/win/ws2tcpip.h>
 #else /* !RT_OS_WINDOWS */
 # include <errno.h>
 # include <sys/select.h>
@@ -72,9 +72,9 @@
 #include "internal/string.h"
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /* non-standard linux stuff (it seems). */
 #ifndef MSG_NOSIGNAL
 # define MSG_NOSIGNAL           0
@@ -121,9 +121,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Socket handle data.
  *
@@ -211,7 +211,7 @@ DECLINLINE(void) rtSocketErrorReset(void)
  *
  * @returns iprt status code.
  */
-int rtSocketResolverError(void)
+DECLHIDDEN(int) rtSocketResolverError(void)
 {
 #ifdef RT_OS_WINDOWS
     return RTErrConvertFromWin32(WSAGetLastError());
@@ -228,6 +228,7 @@ int rtSocketResolverError(void)
             return VERR_TRY_AGAIN;
 
         default:
+            AssertLogRelMsgFailed(("Unhandled error %u\n", h_errno));
             return VERR_UNRESOLVED_ERROR;
     }
 #endif
@@ -281,7 +282,7 @@ static int rtSocketNetAddrFromAddr(RTSOCKADDRUNION const *pSrc, size_t cbSrc, PR
  * @returns IPRT status code.
  * @param   pAddr               Pointer to the generic IPRT network address.
  * @param   pDst                The source address.
- * @param   cbSrc               The size of the source address.
+ * @param   cbDst               The size of the source address.
  * @param   pcbAddr             Where to store the size of the returned address.
  *                              Optional
  */
@@ -399,7 +400,7 @@ DECLINLINE(int) rtSocketSwitchBlockingMode(RTSOCKETINT *pThis, bool fBlocking)
  * @param   ppSocket        Where to return the IPRT socket handle.
  * @param   hNative         The native handle.
  */
-int rtSocketCreateForNative(RTSOCKETINT **ppSocket, RTSOCKETNATIVE hNative)
+DECLHIDDEN(int) rtSocketCreateForNative(RTSOCKETINT **ppSocket, RTSOCKETNATIVE hNative)
 {
     RTSOCKETINT *pThis = (RTSOCKETINT *)RTMemPoolAlloc(RTMEMPOOL_DEFAULT, sizeof(*pThis));
     if (!pThis)
@@ -416,6 +417,7 @@ int rtSocketCreateForNative(RTSOCKETINT **ppSocket, RTSOCKETNATIVE hNative)
     pThis->hEvent           = WSA_INVALID_EVENT;
     pThis->fPollEvts        = 0;
     pThis->fSubscribedEvts  = 0;
+    pThis->fEventsSaved     = 0;
 #endif
     *ppSocket = pThis;
     return VINF_SUCCESS;
@@ -443,7 +445,7 @@ RTDECL(int) RTSocketFromNative(PRTSOCKET phSocket, RTHCINTPTR uNative)
  * @param   iType               The socket type (SOCK_XXX).
  * @param   iProtocol           Socket parameter, usually 0.
  */
-int rtSocketCreate(PRTSOCKET phSocket, int iDomain, int iType, int iProtocol)
+DECLHIDDEN(int) rtSocketCreate(PRTSOCKET phSocket, int iDomain, int iType, int iProtocol)
 {
     /*
      * Create the socket.
@@ -514,9 +516,9 @@ static int rtSocketCloseIt(RTSOCKETINT *pThis, bool fDestroy)
             {
                 rc = rtSocketError();
 #ifdef RT_OS_WINDOWS
-                AssertMsgFailed(("\"%s\": closesocket(%p) -> %Rrc\n", (uintptr_t)hNative, rc));
+                AssertMsgFailed(("closesocket(%p) -> %Rrc\n", (uintptr_t)hNative, rc));
 #else
-                AssertMsgFailed(("\"%s\": close(%d) -> %Rrc\n", hNative, rc));
+                AssertMsgFailed(("close(%d) -> %Rrc\n", hNative, rc));
 #endif
             }
         }
@@ -665,7 +667,7 @@ RTDECL(int) RTSocketParseInetAddress(const char *pszAddress, unsigned uPort, PRT
     RTNETADDRIPV4 IPv4Quad;
     if (rtSocketIsIPv4Numerical(pszAddress, &IPv4Quad))
     {
-        Log3(("rtSocketIsIPv4Numerical: %#x (%RTnaipv4)\n", pszAddress, IPv4Quad.u, IPv4Quad));
+        Log3(("rtSocketIsIPv4Numerical: %s -> %#x (%RTnaipv4)\n", pszAddress, IPv4Quad.u, IPv4Quad));
         RT_ZERO(*pAddr);
         pAddr->enmType      = RTNETADDRTYPE_IPV4;
         pAddr->uPort        = uPort;
@@ -678,7 +680,7 @@ RTDECL(int) RTSocketParseInetAddress(const char *pszAddress, unsigned uPort, PRT
     if (!pHostEnt)
     {
         rc = rtSocketResolverError();
-        //AssertMsgFailed(("Could not resolve '%s', rc=%Rrc\n", pszAddress, rc));
+        AssertMsgFailed(("Could not resolve '%s', rc=%Rrc\n", pszAddress, rc));
         return rc;
     }
 
@@ -775,16 +777,14 @@ RTDECL(int) RTSocketQueryAddressStr(const char *pszHost, char *pszResult, size_t
         return VERR_NET_ADDRESS_NOT_AVAILABLE;
     }
 
-    uint8_t const  *pbDummy;
     RTNETADDRTYPE   enmAddrType = RTNETADDRTYPE_INVALID;
     size_t          cchIpAddress;
     char            szIpAddress[48];
     if (pgrResult->ai_family == AF_INET)
     {
         struct sockaddr_in const *pgrSa = (struct sockaddr_in const *)pgrResult->ai_addr;
-        pbDummy = (uint8_t const *)&pgrSa->sin_addr;
-        cchIpAddress = RTStrPrintf(szIpAddress, sizeof(szIpAddress), "%u.%u.%u.%u",
-                                   pbDummy[0], pbDummy[1], pbDummy[2], pbDummy[3]);
+        cchIpAddress = RTStrPrintf(szIpAddress, sizeof(szIpAddress),
+                                   "%RTnaipv4", pgrSa->sin_addr.s_addr);
         Assert(cchIpAddress >= 7 && cchIpAddress < sizeof(szIpAddress) - 1);
         enmAddrType = RTNETADDRTYPE_IPV4;
         rc = VINF_SUCCESS;
@@ -792,27 +792,10 @@ RTDECL(int) RTSocketQueryAddressStr(const char *pszHost, char *pszResult, size_t
     else if (pgrResult->ai_family == AF_INET6)
     {
         struct sockaddr_in6 const *pgrSa6 = (struct sockaddr_in6 const *)pgrResult->ai_addr;
-        pbDummy = (uint8_t const *) &pgrSa6->sin6_addr;
-        char szTmp[32+1];
-        size_t cchTmp = RTStrPrintf(szTmp, sizeof(szTmp),
-                                    "%02x%02x%02x%02x"
-                                    "%02x%02x%02x%02x"
-                                    "%02x%02x%02x%02x"
-                                    "%02x%02x%02x%02x",
-                                    pbDummy[0],  pbDummy[1],  pbDummy[2],  pbDummy[3],
-                                    pbDummy[4],  pbDummy[5],  pbDummy[6],  pbDummy[7],
-                                    pbDummy[8],  pbDummy[9],  pbDummy[10], pbDummy[11],
-                                    pbDummy[12], pbDummy[13], pbDummy[14], pbDummy[15]);
-        Assert(cchTmp == 32);
-        rc = rtStrToIpAddr6Str(szTmp, szIpAddress, sizeof(szIpAddress), NULL, 0, true);
-        if (RT_SUCCESS(rc))
-            cchIpAddress = strlen(szIpAddress);
-        else
-        {
-            szIpAddress[0] = '\0';
-            cchIpAddress = 0;
-        }
+        cchIpAddress = RTStrPrintf(szIpAddress, sizeof(szIpAddress),
+                                   "%RTnaipv6", (PRTNETADDRIPV6)&pgrSa6->sin6_addr);
         enmAddrType = RTNETADDRTYPE_IPV6;
+        rc = VINF_SUCCESS;
     }
     else
     {
@@ -1087,6 +1070,60 @@ RTDECL(int) RTSocketWriteTo(RTSOCKET hSocket, const void *pvBuffer, size_t cbBuf
 }
 
 
+RTDECL(int) RTSocketWriteToNB(RTSOCKET hSocket, const void *pvBuffer, size_t cbBuffer, PCRTNETADDR pAddr)
+{
+    /*
+     * Validate input.
+     */
+    RTSOCKETINT *pThis = hSocket;
+    AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
+    AssertReturn(pThis->u32Magic == RTSOCKET_MAGIC, VERR_INVALID_HANDLE);
+
+    /* no locking since UDP reads may be done concurrently to writes, and
+     * this is the normal use case of this code. */
+
+    int rc = rtSocketSwitchBlockingMode(pThis, false /* fBlocking */);
+    if (RT_FAILURE(rc))
+        return rc;
+
+    /* Figure out destination address. */
+    struct sockaddr *pSA = NULL;
+#ifdef RT_OS_WINDOWS
+    int cbSA = 0;
+#else
+    socklen_t cbSA = 0;
+#endif
+    RTSOCKADDRUNION u;
+    if (pAddr)
+    {
+        rc = rtSocketAddrFromNetAddr(pAddr, &u, sizeof(u), NULL);
+        if (RT_FAILURE(rc))
+            return rc;
+        pSA = &u.Addr;
+        cbSA = sizeof(u);
+    }
+
+    /*
+     * Must write all at once, otherwise it is a failure.
+     */
+#ifdef RT_OS_WINDOWS
+    int     cbNow     = cbBuffer >= RTSOCKET_MAX_WRITE ? RTSOCKET_MAX_WRITE : (int)cbBuffer;
+#else
+    size_t  cbNow     = cbBuffer >= SSIZE_MAX   ? SSIZE_MAX   :      cbBuffer;
+#endif
+    ssize_t cbWritten = sendto(pThis->hNative, (const char *)pvBuffer, cbNow, MSG_NOSIGNAL, pSA, cbSA);
+    if (RT_LIKELY((size_t)cbWritten == cbBuffer && cbWritten >= 0))
+        rc = VINF_SUCCESS;
+    else if (cbWritten < 0)
+        rc = rtSocketError();
+    else
+        rc = VERR_TOO_MUCH_DATA;
+
+    rtSocketUnlock(pThis);
+    return rc;
+}
+
+
 RTDECL(int) RTSocketSgWrite(RTSOCKET hSocket, PCRTSGBUF pSgBuf)
 {
     /*
@@ -1229,15 +1266,26 @@ RTDECL(int) RTSocketReadNB(RTSOCKET hSocket, void *pvBuffer, size_t cbBuffer, si
         rc = VINF_SUCCESS;
     }
     else
+    {
         rc = rtSocketError();
+        if (rc == VERR_TRY_AGAIN)
+        {
+            *pcbRead = 0;
+            rc = VINF_TRY_AGAIN;
+        }
+    }
 
-    if (rc == VERR_TRY_AGAIN)
-        rc = VINF_TRY_AGAIN;
 #else
     ssize_t cbRead = recv(pThis->hNative, pvBuffer, cbNow, MSG_NOSIGNAL);
     if (cbRead >= 0)
         *pcbRead = cbRead;
-    else if (errno == EAGAIN)
+    else if (   errno == EAGAIN
+# ifdef EWOULDBLOCK
+#  if EWOULDBLOCK != EAGAIN
+             || errno == EWOULDBLOCK
+#  endif
+# endif
+             )
     {
         *pcbRead = 0;
         rc = VINF_TRY_AGAIN;
@@ -1267,13 +1315,12 @@ RTDECL(int) RTSocketWriteNB(RTSOCKET hSocket, const void *pvBuffer, size_t cbBuf
         return rc;
 
     rtSocketErrorReset();
-#ifdef RTSOCKET_MAX_WRITE
-    int    cbNow = cbBuffer >= RTSOCKET_MAX_WRITE ? RTSOCKET_MAX_WRITE : (int)cbBuffer;
-#else
-    size_t cbNow = cbBuffer;
-#endif
-
 #ifdef RT_OS_WINDOWS
+# ifdef RTSOCKET_MAX_WRITE
+    int    cbNow = cbBuffer >= RTSOCKET_MAX_WRITE ? RTSOCKET_MAX_WRITE : (int)cbBuffer;
+# else
+    size_t cbNow = cbBuffer;
+# endif
     int cbWritten = send(pThis->hNative, (const char *)pvBuffer, cbNow, MSG_NOSIGNAL);
     if (cbWritten >= 0)
     {
@@ -1281,15 +1328,25 @@ RTDECL(int) RTSocketWriteNB(RTSOCKET hSocket, const void *pvBuffer, size_t cbBuf
         rc = VINF_SUCCESS;
     }
     else
+    {
         rc = rtSocketError();
-
-    if (rc == VERR_TRY_AGAIN)
-        rc = VINF_TRY_AGAIN;
+        if (rc == VERR_TRY_AGAIN)
+        {
+            *pcbWritten = 0;
+            rc = VINF_TRY_AGAIN;
+        }
+    }
 #else
     ssize_t cbWritten = send(pThis->hNative, pvBuffer, cbBuffer, MSG_NOSIGNAL);
     if (cbWritten >= 0)
         *pcbWritten = cbWritten;
-    else if (errno == EAGAIN)
+    else if (   errno == EAGAIN
+# ifdef EWOULDBLOCK
+#  if EWOULDBLOCK != EAGAIN
+             || errno == EWOULDBLOCK
+#  endif
+# endif
+            )
     {
         *pcbWritten = 0;
         rc = VINF_TRY_AGAIN;
@@ -1410,7 +1467,7 @@ RTDECL(int) RTSocketSelectOne(RTSOCKET hSocket, RTMSINTERVAL cMillies)
     AssertReturn(pThis->u32Magic == RTSOCKET_MAGIC, VERR_INVALID_HANDLE);
     AssertReturn(RTMemPoolRefCount(pThis) >= (pThis->cUsers ? 2U : 1U), VERR_CALLER_NO_REFERENCE);
     int const fdMax = (int)pThis->hNative + 1;
-    AssertReturn(fdMax - 1 == pThis->hNative, VERR_INTERNAL_ERROR_5);
+    AssertReturn((RTSOCKETNATIVE)(fdMax - 1) == pThis->hNative, VERR_INTERNAL_ERROR_5);
 
     /*
      * Set up the file descriptor sets and do the select.
@@ -1442,8 +1499,7 @@ RTDECL(int) RTSocketSelectOne(RTSOCKET hSocket, RTMSINTERVAL cMillies)
 }
 
 
-RTDECL(int) RTSocketSelectOneEx(RTSOCKET hSocket, uint32_t fEvents, uint32_t *pfEvents,
-                                RTMSINTERVAL cMillies)
+RTDECL(int) RTSocketSelectOneEx(RTSOCKET hSocket, uint32_t fEvents, uint32_t *pfEvents, RTMSINTERVAL cMillies)
 {
     /*
      * Validate input.
@@ -1454,8 +1510,18 @@ RTDECL(int) RTSocketSelectOneEx(RTSOCKET hSocket, uint32_t fEvents, uint32_t *pf
     AssertPtrReturn(pfEvents, VERR_INVALID_PARAMETER);
     AssertReturn(!(fEvents & ~RTSOCKET_EVT_VALID_MASK), VERR_INVALID_PARAMETER);
     AssertReturn(RTMemPoolRefCount(pThis) >= (pThis->cUsers ? 2U : 1U), VERR_CALLER_NO_REFERENCE);
-    int const fdMax = (int)pThis->hNative + 1;
-    AssertReturn(fdMax - 1 == pThis->hNative, VERR_INTERNAL_ERROR_5);
+
+    RTSOCKETNATIVE hNative = pThis->hNative;
+    if (hNative == NIL_RTSOCKETNATIVE)
+    {
+        /* Socket is already closed? Possible we raced someone calling rtSocketCloseIt.
+           Should we return a different status code? */
+        *pfEvents = RTSOCKET_EVT_ERROR;
+        return VINF_SUCCESS;
+    }
+
+    int const fdMax = (int)hNative + 1;
+    AssertReturn((RTSOCKETNATIVE)(fdMax - 1) == hNative, VERR_INTERNAL_ERROR_5);
 
     *pfEvents = 0;
 
@@ -1470,11 +1536,11 @@ RTDECL(int) RTSocketSelectOneEx(RTSOCKET hSocket, uint32_t fEvents, uint32_t *pf
     FD_ZERO(&fdsetE);
 
     if (fEvents & RTSOCKET_EVT_READ)
-        FD_SET(pThis->hNative, &fdsetR);
+        FD_SET(hNative, &fdsetR);
     if (fEvents & RTSOCKET_EVT_WRITE)
-        FD_SET(pThis->hNative, &fdsetW);
+        FD_SET(hNative, &fdsetW);
     if (fEvents & RTSOCKET_EVT_ERROR)
-        FD_SET(pThis->hNative, &fdsetE);
+        FD_SET(hNative, &fdsetE);
 
     int rc;
     if (cMillies == RT_INDEFINITE_WAIT)
@@ -1488,14 +1554,22 @@ RTDECL(int) RTSocketSelectOneEx(RTSOCKET hSocket, uint32_t fEvents, uint32_t *pf
     }
     if (rc > 0)
     {
-        if (FD_ISSET(pThis->hNative, &fdsetR))
-            *pfEvents |= RTSOCKET_EVT_READ;
-        if (FD_ISSET(pThis->hNative, &fdsetW))
-            *pfEvents |= RTSOCKET_EVT_WRITE;
-        if (FD_ISSET(pThis->hNative, &fdsetE))
-            *pfEvents |= RTSOCKET_EVT_ERROR;
-
-        rc = VINF_SUCCESS;
+        if (pThis->hNative == hNative)
+        {
+            if (FD_ISSET(hNative, &fdsetR))
+                *pfEvents |= RTSOCKET_EVT_READ;
+            if (FD_ISSET(hNative, &fdsetW))
+                *pfEvents |= RTSOCKET_EVT_WRITE;
+            if (FD_ISSET(hNative, &fdsetE))
+                *pfEvents |= RTSOCKET_EVT_ERROR;
+            rc = VINF_SUCCESS;
+        }
+        else
+        {
+            /* Socket was closed while we waited (rtSocketCloseIt).  Different status code? */
+            *pfEvents = RTSOCKET_EVT_ERROR;
+            rc = VINF_SUCCESS;
+        }
     }
     else if (rc == 0)
         rc = VERR_TIMEOUT;
@@ -1604,7 +1678,27 @@ RTDECL(int) RTSocketGetPeerAddress(RTSOCKET hSocket, PRTNETADDR pAddr)
  * @param   hSocket             The socket handle.
  * @param   pAddr               The address to bind to.
  */
-int rtSocketBind(RTSOCKET hSocket, PCRTNETADDR pAddr)
+DECLHIDDEN(int) rtSocketBind(RTSOCKET hSocket, PCRTNETADDR pAddr)
+{
+    RTSOCKADDRUNION u;
+    int             cbAddr;
+    int rc = rtSocketAddrFromNetAddr(pAddr, &u, sizeof(u), &cbAddr);
+    if (RT_SUCCESS(rc))
+        rc = rtSocketBindRawAddr(hSocket, &u.Addr, cbAddr);
+    return rc;
+}
+
+
+/**
+ * Very thin wrapper around bind.
+ *
+ * @returns IPRT status code.
+ * @param   hSocket             The socket handle.
+ * @param   pvAddr              The address to bind to (struct sockaddr and
+ *                              friends).
+ * @param   cbAddr              The size of the address.
+ */
+DECLHIDDEN(int) rtSocketBindRawAddr(RTSOCKET hSocket, void const *pvAddr, size_t cbAddr)
 {
     /*
      * Validate input.
@@ -1612,20 +1706,19 @@ int rtSocketBind(RTSOCKET hSocket, PCRTNETADDR pAddr)
     RTSOCKETINT *pThis = hSocket;
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTSOCKET_MAGIC, VERR_INVALID_HANDLE);
+    AssertPtrReturn(pvAddr, VERR_INVALID_POINTER);
     AssertReturn(rtSocketTryLock(pThis), VERR_CONCURRENT_ACCESS);
 
-    RTSOCKADDRUNION u;
-    int             cbAddr;
-    int rc = rtSocketAddrFromNetAddr(pAddr, &u, sizeof(u), &cbAddr);
-    if (RT_SUCCESS(rc))
-    {
-        if (bind(pThis->hNative, &u.Addr, cbAddr) != 0)
-            rc = rtSocketError();
-    }
+    int rc;
+    if (bind(pThis->hNative, (struct sockaddr const *)pvAddr, (int)cbAddr) == 0)
+        rc = VINF_SUCCESS;
+    else
+        rc = rtSocketError();
 
     rtSocketUnlock(pThis);
     return rc;
 }
+
 
 
 /**
@@ -1635,7 +1728,7 @@ int rtSocketBind(RTSOCKET hSocket, PCRTNETADDR pAddr)
  * @param   hSocket             The socket handle.
  * @param   cMaxPending         The max number of pending connections.
  */
-int rtSocketListen(RTSOCKET hSocket, int cMaxPending)
+DECLHIDDEN(int) rtSocketListen(RTSOCKET hSocket, int cMaxPending)
 {
     /*
      * Validate input.
@@ -1666,7 +1759,7 @@ int rtSocketListen(RTSOCKET hSocket, int cMaxPending)
  *                              @a pAddr point to.  On return this contains the
  *                              size of what's stored at @a pAddr.
  */
-int rtSocketAccept(RTSOCKET hSocket, PRTSOCKET phClient, struct sockaddr *pAddr, size_t *pcbAddr)
+DECLHIDDEN(int) rtSocketAccept(RTSOCKET hSocket, PRTSOCKET phClient, struct sockaddr *pAddr, size_t *pcbAddr)
 {
     /*
      * Validate input.
@@ -1725,7 +1818,7 @@ int rtSocketAccept(RTSOCKET hSocket, PRTSOCKET phClient, struct sockaddr *pAddr,
  *                              Use RT_TCPCLIENTCONNECT_DEFAULT_WAIT to wait for the default time
  *                              configured on the running system.
  */
-int rtSocketConnect(RTSOCKET hSocket, PCRTNETADDR pAddr, RTMSINTERVAL cMillies)
+DECLHIDDEN(int) rtSocketConnect(RTSOCKET hSocket, PCRTNETADDR pAddr, RTMSINTERVAL cMillies)
 {
     /*
      * Validate input.
@@ -1815,6 +1908,35 @@ int rtSocketConnect(RTSOCKET hSocket, PCRTNETADDR pAddr, RTMSINTERVAL cMillies)
 
 
 /**
+ * Wrapper around connect, raw address, no timeout.
+ *
+ * @returns IPRT status code.
+ * @param   hSocket             The socket handle.
+ * @param   pvAddr              The raw socket address to connect to.
+ * @param   cbAddr              The size of the raw address.
+ */
+DECLHIDDEN(int) rtSocketConnectRaw(RTSOCKET hSocket, void const *pvAddr, size_t cbAddr)
+{
+    /*
+     * Validate input.
+     */
+    RTSOCKETINT *pThis = hSocket;
+    AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
+    AssertReturn(pThis->u32Magic == RTSOCKET_MAGIC, VERR_INVALID_HANDLE);
+    AssertReturn(rtSocketTryLock(pThis), VERR_CONCURRENT_ACCESS);
+
+    int rc;
+    if (connect(pThis->hNative, (const struct sockaddr *)pvAddr, (int)cbAddr) == 0)
+        rc = VINF_SUCCESS;
+    else
+        rc = rtSocketError();
+
+    rtSocketUnlock(pThis);
+    return rc;
+}
+
+
+/**
  * Wrapper around setsockopt.
  *
  * @returns IPRT status code.
@@ -1824,7 +1946,7 @@ int rtSocketConnect(RTSOCKET hSocket, PCRTNETADDR pAddr, RTMSINTERVAL cMillies)
  * @param   pvValue             The value buffer.
  * @param   cbValue             The size of the value pointed to by pvValue.
  */
-int rtSocketSetOpt(RTSOCKET hSocket, int iLevel, int iOption, void const *pvValue, int cbValue)
+DECLHIDDEN(int) rtSocketSetOpt(RTSOCKET hSocket, int iLevel, int iOption, void const *pvValue, int cbValue)
 {
     /*
      * Validate input.
@@ -1852,9 +1974,10 @@ int rtSocketSetOpt(RTSOCKET hSocket, int iLevel, int iOption, void const *pvValu
  * @param   fEvents             The events we're polling for.
  * @param   phNative            Where to put the primary handle.
  */
-int rtSocketPollGetHandle(RTSOCKET hSocket, uint32_t fEvents, PRTHCINTPTR phNative)
+DECLHIDDEN(int) rtSocketPollGetHandle(RTSOCKET hSocket, uint32_t fEvents, PRTHCINTPTR phNative)
 {
     RTSOCKETINT *pThis = hSocket;
+    RT_NOREF_PV(fEvents);
     AssertPtrReturn(pThis, VERR_INVALID_HANDLE);
     AssertReturn(pThis->u32Magic == RTSOCKET_MAGIC, VERR_INVALID_HANDLE);
 #ifdef RT_OS_WINDOWS
@@ -2051,7 +2174,7 @@ static uint32_t rtSocketPollCheck(RTSOCKETINT *pThis, uint32_t fEvents)
  * @remarks There is a potential race wrt duplicate handles when @a fNoWait is
  *          @c true, we don't currently care about that oddity...
  */
-uint32_t rtSocketPollStart(RTSOCKET hSocket, RTPOLLSET hPollSet, uint32_t fEvents, bool fFinalEntry, bool fNoWait)
+DECLHIDDEN(uint32_t) rtSocketPollStart(RTSOCKET hSocket, RTPOLLSET hPollSet, uint32_t fEvents, bool fFinalEntry, bool fNoWait)
 {
     RTSOCKETINT *pThis = hSocket;
     AssertPtrReturn(pThis, UINT32_MAX);
@@ -2123,13 +2246,14 @@ uint32_t rtSocketPollStart(RTSOCKET hSocket, RTPOLLSET hPollSet, uint32_t fEvent
  *                              set was processed).
  * @param   fHarvestEvents      Set if we should check for pending events.
  */
-uint32_t rtSocketPollDone(RTSOCKET hSocket, uint32_t fEvents, bool fFinalEntry, bool fHarvestEvents)
+DECLHIDDEN(uint32_t) rtSocketPollDone(RTSOCKET hSocket, uint32_t fEvents, bool fFinalEntry, bool fHarvestEvents)
 {
     RTSOCKETINT *pThis = hSocket;
     AssertPtrReturn(pThis, 0);
     AssertReturn(pThis->u32Magic == RTSOCKET_MAGIC, 0);
     Assert(pThis->cUsers > 0);
     Assert(pThis->hPollSet != NIL_RTPOLLSET);
+    RT_NOREF_PV(fFinalEntry);
 
     /* Harvest events and clear the event mask for the next round of polling. */
     uint32_t fRetEvents = rtSocketPollCheck(pThis, fEvents);

@@ -68,50 +68,6 @@ WindowExists( Display *dpy, Window w )
     return WindowExistsFlag;
 }
 
-static GLboolean
-renderDestroyWindow( Display *dpy, Window w )
-{
-    XWindowAttributes xwa;
-    int (*oldXErrorHandler)(Display *, XErrorEvent *);
-
-    WindowExistsFlag = GL_TRUE;
-    oldXErrorHandler = XSetErrorHandler(WindowExistsErrorHandler);
-    XGetWindowAttributes(dpy, w, &xwa); /* dummy request */
-    if (xwa.map_state == IsViewable) {
-        XDestroyWindow (dpy, w); /* dummy request */
-        XSync (dpy,0);
-    }
-    XSetErrorHandler(oldXErrorHandler);
-    return WindowExistsFlag;
-}
-
-#if 0
-/*
- * Garbage collection function.
- * Loop over all known windows and check if corresponding X window still
- * exists.  If it doesn't, destroy the render SPU window.
- * XXX seems to blow up with threadtest.conf tests.
- */
-void
-renderspu_GCWindow(void)
-{
-    int i;
-    WindowInfo *window;
-
-    for (i = 0; i < (int)render_spu.window_id - 1; i++) {
-        window = (WindowInfo *) crHashtableSearch(render_spu.windowTable, i);
-        if (window->visual->dpy) {
-            if (!WindowExists (window->visual->dpy, window->appWindow) ) {
-                XSync(window->visual->dpy,0);
-                if(WindowExists(window->visual->dpy, window->window)) {
-                    renderDestroyWindow(window->visual->dpy, window->window);
-                }
-            }
-        }
-    }
-}
-#endif
-
 static Colormap 
 GetLUTColormap( Display *dpy, XVisualInfo *vi )
 {
@@ -1674,11 +1630,6 @@ renderspu_SystemMakeCurrent( WindowInfo *window, GLint nativeWindow,
         }
 
     }
-
-#if 0
-    /* XXX disabled for now due to problem with threadtest.conf */
-    renderspu_GCWindow();
-#endif
 }
 
 
@@ -1973,25 +1924,31 @@ renderspu_SystemShowWindow( WindowInfo *window, GLboolean showIt )
     }
 }
 
-#define CR_RENDER_FORCE_PRESENT_MAIN_THREAD
-
 void renderspu_SystemVBoxPresentComposition( WindowInfo *window, const struct VBOXVR_SCR_COMPOSITOR_ENTRY *pChangedEntry )
 {
-    /* the CR_RENDER_FORCE_PRESENT_MAIN_THREAD is actually inherited from cocoa backend impl,
-     * here it forces rendering in WinCmd thread rather than a Main thread.
-     * it is used for debugging only in any way actually.
-     * @todo: change to some more generic macro name */
-#ifndef CR_RENDER_FORCE_PRESENT_MAIN_THREAD
-    const struct VBOXVR_SCR_COMPOSITOR *pCompositor;
-    /* we do not want to be blocked with the GUI thread here, so only draw her eif we are really able to do that w/o bllocking */
-    int rc = renderspuVBoxCompositorTryAcquire(window, &pCompositor);
-    if (RT_SUCCESS(rc))
+    /* The !render_spu.force_present_main_thread code flow is actually inspired
+     * by cocoa backend impl, here it forces rendering in WinCmd thread rather
+     * than a Main thread.  It defaults to 1, because otherwise there were
+     * 3D driver incompatibilities on some systems. Elsewhere it causes flicker
+     * on NVidia GPUs. In principle would need root cause investigation. */
+    if (!render_spu.force_present_main_thread)
     {
-        renderspuVBoxPresentCompositionGeneric(window, pCompositor, pChangedEntry, 0, false);
-        renderspuVBoxCompositorRelease(window);
+        const struct VBOXVR_SCR_COMPOSITOR *pCompositor;
+        /* we do not want to be blocked with the GUI thread here, so only draw here if we are really able to do that w/o blocking */
+        int rc = renderspuVBoxCompositorTryAcquire(window, &pCompositor);
+        if (RT_SUCCESS(rc))
+        {
+            renderspuVBoxPresentCompositionGeneric(window, pCompositor, pChangedEntry, 0, false);
+            renderspuVBoxCompositorRelease(window);
+        }
+        else if (rc != VERR_SEM_BUSY)
+        {
+            /* this is somewhat we do not expect */
+            WARN(("renderspuVBoxCompositorTryAcquire failed rc %d", rc));
+            return;
+        }
     }
-    else if (rc == VERR_SEM_BUSY)
-#endif
+
     {
         Status status;
         XEvent event;
@@ -2010,13 +1967,6 @@ void renderspu_SystemVBoxPresentComposition( WindowInfo *window, const struct VB
         }
         XFlush(render_spu.pCommunicationDisplay);
     }
-#ifndef CR_RENDER_FORCE_PRESENT_MAIN_THREAD
-    else
-    {
-        /* this is somewhat we do not expect */
-        WARN(("renderspuVBoxCompositorTryAcquire failed rc %d", rc));
-    }
-#endif
 }
 
 static void

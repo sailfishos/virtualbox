@@ -1,11 +1,10 @@
 /* $Id: unpack_shaders.c $ */
-
 /** @file
  * VBox OpenGL DRI driver functions
  */
 
 /*
- * Copyright (C) 2009-2010 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -41,18 +40,57 @@ void crUnpackExtendShaderSource(void)
     GLint *pLocalLength = DATA_POINTER(20, GLint);
     char **ppStrings = NULL;
     GLsizei i, j, jUpTo;
-    int pos=20+count*sizeof(*pLocalLength);
+    int pos, pos_check;
 
-    if (hasNonLocalLen>0)
+    if (count <= 0 || count >= INT32_MAX / sizeof(GLint) / 8)
     {
-        length = DATA_POINTER(pos, GLint);
-        pos += count*sizeof(*length);
+        crError("crUnpackExtendShaderSource: count %u is out of range", count);
+        return;
     }
 
-    ppStrings = crAlloc(count*sizeof(char*));
+    pos = 20 + count * sizeof(*pLocalLength);
+
+    if (!DATA_POINTER_CHECK(pos))
+    {
+        crError("crUnpackExtendShaderSource: pos %d is out of range", pos);
+        return;
+    }
+
+    if (hasNonLocalLen > 0)
+    {
+        length = DATA_POINTER(pos, GLint);
+        pos += count * sizeof(*length);
+    }
+
+    pos_check = pos; 
+
+    if (!DATA_POINTER_CHECK(pos_check))
+    {
+        crError("crUnpackExtendShaderSource: pos %d is out of range", pos);
+        return;
+    }
+
+    for (i = 0; i < count; ++i)
+    {
+        if (pLocalLength[i] <= 0 || pos_check >= INT32_MAX - pLocalLength[i])
+        {
+            crError("crUnpackExtendShaderSource: pos %d is out of range", pos_check);
+            return;
+        }
+
+        pos_check += pLocalLength[i];
+
+        if (!DATA_POINTER_CHECK(pos_check))
+        {
+            crError("crUnpackExtendShaderSource: pos %d is out of range", pos_check);
+            return;
+        }
+    }
+
+    ppStrings = crAlloc(count * sizeof(char*));
     if (!ppStrings) return;
 
-    for (i=0; i<count; ++i)
+    for (i = 0; i < count; ++i)
     {
         ppStrings[i] = DATA_POINTER(pos, char);
         pos += pLocalLength[i];
@@ -264,20 +302,20 @@ void crUnpackExtendGetAttachedShaders(void)
 
 void crUnpackExtendGetAttachedObjectsARB(void)
 {
-	VBoxGLhandleARB containerObj = READ_DATA(8, VBoxGLhandleARB);
-	GLsizei maxCount = READ_DATA(12, GLsizei);
-	SET_RETURN_PTR(16);
-	SET_WRITEBACK_PTR(24);
-	cr_unpackDispatch.GetAttachedObjectsARB(containerObj, maxCount, NULL, NULL);
+        VBoxGLhandleARB containerObj = READ_DATA(8, VBoxGLhandleARB);
+        GLsizei maxCount = READ_DATA(12, GLsizei);
+        SET_RETURN_PTR(16);
+        SET_WRITEBACK_PTR(24);
+        cr_unpackDispatch.GetAttachedObjectsARB(containerObj, maxCount, NULL, NULL);
 }
 
 void crUnpackExtendGetInfoLogARB(void)
 {
-	VBoxGLhandleARB obj = READ_DATA(8, VBoxGLhandleARB);
-	GLsizei maxLength = READ_DATA(12, GLsizei);
-	SET_RETURN_PTR(16);
-	SET_WRITEBACK_PTR(24);
-	cr_unpackDispatch.GetInfoLogARB(obj, maxLength, NULL, NULL);
+        VBoxGLhandleARB obj = READ_DATA(8, VBoxGLhandleARB);
+        GLsizei maxLength = READ_DATA(12, GLsizei);
+        SET_RETURN_PTR(16);
+        SET_WRITEBACK_PTR(24);
+        cr_unpackDispatch.GetInfoLogARB(obj, maxLength, NULL, NULL);
 }
 
 void crUnpackExtendGetProgramInfoLog(void)
@@ -312,6 +350,13 @@ void crUnpackExtendGetAttribLocation(void)
     int packet_length = READ_DATA(0, int);
     GLuint program = READ_DATA(8, GLuint);
     const char *name = DATA_POINTER(12, const char);
+
+    if (!DATA_POINTER_CHECK(packet_length))
+    {
+        crError("crUnpackExtendGetAttribLocation: packet_length is out of range");
+        return;
+    }
+
     SET_RETURN_PTR(packet_length-16);
     SET_WRITEBACK_PTR(packet_length-8);
     cr_unpackDispatch.GetAttribLocation(program, name);
@@ -322,6 +367,13 @@ void crUnpackExtendGetUniformLocation(void)
     int packet_length = READ_DATA(0, int);
     GLuint program = READ_DATA(8, GLuint);
     const char *name = DATA_POINTER(12, const char);
+
+    if (!DATA_POINTER_CHECK(packet_length))
+    {
+        crError("crUnpackExtendGetUniformLocation: packet_length is out of range");
+        return;
+    }
+
     SET_RETURN_PTR(packet_length-16);
     SET_WRITEBACK_PTR(packet_length-8);
     cr_unpackDispatch.GetUniformLocation(program, name);
@@ -329,11 +381,11 @@ void crUnpackExtendGetUniformLocation(void)
 
 void crUnpackExtendGetUniformsLocations(void)
 {
-	GLuint program = READ_DATA(8, GLuint);
-	GLsizei maxcbData = READ_DATA(12, GLsizei);
-	SET_RETURN_PTR(16);
-	SET_WRITEBACK_PTR(24);
-	cr_unpackDispatch.GetUniformsLocations(program, maxcbData, NULL, NULL);
+        GLuint program = READ_DATA(8, GLuint);
+        GLsizei maxcbData = READ_DATA(12, GLsizei);
+        SET_RETURN_PTR(16);
+        SET_WRITEBACK_PTR(24);
+        cr_unpackDispatch.GetUniformsLocations(program, maxcbData, NULL, NULL);
 }
 
 void crUnpackExtendGetAttribsLocations(void)

@@ -1,11 +1,10 @@
+/* $Id: UIGDetailsModel.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIGDetailsModel class declaration
+ * VBox Qt GUI - UIGDetailsModel class declaration.
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,7 +25,7 @@
 #include <QSet>
 
 /* GUI includes: */
-#include "UIDefs.h"
+#include "UIExtraDataDefs.h"
 
 /* COM includes: */
 #include "COMEnums.h"
@@ -36,10 +35,11 @@ class QGraphicsItem;
 class QGraphicsScene;
 class QGraphicsSceneContextMenuEvent;
 class QGraphicsView;
-class UIGDetailsGroup;
 class UIVMItem;
 class UIGDetailsElementAnimationCallback;
+class UIGDetailsGroup;
 class UIGDetailsItem;
+class UIGDetails;
 
 /* Graphics details-model: */
 class UIGDetailsModel : public QObject
@@ -57,8 +57,10 @@ signals:
 
 public:
 
-    /* Constructor/destructor: */
-    UIGDetailsModel(QObject *pParent);
+    /** Constructs a details-model passing @a pParent to the base-class.
+      * @param  pParent  Brings the details container to embed into. */
+    UIGDetailsModel(UIGDetails *pParent);
+    /** Destructs a details-model. */
     ~UIGDetailsModel();
 
     /* API: Scene stuff: */
@@ -66,11 +68,20 @@ public:
     QGraphicsView* paintDevice() const;
     QGraphicsItem* itemAt(const QPointF &position) const;
 
+    /** Returns the details reference. */
+    UIGDetails *details() const { return m_pDetails; }
+
+    /** Returns the root item instance. */
+    UIGDetailsItem *root() const;
+
     /* API: Layout stuff: */
     void updateLayout();
 
     /* API: Current-item(s) stuff: */
     void setItems(const QList<UIVMItem*> &items);
+
+    /** Returns the details settings. */
+    const QMap<DetailsElementType, bool>& settings() const { return m_settings; }
 
 private slots:
 
@@ -102,8 +113,10 @@ private:
     /* Helpers: Prepare stuff: */
     void prepareScene();
     void prepareRoot();
+    void loadSettings();
 
     /* Helpers: Cleanup stuff: */
+    void saveSettings();
     void cleanupRoot();
     void cleanupScene();
 
@@ -113,10 +126,15 @@ private:
     /* Handler: Context-menu stuff: */
     bool processContextMenuEvent(QGraphicsSceneContextMenuEvent *pEvent);
 
+    /** Holds the details reference. */
+    UIGDetails *m_pDetails;
+
     /* Variables: */
     QGraphicsScene *m_pScene;
     UIGDetailsGroup *m_pRoot;
     UIGDetailsElementAnimationCallback *m_pAnimationCallback;
+    /** Holds the details settings. */
+    QMap<DetailsElementType, bool> m_settings;
 };
 
 /* Details-element animation callback: */

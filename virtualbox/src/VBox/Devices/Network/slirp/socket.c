@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -32,73 +32,14 @@
 #endif
 #include <VBox/vmm/pdmdrv.h>
 #if defined (RT_OS_WINDOWS)
-#include <iphlpapi.h>
+#include <iprt/win/iphlpapi.h>
 #include <icmpapi.h>
 #endif
+#include <alias.h>
 
 #if defined(DECLARE_IOVEC) && defined(RT_OS_WINDOWS)
 AssertCompileMembersSameSizeAndOffset(struct iovec, iov_base, WSABUF, buf);
 AssertCompileMembersSameSizeAndOffset(struct iovec, iov_len,  WSABUF, len);
-#endif
-
-#ifdef VBOX_WITH_NAT_UDP_SOCKET_CLONE
-/**
- *
- */
-struct socket * soCloneUDPSocketWithForegnAddr(PNATState pData, bool fBindSocket, struct socket *pSo, uint32_t u32ForeignAddr)
-{
-    struct socket *pNewSocket = NULL;
-    LogFlowFunc(("Enter: fBindSocket:%RTbool, so:%R[natsock], u32ForeignAddr:%RTnaipv4\n", fBindSocket, pSo, u32ForeignAddr));
-    pNewSocket = socreate();
-    if (!pNewSocket)
-    {
-        LogFunc(("Can't create socket\n"));
-        LogFlowFunc(("Leave: NULL\n"));
-        return NULL;
-    }
-    if (fBindSocket)
-    {
-        if (udp_attach(pData, pNewSocket, 0) <= 0)
-        {
-            sofree(pData, pNewSocket);
-            LogFunc(("Can't attach fresh created socket\n"));
-            return NULL;
-        }
-    }
-    else
-    {
-        pNewSocket->so_cloneOf = (struct socket *)pSo;
-        pNewSocket->s = pSo->s;
-        insque(pData, pNewSocket, &udb);
-    }
-    pNewSocket->so_laddr = pSo->so_laddr;
-    pNewSocket->so_lport = pSo->so_lport;
-    pNewSocket->so_faddr.s_addr = u32ForeignAddr;
-    pNewSocket->so_fport = pSo->so_fport;
-    pSo->so_cCloneCounter++;
-    LogFlowFunc(("Leave: %R[natsock]\n", pNewSocket));
-    return pNewSocket;
-}
-
-struct socket *soLookUpClonedUDPSocket(PNATState pData, const struct socket *pcSo, uint32_t u32ForeignAddress)
-{
-    struct socket *pSoClone = NULL;
-    LogFlowFunc(("Enter: pcSo:%R[natsock], u32ForeignAddress:%RTnaipv4\n", pcSo, u32ForeignAddress));
-    for (pSoClone = udb.so_next; pSoClone != &udb; pSoClone = pSoClone->so_next)
-    {
-        if (   pSoClone->so_cloneOf
-            && pSoClone->so_cloneOf == pcSo
-            && pSoClone->so_lport == pcSo->so_lport
-            && pSoClone->so_fport == pcSo->so_fport
-            && pSoClone->so_laddr.s_addr == pcSo->so_laddr.s_addr
-            && pSoClone->so_faddr.s_addr == u32ForeignAddress)
-            goto done;
-    }
-    pSoClone = NULL;
-done:
-    LogFlowFunc(("Leave: pSoClone: %R[natsock]\n", pSoClone));
-    return pSoClone;
-}
 #endif
 
 #ifdef VBOX_WITH_NAT_SEND2HOME
@@ -114,7 +55,7 @@ DECLINLINE(bool) slirpSend2Home(PNATState pData, struct socket *pSo, const void 
         struct socket *pNewSocket = soCloneUDPSocketWithForegnAddr(pData, pSo, pData->pInSockAddrHomeAddress[idxAddr].sin_addr);
         AssertReturn((pNewSocket, false));
         pData->pInSockAddrHomeAddress[idxAddr].sin_port = pSo->so_fport;
-        /* @todo: more verbose on errors,
+        /** @todo more verbose on errors,
          * @note: we shouldn't care if this send fail or not (we're in broadcast).
          */
         LogFunc(("send %d bytes to %RTnaipv4 from %R[natsock]\n", cbBuf, pData->pInSockAddrHomeAddress[idxAddr].sin_addr.s_addr, pNewSocket));
@@ -134,7 +75,7 @@ static void sorecvfrom_icmp_unix(PNATState, struct socket *);
 #endif /* !RT_OS_WINDOWS */
 
 void
-so_init()
+so_init(void)
 {
 }
 
@@ -162,7 +103,7 @@ solookup(struct socket *head, struct in_addr laddr,
  * insque() it into the correct linked-list
  */
 struct socket *
-socreate()
+socreate(void)
 {
     struct socket *so;
 
@@ -230,20 +171,101 @@ sofree(PNATState pData, struct socket *so)
     LogFlowFuncLeave();
 }
 
+
+/*
+ * Worker for sobind() below.
+ */
+static int
+sobindto(struct socket *so, uint32_t addr, uint16_t port)
+{
+    struct sockaddr_in self;
+    int status;
+
+    if (addr == INADDR_ANY && port == 0 && so->so_type != IPPROTO_UDP)
+    {
+        /* TCP sockets without constraints don't need to be bound */
+        Log2(("NAT: sobind: %s guest %RTnaipv4:%d - nothing to do\n",
+              so->so_type == IPPROTO_UDP ? "udp" : "tcp",
+              so->so_laddr.s_addr, ntohs(so->so_lport)));
+        return 0;
+    }
+
+    RT_ZERO(self);
+#ifdef RT_OS_DARWIN
+    self.sin_len = sizeof(self);
+#endif
+    self.sin_family = AF_INET;
+    self.sin_addr.s_addr = addr;
+    self.sin_port = port;
+
+    status = bind(so->s, (struct sockaddr *)&self, sizeof(self));
+    if (status == 0)
+    {
+        Log2(("NAT: sobind: %s guest %RTnaipv4:%d to host %RTnaipv4:%d\n",
+              so->so_type == IPPROTO_UDP ? "udp" : "tcp",
+              so->so_laddr.s_addr, ntohs(so->so_lport), addr, ntohs(port)));
+        return 0;
+    }
+
+    Log2(("NAT: sobind: %s guest %RTnaipv4:%d to host %RTnaipv4:%d error %d%s\n",
+          so->so_type == IPPROTO_UDP ? "udp" : "tcp",
+          so->so_laddr.s_addr, ntohs(so->so_lport),
+          addr, ntohs(port),
+          errno, port ? " (will retry with random port)" : ""));
+
+    if (port) /* retry without */
+        status = sobindto(so, addr, 0);
+
+    if (addr)
+        return status;
+    else
+        return 0;
+}
+
+
+/*
+ * Bind the socket to specific host address and/or port if necessary.
+ * We also always bind udp sockets to force the local port to be
+ * allocated and known in advance.
+ */
+int
+sobind(PNATState pData, struct socket *so)
+{
+    uint32_t addr = pData->bindIP.s_addr; /* may be INADDR_ANY */
+    bool fSamePorts = !!(pData->i32AliasMode & PKT_ALIAS_SAME_PORTS);
+    uint16_t port;
+    int status;
+
+    if (fSamePorts)
+    {
+        int opt = 1;
+        setsockopt(so->s, SOL_SOCKET, SO_REUSEADDR, (char *)&opt, sizeof(opt));
+        port = so->so_lport;
+    }
+    else
+    {
+        port = 0;
+    }
+
+    status = sobindto(so, addr, port);
+    return status;
+}
+
+
 /*
  * Read from so's socket into sb_snd, updating all relevant sbuf fields
  * NOTE: This will only be called if it is select()ed for reading, so
  * a read() of 0 (or less) means it's disconnected
  */
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
 int
 soread(PNATState pData, struct socket *so)
 {
     int n, nn, lss, total;
     struct sbuf *sb = &so->so_snd;
-    size_t len = sb->sb_datalen - sb->sb_cc;
+    u_int len = sb->sb_datalen - sb->sb_cc;
     struct iovec iov[2];
     int mss = so->so_tcpcb->t_maxseg;
+    int sockerr;
 
     STAM_PROFILE_START(&pData->StatIOread, a);
     STAM_COUNTER_RESET(&pData->StatIORead_in_1);
@@ -254,7 +276,7 @@ soread(PNATState pData, struct socket *so)
     QSOCKET_UNLOCK(tcb);
 
     LogFlow(("soread: so = %R[natsock]\n", so));
-    Log2(("%s: so = %R[natsock] so->so_snd = %R[sbuf]\n", __PRETTY_FUNCTION__, so, sb));
+    Log2(("%s: so = %R[natsock] so->so_snd = %R[sbuf]\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, so, sb));
 
     /*
      * No need to check if there's enough room to read.
@@ -321,30 +343,51 @@ soread(PNATState pData, struct socket *so)
 #else
     nn = recv(so->s, iov[0].iov_base, iov[0].iov_len, (so->so_tcpcb->t_force? MSG_OOB:0));
 #endif
-    Log2(("%s: read(1) nn = %d bytes\n", __PRETTY_FUNCTION__, nn));
-    Log2(("%s: so = %R[natsock] so->so_snd = %R[sbuf]\n", __PRETTY_FUNCTION__, so, sb));
+    if (nn < 0)
+        sockerr = errno; /* save it, as it may be clobbered by logging */
+    else
+        sockerr = 0;
+
+    Log2(("%s: read(1) nn = %d bytes\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, nn));
+    Log2(("%s: so = %R[natsock] so->so_snd = %R[sbuf]\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, so, sb));
     if (nn <= 0)
     {
+#ifdef RT_OS_WINDOWS
         /*
-         * Special case for WSAEnumNetworkEvents: If we receive 0 bytes that
-         * _could_ mean that the connection is closed. But we will receive an
-         * FD_CLOSE event later if the connection was _really_ closed. With
-         * www.youtube.com I see this very often. Closing the socket too early
-         * would be dangerous.
+         * Windows reports ESHUTDOWN after SHUT_RD (SD_RECEIVE)
+         * instead of just returning EOF indication.
          */
-        int status;
-        unsigned long pending = 0;
-        status = ioctlsocket(so->s, FIONREAD, &pending);
-        if (status < 0)
-            Log(("NAT:%s: error in WSAIoctl: %d\n", __PRETTY_FUNCTION__, errno));
-        if (nn == 0 && (pending != 0))
+        if (nn < 0 && sockerr == ESHUTDOWN)
         {
-            SOCKET_UNLOCK(so);
-            STAM_PROFILE_STOP(&pData->StatIOread, a);
-            return 0;
+            nn = 0;
+            sockerr = 0;
         }
+#endif
+
+        if (nn == 0) /* XXX: should this be inside #if defined(RT_OS_WINDOWS)? */
+        {
+            /*
+             * Special case for WSAEnumNetworkEvents: If we receive 0 bytes that
+             * _could_ mean that the connection is closed. But we will receive an
+             * FD_CLOSE event later if the connection was _really_ closed. With
+             * www.youtube.com I see this very often. Closing the socket too early
+             * would be dangerous.
+             */
+            int status;
+            unsigned long pending = 0;
+            status = ioctlsocket(so->s, FIONREAD, &pending);
+            if (status < 0)
+                Log(("NAT:%s: error in WSAIoctl: %d\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, errno));
+            if (pending != 0)
+            {
+                SOCKET_UNLOCK(so);
+                STAM_PROFILE_STOP(&pData->StatIOread, a);
+                return 0;
+            }
+        }
+
         if (   nn < 0
-            && soIgnorableErrorCode(errno))
+            && soIgnorableErrorCode(sockerr))
         {
             SOCKET_UNLOCK(so);
             STAM_PROFILE_STOP(&pData->StatIOread, a);
@@ -352,18 +395,24 @@ soread(PNATState pData, struct socket *so)
         }
         else
         {
-            int fUninitiolizedTemplate = 0;
-            fUninitiolizedTemplate = RT_BOOL((   sototcpcb(so)
+            int fUninitializedTemplate = 0;
+            int shuterr;
+
+            fUninitializedTemplate = RT_BOOL((   sototcpcb(so)
                                               && (  sototcpcb(so)->t_template.ti_src.s_addr == INADDR_ANY
                                                  || sototcpcb(so)->t_template.ti_dst.s_addr == INADDR_ANY)));
             /* nn == 0 means peer has performed an orderly shutdown */
             Log2(("%s: disconnected, nn = %d, errno = %d (%s)\n",
-                  __PRETTY_FUNCTION__, nn, errno, strerror(errno)));
-            sofcantrcvmore(so);
-            if (!fUninitiolizedTemplate)
+                  RT_GCC_EXTENSION __PRETTY_FUNCTION__, nn, sockerr, strerror(sockerr)));
+
+            shuterr = sofcantrcvmore(so);
+            if (!sockerr && !shuterr && !fUninitializedTemplate)
                 tcp_sockclosed(pData, sototcpcb(so));
             else
-                tcp_drop(pData, sototcpcb(so), errno);
+            {
+                LogRel2(("NAT: sockerr %d, shuterr %d - %R[natsock]\n", sockerr, shuterr, so));
+                tcp_drop(pData, sototcpcb(so), sockerr);
+            }
             SOCKET_UNLOCK(so);
             STAM_PROFILE_STOP(&pData->StatIOread, a);
             return -1;
@@ -392,7 +441,7 @@ soread(PNATState pData, struct socket *so)
      * a close will be detected on next iteration.
      * A return of -1 wont (shouldn't) happen, since it didn't happen above
      */
-    if (n == 2 && nn == iov[0].iov_len)
+    if (n == 2 && (unsigned)nn == iov[0].iov_len)
     {
         int ret;
         ret = recv(so->s, iov[1].iov_base, iov[1].iov_len, 0);
@@ -407,99 +456,22 @@ soread(PNATState pData, struct socket *so)
         );
     }
 
-    Log2(("%s: read(2) nn = %d bytes\n", __PRETTY_FUNCTION__, nn));
+    Log2(("%s: read(2) nn = %d bytes\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, nn));
 #endif
 
     /* Update fields */
     sb->sb_cc += nn;
     sb->sb_wptr += nn;
-    Log2(("%s: update so_snd (readed nn = %d) %R[sbuf]\n", __PRETTY_FUNCTION__, nn, sb));
+    Log2(("%s: update so_snd (readed nn = %d) %R[sbuf]\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, nn, sb));
     if (sb->sb_wptr >= (sb->sb_data + sb->sb_datalen))
     {
         sb->sb_wptr -= sb->sb_datalen;
-        Log2(("%s: alter sb_wptr  so_snd = %R[sbuf]\n", __PRETTY_FUNCTION__, sb));
+        Log2(("%s: alter sb_wptr  so_snd = %R[sbuf]\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, sb));
     }
     STAM_PROFILE_STOP(&pData->StatIOread, a);
     SOCKET_UNLOCK(so);
     return nn;
 }
-#else /* VBOX_WITH_SLIRP_BSD_SBUF */
-int
-soread(PNATState pData, struct socket *so)
-{
-    int n;
-    char *buf;
-    struct sbuf *sb = &so->so_snd;
-    size_t len = sbspace(sb);
-    int mss = so->so_tcpcb->t_maxseg;
-
-    STAM_PROFILE_START(&pData->StatIOread, a);
-    STAM_COUNTER_RESET(&pData->StatIORead_in_1);
-    STAM_COUNTER_RESET(&pData->StatIORead_in_2);
-
-    QSOCKET_LOCK(tcb);
-    SOCKET_LOCK(so);
-    QSOCKET_UNLOCK(tcb);
-
-    LogFlowFunc(("soread: so = %lx\n", (long)so));
-
-    if (len > mss)
-        len -= len % mss;
-    buf = RTMemAlloc(len);
-    if (buf == NULL)
-    {
-        Log(("NAT: can't alloc enough memory\n"));
-        return -1;
-    }
-
-    n = recv(so->s, buf, len, (so->so_tcpcb->t_force? MSG_OOB:0));
-    if (n <= 0)
-    {
-        /*
-         * Special case for WSAEnumNetworkEvents: If we receive 0 bytes that
-         * _could_ mean that the connection is closed. But we will receive an
-         * FD_CLOSE event later if the connection was _really_ closed. With
-         * www.youtube.com I see this very often. Closing the socket too early
-         * would be dangerous.
-         */
-        int status;
-        unsigned long pending = 0;
-        status = ioctlsocket(so->s, FIONREAD, &pending);
-        if (status < 0)
-            Log(("NAT:error in WSAIoctl: %d\n", errno));
-        if (n == 0 && (pending != 0))
-        {
-            SOCKET_UNLOCK(so);
-            STAM_PROFILE_STOP(&pData->StatIOread, a);
-            RTMemFree(buf);
-            return 0;
-        }
-        if (   n < 0
-            && soIgnorableErrorCode(errno))
-        {
-            SOCKET_UNLOCK(so);
-            STAM_PROFILE_STOP(&pData->StatIOread, a);
-            RTMemFree(buf);
-            return 0;
-        }
-        else
-        {
-            Log2((" --- soread() disconnected, n = %d, errno = %d (%s)\n",
-                  n, errno, strerror(errno)));
-            sofcantrcvmore(so);
-            tcp_sockclosed(pData, sototcpcb(so));
-            SOCKET_UNLOCK(so);
-            STAM_PROFILE_STOP(&pData->StatIOread, a);
-            RTMemFree(buf);
-            return -1;
-        }
-    }
-
-    sbuf_bcat(sb, buf, n);
-    RTMemFree(buf);
-    return n;
-}
-#endif
 
 /*
  * Get urgent data
@@ -533,7 +505,7 @@ sorecvoob(PNATState pData, struct socket *so)
         tp->t_force = 0;
     }
 }
-#ifndef VBOX_WITH_SLIRP_BSD_SBUF
+
 /*
  * Send urgent data
  * There's a lot duplicated code here, but...
@@ -607,7 +579,7 @@ sowrite(PNATState pData, struct socket *so)
 {
     int n, nn;
     struct sbuf *sb = &so->so_rcv;
-    size_t len = sb->sb_cc;
+    u_int len = sb->sb_cc;
     struct iovec iov[2];
 
     STAM_PROFILE_START(&pData->StatIOwrite, a);
@@ -620,7 +592,7 @@ sowrite(PNATState pData, struct socket *so)
     STAM_COUNTER_RESET(&pData->StatIOWrite_rest);
     STAM_COUNTER_RESET(&pData->StatIOWrite_rest_bytes);
     LogFlowFunc(("so = %R[natsock]\n", so));
-    Log2(("%s: so = %R[natsock] so->so_rcv = %R[sbuf]\n", __PRETTY_FUNCTION__, so, sb));
+    Log2(("%s: so = %R[natsock] so->so_rcv = %R[sbuf]\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, so, sb));
     QSOCKET_LOCK(tcb);
     SOCKET_LOCK(so);
     QSOCKET_UNLOCK(tcb);
@@ -689,7 +661,7 @@ sowrite(PNATState pData, struct socket *so)
 #else
     nn = send(so->s, iov[0].iov_base, iov[0].iov_len, 0);
 #endif
-    Log2(("%s: wrote(1) nn = %d bytes\n", __PRETTY_FUNCTION__, nn));
+    Log2(("%s: wrote(1) nn = %d bytes\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, nn));
     /* This should never happen, but people tell me it does *shrug* */
     if (   nn < 0
         && soIgnorableErrorCode(errno))
@@ -702,7 +674,7 @@ sowrite(PNATState pData, struct socket *so)
     if (nn < 0 || (nn == 0 && iov[0].iov_len > 0))
     {
         Log2(("%s: disconnected, so->so_state = %x, errno = %d\n",
-              __PRETTY_FUNCTION__, so->so_state, errno));
+              RT_GCC_EXTENSION __PRETTY_FUNCTION__, so->so_state, errno));
         sofcantsendmore(so);
         tcp_sockclosed(pData, sototcpcb(so));
         SOCKET_UNLOCK(so);
@@ -711,31 +683,31 @@ sowrite(PNATState pData, struct socket *so)
     }
 
 #ifndef HAVE_READV
-    if (n == 2 && nn == iov[0].iov_len)
+    if (n == 2 && (unsigned)nn == iov[0].iov_len)
     {
         int ret;
         ret = send(so->s, iov[1].iov_base, iov[1].iov_len, 0);
         if (ret > 0)
             nn += ret;
-        STAM_STATS({
-            if (ret > 0 && ret != iov[1].iov_len)
-            {
-                STAM_COUNTER_INC(&pData->StatIOWrite_rest);
-                STAM_COUNTER_ADD(&pData->StatIOWrite_rest_bytes, (iov[1].iov_len - ret));
-            }
-        });
+# ifdef VBOX_WITH_STATISTICS
+        if (ret > 0 && ret != (ssize_t)iov[1].iov_len)
+        {
+            STAM_COUNTER_INC(&pData->StatIOWrite_rest);
+            STAM_COUNTER_ADD(&pData->StatIOWrite_rest_bytes, (iov[1].iov_len - ret));
+        }
+#endif
     }
-    Log2(("%s: wrote(2) nn = %d bytes\n", __PRETTY_FUNCTION__, nn));
+    Log2(("%s: wrote(2) nn = %d bytes\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, nn));
 #endif
 
     /* Update sbuf */
     sb->sb_cc -= nn;
     sb->sb_rptr += nn;
-    Log2(("%s: update so_rcv (written nn = %d) %R[sbuf]\n", __PRETTY_FUNCTION__, nn, sb));
+    Log2(("%s: update so_rcv (written nn = %d) %R[sbuf]\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, nn, sb));
     if (sb->sb_rptr >= (sb->sb_data + sb->sb_datalen))
     {
         sb->sb_rptr -= sb->sb_datalen;
-        Log2(("%s: alter sb_rptr of so_rcv %R[sbuf]\n", __PRETTY_FUNCTION__, sb));
+        Log2(("%s: alter sb_rptr of so_rcv %R[sbuf]\n", RT_GCC_EXTENSION __PRETTY_FUNCTION__, sb));
     }
 
     /*
@@ -749,58 +721,6 @@ sowrite(PNATState pData, struct socket *so)
     STAM_PROFILE_STOP(&pData->StatIOwrite, a);
     return nn;
 }
-#else /* VBOX_WITH_SLIRP_BSD_SBUF */
-static int
-do_sosend(struct socket *so, int fUrg)
-{
-    struct sbuf *sb = &so->so_rcv;
-
-    int n, len;
-
-    LogFlowFunc(("sosendoob: so = %R[natsock]\n", so));
-
-    len = sbuf_len(sb);
-
-    n = send(so->s, sbuf_data(sb), len, (fUrg ? MSG_OOB : 0));
-    if (n < 0)
-        Log(("NAT: Can't sent sbuf via socket.\n"));
-    if (fUrg)
-        so->so_urgc -= n;
-    if (n > 0 && n < len)
-    {
-        char *ptr;
-        char *buff;
-        buff = RTMemAlloc(len);
-        if (buff == NULL)
-        {
-            Log(("NAT: No space to allocate temporal buffer\n"));
-            return -1;
-        }
-        ptr = sbuf_data(sb);
-        memcpy(buff, &ptr[n], len - n);
-        sbuf_bcpy(sb, buff, len - n);
-        RTMemFree(buff);
-        return n;
-    }
-    sbuf_clear(sb);
-    return n;
-}
-int
-sosendoob(struct socket *so)
-{
-    return do_sosend(so, 1);
-}
-
-/*
- * Write data from so_rcv to so's socket,
- * updating all sbuf field as necessary
- */
-int
-sowrite(PNATState pData, struct socket *so)
-{
-    return do_sosend(so, 0);
-}
-#endif
 
 /*
  * recvfrom() a UDP socket
@@ -808,7 +728,7 @@ sowrite(PNATState pData, struct socket *so)
 void
 sorecvfrom(PNATState pData, struct socket *so)
 {
-    LogFlowFunc(("sorecvfrom: so = %lx\n", (long)so));
+    LogFlowFunc(("sorecvfrom: so = %p\n", so));
 
 #ifdef RT_OS_WINDOWS
     /* ping is handled with ICMP API in ip_icmpwin.c */
@@ -823,7 +743,7 @@ sorecvfrom(PNATState pData, struct socket *so)
     else
 #endif /* !RT_OS_WINDOWS */
     {
-        static uint8_t au8Buf[64 * 1024];
+        static char achBuf[64 * 1024];
 
         /* A "normal" UDP packet */
         struct sockaddr_in addr;
@@ -853,8 +773,8 @@ sorecvfrom(PNATState pData, struct socket *so)
         iov[0].iov_len = M_TRAILINGSPACE(m);
 
         /* large packets will spill into a temp buffer */
-        iov[1].iov_base = au8Buf;
-        iov[1].iov_len = sizeof(au8Buf);
+        iov[1].iov_base = achBuf;
+        iov[1].iov_len = sizeof(achBuf);
 
 #if !defined(RT_OS_WINDOWS)
         {
@@ -871,11 +791,12 @@ sorecvfrom(PNATState pData, struct socket *so)
 #else  /* RT_OS_WINDOWS */
         {
             DWORD nbytes; /* NB: can't use nread b/c of different size */
-            DWORD flags;
+            DWORD flags = 0;
             int status;
-
-            flags = 0;
-            status = WSARecvFrom(so->s, iov, 2, &nbytes, &flags,
+            AssertCompile(sizeof(WSABUF) == sizeof(struct iovec));
+            AssertCompileMembersSameSizeAndOffset(WSABUF, len, struct iovec, iov_len);
+            AssertCompileMembersSameSizeAndOffset(WSABUF, buf, struct iovec, iov_base);
+            status = WSARecvFrom(so->s, (WSABUF *)&iov[0], 2, &nbytes, &flags,
                                  (struct sockaddr *)&addr, &addrlen,
                                  NULL, NULL);
             if (status != SOCKET_ERROR)
@@ -893,7 +814,7 @@ sorecvfrom(PNATState pData, struct socket *so)
                 m->m_len = iov[0].iov_len;
                 m_append(pData, m, nread - iov[0].iov_len, iov[1].iov_base);
             }
-            Assert((m_length(m, NULL) == nread));
+            Assert(m_length(m, NULL) == (size_t)nread);
 
             /*
              * Hack: domain name lookup will be used the most for UDP,
@@ -908,11 +829,15 @@ sorecvfrom(PNATState pData, struct socket *so)
             }
 
             /*
-             *  last argument should be changed if Slirp will inject IP attributes
-             *  Note: Here we can't check if dnsproxy's sent initial request
+             * DNS proxy requests are forwarded to the real resolver,
+             * but its socket's so_faddr is that of the DNS proxy
+             * itself.
+             *
+             * last argument should be changed if Slirp will inject IP attributes
              */
             if (   pData->fUseDnsProxy
-                && so->so_fport == RT_H2N_U16_C(53))
+                && so->so_fport == RT_H2N_U16_C(53)
+                && CTL_CHECK(so->so_faddr.s_addr, CTL_DNS))
                 dnsproxy_answer(pData, so, m);
 
             /* packets definetly will be fragmented, could confuse receiver peer. */
@@ -964,7 +889,7 @@ sosendto(PNATState pData, struct socket *so, struct mbuf *m)
     caddr_t buf = 0;
     int mlen;
 
-    LogFlowFunc(("sosendto: so = %R[natsock], m = %lx\n", so, (long)m));
+    LogFlowFunc(("sosendto: so = %R[natsock], m = %p\n", so, m));
 
     memset(&addr, 0, sizeof(struct sockaddr));
 #ifdef RT_OS_DARWIN
@@ -1215,21 +1140,53 @@ soisfconnected(struct socket *so)
     LogFlowFunc(("LEAVE: so:%R[natsock]\n", so));
 }
 
-void
+int
 sofcantrcvmore(struct  socket *so)
 {
+    int err = 0;
+
     LogFlowFunc(("ENTER: so:%R[natsock]\n", so));
     if ((so->so_state & SS_NOFDREF) == 0)
     {
-        shutdown(so->s, 0);
+        /*
+         * If remote closes first and then sends an RST, the recv() in
+         * soread() will keep reporting EOF without any error
+         * indication.  As far as I can tell the only way to detect
+         * this on Linux is to check if shutdown() succeeds here (but
+         * see below).
+         *
+         * OTOH on OS X shutdown() "helpfully" checks if remote has
+         * already closed and then always returns ENOTCONN
+         * immediately.
+         */
+        int status = shutdown(so->s, SHUT_RD);
+#if defined(RT_OS_LINUX)
+        if (status < 0)
+            err = errno;
+#else
+        RT_NOREF(status);
+#endif
     }
     so->so_state &= ~(SS_ISFCONNECTING);
     if (so->so_state & SS_FCANTSENDMORE)
+    {
+#if defined(RT_OS_LINUX)
+        /*
+         * If we have closed first, and remote closes, shutdown will
+         * return ENOTCONN, but this is expected.  Don't tell the
+         * caller there was an error.
+         */
+        if (err == ENOTCONN)
+            err = 0;
+#endif
         so->so_state = SS_NOFDREF; /* Don't select it */
                                    /* XXX close() here as well? */
+    }
     else
         so->so_state |= SS_FCANTRCVMORE;
-    LogFlowFuncLeave();
+
+    LogFlowFunc(("LEAVE: %d\n", err));
+    return err;
 }
 
 void
@@ -1353,9 +1310,7 @@ send_icmp_to_guest(PNATState pData, char *buff, size_t len, const struct sockadd
     if (!m)
     {
         LogFunc(("%R[natsock] hasn't stored it's mbuf on sent\n", icm->im_so));
-        LIST_REMOVE(icm, im_list);
-        RTMemFree(icm);
-        return;
+        goto done;
     }
 
     src = addr->sin_addr.s_addr;
@@ -1366,7 +1321,7 @@ send_icmp_to_guest(PNATState pData, char *buff, size_t len, const struct sockadd
         if (icp0->icmp_type != ICMP_ECHO)
         {
             Log(("NAT: we haven't found echo for this reply\n"));
-            return;
+            goto done;
         }
         /*
          * while combining buffer to send (see ip_icmp.c) we control ICMP header only,
@@ -1379,7 +1334,7 @@ send_icmp_to_guest(PNATState pData, char *buff, size_t len, const struct sockadd
         {
             Log(("NAT: ECHO(%d) lenght doesn't match ECHOREPLY(%d)\n",
                 (ip->ip_len - hlen), (ip0->ip_len - (ip0->ip_hl << 2))));
-            return;
+            goto done;
         }
     }
 
@@ -1414,35 +1369,23 @@ send_icmp_to_guest(PNATState pData, char *buff, size_t len, const struct sockadd
     {
         /* according RFC 793 error messages required copy of initial IP header + 64 bit */
         memcpy(&icp->icmp_ip, ip_copy, old_ip_len);
+
+        /* undo byte order conversions done in ip_input() */
+        HTONS(icp->icmp_ip.ip_len);
+        HTONS(icp->icmp_ip.ip_id);
+        HTONS(icp->icmp_ip.ip_off);
+
         ip->ip_tos = ((ip->ip_tos & 0x1E) | 0xC0);  /* high priority for errors */
     }
 
     ip->ip_src.s_addr = src;
     ip->ip_dst.s_addr = dst;
     icmp_reflect(pData, m);
-    LIST_REMOVE(icm, im_list);
-    pData->cIcmpCacheSize--;
-    /* Don't call m_free here*/
+    /* m was freed */
+    icm->im_m = NULL;
 
-    if (   type == ICMP_TIMXCEED
-        || type == ICMP_UNREACH)
-    {
-        icm->im_so->so_m = NULL;
-        switch (proto)
-        {
-            case  IPPROTO_UDP:
-                /*XXX: so->so_m already freed so we shouldn't call sofree */
-                udp_detach(pData, icm->im_so);
-            break;
-            case  IPPROTO_TCP:
-                /*close tcp should be here */
-            break;
-            default:
-            /* do nothing */
-            break;
-        }
-    }
-    RTMemFree(icm);
+  done:
+    icmp_msg_delete(pData, icm);
 }
 
 static void sorecvfrom_icmp_unix(PNATState pData, struct socket *so)
@@ -1476,7 +1419,7 @@ static void sorecvfrom_icmp_unix(PNATState pData, struct socket *so)
         else if (errno == ENETUNREACH)
             code = ICMP_UNREACH_NET;
 
-        LogRel((" udp icmp rx errno = %d (%s)\n", errno, strerror(errno)));
+        LogRel(("NAT: UDP ICMP rx errno=%d (%s)\n", errno, strerror(errno)));
         icmp_error(pData, so->so_m, ICMP_UNREACH, code, 0, strerror(errno));
         so->so_m = NULL;
         Log(("sorecvfrom_icmp_unix: 1 - step can't read IP datagramm\n"));

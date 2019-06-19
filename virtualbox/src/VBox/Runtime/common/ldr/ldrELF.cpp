@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_LDR
 #include <iprt/ldr.h>
 #include "internal/iprt.h"
@@ -37,17 +37,17 @@
 #include <iprt/string.h>
 #include <iprt/log.h>
 #include <iprt/err.h>
-#include "internal/ldrELF32.h"
-#include "internal/ldrELF64.h"
-#include "internal/ldrELFi386.h"
-#include "internal/ldrELFAmd64.h"
+#include <iprt/formats/elf32.h>
+#include <iprt/formats/elf64.h>
+#include <iprt/formats/elf-i386.h>
+#include <iprt/formats/elf-amd64.h>
 #include "internal/ldr.h"
 
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 /** Finds an ELF symbol table string. */
 #define ELF_STR(pHdrs, iStr) ((pHdrs)->pStr + (iStr))
 /** Finds an ELF section header string. */
@@ -55,9 +55,9 @@
 
 
 
-/*******************************************************************************
-*   Internal Functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal Functions                                                                                                           *
+*********************************************************************************************************************************/
 #ifdef LOG_ENABLED
 static const char *rtldrElfGetShdrType(uint32_t iType);
 #endif
@@ -118,9 +118,11 @@ static const char *rtldrElfGetShdrType(uint32_t iType)
  * @param   phLdrMod    Where to store the handle.
  * @param   pErrInfo    Where to return extended error information. Optional.
  */
-int rtldrELFOpen(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH enmArch, PRTLDRMOD phLdrMod, PRTERRINFO pErrInfo)
+DECLHIDDEN(int) rtldrELFOpen(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH enmArch, PRTLDRMOD phLdrMod, PRTERRINFO pErrInfo)
 {
     const char *pszLogName = pReader->pfnLogName(pReader); NOREF(pszLogName);
+
+    RT_NOREF_PV(pErrInfo); /** @todo implement */
 
     /*
      * Read the ident to decide if this is 32-bit or 64-bit
@@ -143,7 +145,7 @@ int rtldrELFOpen(PRTLDRREADER pReader, uint32_t fFlags, RTLDRARCH enmArch, PRTLD
     }
     if (e_ident[EI_DATA] != ELFDATA2LSB)
     {
-        Log(("RTLdrELF: %s: ELF endian %x is unsupported\n", e_ident[EI_DATA]));
+        Log(("RTLdrELF: %s: ELF endian %x is unsupported\n", pszLogName, e_ident[EI_DATA]));
         return VERR_LDRELF_ODD_ENDIAN;
     }
     if (e_ident[EI_CLASS] == ELFCLASS32)

@@ -1,10 +1,11 @@
 /* $Id: TestVBox.java $ */
-
-/* Small sample/testcase which demonstrates that the same source code can
- * be used to connect to the webservice and (XP)COM APIs. */
+/*! file
+ * Small sample/testcase which demonstrates that the same source code can
+ * be used to connect to the webservice and (XP)COM APIs.
+ */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -14,7 +15,8 @@
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
-import org.virtualbox_4_3.*;
+
+import org.virtualbox_5_0.*;
 import java.util.List;
 import java.util.Arrays;
 import java.math.BigInteger;
@@ -72,6 +74,8 @@ public class TestVBox
                     processEvent(ev);
                     es.eventProcessed(listener, ev);
                 }
+                // process system event queue
+                mgr.waitForEvents(0);
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -114,6 +118,8 @@ public class TestVBox
                                    + ", PAE: " + paeEnabled);
             }
         }
+        // process system event queue
+        mgr.waitForEvents(0);
     }
 
     static boolean progressBar(VirtualBoxManager mgr, IProgress p, long waitMillis)
@@ -121,7 +127,9 @@ public class TestVBox
         long end = System.currentTimeMillis() + waitMillis;
         while (!p.getCompleted())
         {
+            // process system event queue
             mgr.waitForEvents(0);
+            // wait for completion of the task, but at most 200 msecs
             p.waitForCompletion(200);
             if (System.currentTimeMillis() >= end)
                 return false;
@@ -134,11 +142,13 @@ public class TestVBox
         IMachine m = vbox.getMachines().get(0);
         String name = m.getName();
         System.out.println("\nAttempting to start VM '" + name + "'");
-        
+
         ISession session = mgr.getSessionObject();
         IProgress p = m.launchVMProcess(session, "gui", "");
         progressBar(mgr, p, 10000);
         session.unlockMachine();
+        // process system event queue
+        mgr.waitForEvents(0);
     }
 
     static void testMultiServer()
@@ -162,6 +172,9 @@ public class TestVBox
             progressBar(mgr2, p2, 10000);
             session1.unlockMachine();
             session2.unlockMachine();
+            // process system event queue
+            mgr1.waitForEvents(0);
+            mgr2.waitForEvents(0);
         } finally {
             mgr1.cleanup();
             mgr2.cleanup();
@@ -182,6 +195,8 @@ public class TestVBox
             System.out.print(new String(buf));
             off += buf.length;
         }
+        // process system event queue
+        mgr.waitForEvents(0);
     }
 
     static void printErrorInfo(VBoxException e)
@@ -264,6 +279,8 @@ public class TestVBox
             e.printStackTrace();
         }
 
+        // process system event queue
+        mgr.waitForEvents(0);
         if (ws)
         {
             try {

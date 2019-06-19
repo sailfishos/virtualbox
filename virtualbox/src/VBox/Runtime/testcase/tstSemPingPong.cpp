@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/semaphore.h>
 #include <iprt/string.h>
 #include <iprt/stream.h>
@@ -34,20 +35,23 @@
 #include <iprt/thread.h>
 #include <iprt/asm.h>
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define TSTSEMPINGPONG_ITERATIONS   1000000
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static volatile uint32_t g_cErrors = 0;
 
 static DECLCALLBACK(int) tstSemPingPongThread(RTTHREAD hThread, void *pvPP)
 {
-    int rc;
+    RT_NOREF_PV(hThread);
+
+    int rc = VINF_SUCCESS; /* (MSC powers of deduction are rather weak. sigh) */
     PRTPINGPONG pPP = (PRTPINGPONG)pvPP;
     for (uint32_t i = 0; i < TSTSEMPINGPONG_ITERATIONS; i++)
     {

@@ -1,12 +1,10 @@
 /* $Id: UIWizardPage.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardPage class implementation
+ * VBox Qt GUI - UIWizardPage class implementation.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,13 +15,20 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QAbstractButton>
+# include <QAbstractButton>
 
 /* Local includes: */
-#include "UIWizardPage.h"
-#include "UIWizard.h"
-#include "VBoxGlobal.h"
+# include "UIWizardPage.h"
+# include "UIWizard.h"
+# include "VBoxGlobal.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 
 UIWizard* UIWizardPageBase::wizardImp()
 {

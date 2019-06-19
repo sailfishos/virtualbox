@@ -1,11 +1,10 @@
 /* $Id: VBoxDispDrawCmd.cpp $ */
-
 /** @file
  * VBox XPDM Display driver drawing interface functions
  */
 
 /*
- * Copyright (C) 2011 Oracle Corporation
+ * Copyright (C) 2011-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -153,6 +152,7 @@ static void VBoxDispPrintStats(void)
 
 void VBoxDispDumpPSO(SURFOBJ *pso, char *s)
 {
+    RT_NOREF(pso, s);
     if (pso)
     {
         LOG(("Surface %s: %p\n"
@@ -539,10 +539,8 @@ BOOL APIENTRY
 VBoxDispDrvCopyBits(SURFOBJ *psoDest, SURFOBJ *psoSrc, CLIPOBJ *pco, XLATEOBJ *pxlo,
                     RECTL *prclDest, POINTL *pptlSrc)
 {
-    BOOL bRc;
     RECTL rclDest = *prclDest;
     POINTL ptlSrc = *pptlSrc;
-    BOOL bDo = TRUE;
     LOGF_ENTER();
     STATDRVENTRY(CopyBits, psoDest);
 
@@ -567,6 +565,7 @@ VBoxDispDrvCopyBits(SURFOBJ *psoDest, SURFOBJ *psoSrc, CLIPOBJ *pco, XLATEOBJ *p
      *  - the bitmap formats of both the source and the screen surfaces are equal.
      *
      */
+    BOOL fDo = TRUE;
     if (   psoSrc
         && !VBoxDispIsScreenSurface(psoSrc)
         && VBoxDispIsScreenSurface(psoDest))
@@ -584,12 +583,12 @@ VBoxDispDrvCopyBits(SURFOBJ *psoDest, SURFOBJ *psoSrc, CLIPOBJ *pco, XLATEOBJ *p
                 LOG(("non-cacheable %d->%d (pDev %p)", psoSrc->iBitmapFormat, psoDest->iBitmapFormat, pDev));
 
                 /* It is possible to apply the fix. */
-                bDo = vbvaFindChangedRect(getSurfObj(psoDest), getSurfObj(psoSrc), &rclDest, &ptlSrc);
+                fDo = vbvaFindChangedRect(getSurfObj(psoDest), getSurfObj(psoSrc), &rclDest, &ptlSrc);
             }
         }
     }
 
-    if (!bDo)
+    if (!fDo)
     {
         /* The operation is a NOP. Just return success. */
         LOGF_LEAVE();
@@ -597,9 +596,9 @@ VBoxDispDrvCopyBits(SURFOBJ *psoDest, SURFOBJ *psoSrc, CLIPOBJ *pco, XLATEOBJ *p
     }
 #endif /* VBOX_VBVA_ADJUST_RECT */
 
-    bRc = EngCopyBits(getSurfObj(psoDest), getSurfObj(psoSrc), pco, pxlo, &rclDest, &ptlSrc);
+    BOOL fRc = EngCopyBits(getSurfObj(psoDest), getSurfObj(psoSrc), pco, pxlo, &rclDest, &ptlSrc);
     VBVA_OPERATION(psoDest, CopyBits, (psoDest, psoSrc, pco, pxlo, &rclDest, &ptlSrc));
 
     LOGF_LEAVE();
-    return bRc;
+    return fRc;
 }

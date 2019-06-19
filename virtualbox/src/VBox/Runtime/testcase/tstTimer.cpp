@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/timer.h>
 #include <iprt/time.h>
 #include <iprt/thread.h>
@@ -38,9 +39,9 @@
 
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 static volatile unsigned gcTicks;
 static volatile uint64_t gu64Min;
 static volatile uint64_t gu64Max;
@@ -51,6 +52,8 @@ static uint32_t cFrequency[200];
 
 static DECLCALLBACK(void) TimerCallback(PRTTIMER pTimer, void *pvUser, uint64_t iTick)
 {
+    RT_NOREF_PV(pTimer); RT_NOREF_PV(pvUser); RT_NOREF_PV(iTick);
+
     gcTicks++;
 
     const uint64_t u64Now = RTTimeNanoTS();
@@ -180,7 +183,7 @@ int main()
         rc = RTTimerStart(pTimer, 0);
         if (RT_FAILURE(rc))
         {
-            RTPrintf("tstTimer: FAILURE - RTTimerStart(,0) -> %Rrc\n", aTests[i].uMicroInterval, rc);
+            RTPrintf("tstTimer: FAILURE - RTTimerStart(,0) -> %Rrc\n", rc);
             cErrors++;
         }
 #endif

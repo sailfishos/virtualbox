@@ -59,10 +59,10 @@ static PyObject *g_obFuncMakeInterfaceCount = NULL; // XXX - never released!!!
 /*static*/ RTONCE            Py_nsISupports::g_Once = RTONCE_INITIALIZER;
 /*static*/ RTCRITSECT        Py_nsISupports::g_CritSect;
 
-/*static*/ DECLCALLBACK(int)
-Py_nsISupports::initOnceCallback(void *pvUser1, void *pvUser2)
+/*static*/ DECLCALLBACK(int32_t)
+Py_nsISupports::initOnceCallback(void *pvUser1)
 {
-    NOREF(pvUser1); NOREF(pvUser2);
+    NOREF(pvUser1);
     RTListInit(&g_List);
     return RTCritSectInit(&g_CritSect);
 }
@@ -70,7 +70,7 @@ Py_nsISupports::initOnceCallback(void *pvUser1, void *pvUser2)
 /*static*/ void
 Py_nsISupports::dumpList(void)
 {
-    RTOnce(&g_Once, initOnceCallback, NULL, NULL);
+    RTOnce(&g_Once, initOnceCallback, NULL);
     RTCritSectEnter(&g_CritSect);
 
     uint32_t i = 0;
@@ -88,7 +88,7 @@ Py_nsISupports::dumpList(void)
 /*static*/ void
 Py_nsISupports::dumpListToStdOut()
 {
-    RTOnce(&g_Once, initOnceCallback, NULL, NULL);
+    RTOnce(&g_Once, initOnceCallback, NULL);
     RTCritSectEnter(&g_CritSect);
 
     uint32_t i = 0;
@@ -139,7 +139,7 @@ Py_nsISupports::Py_nsISupports(nsISupports *punk, const nsIID &iid, PyTypeObject
 	_Py_NewReference(this);
 
 #ifdef VBOX_DEBUG_LIFETIMES
-        RTOnce(&g_Once, initOnceCallback, NULL, NULL);
+        RTOnce(&g_Once, initOnceCallback, NULL);
         RTCritSectEnter(&g_CritSect);
         RTListAppend(&g_List, &m_ListEntry);
         RTCritSectLeave(&g_CritSect);
@@ -217,7 +217,36 @@ Py_nsISupports::getattr(const char *name)
 		return ret;
 	}
 	PyXPCOM_TypeObject *this_type = (PyXPCOM_TypeObject *)ob_type;
+#if PY_MAJOR_VERSION <= 2
 	return Py_FindMethodInChain(&this_type->chain, this, (char *)name);
+#else
+    PyMethodChain *chain = &this_type->chain;
+    if (name[0] == '_' && name[1] == '_')
+    {
+        if (!strcmp(name, "__doc__"))
+        {
+            const char *doc = ob_type->tp_doc;
+            if (doc)
+#if PY_MAJOR_VERSION <= 2
+                return PyString_FromString(doc);
+#else
+                return PyUnicode_FromString(doc);
+#endif
+        }
+    }
+    while (chain)
+    {
+        PyMethodDef *ml = chain->methods;
+        for (; ml->ml_name; ml++)
+        {
+            if (!strcmp(name, ml->ml_name))
+                return PyCFunction_New(ml, this);
+        }
+        chain = chain->link;
+    }
+    PyErr_SetString(PyExc_AttributeError, name);
+    return NULL;
+#endif
 }
 
 /* virtual */ int

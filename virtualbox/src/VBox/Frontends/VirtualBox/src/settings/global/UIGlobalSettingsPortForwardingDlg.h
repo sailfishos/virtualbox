@@ -1,11 +1,10 @@
+/* $Id: UIGlobalSettingsPortForwardingDlg.h $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIMachineSettingsPortForwardingDlg class declaration
+ * VBox Qt GUI - UIMachineSettingsPortForwardingDlg class declaration.
  */
 
 /*
- * Copyright (C) 2010-2013 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -41,8 +40,8 @@ public:
                                       const UIPortForwardingDataList &ipv6rules);
 
     /* API: Rules stuff: */
-    const UIPortForwardingDataList& ipv4rules() const;
-    const UIPortForwardingDataList& ipv6rules() const;
+    const UIPortForwardingDataList ipv4rules() const;
+    const UIPortForwardingDataList ipv6rules() const;
 
 private slots:
 

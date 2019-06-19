@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/vmm/mm.h>
 #include <VBox/vmm/stam.h>
 #include <VBox/vmm/vm.h>
@@ -42,6 +43,7 @@
  */
 extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 {
+    RT_NOREF1(envp);
 
     /*
      * Init runtime.
@@ -51,28 +53,34 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
     /*
      * Create empty VM structure and call MMR3Init().
      */
-    PVM         pVM;
-    RTR0PTR     pvR0;
+    PVM         pVM = NULL;
+    RTR0PTR     pvR0 = NIL_RTR0PTR;
     SUPPAGE     aPages[RT_ALIGN_Z(sizeof(*pVM) + NUM_CPUS * sizeof(VMCPU), PAGE_SIZE) >> PAGE_SHIFT];
     int rc = SUPR3Init(NULL);
     if (RT_SUCCESS(rc))
-        rc = SUPR3LowAlloc(RT_ELEMENTS(aPages), (void **)&pVM, &pvR0, &aPages[0]);
+        //rc = SUPR3LowAlloc(RT_ELEMENTS(aPages), (void **)&pVM, &pvR0, &aPages[0]);
+        rc = SUPR3PageAllocEx(RT_ELEMENTS(aPages), 0, (void **)&pVM, &pvR0, &aPages[0]);
     if (RT_FAILURE(rc))
     {
         RTPrintf("Fatal error: SUP Failure! rc=%Rrc\n", rc);
-        return 1;
+        return RTEXITCODE_FAILURE;
     }
-    memset(pVM, 0, sizeof(*pVM)); /* wtf? */
     pVM->paVMPagesR3 = aPages;
     pVM->pVMR0 = pvR0;
 
-    static UVM s_UVM;
-    PUVM pUVM = &s_UVM;
+    PUVM pUVM = (PUVM)RTMemPageAllocZ(RT_ALIGN_Z(sizeof(*pUVM), PAGE_SIZE));
+    if (!pUVM)
+    {
+        RTPrintf("Fatal error: RTMEmPageAllocZ failed\n");
+        return RTEXITCODE_FAILURE;
+    }
+    pUVM->u32Magic = UVM_MAGIC;
     pUVM->pVM = pVM;
     pVM->pUVM = pUVM;
 
     pVM->cCpus = NUM_CPUS;
-    pVM->cbSelf = RT_UOFFSETOF(VM, aCpus[pVM->cCpus]);
+    pVM->cbSelf = RT_UOFFSETOF_DYN(VM, aCpus[pVM->cCpus]);
+    pVM->fHMEnabledFixed = true;
 
     rc = STAMR3InitUVM(pUVM);
     if (RT_FAILURE(rc))
@@ -241,6 +249,8 @@ extern "C" DECLEXPORT(int) TrustedMain(int argc, char **argv, char **envp)
 #ifdef LOG_ENABLED
     RTLogFlush(NULL);
 #endif
+    SUPR3PageFreeEx(pVM, RT_ELEMENTS(aPages));
+    RTMemPageFree(pUVM, RT_ALIGN_Z(sizeof(*pUVM), PAGE_SIZE));
     return 0;
 }
 

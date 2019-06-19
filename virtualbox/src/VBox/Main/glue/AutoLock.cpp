@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -16,15 +16,15 @@
  */
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define GLUE_USE_CRITSECTRW
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/cdefs.h>
 #include <iprt/critsect.h>
 #include <iprt/thread.h>
@@ -126,11 +126,11 @@ void InitAutoLockSystem()
 bool AutoLockHoldsLocksInClass(VBoxLockingClass lockClass)
 {
 #ifdef VBOX_WITH_MAIN_LOCK_VALIDATION
-    return RTLockValidatorHoldsLocksInClass(NIL_RTTHREAD,
-                                            g_mapLockValidationClasses[lockClass]);
-#else /* !VBOX_WITH_MAIN_LOCK_VALIDATION */
+    return RTLockValidatorHoldsLocksInClass(NIL_RTTHREAD, g_mapLockValidationClasses[lockClass]);
+#else
+    RT_NOREF(lockClass);
     return false;
-#endif /* !VBOX_WITH_MAIN_LOCK_VALIDATION */
+#endif
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -227,6 +227,15 @@ RWLockHandle::RWLockHandle(VBoxLockingClass lockClass)
 #endif
     AssertRC(vrc);
 
+}
+
+/*virtual*/ bool RWLockHandle::isReadLockedOnCurrentThread(bool fWannaHear) const
+{
+#ifdef GLUE_USE_CRITSECTRW
+    return RTCritSectRwIsReadOwner(&m->CritSect, fWannaHear);
+#else
+    return RTSemRWIsReadOwner(m->sem, fWannaHear);
+#endif
 }
 
 /*virtual*/ void RWLockHandle::lockRead(LOCKVAL_SRC_POS_DECL)
@@ -328,6 +337,12 @@ WriteLockHandle::~WriteLockHandle()
 #endif
 }
 
+/*virtual*/ bool WriteLockHandle::isReadLockedOnCurrentThread(bool fWannaHear) const
+{
+    RT_NOREF(fWannaHear);
+    return RTCritSectIsOwner(&m->sem);
+}
+
 /*virtual*/ void WriteLockHandle::unlockWrite()
 {
     RTCritSectLeave(&m->sem);
@@ -401,17 +416,15 @@ struct AutoLockBase::Data
 AutoLockBase::AutoLockBase(uint32_t cHandles
                            COMMA_LOCKVAL_SRC_POS_DECL)
 {
-    m = new Data(cHandles
-                 COMMA_LOCKVAL_SRC_POS_ARGS);
+    m = new Data(cHandles COMMA_LOCKVAL_SRC_POS_ARGS);
 }
 
 AutoLockBase::AutoLockBase(uint32_t cHandles,
                            LockHandle *pHandle
                            COMMA_LOCKVAL_SRC_POS_DECL)
 {
-    Assert(cHandles == 1);
-    m = new Data(1
-                 COMMA_LOCKVAL_SRC_POS_ARGS);
+    Assert(cHandles == 1); NOREF(cHandles);
+    m = new Data(1 COMMA_LOCKVAL_SRC_POS_ARGS);
     m->aHandles[0] = pHandle;
 }
 
@@ -660,6 +673,18 @@ bool AutoWriteLock::isWriteLockOnCurrentThread() const
 uint32_t AutoWriteLock::writeLockLevel() const
 {
     return m->aHandles[0] ? m->aHandles[0]->writeLockLevel() : 0;
+}
+
+/**
+ * Returns @c true if the current thread holds a write lock on the managed
+ * read/write semaphore. Returns @c false if the managed semaphore is @c
+ * NULL.
+ *
+ * @note Intended for debugging only (esp. considering fWannaHear).
+ */
+bool AutoWriteLock::isReadLockedOnCurrentThread(bool fWannaHear) const
+{
+    return m->aHandles[0] ? m->aHandles[0]->isReadLockedOnCurrentThread(fWannaHear) : false;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

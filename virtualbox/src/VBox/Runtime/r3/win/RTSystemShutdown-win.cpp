@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/system.h>
 #include "internal/iprt.h"
 
@@ -35,7 +35,7 @@
 #include <iprt/err.h>
 #include <iprt/string.h>
 
-#include <Windows.h>
+#include <iprt/win/windows.h>
 
 
 RTDECL(int) RTSystemShutdown(RTMSINTERVAL cMsDelay, uint32_t fFlags, const char *pszLogMsg)
@@ -103,7 +103,7 @@ RTDECL(int) RTSystemShutdown(RTMSINTERVAL cMsDelay, uint32_t fFlags, const char 
                     if (AdjustTokenPrivileges(hToken,
                                               FALSE /*DisableAllPrivileges*/,
                                               &u.TokenPriv,
-                                              RT_OFFSETOF(TOKEN_PRIVILEGES, Privileges[1]),
+                                              RT_UOFFSETOF(TOKEN_PRIVILEGES, Privileges[1]),
                                               NULL,
                                               NULL) )
                     {

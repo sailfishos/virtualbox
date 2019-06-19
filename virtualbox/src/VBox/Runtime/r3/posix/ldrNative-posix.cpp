@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP RTLOGGROUP_LDR
 #include <dlfcn.h>
 
@@ -40,12 +41,12 @@
 #include "internal/ldr.h"
 
 
-int rtldrNativeLoad(const char *pszFilename, uintptr_t *phHandle, uint32_t fFlags, PRTERRINFO pErrInfo)
+DECLHIDDEN(int) rtldrNativeLoad(const char *pszFilename, uintptr_t *phHandle, uint32_t fFlags, PRTERRINFO pErrInfo)
 {
     /*
      * Do we need to add an extension?
      */
-    if (!RTPathHaveExt(pszFilename))
+    if (!RTPathHasSuffix(pszFilename))
     {
 #if defined(RT_OS_OS2) || defined(RT_OS_WINDOWS)
         static const char s_szSuff[] = ".DLL";
@@ -108,6 +109,11 @@ DECLCALLBACK(int) rtldrNativeGetSymbol(PRTLDRMODINTERNAL pMod, const char *pszSy
 DECLCALLBACK(int) rtldrNativeClose(PRTLDRMODINTERNAL pMod)
 {
     PRTLDRMODNATIVE pModNative = (PRTLDRMODNATIVE)pMod;
+#ifdef __SANITIZE_ADDRESS__
+    /* If we are compiled with enabled address sanitizer (gcc/llvm), don't
+     * unload the module to prevent <unknown module> in the stack trace */
+    pModNative->fFlags |= RTLDRLOAD_FLAGS_NO_UNLOAD;
+#endif
     if (   (pModNative->fFlags & RTLDRLOAD_FLAGS_NO_UNLOAD)
         || !dlclose((void *)pModNative->hNative))
     {
@@ -119,8 +125,9 @@ DECLCALLBACK(int) rtldrNativeClose(PRTLDRMODINTERNAL pMod)
 }
 
 
-int rtldrNativeLoadSystem(const char *pszFilename, const char *pszExt, uint32_t fFlags, PRTLDRMOD phLdrMod)
+DECLHIDDEN(int) rtldrNativeLoadSystem(const char *pszFilename, const char *pszExt, uint32_t fFlags, PRTLDRMOD phLdrMod)
 {
+    RT_NOREF_PV(pszFilename); RT_NOREF_PV(pszExt); RT_NOREF_PV(fFlags); RT_NOREF_PV(phLdrMod);
     /** @todo implement this in some sensible fashion. */
     return VERR_NOT_SUPPORTED;
 }

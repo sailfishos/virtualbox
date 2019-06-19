@@ -142,7 +142,7 @@ void crStateFreeFBImageLegacy(CRContext *to)
 
 int crStateAcquireFBImage(CRContext *to, CRFBData *data)
 {
-    CRBufferState *pBuf = &to->buffer;
+    /*CRBufferState *pBuf = &to->buffer; - unused */
     CRPixelPackState packing = to->client.pack;
     uint32_t i;
 
@@ -279,7 +279,7 @@ int crStateAcquireFBImage(CRContext *to, CRFBData *data)
 void crStateApplyFBImage(CRContext *to, CRFBData *data)
 {
     {
-        CRBufferState *pBuf = &to->buffer;
+        /*CRBufferState *pBuf = &to->buffer; - unused */
         CRPixelPackState unpack = to->client.unpack;
         uint32_t i;
 
@@ -312,6 +312,15 @@ void crStateApplyFBImage(CRContext *to, CRFBData *data)
             sprintf(fname, "./img_apply_%p_%d_%d.tga", to, i, el->enmFormat);
             crDumpNamedTGA(fname, el->width, el->height, el->pvData);
 #endif
+
+            /* Before SSM version SHCROGL_SSM_VERSION_WITH_SEPARATE_DEPTH_STENCIL_BUFFERS
+             * saved state file contined invalid DEPTH/STENCIL data. In order to prevent
+             * crashes and improper guest App behavior, this data should be ignored. */
+            if (   data->u32Version < SHCROGL_SSM_VERSION_WITH_SEPARATE_DEPTH_STENCIL_BUFFERS
+                && (   el->enmFormat == GL_DEPTH_COMPONENT
+                    || el->enmFormat == GL_STENCIL_INDEX
+                    || el->enmFormat == GL_DEPTH_STENCIL))
+                continue;
 
             if (el->enmFormat == GL_DEPTH_COMPONENT || el->enmFormat == GL_DEPTH_STENCIL)
             {
@@ -587,7 +596,7 @@ void crStateSyncHWErrorState(CRContext *ctx)
     }
 }
 
-GLenum crStateCleanHWErrorState()
+GLenum crStateCleanHWErrorState(void)
 {
     GLenum err;
     while ((err = diff_api.GetError()) != GL_NO_ERROR)

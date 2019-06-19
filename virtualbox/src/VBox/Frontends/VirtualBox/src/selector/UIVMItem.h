@@ -1,11 +1,10 @@
+/* $Id: UIVMItem.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIVMItem class declarations
+ * VBox Qt GUI - UIVMItem class declarations.
  */
 
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -22,11 +21,18 @@
 /* Qt includes: */
 #include <QDateTime>
 #include <QMimeData>
+#include <QPixmap>
+
+/* GUI includes: */
+#include "UISettingsDefs.h"
 
 /* COM includes: */
 #include "COMEnums.h"
 #include "CVirtualBoxErrorInfo.h"
 #include "CMachine.h"
+
+/* Using declarations: */
+using namespace UISettingsDefs;
 
 class UIVMItem
 {
@@ -38,7 +44,7 @@ public:
     CMachine machine() const { return m_machine; }
 
     QString name() const { return m_strName; }
-    QIcon osIcon() const;
+    QPixmap osPixmap(QSize *pLogicalSize = 0) const;
     QString osTypeId() const { return m_strOSTypeId; }
     QString id() const { return m_strId; }
 
@@ -64,14 +70,17 @@ public:
     bool canSwitchTo() const;
     bool switchTo();
 
-    bool reconfigurable() const { return m_fReconfigurable; }
     bool hasDetails() const { return m_fHasDetails; }
+
+    /** Returns configuration access level. */
+    ConfigurationAccessLevel configurationAccessLevel() const { return m_configurationAccessLevel; }
 
     static bool isItemEditable(UIVMItem *pItem);
     static bool isItemSaved(UIVMItem *pItem);
     static bool isItemPoweredOff(UIVMItem *pItem);
     static bool isItemStarted(UIVMItem *pItem);
     static bool isItemRunning(UIVMItem *pItem);
+    static bool isItemRunningHeadless(UIVMItem *pItem);
     static bool isItemPaused(UIVMItem *pItem);
     static bool isItemStuck(UIVMItem *pItem);
 
@@ -88,6 +97,8 @@ private:
     CVirtualBoxErrorInfo m_accessError;
 
     QString m_strName;
+    QPixmap m_pixmap;
+    QSize m_logicalPixmapSize;
     QString m_strSnapshotName;
     QDateTime m_lastStateChange;
     KMachineState m_machineState;
@@ -97,8 +108,10 @@ private:
 
     ULONG m_pid;
 
-    bool m_fReconfigurable;
     bool m_fHasDetails;
+
+    /** Holds configuration access level. */
+    ConfigurationAccessLevel m_configurationAccessLevel;
 };
 
 /* Make the pointer of this class public to the QVariant framework */

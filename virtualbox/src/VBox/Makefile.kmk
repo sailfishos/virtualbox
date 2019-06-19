@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2006-2012 Oracle Corporation
+# Copyright (C) 2006-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -22,7 +22,7 @@ include $(KBUILD_PATH)/subheader.kmk
 ifdef VBOX_ONLY_ADDITIONS
  include $(PATH_SUB_CURRENT)/Runtime/Makefile.kmk
  if defined(VBOX_WITH_CROGL) || defined(VBOX_WITH_HGSMI)
-  if1of ($(KBUILD_TARGET),win linux solaris freebsd haiku)
+  if1of ($(KBUILD_TARGET),win linux solaris freebsd netbsd haiku)
    include $(PATH_SUB_CURRENT)/GuestHost/Makefile.kmk
   endif
  endif
@@ -35,9 +35,9 @@ else ifdef VBOX_ONLY_DOCS
 
 else ifdef VBOX_ONLY_EXTPACKS
  include $(PATH_SUB_CURRENT)/Runtime/Makefile.kmk
- include $(PATH_SUB_CURRENT)/Storage/Makefile.kmk
  include $(PATH_SUB_CURRENT)/Devices/Makefile.kmk
  include $(PATH_SUB_CURRENT)/HostDrivers/Makefile.kmk
+ include $(PATH_SUB_CURRENT)/Storage/Makefile.kmk
  include $(PATH_SUB_CURRENT)/ExtPacks/Makefile.kmk
  ifdef VBOX_WITH_VRDP
   include $(PATH_SUB_CURRENT)/RDP/Makefile.kmk
@@ -55,11 +55,12 @@ else ifdef VBOX_ONLY_SDK
  include $(PATH_SUB_CURRENT)/Installer/Makefile.kmk
  include $(PATH_SUB_CURRENT)/Frontends/VBoxShell/Makefile.kmk
 
-else ifdef VBOX_ONLY_TESTSUITE
+else ifdef VBOX_ONLY_VALIDATIONKIT
  include $(PATH_SUB_CURRENT)/Runtime/Makefile.kmk
  include $(PATH_SUB_CURRENT)/HostDrivers/Makefile.kmk
  include $(PATH_SUB_CURRENT)/Additions/Makefile.kmk
- include $(PATH_SUB_CURRENT)/Testsuite/Makefile.kmk
+ include $(PATH_SUB_CURRENT)/Disassembler/Makefile.kmk
+ include $(PATH_SUB_CURRENT)/ValidationKit/Makefile.kmk
 
 else
  ifdef VBOX_WITH_MAIN
@@ -80,6 +81,8 @@ else
  include $(PATH_SUB_CURRENT)/Frontends/Makefile.kmk
  ifdef VBOX_WITH_VRDP
   include $(PATH_SUB_CURRENT)/RDP/Makefile.kmk
+ else ifdef VBOX_WITH_VRDP_RDESKTOP
+  include $(PATH_SUB_CURRENT)/RDP/client-1.8.4/Makefile.kmk
  endif
  if defined(VBOX_WITH_CROGL) || defined(VBOX_WITH_HGSMI) || defined(VBOX_WITH_HGCM)
   include $(PATH_SUB_CURRENT)/GuestHost/Makefile.kmk
@@ -87,11 +90,13 @@ else
  ifdef VBOX_WITH_ADDITIONS
   include $(PATH_SUB_CURRENT)/Additions/Makefile.kmk
  endif
- ifdef VBOX_WITH_TESTSUITE
-  include $(PATH_SUB_CURRENT)/Testsuite/Makefile.kmk
+ ifdef VBOX_WITH_VALIDATIONKIT
+  include $(PATH_SUB_CURRENT)/ValidationKit/Makefile.kmk
  endif
- if1of ($(KBUILD_TARGET_ARCH), amd64 x86)
-  include $(PATH_SUB_CURRENT)/NetworkServices/Makefile.kmk
+ ifdef VBOX_WITH_MAIN
+  if1of ($(KBUILD_TARGET_ARCH), amd64 x86)
+   include $(PATH_SUB_CURRENT)/NetworkServices/Makefile.kmk
+  endif
  endif
  include $(PATH_SUB_CURRENT)/ExtPacks/Makefile.kmk
  ifdef VBOX_WITH_INSTALLER

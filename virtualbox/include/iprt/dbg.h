@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -106,7 +106,7 @@ typedef RTDBGSEGMENT const *PCRTDBGSEGMENT;
 
 
 /** Max length (including '\\0') of a symbol name. */
-#define RTDBG_SYMBOL_NAME_LENGTH    (384 - 8 - 8 - 8 - 4 - 4 - 8)
+#define RTDBG_SYMBOL_NAME_LENGTH    (512 - 8 - 8 - 8 - 4 - 4 - 8)
 
 /**
  * Debug symbol.
@@ -443,24 +443,49 @@ RTDECL(int) RTDbgCfgSetLogCallback(RTDBGCFG hDbgCfg, PFNRTDBGCFGLOG pfnCallback,
  * @param   pvUser1             First user parameter.
  * @param   pvUser2             Second user parameter.
  */
-typedef DECLCALLBACK(int) FNDBGCFGOPEN(RTDBGCFG hDbgCfg, const char *pszFilename, void *pvUser1, void *pvUser2);
+typedef DECLCALLBACK(int) FNRTDBGCFGOPEN(RTDBGCFG hDbgCfg, const char *pszFilename, void *pvUser1, void *pvUser2);
 /** Pointer to a open-file callback used to the RTDbgCfgOpen functions. */
-typedef FNDBGCFGOPEN *PFNDBGCFGOPEN;
+typedef FNRTDBGCFGOPEN *PFNRTDBGCFGOPEN;
 
 
 RTDECL(int) RTDbgCfgOpenPeImage(RTDBGCFG hDbgCfg, const char *pszFilename, uint32_t cbImage, uint32_t uTimestamp,
-                                PFNDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
+                                PFNRTDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
 RTDECL(int) RTDbgCfgOpenPdb70(RTDBGCFG hDbgCfg, const char *pszFilename, PCRTUUID pUuid, uint32_t uAge,
-                              PFNDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
+                              PFNRTDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
 RTDECL(int) RTDbgCfgOpenPdb20(RTDBGCFG hDbgCfg, const char *pszFilename, uint32_t cbImage, uint32_t uTimestamp, uint32_t uAge,
-                              PFNDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
+                              PFNRTDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
 RTDECL(int) RTDbgCfgOpenDbg(RTDBGCFG hDbgCfg, const char *pszFilename, uint32_t cbImage, uint32_t uTimestamp,
-                            PFNDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
+                            PFNRTDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
 RTDECL(int) RTDbgCfgOpenDwo(RTDBGCFG hDbgCfg, const char *pszFilename, uint32_t uCrc32,
-                            PFNDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
-
+                            PFNRTDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
 RTDECL(int) RTDbgCfgOpenDsymBundle(RTDBGCFG hDbgCfg, const char *pszFilename, PCRTUUID pUuid,
-                                   PFNDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
+                                   PFNRTDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
+RTDECL(int) RTDbgCfgOpenMachOImage(RTDBGCFG hDbgCfg, const char *pszFilename, PCRTUUID pUuid,
+                                   PFNRTDBGCFGOPEN pfnCallback, void *pvUser1, void *pvUser2);
+
+
+/** @name Static symbol cache configuration
+ * @{ */
+/** The cache subdirectory containing the UUID mappings for .dSYM bundles.
+ * The UUID mappings implemented by IPRT are splitting the image/dsym UUID up
+ * into five 4 digit parts that maps to directories and one twelve digit part
+ * that maps to a symbolic link.  The symlink points to the file in the
+ * Contents/Resources/DWARF/ directory of the .dSYM bundle for a .dSYM map, and
+ * to the image file (Contents/MacOS/bundlename for bundles) for image map.
+ *
+ * According to available documentation, both lldb and gdb are able to use these
+ * UUID maps to find debug info while debugging.  See:
+ *      http://lldb.llvm.org/symbols.html
+ */
+#define RTDBG_CACHE_UUID_MAP_DIR_DSYMS   "dsym-uuids"
+/** The cache subdirectory containing the UUID mappings for image files. */
+#define RTDBG_CACHE_UUID_MAP_DIR_IMAGES  "image-uuids"
+/** Suffix used for the cached .dSYM debug files.
+ * In .dSYM bundles only the .dSYM/Contents/Resources/DWARF/debug-file is
+ * copied into the cache, and in order to not clash with the stripped/rich image
+ * file, the cache tool slaps this suffix onto the name. */
+#define RTDBG_CACHE_DSYM_FILE_SUFFIX     ".dwarf"
+/** @} */
 
 
 /** @} */
@@ -493,7 +518,8 @@ RTDECL(int) RTDbgAsCreate(PRTDBGAS phDbgAs, RTUINTPTR FirstAddr, RTUINTPTR LastA
  * @param   pszNameFmt      The name format of the address space.
  * @param   va              Format arguments.
  */
-RTDECL(int) RTDbgAsCreateV(PRTDBGAS phDbgAs, RTUINTPTR FirstAddr, RTUINTPTR LastAddr, const char *pszNameFmt, va_list va);
+RTDECL(int) RTDbgAsCreateV(PRTDBGAS phDbgAs, RTUINTPTR FirstAddr, RTUINTPTR LastAddr,
+                           const char *pszNameFmt, va_list va) RT_IPRT_FORMAT_ATTR(4, 0);
 
 /**
  * Variant of RTDbgAsCreate that takes a name format string.
@@ -506,7 +532,8 @@ RTDECL(int) RTDbgAsCreateV(PRTDBGAS phDbgAs, RTUINTPTR FirstAddr, RTUINTPTR Last
  * @param   pszNameFmt      The name format of the address space.
  * @param   ...             Format arguments.
  */
-RTDECL(int) RTDbgAsCreateF(PRTDBGAS phDbgAs, RTUINTPTR FirstAddr, RTUINTPTR LastAddr, const char *pszNameFmt, ...);
+RTDECL(int) RTDbgAsCreateF(PRTDBGAS phDbgAs, RTUINTPTR FirstAddr, RTUINTPTR LastAddr,
+                           const char *pszNameFmt, ...) RT_IPRT_FORMAT_ATTR(4, 5);
 
 /**
  * Retains a reference to the address space.
@@ -1563,11 +1590,13 @@ RTR0DECL(uint32_t)  RTR0DbgKrnlInfoRelease(RTDBGKRNLINFO hKrnlInfo);
  * @retval  VERR_INVALID_POINTER if any of the pointers are bad.
  *
  * @param   hKrnlInfo       The kernel info handle.
+ * @param   pszModule       The name of the module to search, pass NULL to
+ *                          search the default kernel module(s).
  * @param   pszStructure    The structure name.
  * @param   pszMember       The member name.
  * @param   poffMember      Where to return the offset.
  */
-RTR0DECL(int)       RTR0DbgKrnlInfoQueryMember(RTDBGKRNLINFO hKrnlInfo, const char *pszStructure,
+RTR0DECL(int)       RTR0DbgKrnlInfoQueryMember(RTDBGKRNLINFO hKrnlInfo, const char *pszModule, const char *pszStructure,
                                                const char *pszMember, size_t *poffMember);
 
 
@@ -1595,6 +1624,27 @@ RTR0DECL(int)       RTR0DbgKrnlInfoQueryMember(RTDBGKRNLINFO hKrnlInfo, const ch
  */
 RTR0DECL(int)       RTR0DbgKrnlInfoQuerySymbol(RTDBGKRNLINFO hKrnlInfo, const char *pszModule,
                                                const char *pszSymbol, void **ppvSymbol);
+
+
+/**
+ * Queries the size (in bytes) of a kernel data type.
+ *
+ * @returns IPRT status code.
+ * @retval  VINF_SUCCESS and size at @a pcbType.
+ * @retval  VERR_NOT_FOUND if the type was not found.
+ * @retval  VERR_INVALID_HANDLE if hKrnlInfo is bad.
+ * @retval  VERR_INVALID_POINTER if any of the pointers are bad.
+ * @retval  VERR_WRONG_TYPE if the type was not a valid data type (e.g. a
+ *          function)
+ *
+ * @param   hKrnlInfo       The kernel info handle.
+ * @param   pszModule       The name of the module to search, pass NULL to
+ *                          search the default kernel module(s).
+ * @param   pszType         The type name.
+ * @param   pcbType         Where to return the size of the type.
+ */
+RTR0DECL(int)       RTR0DbgKrnlInfoQuerySize(RTDBGKRNLINFO hKrnlInfo, const char *pszModule,
+                                             const char *pszType, size_t *pcbType);
 /** @} */
 
 /** @} */

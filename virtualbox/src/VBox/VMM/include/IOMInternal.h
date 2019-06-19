@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -51,9 +51,11 @@ typedef struct IOMMMIORANGE
     /** Start physical address. */
     RTGCPHYS                    GCPhys;
     /** Size of the range. */
-    uint32_t                    cb;
+    RTGCPHYS                    cb;
     /** The reference counter. */
     uint32_t volatile           cRefs;
+    /** Flags, see IOMMMIO_FLAGS_XXX. */
+    uint32_t                    fFlags;
 
     /** Pointer to user argument - R0. */
     RTR0PTR                     pvUserR0;
@@ -65,20 +67,6 @@ typedef struct IOMMMIORANGE
     R0PTRTYPE(PFNIOMMMIOREAD)   pfnReadCallbackR0;
     /** Pointer to fill (memset) callback function - R0. */
     R0PTRTYPE(PFNIOMMMIOFILL)   pfnFillCallbackR0;
-
-    /** Flags, see IOMMMIO_FLAGS_XXX. */ /* (Placed here for alignment reasons.) */
-    uint32_t                    fFlags;
-
-    /** Pointer to user argument - RC. */
-    RTRCPTR                     pvUserRC;
-    /** Pointer to device instance - RC. */
-    PPDMDEVINSRC                pDevInsRC;
-    /** Pointer to write callback function - RC. */
-    RCPTRTYPE(PFNIOMMMIOWRITE)  pfnWriteCallbackRC;
-    /** Pointer to read callback function - RC. */
-    RCPTRTYPE(PFNIOMMMIOREAD)   pfnReadCallbackRC;
-    /** Pointer to fill (memset) callback function - RC. */
-    RCPTRTYPE(PFNIOMMMIOFILL)   pfnFillCallbackRC;
 
     /** Pointer to user argument - R3. */
     RTR3PTR                     pvUserR3;
@@ -93,6 +81,21 @@ typedef struct IOMMMIORANGE
 
     /** Description / Name. For easing debugging. */
     R3PTRTYPE(const char *)     pszDesc;
+
+    /** Pointer to user argument - RC. */
+    RTRCPTR                     pvUserRC;
+    /** Pointer to device instance - RC. */
+    PPDMDEVINSRC                pDevInsRC;
+    /** Pointer to write callback function - RC. */
+    RCPTRTYPE(PFNIOMMMIOWRITE)  pfnWriteCallbackRC;
+    /** Pointer to read callback function - RC. */
+    RCPTRTYPE(PFNIOMMMIOREAD)   pfnReadCallbackRC;
+    /** Pointer to fill (memset) callback function - RC. */
+    RCPTRTYPE(PFNIOMMMIOFILL)   pfnFillCallbackRC;
+#if HC_ARCH_BITS == 64
+    /** Padding structure length to multiple of 8 bytes. */
+    RTRCPTR                     RCPtrPadding;
+#endif
 } IOMMMIORANGE;
 /** Pointer to a MMIO range descriptor, R3 version. */
 typedef struct IOMMMIORANGE *PIOMMMIORANGE;
@@ -319,13 +322,9 @@ typedef struct IOM
     /** Pointer to the trees - R0 ptr. */
     R0PTRTYPE(PIOMTREES)            pTreesR0;
 
-    /** The ring-0 address of IOMMMIOHandler. */
-    R0PTRTYPE(PFNPGMR0PHYSHANDLER)  pfnMMIOHandlerR0;
-    /** The RC address of IOMMMIOHandler. */
-    RCPTRTYPE(PFNPGMRCPHYSHANDLER)  pfnMMIOHandlerRC;
-#if HC_ARCH_BITS == 64
-    RTRCPTR                         padding;
-#endif
+    /** MMIO physical access handler type.   */
+    PGMPHYSHANDLERTYPE              hMmioHandlerType;
+    uint32_t                        u32Padding;
 
     /** Lock serializing EMT access to IOM. */
 #ifdef IOM_WITH_CRIT_SECT_RW
@@ -389,6 +388,45 @@ typedef struct IOMCPU
      * on the stack. */
     DISCPUSTATE                     DisState;
 
+    /**
+     * Pending I/O port write commit (VINF_IOM_R3_IOPORT_COMMIT_WRITE).
+     *
+     * This is a converted VINF_IOM_R3_IOPORT_WRITE handler return that lets the
+     * execution engine commit the instruction and then return to ring-3 to complete
+     * the I/O port write there.  This avoids having to decode the instruction again
+     * in ring-3.
+     */
+    struct
+    {
+        /** The value size (0 if not pending). */
+        uint16_t                        cbValue;
+        /** The I/O port. */
+        RTIOPORT                        IOPort;
+        /** The value. */
+        uint32_t                        u32Value;
+    } PendingIOPortWrite;
+
+    /**
+     * Pending MMIO write commit (VINF_IOM_R3_MMIO_COMMIT_WRITE).
+     *
+     * This is a converted VINF_IOM_R3_MMIO_WRITE handler return that lets the
+     * execution engine commit the instruction, stop any more REPs, and return to
+     * ring-3 to complete the MMIO write there.  The avoid the tedious decoding of
+     * the instruction again once we're in ring-3, more importantly it allows us to
+     * correctly deal with read-modify-write instructions like XCHG, OR, and XOR.
+     */
+    struct
+    {
+        /** Guest physical MMIO address. */
+        RTGCPHYS                        GCPhys;
+        /** The value to write. */
+        uint8_t                         abValue[128];
+        /** The number of bytes to write (0 if nothing pending). */
+        uint32_t                        cbValue;
+        /** Alignment padding. */
+        uint32_t                        uAlignmentPadding;
+    } PendingMmioWrite;
+
     /** @name Caching of I/O Port and MMIO ranges and statistics.
      * (Saves quite some time in rep outs/ins instruction emulation.)
      * @{ */
@@ -425,12 +463,10 @@ void                iomMmioFreeRange(PVM pVM, PIOMMMIORANGE pRange);
 PIOMMMIOSTATS       iomR3MMIOStatsCreate(PVM pVM, RTGCPHYS GCPhys, const char *pszDesc);
 #endif /* IN_RING3 */
 
-VMMDECL(int)        IOMMMIOHandler(PVM pVM, RTGCUINT uErrorCode, PCPUMCTXCORE pRegFrame, RTGCPTR pvFault,
-                                   RTGCPHYS GCPhysFault, void *pvUser);
-#ifdef IN_RING3
-DECLCALLBACK(int)   IOMR3MMIOHandler(PVM pVM, RTGCPHYS GCPhys, void *pvPhys, void *pvBuf, size_t cbBuf,
-                                     PGMACCESSTYPE enmAccessType, void *pvUser);
+#ifndef IN_RING3
+DECLEXPORT(FNPGMRZPHYSPFHANDLER)    iomMmioPfHandler;
 #endif
+PGM_ALL_CB2_PROTO(FNPGMPHYSHANDLER) iomMmioHandler;
 
 /* IOM locking helpers. */
 #ifdef IOM_WITH_CRIT_SECT_RW
@@ -456,10 +492,6 @@ DECLCALLBACK(int)   IOMR3MMIOHandler(PVM pVM, RTGCPHYS GCPhys, void *pvPhys, voi
 #endif
 #define IOM_LOCK_SHARED(a_pVM)                  IOM_LOCK_SHARED_EX(a_pVM, VERR_SEM_BUSY)
 
-
-/* Disassembly helpers used in IOMAll.cpp & IOMAllMMIO.cpp */
-bool    iomGetRegImmData(PDISCPUSTATE pCpu, PCDISOPPARAM pParam, PCPUMCTXCORE pRegFrame, uint64_t *pu64Data, unsigned *pcbSize);
-bool    iomSaveDataToReg(PDISCPUSTATE pCpu, PCDISOPPARAM pParam, PCPUMCTXCORE pRegFrame, uint64_t u64Data);
 
 RT_C_DECLS_END
 

@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2010 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,14 +17,21 @@
 
 /* 0x0501 for SPI_SETDROPSHADOW */
 #define _WIN32_WINNT 0x0501
-#include <windows.h>
+#include <iprt/win/windows.h>
 #include "VBoxTray.h"
 #include "VBoxHelpers.h"
 #include "VBoxVRDP.h"
-#include <VBox/VMMDev.h>
-#include <VBoxGuestInternal.h>
+
+#include <VBox/VMMDev.h> /* for VMMDEV_EVENT_VRDP and VRDP_EXPERIENCE_LEVEL_XXX */
+#ifdef DEBUG
+# define LOG_ENABLED
+# define LOG_GROUP LOG_GROUP_DEFAULT
+#endif
+#include <VBox/log.h>
+
 #include <iprt/assert.h>
 #include <iprt/ldr.h>
+
 
 
 /* The guest receives VRDP_ACTIVE/VRDP_INACTIVE notifications.
@@ -50,7 +57,7 @@ static ANIMATIONINFO animationInfoDisable =
     FALSE
 };
 
-typedef struct _VBoxExperienceParameter
+typedef struct _VBOXVRDPEXPPARAM
 {
     const char *name;
     UINT  uActionSet;
@@ -60,11 +67,26 @@ typedef struct _VBoxExperienceParameter
     void  *pvDisable;
     UINT  cbSavedValue;
     char  achSavedValue[2 * MAX_PATH]; /* Large enough to save the bitmap path. */
-} VBoxExperienceParameter;
+} VBOXVRDPEXPPARAM, *PVBOXVRDPEXPPARAM;
+
+typedef struct _VBOXVRDPCONTEXT
+{
+    const VBOXSERVICEENV *pEnv;
+
+    uint32_t level;
+    BOOL fSavedThemeEnabled;
+
+    RTLDRMOD hModUxTheme;
+
+    HRESULT (* pfnEnableTheming)(BOOL fEnable);
+    BOOL (* pfnIsThemeActive)(VOID);
+} VBOXVRDPCONTEXT, *PVBOXVRDPCONTEXT;
+
+static VBOXVRDPCONTEXT g_Ctx = { 0 };
 
 #define SPI_(l, a) #a, SPI_SET##a, SPI_GET##a, VRDP_EXPERIENCE_LEVEL_##l
 
-static VBoxExperienceParameter parameters[] =
+static VBOXVRDPEXPPARAM s_aSPIParams[] =
 {
     { SPI_(MEDIUM, DESKWALLPAPER),           VBOX_SPI_STRING,   "" },
     { SPI_(FULL,   DROPSHADOW),              VBOX_SPI_BOOL_PTR,       },
@@ -83,29 +105,29 @@ static VBoxExperienceParameter parameters[] =
 
 #undef SPI_
 
-static void vboxExperienceSet (uint32_t level)
+static void vboxExperienceSet(uint32_t uLevel)
 {
-    int i;
-    for (i = 0; i < RT_ELEMENTS(parameters); i++)
+    for (size_t i = 0; i < RT_ELEMENTS(s_aSPIParams); i++)
     {
-        if (parameters[i].level > level)
+        PVBOXVRDPEXPPARAM pParam = &s_aSPIParams[i];
+        if (pParam->level > uLevel)
         {
             /*
              * The parameter has to be disabled.
              */
-            Log(("VBoxTray: vboxExperienceSet: Saving %s\n", parameters[i].name));
+            LogFlowFunc(("Saving %s\n", pParam->name));
 
             /* Save the current value. */
-            switch (parameters[i].type)
+            switch (pParam->type)
             {
                 case VBOX_SPI_STRING:
                 {
                     /* The 2nd parameter is size in characters of the buffer.
                      * The 3rd parameter points to the buffer.
                      */
-                    SystemParametersInfo (parameters[i].uActionGet,
+                    SystemParametersInfo (pParam->uActionGet,
                                           MAX_PATH,
-                                          parameters[i].achSavedValue,
+                                          pParam->achSavedValue,
                                           0);
                 } break;
 
@@ -113,9 +135,9 @@ static void vboxExperienceSet (uint32_t level)
                 case VBOX_SPI_BOOL_PTR:
                 {
                     /* The 3rd parameter points to BOOL. */
-                    SystemParametersInfo (parameters[i].uActionGet,
+                    SystemParametersInfo (pParam->uActionGet,
                                           0,
-                                          parameters[i].achSavedValue,
+                                          pParam->achSavedValue,
                                           0);
                 } break;
 
@@ -125,17 +147,17 @@ static void vboxExperienceSet (uint32_t level)
                      * The cbSize member of this structure must be set.
                      * The uiParam parameter must alos be set.
                      */
-                    if (parameters[i].cbSavedValue > sizeof (parameters[i].achSavedValue))
+                    if (pParam->cbSavedValue > sizeof (pParam->achSavedValue))
                     {
-                        Log(("VBoxTray: vboxExperienceSet: Not enough space %d > %d\n", parameters[i].cbSavedValue, sizeof (parameters[i].achSavedValue)));
+                        LogFlowFunc(("Not enough space %d > %d\n", pParam->cbSavedValue, sizeof (pParam->achSavedValue)));
                         break;
                     }
 
-                    *(UINT *)&parameters[i].achSavedValue[0] = parameters[i].cbSavedValue;
+                    *(UINT *)&pParam->achSavedValue[0] = pParam->cbSavedValue;
 
-                    SystemParametersInfo (parameters[i].uActionGet,
-                                          parameters[i].cbSavedValue,
-                                          parameters[i].achSavedValue,
+                    SystemParametersInfo (s_aSPIParams[i].uActionGet,
+                                          s_aSPIParams[i].cbSavedValue,
+                                          s_aSPIParams[i].achSavedValue,
                                           0);
                 } break;
 
@@ -143,24 +165,24 @@ static void vboxExperienceSet (uint32_t level)
                     break;
             }
 
-            Log(("VBoxTray: vboxExperienceSet: Disabling %s\n", parameters[i].name));
+            LogFlowFunc(("Disabling %s\n", pParam->name));
 
             /* Disable the feature. */
-            switch (parameters[i].type)
+            switch (pParam->type)
             {
                 case VBOX_SPI_STRING:
                 {
                     /* The 3rd parameter points to the string. */
-                    SystemParametersInfo (parameters[i].uActionSet,
+                    SystemParametersInfo (pParam->uActionSet,
                                           0,
-                                          parameters[i].pvDisable,
+                                          pParam->pvDisable,
                                           SPIF_SENDCHANGE);
                 } break;
 
                 case VBOX_SPI_BOOL:
                 {
                     /* The 2nd parameter is BOOL. */
-                    SystemParametersInfo (parameters[i].uActionSet,
+                    SystemParametersInfo (pParam->uActionSet,
                                           FALSE,
                                           NULL,
                                           SPIF_SENDCHANGE);
@@ -169,7 +191,7 @@ static void vboxExperienceSet (uint32_t level)
                 case VBOX_SPI_BOOL_PTR:
                 {
                     /* The 3rd parameter is NULL to disable. */
-                    SystemParametersInfo (parameters[i].uActionSet,
+                    SystemParametersInfo (pParam->uActionSet,
                                           0,
                                           NULL,
                                           SPIF_SENDCHANGE);
@@ -178,9 +200,9 @@ static void vboxExperienceSet (uint32_t level)
                 case VBOX_SPI_PTR:
                 {
                     /* The 3rd parameter points to the structure. */
-                    SystemParametersInfo (parameters[i].uActionSet,
+                    SystemParametersInfo (pParam->uActionSet,
                                           0,
-                                          parameters[i].pvDisable,
+                                          pParam->pvDisable,
                                           SPIF_SENDCHANGE);
                 } break;
 
@@ -191,32 +213,33 @@ static void vboxExperienceSet (uint32_t level)
     }
 }
 
-static void vboxExperienceRestore (uint32_t level)
+static void vboxExperienceRestore(uint32_t uLevel)
 {
     int i;
-    for (i = 0; i < RT_ELEMENTS(parameters); i++)
+    for (i = 0; i < RT_ELEMENTS(s_aSPIParams); i++)
     {
-        if (parameters[i].level > level)
+        PVBOXVRDPEXPPARAM pParam = &s_aSPIParams[i];
+        if (pParam->level > uLevel)
         {
-            Log(("VBoxTray: vboxExperienceRestore: Restoring %s\n", parameters[i].name));
+            LogFlowFunc(("Restoring %s\n", pParam->name));
 
             /* Restore the feature. */
-            switch (parameters[i].type)
+            switch (pParam->type)
             {
                 case VBOX_SPI_STRING:
                 {
                     /* The 3rd parameter points to the string. */
-                    SystemParametersInfo (parameters[i].uActionSet,
+                    SystemParametersInfo (pParam->uActionSet,
                                           0,
-                                          parameters[i].achSavedValue,
+                                          pParam->achSavedValue,
                                           SPIF_SENDCHANGE);
                 } break;
 
                 case VBOX_SPI_BOOL:
                 {
                     /* The 2nd parameter is BOOL. */
-                    SystemParametersInfo (parameters[i].uActionSet,
-                                          *(BOOL *)&parameters[i].achSavedValue[0],
+                    SystemParametersInfo (pParam->uActionSet,
+                                          *(BOOL *)&pParam->achSavedValue[0],
                                           NULL,
                                           SPIF_SENDCHANGE);
                 } break;
@@ -224,9 +247,9 @@ static void vboxExperienceRestore (uint32_t level)
                 case VBOX_SPI_BOOL_PTR:
                 {
                     /* The 3rd parameter is NULL to disable. */
-                    BOOL fSaved = *(BOOL *)&parameters[i].achSavedValue[0];
+                    BOOL fSaved = *(BOOL *)&pParam->achSavedValue[0];
 
-                    SystemParametersInfo (parameters[i].uActionSet,
+                    SystemParametersInfo (pParam->uActionSet,
                                           0,
                                           fSaved? &fSaved: NULL,
                                           SPIF_SENDCHANGE);
@@ -235,9 +258,9 @@ static void vboxExperienceRestore (uint32_t level)
                 case VBOX_SPI_PTR:
                 {
                     /* The 3rd parameter points to the structure. */
-                    SystemParametersInfo (parameters[i].uActionSet,
+                    SystemParametersInfo (pParam->uActionSet,
                                           0,
-                                          parameters[i].achSavedValue,
+                                          pParam->achSavedValue,
                                           SPIF_SENDCHANGE);
                 } break;
 
@@ -248,128 +271,118 @@ static void vboxExperienceRestore (uint32_t level)
     }
 }
 
-
-typedef struct _VBOXVRDPCONTEXT
+static DECLCALLBACK(int) VBoxVRDPInit(const PVBOXSERVICEENV pEnv, void **ppInstance)
 {
-    const VBOXSERVICEENV *pEnv;
+    AssertPtrReturn(pEnv, VERR_INVALID_POINTER);
+    AssertPtrReturn(ppInstance, VERR_INVALID_POINTER);
 
-    uint32_t level;
-    BOOL fSavedThemeEnabled;
+    LogFlowFuncEnter();
 
-    RTLDRMOD hModUxTheme;
+    PVBOXVRDPCONTEXT pCtx = &g_Ctx; /* Only one instance at the moment. */
+    AssertPtr(pCtx);
 
-    HRESULT (* pfnEnableTheming)(BOOL fEnable);
-    BOOL (* pfnIsThemeActive)(VOID);
-} VBOXVRDPCONTEXT;
+    pCtx->pEnv               = pEnv;
+    pCtx->level              = VRDP_EXPERIENCE_LEVEL_FULL;
+    pCtx->fSavedThemeEnabled = FALSE;
 
-
-static VBOXVRDPCONTEXT gCtx = {0};
-
-
-int VBoxVRDPInit(const VBOXSERVICEENV *pEnv, void **ppInstance, bool *pfStartThread)
-{
-    Log(("VBoxTray: VBoxVRDPInit\n"));
-
-    gCtx.pEnv      = pEnv;
-    gCtx.level     = VRDP_EXPERIENCE_LEVEL_FULL;
-    gCtx.fSavedThemeEnabled = FALSE;
-
-    int rc = RTLdrLoadSystem("UxTheme.dll", false /*fNoUnload*/, &gCtx.hModUxTheme);
+    int rc = RTLdrLoadSystem("UxTheme.dll", false /*fNoUnload*/, &g_Ctx.hModUxTheme);
     if (RT_SUCCESS(rc))
     {
-        *(PFNRT *)&gCtx.pfnEnableTheming = RTLdrGetFunction(gCtx.hModUxTheme, "EnableTheming");
-        *(PFNRT *)&gCtx.pfnIsThemeActive = RTLdrGetFunction(gCtx.hModUxTheme, "IsThemeActive");
+        *(PFNRT *)&pCtx->pfnEnableTheming = RTLdrGetFunction(g_Ctx.hModUxTheme, "EnableTheming");
+        *(PFNRT *)&pCtx->pfnIsThemeActive = RTLdrGetFunction(g_Ctx.hModUxTheme, "IsThemeActive");
+
+        *ppInstance = &g_Ctx;
     }
     else
     {
-        gCtx.hModUxTheme = NIL_RTLDRMOD;
-        gCtx.pfnEnableTheming = NULL;
-        gCtx.pfnIsThemeActive = NULL;
+        g_Ctx.hModUxTheme = NIL_RTLDRMOD;
+        g_Ctx.pfnEnableTheming = NULL;
+        g_Ctx.pfnIsThemeActive = NULL;
     }
 
-    *pfStartThread = true;
-    *ppInstance = &gCtx;
-    return VINF_SUCCESS;
+    /* Tell the caller that the service does not work but it is OK to continue. */
+    if (RT_FAILURE(rc))
+        rc = VERR_NOT_SUPPORTED;
+
+    LogFlowFuncLeaveRC(rc);
+    return rc;
 }
 
-
-void VBoxVRDPDestroy(const VBOXSERVICEENV *pEnv, void *pInstance)
+static DECLCALLBACK(void) VBoxVRDPDestroy(void *pInstance)
 {
-    Log(("VBoxTray: VBoxVRDPDestroy\n"));
-    VBOXVRDPCONTEXT *pCtx = (VBOXVRDPCONTEXT *)pInstance;
+    AssertPtrReturnVoid(pInstance);
+
+    LogFlowFuncEnter();
+
+    PVBOXVRDPCONTEXT pCtx = (PVBOXVRDPCONTEXT)pInstance;
+
     vboxExperienceRestore (pCtx->level);
-    if (gCtx.hModUxTheme != NIL_RTLDRMOD)
+    if (pCtx->hModUxTheme != NIL_RTLDRMOD)
     {
-        RTLdrClose(gCtx.hModUxTheme);
-        gCtx.hModUxTheme = NIL_RTLDRMOD;
+        RTLdrClose(g_Ctx.hModUxTheme);
+        pCtx->hModUxTheme = NIL_RTLDRMOD;
     }
+
     return;
 }
 
 /**
  * Thread function to wait for and process mode change requests
  */
-unsigned __stdcall VBoxVRDPThread(void *pInstance)
+static DECLCALLBACK(int) VBoxVRDPWorker(void *pvInstance, bool volatile *pfShutdown)
 {
-    VBOXVRDPCONTEXT *pCtx = (VBOXVRDPCONTEXT *)pInstance;
-    HANDLE gVBoxDriver = pCtx->pEnv->hDriver;
-    bool fTerminate = false;
-    VBoxGuestFilterMaskInfo maskInfo;
-    DWORD cbReturned;
+    AssertPtrReturn(pvInstance, VERR_INVALID_POINTER);
+    PVBOXVRDPCONTEXT pCtx = (PVBOXVRDPCONTEXT)pvInstance;
 
-    maskInfo.u32OrMask = VMMDEV_EVENT_VRDP;
-    maskInfo.u32NotMask = 0;
-    if (DeviceIoControl (gVBoxDriver, VBOXGUEST_IOCTL_CTL_FILTER_MASK, &maskInfo, sizeof (maskInfo), NULL, 0, &cbReturned, NULL))
+    LogFlowFuncEnter();
+
+    /*
+     * Tell the control thread that it can continue spawning services.
+     */
+    RTThreadUserSignal(RTThreadSelf());
+
+    int rc = VbglR3CtlFilterMask(VMMDEV_EVENT_VRDP, 0 /*fNot*/);
+    if (RT_FAILURE(rc))
     {
-        Log(("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask - or) succeeded\n"));
-    }
-    else
-    {
-        Log(("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask) failed\n"));
-        return 0;
+        LogRel(("VbglR3CtlFilterMask(VMMDEV_EVENT_VRDP, 0) failed with %Rrc, exiting...\n"));
+        return rc;
     }
 
-    do
+    for (;;)
     {
-        /* wait for the event */
-        VBoxGuestWaitEventInfo waitEvent;
-        waitEvent.u32TimeoutIn   = 5000;
-        waitEvent.u32EventMaskIn = VMMDEV_EVENT_VRDP;
-        if (DeviceIoControl(gVBoxDriver, VBOXGUEST_IOCTL_WAITEVENT, &waitEvent, sizeof(waitEvent), &waitEvent, sizeof(waitEvent), &cbReturned, NULL))
+        /*
+         * Wait for the event, checking the shutdown flag both before and after the call.
+         */
+        if (*pfShutdown)
         {
-            Log(("VBoxTray: VBoxVRDPThread: DeviceIOControl succeeded\n"));
+            rc = VINF_SUCCESS;
+            break;
+        }
 
-            /* are we supposed to stop? */
-            if (WaitForSingleObject(pCtx->pEnv->hStopEvent, 0) == WAIT_OBJECT_0)
-                break;
+        uint32_t fEvent = 0;
+        rc = VbglR3WaitEvent(VMMDEV_EVENT_VRDP, 5000 /*ms*/, &fEvent);
 
-            Log(("VBoxTray: VBoxVRDPThread: checking event\n"));
+        if (*pfShutdown)
+        {
+            rc = VINF_SUCCESS;
+            break;
+        }
 
+        if (RT_SUCCESS(rc))
+        {
             /* did we get the right event? */
-            if (waitEvent.u32EventFlagsOut & VMMDEV_EVENT_VRDP)
+            if (fEvent & VMMDEV_EVENT_VRDP)
             {
-                /* Call the host to get VRDP status and the experience level. */
-                VMMDevVRDPChangeRequest vrdpChangeRequest = {0};
-
-                vrdpChangeRequest.header.size            = sizeof(VMMDevVRDPChangeRequest);
-                vrdpChangeRequest.header.version         = VMMDEV_REQUEST_HEADER_VERSION;
-                vrdpChangeRequest.header.requestType     = VMMDevReq_GetVRDPChangeRequest;
-                vrdpChangeRequest.u8VRDPActive           = 0;
-                vrdpChangeRequest.u32VRDPExperienceLevel = 0;
-
-                if (DeviceIoControl (gVBoxDriver,
-                                     VBOXGUEST_IOCTL_VMMREQUEST(sizeof(VMMDevVRDPChangeRequest)),
-                                     &vrdpChangeRequest,
-                                     sizeof(VMMDevVRDPChangeRequest),
-                                     &vrdpChangeRequest,
-                                     sizeof(VMMDevVRDPChangeRequest),
-                                     &cbReturned, NULL))
+                bool     fActive = false;
+                uint32_t uExperienceLevel = 0;
+                rc = VbglR3VrdpGetChangeRequest(&fActive, &uExperienceLevel);
+                if (RT_SUCCESS(rc))
                 {
-                    Log(("VBoxTray: VBoxVRDPThread: u8VRDPActive = %d, level %d\n", vrdpChangeRequest.u8VRDPActive, vrdpChangeRequest.u32VRDPExperienceLevel));
+                    LogFlowFunc(("u8VRDPActive = %d, level %d\n", fActive, uExperienceLevel));
 
-                    if (vrdpChangeRequest.u8VRDPActive)
+                    if (fActive)
                     {
-                        pCtx->level = vrdpChangeRequest.u32VRDPExperienceLevel;
+                        pCtx->level = uExperienceLevel;
                         vboxExperienceSet (pCtx->level);
 
                         if (pCtx->level == VRDP_EXPERIENCE_LEVEL_ZERO
@@ -378,7 +391,7 @@ unsigned __stdcall VBoxVRDPThread(void *pInstance)
                         {
                             pCtx->fSavedThemeEnabled = pCtx->pfnIsThemeActive ();
 
-                            Log(("VBoxTray: VBoxVRDPThread: pCtx->fSavedThemeEnabled = %d\n", pCtx->fSavedThemeEnabled));
+                            LogFlowFunc(("pCtx->fSavedThemeEnabled = %d\n", pCtx->fSavedThemeEnabled));
 
                             if (pCtx->fSavedThemeEnabled)
                             {
@@ -394,9 +407,9 @@ unsigned __stdcall VBoxVRDPThread(void *pInstance)
                         {
                             if (pCtx->fSavedThemeEnabled)
                             {
-                                /* @todo the call returns S_OK but theming remains disabled. */
+                                /** @todo the call returns S_OK but theming remains disabled. */
                                 HRESULT hrc = pCtx->pfnEnableTheming (TRUE);
-                                Log(("VBoxTray: VBoxVRDPThread: enabling theme rc = 0x%08X\n", hrc));
+                                LogFlowFunc(("enabling theme rc = 0x%08X\n", hrc)); NOREF(hrc);
                                 pCtx->fSavedThemeEnabled = FALSE;
                             }
                         }
@@ -408,42 +421,37 @@ unsigned __stdcall VBoxVRDPThread(void *pInstance)
                 }
                 else
                 {
-                    Log(("VBoxTray: VBoxVRDPThread: Error from DeviceIoControl VBOXGUEST_IOCTL_VMMREQUEST\n"));
-
                     /* sleep a bit to not eat too much CPU in case the above call always fails */
-                    if (WaitForSingleObject(pCtx->pEnv->hStopEvent, 10) == WAIT_OBJECT_0)
-                    {
-                        fTerminate = true;
-                        break;
-                    }
+                    RTThreadSleep(10);
                 }
             }
         }
+        /* sleep a bit to not eat too much CPU in case the above call always fails */
         else
-        {
-            Log(("VBoxTray: VBoxVRDPThread: Error from DeviceIoControl VBOXGUEST_IOCTL_WAITEVENT\n"));
-
-            /* sleep a bit to not eat too much CPU in case the above call always fails */
-            if (WaitForSingleObject(pCtx->pEnv->hStopEvent, 10) == WAIT_OBJECT_0)
-            {
-                fTerminate = true;
-                break;
-            }
-        }
-    } while (!fTerminate);
-
-    maskInfo.u32OrMask = 0;
-    maskInfo.u32NotMask = VMMDEV_EVENT_VRDP;
-    if (DeviceIoControl (gVBoxDriver, VBOXGUEST_IOCTL_CTL_FILTER_MASK, &maskInfo, sizeof (maskInfo), NULL, 0, &cbReturned, NULL))
-    {
-        Log(("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask - not) succeeded\n"));
-    }
-    else
-    {
-        Log(("VBoxTray: VBoxVRDPThread: DeviceIOControl(CtlMask) failed\n"));
+            RTThreadSleep(50);
     }
 
-    Log(("VBoxTray: VBoxVRDPThread: Finished VRDP change request thread\n"));
-    return 0;
+    int rc2 = VbglR3CtlFilterMask(0 /*fOr*/, VMMDEV_EVENT_VRDP);
+    if (RT_FAILURE(rc2))
+        LogRel(("VbglR3CtlFilterMask(0 /*fOr*/, VMMDEV_EVENT_VRDP) failed with %Rrc\n", rc));
+
+    LogFlowFuncLeaveRC(rc);
+    return rc;
 }
+
+/**
+ * The service description.
+ */
+VBOXSERVICEDESC g_SvcDescVRDP =
+{
+    /* pszName. */
+    "VRDP",
+    /* pszDescription. */
+    "VRDP Connection Notification",
+    /* methods */
+    VBoxVRDPInit,
+    VBoxVRDPWorker,
+    NULL /* pfnStop */,
+    VBoxVRDPDestroy
+};
 

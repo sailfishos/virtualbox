@@ -1,12 +1,10 @@
 /* $Id: UIWizardImportApp.cpp $ */
 /** @file
- *
- * VBox frontends: Qt4 GUI ("VirtualBox"):
- * UIWizardImportApp class implementation
+ * VBox Qt GUI - UIWizardImportApp class implementation.
  */
 
 /*
- * Copyright (C) 2009-2012 Oracle Corporation
+ * Copyright (C) 2009-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -17,21 +15,31 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
+#ifdef VBOX_WITH_PRECOMPILED_HEADERS
+# include <precomp.h>
+#else  /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
 /* Global includes: */
-#include <QDialogButtonBox>
-#include <QPrintDialog>
-#include <QPrinter>
-#include <QPushButton>
-#include <QTextStream>
+# include <QDialogButtonBox>
+# include <QLabel>
+# include <QPushButton>
+# include <QTextEdit>
+# include <QTextStream>
 
 /* Local includes: */
-#include "UIWizardImportApp.h"
-#include "UIWizardImportAppPageBasic1.h"
-#include "UIWizardImportAppPageBasic2.h"
-#include "UIWizardImportAppPageExpert.h"
-#include "VBoxGlobal.h"
-#include "QIDialog.h"
-#include "QIFileDialog.h"
+# include "UIWizardImportApp.h"
+# include "UIWizardImportAppPageBasic1.h"
+# include "UIWizardImportAppPageBasic2.h"
+# include "UIWizardImportAppPageExpert.h"
+# include "VBoxGlobal.h"
+# include "QIDialog.h"
+# include "QIFileDialog.h"
+
+#endif /* !VBOX_WITH_PRECOMPILED_HEADERS */
+
+#include <QPrintDialog>
+#include <QPrinter>
+
 
 /* Import license viewer: */
 class UIImportLicenseViewer : public QIDialog
@@ -135,16 +143,16 @@ private:
 };
 
 UIWizardImportApp::UIWizardImportApp(QWidget *pParent, const QString &strFileName)
-    : UIWizard(pParent, UIWizardType_ImportAppliance)
+    : UIWizard(pParent, WizardType_ImportAppliance)
     , m_strFileName(strFileName)
 {
-#ifndef Q_WS_MAC
+#ifndef VBOX_WS_MAC
     /* Assign watermark: */
     assignWatermark(":/vmw_ovf_import.png");
-#else /* Q_WS_MAC */
+#else /* VBOX_WS_MAC */
     /* Assign background image: */
     assignBackground(":/vmw_ovf_import_bg.png");
-#endif /* Q_WS_MAC */
+#endif /* VBOX_WS_MAC */
 }
 
 bool UIWizardImportApp::isValid() const
@@ -183,8 +191,8 @@ void UIWizardImportApp::sltCurrentIdChanged(int iId)
     /* Call to base-class: */
     UIWizard::sltCurrentIdChanged(iId);
     /* Enable 2nd button (Reset to Defaults) for 2nd and Expert pages only! */
-    setOption(QWizard::HaveCustomButton2, (mode() == UIWizardMode_Basic && iId == Page2) ||
-                                          (mode() == UIWizardMode_Expert && iId == PageExpert));
+    setOption(QWizard::HaveCustomButton2, (mode() == WizardMode_Basic && iId == Page2) ||
+                                          (mode() == WizardMode_Expert && iId == PageExpert));
 }
 
 void UIWizardImportApp::sltCustomButtonClicked(int iId)
@@ -219,14 +227,14 @@ void UIWizardImportApp::prepare()
     /* Create corresponding pages: */
     switch (mode())
     {
-        case UIWizardMode_Basic:
+        case WizardMode_Basic:
         {
             if (m_strFileName.isEmpty())
                 setPage(Page1, new UIWizardImportAppPageBasic1);
             setPage(Page2, new UIWizardImportAppPageBasic2(m_strFileName));
             break;
         }
-        case UIWizardMode_Expert:
+        case WizardMode_Expert:
         {
             setPage(PageExpert, new UIWizardImportAppPageExpert(m_strFileName));
             break;

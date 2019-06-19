@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2014 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,23 +15,24 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #if defined(_WIN32_WINNT) && _WIN32_WINNT < 0x0501
 # undef  _WIN32_WINNT
 # define _WIN32_WINNT 0x0501 /* AttachConsole() / FreeConsole(). */
 #endif
 
-#include <Windows.h>
+#include <iprt/win/windows.h>
 #include <commctrl.h>
 #include <fcntl.h>
 #include <io.h>
 #include <lmerr.h>
 #include <msiquery.h>
-#include <objbase.h>
+#include <iprt/win/objbase.h>
 
-#include <shlobj.h>
+#include <iprt/win/shlobj.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
@@ -67,16 +68,17 @@
 # define VBOX_STUB_WITH_OWN_CONSOLE
 #endif
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 #define MY_UNICODE_SUB(str) L ##str
 #define MY_UNICODE(str)     MY_UNICODE_SUB(str)
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /**
  * Cleanup record.
  */
@@ -93,9 +95,9 @@ typedef struct STUBCLEANUPREC
 typedef STUBCLEANUPREC *PSTUBCLEANUPREC;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 /** Whether it's a silent or interactive GUI driven install. */
 static bool             g_fSilent = false;
 /** List of temporary files. */
@@ -281,14 +283,17 @@ static int GetTempFileAlloc(const char  *pszTempPath,
 static int ExtractFile(const char *pszResourceName,
                        const char *pszTempFile)
 {
+#if 0 /* Another example of how unnecessarily complicated things get with
+         do-break-while-false and you end up with buggy code using uninitialized
+         variables. */
     int rc;
     RTFILE fh;
     BOOL bCreatedFile = FALSE;
 
     do
     {
-        AssertMsgBreak(pszResourceName, ("Resource pointer invalid!\n"));
-        AssertMsgBreak(pszTempFile, ("Temp file pointer invalid!"));
+        AssertMsgBreak(pszResourceName, ("Resource pointer invalid!\n")); /* rc is not initialized here, we'll return garbage. */
+        AssertMsgBreak(pszTempFile, ("Temp file pointer invalid!"));      /* Ditto. */
 
         /* Read the data of the built-in resource. */
         PVOID pvData = NULL;
@@ -313,7 +318,7 @@ static int ExtractFile(const char *pszResourceName,
 
     } while (0);
 
-    if (RTFileIsValid(fh))
+    if (RTFileIsValid(fh)) /* fh is unused uninitalized (MSC agrees) */
         RTFileClose(fh);
 
     if (RT_FAILURE(rc))
@@ -321,6 +326,43 @@ static int ExtractFile(const char *pszResourceName,
         if (bCreatedFile)
             RTFileDelete(pszTempFile);
     }
+
+#else /* This is exactly the same as above, except no bug and better assertion
+         message.  Note only the return-success statment is indented, indicating
+         that the whole do-break-while-false approach was totally unnecessary.   */
+
+    AssertPtrReturn(pszResourceName, VERR_INVALID_POINTER);
+    AssertPtrReturn(pszTempFile, VERR_INVALID_POINTER);
+
+    /* Read the data of the built-in resource. */
+    PVOID pvData = NULL;
+    DWORD dwDataSize = 0;
+    int rc = FindData(pszResourceName, &pvData, &dwDataSize);
+    AssertMsgRCReturn(rc, ("Could not read resource data: %Rrc\n", rc), rc);
+
+    /* Create new (and replace an old) file. */
+    RTFILE hFile;
+    rc = RTFileOpen(&hFile, pszTempFile,
+                      RTFILE_O_CREATE_REPLACE
+                    | RTFILE_O_WRITE
+                    | RTFILE_O_DENY_NOT_DELETE
+                    | RTFILE_O_DENY_WRITE);
+    AssertMsgRCReturn(rc, ("Could not open '%s' for writing: %Rrc\n", pszTempFile, rc), rc);
+
+    /* Write contents to new file. */
+    size_t cbWritten = 0;
+    rc = RTFileWrite(hFile, pvData, dwDataSize, &cbWritten);
+    AssertMsgStmt(cbWritten == dwDataSize || RT_FAILURE_NP(rc), ("%#zx vs %#x\n", cbWritten, dwDataSize), rc = VERR_WRITE_ERROR);
+
+    int rc2 = RTFileClose(hFile);
+    AssertRC(rc2);
+
+    if (RT_SUCCESS(rc))
+        return VINF_SUCCESS;
+
+    RTFileDelete(pszTempFile);
+
+#endif
     return rc;
 }
 
@@ -337,8 +379,7 @@ static int ExtractFile(const char *pszResourceName,
 static int Extract(const PVBOXSTUBPKG  pPackage,
                    const char         *pszTempFile)
 {
-    return ExtractFile(pPackage->szResourceName,
-                       pszTempFile);
+    return ExtractFile(pPackage->szResourceName, pszTempFile);
 }
 
 
@@ -391,7 +432,7 @@ static bool PackageIsNeeded(PVBOXSTUBPKG pPackage)
 static bool AddCleanupRec(const char *pszPath, bool fFile)
 {
     size_t cchPath = strlen(pszPath); Assert(cchPath > 0);
-    PSTUBCLEANUPREC pRec = (PSTUBCLEANUPREC)RTMemAlloc(RT_OFFSETOF(STUBCLEANUPREC, szPath[cchPath + 1]));
+    PSTUBCLEANUPREC pRec = (PSTUBCLEANUPREC)RTMemAlloc(RT_UOFFSETOF_DYN(STUBCLEANUPREC, szPath[cchPath + 1]));
     if (!pRec)
     {
         ShowError("Out of memory!");
@@ -409,11 +450,10 @@ static bool AddCleanupRec(const char *pszPath, bool fFile)
  * Cleans up all the extracted files and optionally removes the package
  * directory.
  *
- * @param   cPackages           The number of packages.
  * @param   pszPkgDir           The package directory, NULL if it shouldn't be
  *                              removed.
  */
-static void CleanUp(unsigned cPackages, const char *pszPkgDir)
+static void CleanUp(const char *pszPkgDir)
 {
     for (int i = 0; i < 5; i++)
     {
@@ -638,10 +678,10 @@ static RTEXITCODE ProcessPackage(unsigned iPackage, const char *pszPkgDir, const
     RTPathChangeToDosSlashes(szPkgFile, true /* Force conversion. */); /* paranoia */
 
     RTEXITCODE rcExit;
-    const char *pszExt = RTPathExt(szPkgFile);
-    if (RTStrICmp(pszExt, ".msi") == 0)
+    const char *pszSuff = RTPathSuffix(szPkgFile);
+    if (RTStrICmp(pszSuff, ".msi") == 0)
         rcExit = ProcessMsiPackage(szPkgFile, pszMsiArgs, fLogging);
-    else if (RTStrICmp(pszExt, ".cab") == 0)
+    else if (RTStrICmp(pszSuff, ".cab") == 0)
         rcExit = RTEXITCODE_SUCCESS; /* Ignore .cab files, they're generally referenced by other files. */
     else
         rcExit = ShowError("Internal error: Do not know how to handle file '%s'.", pPackage->szFileName);
@@ -657,14 +697,17 @@ static RTEXITCODE ProcessPackage(unsigned iPackage, const char *pszPkgDir, const
  *
  * @returns Fully complained exit code.
  */
-static RTEXITCODE InstallCertificate(void)
+static RTEXITCODE InstallCertificates(void)
 {
-    if (addCertToStore(CERT_SYSTEM_STORE_LOCAL_MACHINE,
-                       "TrustedPublisher",
-                       g_ab_VBoxStubPublicCert,
-                       sizeof(g_ab_VBoxStubPublicCert)))
-        return RTEXITCODE_SUCCESS;
-    return ShowError("Failed to construct install certificate.");
+    for (uint32_t i = 0; i < RT_ELEMENTS(g_aVBoxStubTrustedCerts); i++)
+    {
+        if (!addCertToStore(CERT_SYSTEM_STORE_LOCAL_MACHINE,
+                            "TrustedPublisher",
+                            g_aVBoxStubTrustedCerts[i].pab,
+                            g_aVBoxStubTrustedCerts[i].cb))
+            return ShowError("Failed to construct install certificate.");
+    }
+    return RTEXITCODE_SUCCESS;
 }
 #endif /* VBOX_WITH_CODE_SIGNING */
 
@@ -796,11 +839,23 @@ int WINAPI WinMain(HINSTANCE  hInstance,
                    char      *lpCmdLine,
                    int        nCmdShow)
 {
+    RT_NOREF(hInstance, hPrevInstance, lpCmdLine, nCmdShow);
     char **argv = __argv;
     int argc    = __argc;
 
-    /* Check if we're already running and jump out if so. */
-    /* Do not use a global namespace ("Global\\") for mutex name here, will blow up NT4 compatibility! */
+    /*
+     * Init IPRT. This is _always_ the very first thing we do.
+     */
+    int vrc = RTR3InitExe(argc, &argv, RTR3INIT_FLAGS_STANDALONE_APP);
+    if (RT_FAILURE(vrc))
+        return RTMsgInitFailure(vrc);
+
+    /*
+     * Check if we're already running and jump out if so.
+     *
+     * Note! Do not use a global namespace ("Global\\") for mutex name here,
+     *       will blow up NT4 compatibility!
+     */
     HANDLE hMutexAppRunning = CreateMutex(NULL, FALSE, "VBoxStubInstaller");
     if (   hMutexAppRunning != NULL
         && GetLastError() == ERROR_ALREADY_EXISTS)
@@ -809,16 +864,6 @@ int WINAPI WinMain(HINSTANCE  hInstance,
         CloseHandle(hMutexAppRunning);
         hMutexAppRunning = NULL;
         return RTEXITCODE_FAILURE;
-    }
-
-    /* Init IPRT. */
-    int vrc = RTR3InitExe(argc, &argv, 0);
-    if (RT_FAILURE(vrc))
-    {
-        /* Close the mutex for this application instance. */
-        CloseHandle(hMutexAppRunning);
-        hMutexAppRunning = NULL;
-        return RTMsgInitFailure(vrc);
     }
 
     /*
@@ -878,13 +923,13 @@ int WINAPI WinMain(HINSTANCE  hInstance,
 
     /* Parse the parameters. */
     int ch;
-    bool fParsingDone = false;
+    bool fExitEarly = false;
     RTGETOPTUNION ValueUnion;
     RTGETOPTSTATE GetState;
     RTGetOptInit(&GetState, argc, argv, s_aOptions, RT_ELEMENTS(s_aOptions), 1, 0);
     while (   (ch = RTGetOpt(&GetState, &ValueUnion))
            && rcExit == RTEXITCODE_SUCCESS
-           && !fParsingDone)
+           && !fExitEarly)
     {
         switch (ch)
         {
@@ -934,7 +979,7 @@ int WINAPI WinMain(HINSTANCE  hInstance,
                 ShowInfo("Version: %d.%d.%d.%d",
                          VBOX_VERSION_MAJOR, VBOX_VERSION_MINOR, VBOX_VERSION_BUILD,
                          VBOX_SVN_REV);
-                fParsingDone = true;
+                fExitEarly = true;
                 break;
 
             case 'v':
@@ -959,7 +1004,7 @@ int WINAPI WinMain(HINSTANCE  hInstance,
                          "%s --extract -path C:\\VBox",
                          VBOX_STUB_TITLE, VBOX_VERSION_MAJOR, VBOX_VERSION_MINOR, VBOX_VERSION_BUILD, VBOX_SVN_REV,
                          argv[0], argv[0]);
-                fParsingDone = true;
+                fExitEarly = true;
                 break;
 
             case VINF_GETOPT_NOT_OPTION:
@@ -991,8 +1036,18 @@ int WINAPI WinMain(HINSTANCE  hInstance,
         }
     }
 
+    /* Check if we can bail out early. */
+    if (fExitEarly)
+        return rcExit;
+
     if (rcExit != RTEXITCODE_SUCCESS)
         vrc = VERR_PARSE_ERROR;
+
+/** @todo
+ *
+ *  Split the remainder up in functions and simplify the code flow!!
+ *
+ *   */
 
 #if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0501
 # ifdef VBOX_STUB_WITH_OWN_CONSOLE /* Use an own console window if run in debug mode. */
@@ -1055,61 +1110,60 @@ int WINAPI WinMain(HINSTANCE  hInstance,
     }
 
     /* Read our manifest. */
-    PVBOXSTUBPKGHEADER pHeader;
     if (RT_SUCCESS(vrc))
     {
+        PVBOXSTUBPKGHEADER pHeader;
         vrc = FindData("MANIFEST", (PVOID *)&pHeader, NULL);
-        if (RT_FAILURE(vrc))
-            rcExit = ShowError("Internal package error: Manifest not found (%Rrc)", vrc);
-    }
-    if (RT_SUCCESS(vrc))
-    {
-        /** @todo If we could, we should validate the header. Only the magic isn't
-         *        commonly defined, nor the version number... */
-
-        RTListInit(&g_TmpFiles);
-
-        /*
-         * Up to this point, we haven't done anything that requires any cleanup.
-         * From here on, we do everything in function so we can counter clean up.
-         */
-        bool fCreatedExtractDir;
-        rcExit = ExtractFiles(pHeader->byCntPkgs, szExtractPath,
-                              fExtractOnly, &fCreatedExtractDir);
-        if (rcExit == RTEXITCODE_SUCCESS)
+        if (RT_SUCCESS(vrc))
         {
-            if (fExtractOnly)
-                ShowInfo("Files were extracted to: %s", szExtractPath);
-            else
-            {
-                rcExit = CopyCustomDir(szExtractPath);
-#ifdef VBOX_WITH_CODE_SIGNING
-                if (rcExit == RTEXITCODE_SUCCESS && fEnableSilentCert && g_fSilent)
-                    rcExit = InstallCertificate();
-#endif
-                unsigned iPackage = 0;
-                while (   iPackage < pHeader->byCntPkgs
-                       && rcExit == RTEXITCODE_SUCCESS)
-                {
-                    rcExit = ProcessPackage(iPackage, szExtractPath,
-                                            szMSIArgs, fEnableLogging);
-                    iPackage++;
-                }
+            /** @todo If we could, we should validate the header. Only the magic isn't
+             *        commonly defined, nor the version number... */
 
-                /* Don't fail if cleanup fail. At least for now. */
-                CleanUp(pHeader->byCntPkgs,
-                           !fEnableLogging
-                        && fCreatedExtractDir ? szExtractPath : NULL);
+            RTListInit(&g_TmpFiles);
+
+            /*
+             * Up to this point, we haven't done anything that requires any cleanup.
+             * From here on, we do everything in function so we can counter clean up.
+             */
+            bool fCreatedExtractDir;
+            rcExit = ExtractFiles(pHeader->byCntPkgs, szExtractPath,
+                                  fExtractOnly, &fCreatedExtractDir);
+            if (rcExit == RTEXITCODE_SUCCESS)
+            {
+                if (fExtractOnly)
+                    ShowInfo("Files were extracted to: %s", szExtractPath);
+                else
+                {
+                    rcExit = CopyCustomDir(szExtractPath);
+#ifdef VBOX_WITH_CODE_SIGNING
+                    if (rcExit == RTEXITCODE_SUCCESS && fEnableSilentCert && g_fSilent)
+                        rcExit = InstallCertificates();
+#endif
+                    unsigned iPackage = 0;
+                    while (   iPackage < pHeader->byCntPkgs
+                           && rcExit == RTEXITCODE_SUCCESS)
+                    {
+                        rcExit = ProcessPackage(iPackage, szExtractPath,
+                                                szMSIArgs, fEnableLogging);
+                        iPackage++;
+                    }
+
+                    /* Don't fail if cleanup fail. At least for now. */
+                    CleanUp(   !fEnableLogging
+                            && fCreatedExtractDir ? szExtractPath : NULL);
+                }
+            }
+
+            /* Free any left behind cleanup records (not strictly needed). */
+            PSTUBCLEANUPREC pCur, pNext;
+            RTListForEachSafe(&g_TmpFiles, pCur, pNext, STUBCLEANUPREC, ListEntry)
+            {
+                RTListNodeRemove(&pCur->ListEntry);
+                RTMemFree(pCur);
             }
         }
-
-        /* Free any left behind cleanup records (not strictly needed). */
-        PSTUBCLEANUPREC pCur, pNext;
-        RTListForEachSafe(&g_TmpFiles, pCur, pNext, STUBCLEANUPREC, ListEntry)
-        {
-            RTListNodeRemove(&pCur->ListEntry);
-            RTMemFree(pCur);
-        }
+        else
+            rcExit = ShowError("Internal package error: Manifest not found (%Rrc)", vrc);
     }
 
 #if defined(_WIN32_WINNT) && _WIN32_WINNT >= 0x0501

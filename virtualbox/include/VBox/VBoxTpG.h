@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012-2013 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -104,7 +104,7 @@ typedef VTGPROBELOC const *PCVTGPROBELOC;
 # ifdef _MSC_VER
 #  define VTG_DECL_VTGPROBELOC(a_VarName) \
     __declspec(allocate(VTG_LOC_SECT)) static VTGPROBELOC a_VarName
-# elif defined(__GNUC__)
+# elif defined(__GNUC__) || defined(DOXYGEN_RUNNING)
 #  define VTG_DECL_VTGPROBELOC(a_VarName) \
     static VTGPROBELOC __attribute__((section(VTG_LOC_SECT))) a_VarName
 # else
@@ -115,7 +115,7 @@ typedef VTGPROBELOC const *PCVTGPROBELOC;
 # define VTG_OBJ_SECT       "__VTGObj"
 # define VTG_LOC_SECT       "__VTGPrLc"
 # define VTG_LOC_SEG        "__VTG"
-# ifdef __GNUC__
+# if defined(__GNUC__) || defined(DOXYGEN_RUNNING)
 #  define VTG_DECL_VTGPROBELOC(a_VarName) \
     static VTGPROBELOC __attribute__((section(VTG_LOC_SEG "," VTG_LOC_SECT ",regular")/*, aligned(16)*/)) a_VarName
 # else
@@ -126,7 +126,7 @@ typedef VTGPROBELOC const *PCVTGPROBELOC;
 # define VTG_OBJ_SECT       "__DATA"
 # define VTG_LOC_SECT       "__VTGPrLc"
 # define VTG_LOC_SET        "__VTGPrLcSet"
-# ifdef __GNUC__
+# if defined(__GNUC__) || defined(DOXYGEN_RUNNING)
 #  define VTG_DECL_VTGPROBELOC(a_VarName) \
     static VTGPROBELOC a_VarName; \
     __asm__ (".stabs \"__VTGPrLcSet\",  23, 0, 0, _" #a_VarName );
@@ -138,7 +138,7 @@ typedef VTGPROBELOC const *PCVTGPROBELOC;
 #else /* Assume the rest uses ELF. */
 # define VTG_OBJ_SECT       ".VTGObj"
 # define VTG_LOC_SECT       ".VTGPrLc"
-# ifdef __GNUC__
+# if defined(__GNUC__) || defined(DOXYGEN_RUNNING)
 #  define VTG_DECL_VTGPROBELOC(a_VarName) \
     static VTGPROBELOC __attribute__((section(VTG_LOC_SECT))) a_VarName
 # else
@@ -163,6 +163,8 @@ typedef uint32_t VTGSTROFF;
 #define VTG_TYPE_CTX_POINTER    RT_BIT_32(10)
 /** The type has the same size as the host architecture. */
 #define VTG_TYPE_HC_ARCH_SIZED  RT_BIT_32(11)
+/** Const char pointer, requires casting in wrapper headers. */
+#define VTG_TYPE_CONST_CHAR_PTR RT_BIT_32(12)
 /** The type applies to ring-3 context. */
 #define VTG_TYPE_CTX_R3         RT_BIT_32(24)
 /** The type applies to ring-0 context. */
@@ -182,7 +184,7 @@ typedef uint32_t VTGSTROFF;
 /** The type is signed. */
 #define VTG_TYPE_SIGNED         RT_BIT_32(31)
 /** Mask of valid bits (for simple validation). */
-#define VTG_TYPE_VALID_MASK     UINT32_C(0xff000fff)
+#define VTG_TYPE_VALID_MASK     UINT32_C(0xff001fff)
 /** @} */
 
 /**
@@ -293,16 +295,22 @@ typedef VTGDESCATTR const *PCVTGDESCATTR;
  */
 typedef struct VTGDESCPROVIDER
 {
-    VTGSTROFF       offName;
-    uint16_t        iFirstProbe;
-    uint16_t        cProbes;
-    VTGDESCATTR     AttrSelf;
-    VTGDESCATTR     AttrModules;
-    VTGDESCATTR     AttrFunctions;
-    VTGDESCATTR     AttrNames;
-    VTGDESCATTR     AttrArguments;
-    uint8_t         bReserved;
+    VTGSTROFF           offName;
+    uint16_t            iFirstProbe;
+    uint16_t            cProbes;
+    VTGDESCATTR         AttrSelf;
+    VTGDESCATTR         AttrModules;
+    VTGDESCATTR         AttrFunctions;
+    VTGDESCATTR         AttrNames;
+    VTGDESCATTR         AttrArguments;
+    uint8_t             bReserved;
+    uint32_t volatile   cProbesEnabled;
+    /** This increases every time a probe is enabled or disabled.
+     * Can be used in non-ring-3 context via PROVIDER_GET_SETTINGS_SEQ_NO() in
+     * order to only configure probes related stuff when actually required.  */
+    uint32_t volatile   uSettingsSerialNo;
 } VTGDESCPROVIDER;
+AssertCompileSize(VTGDESCPROVIDER, 32);
 /** Pointer to a VTG provider descriptor. */
 typedef VTGDESCPROVIDER    *PVTGDESCPROVIDER;
 /** Pointer to a const VTG provider descriptor. */
@@ -409,7 +417,7 @@ typedef VTGOBJHDR          *PVTGOBJHDR;
 typedef VTGOBJHDR const    *PCVTGOBJHDR;
 
 /** The current VTGOBJHDR::szMagic value. */
-#define VTGOBJHDR_MAGIC     "VTG Object Header v1.5\0"
+#define VTGOBJHDR_MAGIC     "VTG Object Header v1.7\0"
 
 /** The name of the VTG data object header symbol in the object file. */
 extern VTGOBJHDR            g_VTGObjHeader;

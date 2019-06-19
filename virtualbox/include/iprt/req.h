@@ -3,7 +3,7 @@
  */
 
 /*
- * Copyright (C) 2006-2011 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -111,12 +111,25 @@ RTDECL(int) RTReqQueueDestroy(RTREQQUEUE hQueue);
 /**
  * Process one or more request packets
  *
- * @returns iprt status code.
- * @returns VERR_TIMEOUT if cMillies was reached without the packet being added.
+ * @returns iprt status code.  Any non-VINF_SUCCESS returns from request
+ *          processing is immediately propagated to the caller.
+ * @retval  VERR_TIMEOUT if @a cMillies was reached without the packet being
+ *          added.
+ * @retval  VERR_INVALID_HANDLE if @a hQueue not a valid queue handle.
  *
  * @param   hQueue          The request queue.
- * @param   cMillies        Number of milliseconds to wait for a pending request.
- *                          Use RT_INDEFINITE_WAIT to only wait till one is added.
+ * @param   cMillies        Max number of milliseconds to wait for a pending
+ *                          request.  This is not adjusted down before another
+ *                          wait, so the function may end up waiting for much
+ *                          longer than the given amount if there are requests
+ *                          trickling in at a rate slightly higher than the
+ *                          timeout.
+ *
+ *                          Use RT_INDEFINITE_WAIT to process requests until a
+ *                          non-VINF_SUCCESS return code is encountered.
+ *
+ * @remarks The function may repeatedly try wait for @a cMillies on new
+ *          requests if requests arrive before it times out.
  */
 RTDECL(int) RTReqQueueProcess(RTREQQUEUE hQueue, RTMSINTERVAL cMillies);
 

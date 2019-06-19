@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2007-2012 Oracle Corporation
+ * Copyright (C) 2007-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -13,14 +13,25 @@
  * Foundation, in version 2 as it comes in the "COPYING" file of the
  * VirtualBox OSE distribution. VirtualBox OSE is distributed in the
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
+ *
+ * The contents of this file may alternatively be used under the terms
+ * of the Common Development and Distribution License Version 1.0
+ * (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+ * VirtualBox OSE distribution, in which case the provisions of the
+ * CDDL are applicable instead of those of the GPL.
+ *
+ * You may elect to license modified versions of this file under the
+ * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <VBox/usbfilter.h>
 #include "VBoxUSBFilterMgr.h"
 
+#include <iprt/handletable.h>
 #include <iprt/mem.h>
 #ifdef VBOXUSBFILTERMGR_USB_SPINLOCK
 # include <iprt/spinlock.h>
@@ -30,9 +41,9 @@
 #include <iprt/string.h>
 
 
-/*******************************************************************************
-*   Defined Constants And Macros                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Defined Constants And Macros                                                                                                 *
+*********************************************************************************************************************************/
 
 /** @def VBOXUSBFILTERMGR_LOCK
  * Locks the filter list. Careful with scoping since this may
@@ -61,9 +72,9 @@
 #endif
 
 
-/*******************************************************************************
-*   Structures and Typedefs                                                    *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Structures and Typedefs                                                                                                      *
+*********************************************************************************************************************************/
 /** Pointer to an VBoxUSB filter. */
 typedef struct VBOXUSBFILTER *PVBOXUSBFILTER;
 /** Pointer to PVBOXUSBFILTER. */
@@ -75,13 +86,13 @@ typedef PVBOXUSBFILTER *PPVBOXUSBFILTER;
 typedef struct VBOXUSBFILTER
 {
     /** The core filter. */
-    USBFILTER       Core;
+    USBFILTER             Core;
     /** The filter owner. */
-    VBOXUSBFILTER_CONTEXT       Owner;
+    VBOXUSBFILTER_CONTEXT Owner;
     /** The filter Id. */
-    uintptr_t       uId;
+    uint32_t              uHnd;
     /** Pointer to the next filter in the list. */
-    PVBOXUSBFILTER  pNext;
+    PVBOXUSBFILTER        pNext;
 } VBOXUSBFILTER;
 
 /**
@@ -98,9 +109,9 @@ typedef struct VBOXUSBFILTERLIST
 typedef VBOXUSBFILTERLIST *PVBOXUSBFILTERLIST;
 
 
-/*******************************************************************************
-*   Global Variables                                                           *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Global Variables                                                                                                             *
+*********************************************************************************************************************************/
 #ifdef VBOXUSBFILTERMGR_USB_SPINLOCK
 /** Spinlock protecting the filter lists. */
 static RTSPINLOCK           g_Spinlock = NIL_RTSPINLOCK;
@@ -111,6 +122,8 @@ static RTSEMFASTMUTEX       g_Mtx = NIL_RTSEMFASTMUTEX;
 /** The per-type filter lists.
  * @remark The first entry is empty (USBFILTERTYPE_INVALID). */
 static VBOXUSBFILTERLIST    g_aLists[USBFILTERTYPE_END];
+/** The handle table to match handles to the right filter. */
+static RTHANDLETABLE        g_hHndTableFilters = NIL_RTHANDLETABLE;
 
 
 
@@ -128,9 +141,30 @@ int VBoxUSBFilterInit(void)
 #endif
     if (RT_SUCCESS(rc))
     {
-        /* not really required, but anyway... */
-        for (unsigned i = USBFILTERTYPE_FIRST; i < RT_ELEMENTS(g_aLists); i++)
-            g_aLists[i].pHead = g_aLists[i].pTail = NULL;
+        uint32_t fFlags;
+#ifdef VBOXUSBFILTERMGR_USB_SPINLOCK
+        fFlags = RTHANDLETABLE_FLAGS_LOCKED_IRQ_SAFE;
+#else
+        fFlags = RTHANDLETABLE_FLAGS_LOCKED;
+#endif
+        rc = RTHandleTableCreateEx(&g_hHndTableFilters, fFlags, 1 /* uBase */, 8192 /* cMax */,
+                                   NULL, NULL);
+        if (RT_SUCCESS(rc))
+        {
+            /* not really required, but anyway... */
+            for (unsigned i = USBFILTERTYPE_FIRST; i < RT_ELEMENTS(g_aLists); i++)
+                g_aLists[i].pHead = g_aLists[i].pTail = NULL;
+        }
+        else
+        {
+#ifdef VBOXUSBFILTERMGR_USB_SPINLOCK
+            RTSpinlockDestroy(g_Spinlock);
+            g_Spinlock = NIL_RTSPINLOCK;
+#else
+            RTSemFastMutexDestroy(g_Mtx);
+            g_Mtx = NIL_RTSEMFASTMUTEX;
+#endif
+        }
     }
     return rc;
 }
@@ -170,10 +204,13 @@ void VBoxUSBFilterTerm(void)
         while (pCur)
         {
             PVBOXUSBFILTER pNext = pCur->pNext;
+            RTHandleTableFree(g_hHndTableFilters, pCur->uHnd);
             vboxUSBFilterFree(pCur);
             pCur = pNext;
         }
     }
+
+    RTHandleTableDestroy(g_hHndTableFilters, NULL, NULL);
 }
 
 
@@ -208,27 +245,32 @@ int VBoxUSBFilterAdd(PCUSBFILTER pFilter, VBOXUSBFILTER_CONTEXT Owner, uintptr_t
         return VERR_NO_MEMORY;
     memcpy(&pNew->Core, pFilter, sizeof(pNew->Core));
     pNew->Owner = Owner;
-    pNew->uId   = (uintptr_t)pNew;
     pNew->pNext = NULL;
 
-    *puId = pNew->uId;
+    rc = RTHandleTableAlloc(g_hHndTableFilters, pNew, &pNew->uHnd);
+    if (RT_SUCCESS(rc))
+    {
+        *puId = pNew->uHnd;
 
-    /*
-     * Insert it.
-     */
-    PVBOXUSBFILTERLIST pList = &g_aLists[pFilter->enmType];
+        /*
+         * Insert it.
+         */
+        PVBOXUSBFILTERLIST pList = &g_aLists[pFilter->enmType];
 
-    VBOXUSBFILTERMGR_LOCK();
+        VBOXUSBFILTERMGR_LOCK();
 
-    if (pList->pTail)
-        pList->pTail->pNext = pNew;
+        if (pList->pTail)
+            pList->pTail->pNext = pNew;
+        else
+            pList->pHead = pNew;
+        pList->pTail = pNew;
+
+        VBOXUSBFILTERMGR_UNLOCK();
+    }
     else
-        pList->pHead = pNew;
-    pList->pTail = pNew;
+        RTMemFree(pNew);
 
-    VBOXUSBFILTERMGR_UNLOCK();
-
-    return VINF_SUCCESS;
+    return rc;
 }
 
 
@@ -250,7 +292,7 @@ int VBoxUSBFilterRemove(VBOXUSBFILTER_CONTEXT Owner, uintptr_t uId)
     /*
      * Validate input.
      */
-    if (!uId)
+    if (!uId || uId != (uint32_t)uId)
         return VERR_INVALID_PARAMETER;
     if (!Owner || Owner == VBOXUSBFILTER_CONTEXT_NIL)
         return VERR_INVALID_PARAMETER;
@@ -258,6 +300,7 @@ int VBoxUSBFilterRemove(VBOXUSBFILTER_CONTEXT Owner, uintptr_t uId)
     /*
      * Locate and unlink it.
      */
+    uint32_t uHnd = (uint32_t)uId;
     PVBOXUSBFILTER pCur = NULL;
 
     VBOXUSBFILTERMGR_LOCK();
@@ -268,7 +311,7 @@ int VBoxUSBFilterRemove(VBOXUSBFILTER_CONTEXT Owner, uintptr_t uId)
         pCur = g_aLists[i].pHead;
         while (pCur)
         {
-            if (    pCur->uId == uId
+            if (    pCur->uHnd == uHnd
                 &&  pCur->Owner == Owner)
             {
                 PVBOXUSBFILTER pNext = pCur->pNext;
@@ -293,6 +336,8 @@ int VBoxUSBFilterRemove(VBOXUSBFILTER_CONTEXT Owner, uintptr_t uId)
      */
     if (pCur)
     {
+        void *pv = RTHandleTableFree(g_hHndTableFilters, pCur->uHnd);
+        Assert(pv == pCur); NOREF(pv);
         vboxUSBFilterFree(pCur);
         return VINF_SUCCESS;
     }
@@ -306,7 +351,7 @@ VBOXUSBFILTER_CONTEXT VBoxUSBFilterGetOwner(uintptr_t uId)
     /*
      * Validate input.
      */
-    if (!uId)
+    if (!uId || uId != (uint32_t)uId)
         return VBOXUSBFILTER_CONTEXT_NIL;
 
     /*
@@ -316,18 +361,9 @@ VBOXUSBFILTER_CONTEXT VBoxUSBFilterGetOwner(uintptr_t uId)
 
     VBOXUSBFILTERMGR_LOCK();
 
-    for (unsigned i = USBFILTERTYPE_FIRST; i < RT_ELEMENTS(g_aLists); i++)
-    {
-        for (PVBOXUSBFILTER pCur = g_aLists[i].pHead; pCur; pCur = pCur->pNext)
-        {
-            if (pCur->uId == uId)
-            {
-                Owner = pCur->Owner;
-                Assert(Owner != VBOXUSBFILTER_CONTEXT_NIL);
-                break;
-            }
-        }
-    }
+    PVBOXUSBFILTER pCur = (PVBOXUSBFILTER)RTHandleTableLookup(g_hHndTableFilters, (uint32_t)uId);
+    if (pCur)
+        Owner = pCur->Owner;
 
     Assert(Owner != VBOXUSBFILTER_CONTEXT_NIL);
 
@@ -390,6 +426,8 @@ void VBoxUSBFilterRemoveOwner(VBOXUSBFILTER_CONTEXT Owner)
     while (pToFree)
     {
         PVBOXUSBFILTER pNext = pToFree->pNext;
+        void *pv = RTHandleTableFree(g_hHndTableFilters, pToFree->uHnd);
+        Assert(pv == pToFree); NOREF(pv);
         vboxUSBFilterFree(pToFree);
         pToFree = pNext;
     }
@@ -400,12 +438,18 @@ void VBoxUSBFilterRemoveOwner(VBOXUSBFILTER_CONTEXT Owner)
  * Unlike the VBoxUSBFilterMatch, returns Owner also if exclude filter is matched
  *
  * @returns Owner on if matched, VBOXUSBFILTER_CONTEXT_NIL it not matched.
- * @param   pDevice     The device data as a filter structure.
- *                      See USBFilterMatch for how to construct this.
- * @param   puId        Where to store the filter id (optional).
- * @param   pfFilter    Where to store whether the device must be filtered or not
+ * @param   pDevice             The device data as a filter structure.
+ *                              See USBFilterMatch for how to construct this.
+ * @param   puId                Where to store the filter id (optional).
+ * @param   fRemoveFltIfOneShot Whether or not to remove one-shot filters on
+ *                              match.
+ * @param   pfFilter            Where to store whether the device must be filtered or not
+ * @param   pfIsOneShot         Where to return whetehr the match was a one-shot
+ *                              filter or not.  Optional.
+ *
  */
-VBOXUSBFILTER_CONTEXT VBoxUSBFilterMatchEx(PCUSBFILTER pDevice, uintptr_t *puId, bool fRemoveFltIfOneShot, bool *pfFilter, bool *pfIsOneShot)
+VBOXUSBFILTER_CONTEXT VBoxUSBFilterMatchEx(PCUSBFILTER pDevice, uintptr_t *puId,
+                                           bool fRemoveFltIfOneShot, bool *pfFilter, bool *pfIsOneShot)
 {
     /*
      * Validate input.
@@ -440,7 +484,7 @@ VBOXUSBFILTER_CONTEXT VBoxUSBFilterMatchEx(PCUSBFILTER pDevice, uintptr_t *puId,
                  * situation that noone will encounter.
                  */
                 if (puId)
-                    *puId = pCur->uId;
+                    *puId = pCur->uHnd;
                 VBOXUSBFILTER_CONTEXT Owner = pCur->Owner;
                 *pfFilter = !!(i != USBFILTERTYPE_IGNORE
                             && i != USBFILTERTYPE_ONESHOT_IGNORE);
@@ -468,6 +512,8 @@ VBOXUSBFILTER_CONTEXT VBoxUSBFilterMatchEx(PCUSBFILTER pDevice, uintptr_t *puId,
                 {
                     if (fRemoveFltIfOneShot)
                     {
+                        void *pv = RTHandleTableFree(g_hHndTableFilters, pCur->uHnd);
+                        Assert(pv == pCur); NOREF(pv);
                         vboxUSBFilterFree(pCur);
                     }
                     if (pfIsOneShot)

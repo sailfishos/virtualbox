@@ -1,10 +1,10 @@
 /* $Id: table.cpp $ */
 /** @file
- * IPRT - AVL tree, RTHCPHYS, unique keys.
+ * IPRT - Generic Tables/Containers, just a thought so far.
  */
 
 /*
- * Copyright (C) 2001-2010 knut st. osmundsen (bird-src-spam@anduin.net)
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,12 +24,9 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-#ifndef NOFILEID
-static const char szFileId[] = "Id: kAVLULInt.c,v 1.4 2003/02/13 02:02:38 bird Exp $";
-#endif
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/table.h>
 

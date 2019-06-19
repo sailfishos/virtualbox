@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2014 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -24,9 +24,10 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "internal/iprt.h"
 #include <iprt/asn1.h>
 
@@ -177,11 +178,50 @@ RTDECL(int) RTAsn1Core_CompareEx(PCRTASN1CORE pLeft, PCRTASN1CORE pRight, bool f
 }
 
 
+/**
+ * @interface_method_impl{RTASN1COREVTABLE,pfnEncodePrep,
+ *      This is for not dropping the unparsed content of a 'core' structure when
+ *      re-encoding it. }
+ */
+static DECLCALLBACK(int) rtAsn1Core_EncodePrep(PRTASN1CORE pThisCore, uint32_t fFlags, PRTERRINFO pErrInfo)
+{
+    /* We don't update anything here. */
+    RT_NOREF(pThisCore, fFlags, pErrInfo);
+    return VINF_SUCCESS;
+}
+
+
+/**
+ * @interface_method_impl{RTASN1COREVTABLE,pfnEncodeWrite,
+ *      This is for not dropping the unparsed content of a 'core' structure when
+ *      re-encoding it. }
+ */
+static DECLCALLBACK(int) rtAsn1Core_EncodeWrite(PRTASN1CORE pThisCore, uint32_t fFlags, PFNRTASN1ENCODEWRITER pfnWriter,
+                                                void *pvUser, PRTERRINFO pErrInfo)
+{
+    int rc = RTAsn1EncodeWriteHeader(pThisCore, fFlags, pfnWriter, pvUser, pErrInfo);
+    if (   RT_SUCCESS(rc)
+        && rc != VINF_ASN1_NOT_ENCODED)
+    {
+        Assert(!RTASN1CORE_IS_DUMMY(pThisCore));
+        if (pThisCore->cb)
+        {
+            AssertPtrReturn(pThisCore->uData.pv,
+                            RTErrInfoSetF(pErrInfo, VERR_ASN1_INVALID_DATA_POINTER,
+                                          "Invalid uData pointer %p for lone ASN.1 core with %#x bytes of content",
+                                          pThisCore->uData.pv, pThisCore->cb));
+            rc = pfnWriter(pThisCore->uData.pv, pThisCore->cb, pvUser, pErrInfo);
+        }
+    }
+    return rc;
+}
+
+
 
 /*
  * ASN.1 Core - Standard Methods.
  *
- * Note! Children of the ASN.1 Core doesn't normally call these, they are for
+ * @note Children of the ASN.1 Core doesn't normally call these, they are for
  *       when RTASN1CORE is used as a member type.
  */
 
@@ -197,13 +237,14 @@ RT_DECL_DATA_CONST(RTASN1COREVTABLE const) g_RTAsn1Core_Vtable =
     (PFNRTASN1COREVTCLONE)RTAsn1Core_Clone,
     (PFNRTASN1COREVTCOMPARE)RTAsn1Core_Compare,
     (PFNRTASN1COREVTCHECKSANITY)RTAsn1Core_CheckSanity,
-    NULL,
-    NULL
+    rtAsn1Core_EncodePrep,
+    rtAsn1Core_EncodeWrite
 };
 
 
 RTDECL(int) RTAsn1Core_Init(PRTASN1CORE pThis, PCRTASN1ALLOCATORVTABLE pAllocator)
 {
+    RT_NOREF_PV(pAllocator);
     return RTAsn1Core_InitEx(pThis, 0, ASN1_TAGCLASS_CONTEXT | ASN1_TAGFLAG_PRIMITIVE,
                              &g_RTAsn1Core_Vtable, RTASN1CORE_F_PRESENT);
 }
@@ -260,6 +301,8 @@ RTDECL(int) RTAsn1Core_Compare(PCRTASN1CORE pLeft, PCRTASN1CORE pRight)
 
 RTDECL(int) RTAsn1Core_CheckSanity(PCRTASN1CORE pThis, uint32_t fFlags, PRTERRINFO pErrInfo, const char *pszErrorTag)
 {
+    RT_NOREF_PV(fFlags);
+
     /* We can only check that it's present. */
     if (!RTAsn1Core_IsPresent(pThis))
         return RTErrInfoSetF(pErrInfo, VERR_ASN1_NOT_PRESENT, "%s: Missing (RTASN1CORE).", pszErrorTag);

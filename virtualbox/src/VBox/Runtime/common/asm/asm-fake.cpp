@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2010-2012 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include <iprt/asm.h>
 #include "internal/iprt.h"
 
@@ -450,6 +450,15 @@ RTDECL(unsigned) ASMBitLastSetU32(uint32_t u32)
     return 0;
 }
 
+RTDECL(unsigned) ASMBitFirstSetU64(uint64_t u64)
+{
+    uint32_t iBit;
+    for (iBit = 0; iBit < 64; iBit++)
+        if (u64 & RT_BIT_64(iBit))
+            return iBit + 1;
+    return 0;
+}
+
 RTDECL(uint16_t) ASMByteSwapU16(uint16_t u16)
 {
     return RT_MAKE_U16(RT_HIBYTE(u16), RT_LOBYTE(u16));
@@ -458,11 +467,5 @@ RTDECL(uint16_t) ASMByteSwapU16(uint16_t u16)
 RTDECL(uint32_t) ASMByteSwapU32(uint32_t u32)
 {
     return RT_MAKE_U32_FROM_U8(RT_BYTE4(u32), RT_BYTE3(u32), RT_BYTE2(u32), RT_BYTE1(u32));
-}
-
-RTDECL(uint64_t) ASMByteSwapU64(uint64_t u64)
-{
-    return RT_MAKE_U64_FROM_U8(RT_BYTE8(u64), RT_BYTE7(u64), RT_BYTE6(u64), RT_BYTE5(u64),
-                               RT_BYTE4(u64), RT_BYTE3(u64), RT_BYTE2(u64), RT_BYTE1(u64));
 }
 

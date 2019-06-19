@@ -21,9 +21,18 @@
 #include "cr_compiler.h"
 
 #ifdef IN_RING0
+
+# ifndef VBOXVIDEOLOG_H
+#  undef WARN     /* VBoxMpUtils.h includes common/VBoxVideoLog.h which */
+#  undef LOG      /* uncondtionally redefines these three macros. */
+#  undef LOGREL
+# endif
 # include <common/VBoxMPUtils.h>
-# define WINGDIAPI
+
+# define WINGDIAPI /* gl/gl.h is using this (wingdi.h defines it a __declspec(dllimport) normaly).  */
+
 #endif
+
 /*
  * We effectively wrap gl.h, glu.h, etc, just like GLUT
  */
@@ -34,11 +43,15 @@
 
 #if defined(WINDOWS)
 # ifdef IN_RING0
-#  error "should not happen!"
+#  error "should not happen!" /* bird: This is certifiably insane, in my opinion. */
 # endif
 # define WIN32_LEAN_AND_MEAN
 # define WGL_APIENTRY __stdcall
-# include <windows.h>
+# ifdef VBOX
+#  include <iprt/win/windows.h>
+# else
+#  include <windows.h>
+# endif
 #elif defined(DARWIN)
 /* nothing */
 #else
@@ -48,9 +61,34 @@
 #endif
 
 #include <GL/gl.h>
+/* Quick fix so as not to update the version of glext.h we provide. */
+#ifdef GL_GLEXT_PROTOTYPES
+# if defined(RT_OS_LINUX) || defined(RT_OS_SOLARIS)
+GLAPI void APIENTRY glBindFramebuffer (GLenum, GLuint);
+GLAPI void APIENTRY glBlitFramebuffer (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
+GLAPI GLenum APIENTRY glCheckFramebufferStatus (GLenum);
+GLAPI void APIENTRY glDeleteFramebuffers (GLsizei, const GLuint *);
+GLAPI void APIENTRY glFramebufferTexture2D (GLenum, GLenum, GLenum, GLuint, GLint);
+GLAPI void APIENTRY glGenFramebuffers (GLsizei, GLuint *);
+# endif
+#endif
 
 #ifndef WINDOWS
-#include <GL/glu.h>
+# ifndef RT_OS_WINDOWS /* If we don't need it in ring-3, we probably not need it in ring-0 either (triggers warnings). */
+#  include <iprt/cdefs.h>
+#  if RT_GNUC_PREREQ(4, 6)
+#   pragma GCC diagnostic push
+#  endif
+#  if RT_GNUC_PREREQ(4, 2)
+#   ifndef __cplusplus
+#    pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#   endif
+#  endif
+#  include <GL/glu.h>
+#  if RT_GNUC_PREREQ(4, 6)
+#   pragma GCC diagnostic pop
+#  endif
+# endif /* !RT_OS_WINDOWS */
 #endif
 
 
@@ -73,6 +111,10 @@
 
 #include "cr_glext.h"
 
+#ifdef IN_RING0
+# undef WINGDIAPI /* don't want it clashing with wingdi.h should it be included. */
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -85,7 +127,7 @@ struct VBOXVR_SCR_COMPOSITOR_ENTRY;
 #define CR_RENDER_DEFAULT_CONTEXT_ID (INT32_MAX-1)
 #define CR_RENDER_DEFAULT_WINDOW_ID (INT32_MAX-1)
 
-#if defined(IN_GUEST) && (WINDOWS) && defined(VBOX_WITH_WDDM)
+#if defined(IN_GUEST) && defined(RT_OS_WINDOWS) && defined(VBOX_WITH_WDDM)
 # ifdef VBOX_WDDM_WOW64
 #  define VBOX_MODNAME_DISPD3D "VBoxDispD3D-x86"
 # else
@@ -95,6 +137,13 @@ struct VBOXVR_SCR_COMPOSITOR_ENTRY;
 
 #ifndef APIENTRY
 #define APIENTRY
+#endif
+
+/** For the pointer hack, bugref:9407. */
+#ifdef IN_GUEST
+# define CRVBOX_HOST_ONLY_PARAM(a_Stuff)
+#else
+# define CRVBOX_HOST_ONLY_PARAM(a_Stuff)    , a_Stuff
 #endif
 
 
@@ -433,7 +482,7 @@ struct VBOXVR_SCR_COMPOSITOR_ENTRY;
 #define GL_FOG_COORDINATE_ARRAY_POINTER_EXT     0x8456
 #endif
 
-typedef void (*CR_GLXFuncPtr)();
+typedef void (*CR_GLXFuncPtr)(void);
 #ifndef GLX_ARB_get_proc_address
 #define GLX_ARB_get_proc_address 1
 CR_GLXFuncPtr glXGetProcAddressARB( const GLubyte *name );
@@ -781,7 +830,7 @@ typedef void (APIENTRY *crWindowSizeProc)(GLint window, GLint w, GLint h);
 typedef void (APIENTRY *crWindowPositionProc)(GLint window, GLint x, GLint y);
 typedef void (APIENTRY *crWindowShowProc)( GLint window, GLint flag );
 
-extern GLint APIENTRY crCreateContext(const char *dpyName, GLint visBits);
+extern GLint APIENTRY crCreateContext(char *dpyName, GLint visBits);
 extern void APIENTRY crDestroyContext(GLint context);
 extern void APIENTRY crMakeCurrent(GLint window, GLint context);
 extern GLint APIENTRY crGetCurrentContext(void);
@@ -795,7 +844,7 @@ extern void APIENTRY crWindowVisibleRegion( GLint window, GLint cRects, const vo
 extern void APIENTRY crWindowShow( GLint window, GLint flag );
 extern void APIENTRY crVBoxTexPresent(GLuint texture, GLuint cfg, GLint xPos, GLint yPos, GLint cRects, const GLint *pRects);
 
-typedef int (CR_APIENTRY *CR_PROC)();
+typedef int (CR_APIENTRY *CR_PROC)(void);
 CR_PROC APIENTRY crGetProcAddress( const char *name );
 
 

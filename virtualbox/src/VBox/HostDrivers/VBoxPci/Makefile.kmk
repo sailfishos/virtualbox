@@ -4,7 +4,7 @@
 #
 
 #
-# Copyright (C) 2011-2012 Oracle Corporation
+# Copyright (C) 2011-2017 Oracle Corporation
 #
 # This file is part of VirtualBox Open Source Edition (OSE), as
 # available from http://www.virtualbox.org. This file is free software;
@@ -14,6 +14,15 @@
 # VirtualBox OSE distribution. VirtualBox OSE is distributed in the
 # hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
 #
+# The contents of this file may alternatively be used under the terms
+# of the Common Development and Distribution License Version 1.0
+# (CDDL) only, as it comes in the "COPYING.CDDL" file of the
+# VirtualBox OSE distribution, in which case the provisions of the
+# CDDL are applicable instead of those of the GPL.
+#
+# You may elect to license modified versions of this file under the
+# terms and conditions of either the GPL or the CDDL or both.
+#
 
 SUB_DEPTH = ../../../..
 include $(KBUILD_PATH)/subheader.kmk
@@ -22,20 +31,14 @@ if1of ($(KBUILD_TARGET), linux)
  ifdef VBOX_WITH_VBOXDRV
   #
   # The driver.
-  # Note! For Linux, this is just a compile test. Don't use the binary!
   #
   SYSMODS += VBoxPci
   VBoxPci_TEMPLATE       = VBOXR0DRV
   VBoxPci_INST           = $(INST_VBOXPCI)$(if $(eq $(KBUILD_TARGET),darwin),Contents/MacOS/)
   VBoxPci_NAME.linux     = vboxpci
   VBoxPci_DEFS           = IN_RT_R0 VBOX_SVN_REV=$(VBOX_SVN_REV) IN_SUP_STATIC
-  VBoxPci_DEFS.linux     = KBUILD_MODNAME=KBUILD_STR\(vboxpci\) KBUILD_BASENAME=KBUILD_STR\(vboxpci\) MODULE
-  VBoxPci_INCS.linux    := \
- 	$(PATH_ROOT)/src/VBox/Runtime/r0drv/linux
   VBoxPci_INCS           = \
  	.
-  VBoxPci_SOURCES.linux  = \
- 	linux/VBoxPci-linux.c
   VBoxPci_SOURCES        = \
  	VBoxPci.c
   VBoxPci_LIBS          += \
@@ -51,8 +54,6 @@ if1of ($(KBUILD_TARGET), linux)
  VBoxPci-src_SOURCES    = \
 	$(subst $(DQUOTE),,$(VBOX_VBOXPCI_SOURCES)) \
  	$(VBoxPci-src_0_OUTDIR)/Makefile
- VBoxPci-src_EXEC_SOURCES = \
- 	$(PATH_ROOT)/src/VBox/HostDrivers/linux/do_Module.symvers
  VBoxPci-src_CLEAN      = \
  	$(VBoxPci-src_0_OUTDIR)/Makefile \
  	$(PATH_TARGET)/VBoxPciSrc-src-1.dep \

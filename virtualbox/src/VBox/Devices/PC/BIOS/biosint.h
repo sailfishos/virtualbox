@@ -1,5 +1,10 @@
+/* $Id: biosint.h $ */
+/** @file
+ * PC BIOS - ???
+ */
+
 /*
- * Copyright (C) 2006-2012 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -38,6 +43,15 @@
  *
  */
 
+/*
+ * Oracle LGPL Disclaimer: For the avoidance of doubt, except that if any license choice
+ * other than GPL or LGPL is available it will apply instead, Oracle elects to use only
+ * the Lesser General Public License version 2.1 (LGPLv2) at this time for any software where
+ * a choice of LGPL license versions is made available with the language indicating
+ * that LGPLv2 or any later version may be used, or where a choice of which version
+ * of the LGPL is applied is otherwise unspecified.
+ */
+
 
 /* Compile-time assertion macro. */
 #define ct_assert(a)    extern int ct_ass_arr[!!(a) == 1];
@@ -50,21 +64,54 @@
 #define BX_USE_PS2_MOUSE    1
 #define BX_APM              1
 
-#define DEBUG_ATA       0
-#define DEBUG_AHCI      0
-#define DEBUG_SCSI      0
-#define DEBUG_CD_BOOT   0
-#define DEBUG_ELTORITO  0
-#define DEBUG_INT13_HD  0
-#define DEBUG_INT13_FL  0
-#define DEBUG_INT13_CD  0
-#define DEBUG_INT15     0
-#define DEBUG_INT15_MS  0
-#define DEBUG_INT16     0
-#define DEBUG_INT1A     0
-#define DEBUG_INT74     0
-#define DEBUG_PCI       0
-#define DEBUG_APM       0
+#ifndef DEBUG_ATA
+# define DEBUG_ATA       0
+#endif
+#ifdef DEBUG_AHCI
+# define DEBUG_AHCI      0
+#endif
+#ifndef DEBUG_SCSI
+# define DEBUG_SCSI      0
+#endif
+#ifndef DEBUG_CD_BOOT
+# define DEBUG_CD_BOOT   0
+#endif
+#ifndef DEBUG_ELTORITO
+# define DEBUG_ELTORITO  0
+#endif
+#ifndef DEBUG_INT13_HD
+# define DEBUG_INT13_HD  0
+#endif
+#ifndef DEBUG_INT13_FL
+# define DEBUG_INT13_FL  0
+#endif
+#ifndef DEBUG_INT13_CD
+# define DEBUG_INT13_CD  0
+#endif
+#ifndef DEBUG_INT15
+# define DEBUG_INT15     0
+#endif
+#ifndef DEBUG_INT15_MS
+# define DEBUG_INT15_MS  0
+#endif
+#ifndef DEBUG_INT16
+# define DEBUG_INT16     0
+#endif
+#ifndef DEBUG_INT1A
+# define DEBUG_INT1A     0
+#endif
+#ifndef DEBUG_INT74
+# define DEBUG_INT74     0
+#endif
+#ifndef DEBUG_PCI
+# define DEBUG_PCI       0
+#endif
+#ifndef DEBUG_APM
+# define DEBUG_APM       0
+#endif
+#ifndef DEBUG_POST
+# define DEBUG_POST      0
+#endif
 
 #define FP_OFF(p)   ((unsigned)(p))
 #define FP_SEG(p)   ((unsigned)((unsigned long)(void __far*)(p) >> 16))
@@ -136,6 +183,7 @@ typedef struct {
     pusha_regs_t    gr;
     uint16_t        es;
     uint16_t        ds;
+    uint16_t        ifl;
     iret_addr_t     ra;
 } kbd_regs_t;
 

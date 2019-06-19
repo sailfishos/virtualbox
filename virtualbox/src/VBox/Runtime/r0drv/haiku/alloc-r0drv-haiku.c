@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2012 Oracle Corporation
+ * Copyright (C) 2012-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -25,9 +25,9 @@
  */
 
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #include "the-haiku-kernel.h"
 #include "internal/iprt.h"
 #include <iprt/mem.h>
@@ -73,7 +73,7 @@ void rtR0MemFree(PRTMEMHDR pHdr)
 }
 
 
-RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb) RT_NO_THROW
+RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb) RT_NO_THROW_DEF
 {
     /*
      * Validate input.
@@ -107,7 +107,7 @@ RTR0DECL(void *) RTMemContAlloc(PRTCCPHYS pPhys, size_t cb) RT_NO_THROW
 }
 
 
-RTR0DECL(void) RTMemContFree(void *pv, size_t cb) RT_NO_THROW
+RTR0DECL(void) RTMemContFree(void *pv, size_t cb) RT_NO_THROW_DEF
 {
     RT_ASSERT_PREEMPTIBLE();
     if (pv)

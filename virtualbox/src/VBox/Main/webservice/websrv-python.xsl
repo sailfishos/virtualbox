@@ -9,7 +9,7 @@
         VirtualBox.xidl. This Python file represents our
         web service API. Depends on WSDL file for actual SOAP bindings.
 
-    Copyright (C) 2008-2014 Oracle Corporation
+    Copyright (C) 2008-2016 Oracle Corporation
 
     This file is part of VirtualBox Open Source Edition (OSE), as
     available from http://www.virtualbox.org. This file is free software;
@@ -94,13 +94,13 @@
        req=<xsl:value-of select="$ifname"/>_<xsl:value-of select="$fname"/>RequestMsg()
        req._this=self.handle
        val=self.mgr.getPort().<xsl:value-of select="$ifname"/>_<xsl:value-of select="$fname"/>(req)
-       <xsl:text>return  </xsl:text>
+       <xsl:text>return </xsl:text>
        <xsl:call-template name="emitOutParam">
            <xsl:with-param name="ifname" select="$ifname" />
            <xsl:with-param name="methodname" select="@name" />
            <xsl:with-param name="type" select="$attrtype" />
            <xsl:with-param name="value" select="concat('val.','_returnval')" />
-           <xsl:with-param name="safearray" select="@safearray"/>
+           <xsl:with-param name="safearray" select="$attrsafearray"/>
          </xsl:call-template>
 </xsl:template>
 
@@ -113,7 +113,7 @@
    def <xsl:value-of select="$fname"/>(self, value):
        req=<xsl:value-of select="$ifname"/>_<xsl:value-of select="$fname"/>RequestMsg()
        req._this=self.handle
-       if type(value) in [int, bool, basestring, str]:
+       if type(value) in [int, bool, basestring, str<xsl:if test="$attrsafearray='yes'">, tuple, list</xsl:if>]:
             req._<xsl:value-of select="$attrname"/> = value
        else:
             req._<xsl:value-of select="$attrname"/> = value.handle
@@ -174,43 +174,52 @@ class <xsl:value-of select="$ifname"/>(<xsl:value-of select="$base" />):
            raise Exception("bad handle: "+str(handle))
        self.handle = handle
        self.isarray = isarray
-<!--
-    This doesn't work now
-       mgr.register(handle)
+       if self.isarray:
+           for strHnd in handle:
+               mgr.register(strHnd)
+       else:
+           mgr.register(self.handle)
 
    def __del__(self):
-       mgr.unregister(self.handle)
--->
+       self.releaseRemote()
+
    def releaseRemote(self):
         try:
-            req=IManagedObjectRef_releaseRequestMsg()
-            req._this=handle
-            self.mgr.getPort().IManagedObjectRef_release(req)
+            if self.handle is not None:
+               if self.isarray:
+                   for strHnd in self.handle:
+                       self.mgr.unregister(strHnd)
+               else:
+                   self.mgr.unregister(self.handle)
+               self.handle = None;
         except:
             pass
 
    def __next(self):
       if self.isarray:
           return self.handle.__next()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
    def __size(self):
       if self.isarray:
           return self.handle.__size()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
    def __len__(self):
       if self.isarray:
           return self.handle.__len__()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
    def __getitem__(self, index):
       if self.isarray:
           return <xsl:value-of select="$ifname" />(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
    def __str__(self):
-        return self.handle
+        if self.isarray:
+            return str(self.handle)
+        else:
+            return self.handle
 
    def isValid(self):
         return self.handle != None and self.handle != ''
@@ -240,6 +249,7 @@ class <xsl:value-of select="$ifname"/>(<xsl:value-of select="$base" />):
       <xsl:variable name="attrname"><xsl:value-of select="@name" /></xsl:variable>
       <xsl:variable name="attrtype"><xsl:value-of select="@type" /></xsl:variable>
       <xsl:variable name="attrreadonly"><xsl:value-of select="@readonly" /></xsl:variable>
+      <xsl:variable name="attrsafearray"><xsl:value-of select="@safearray" /></xsl:variable>
       <!-- skip this attribute if it has parameters of a type that has wsmap="suppress" -->
       <xsl:choose>
         <xsl:when test="( $attrtype=($G_setSuppressedInterfaces/@name) )">
@@ -259,6 +269,7 @@ class <xsl:value-of select="$ifname"/>(<xsl:value-of select="$base" />):
             <xsl:with-param name="ifname" select="$ifname" />
             <xsl:with-param name="attrname" select="$attrname" />
             <xsl:with-param name="attrtype" select="$attrtype" />
+            <xsl:with-param name="attrsafearray" select="$attrsafearray" />
           </xsl:call-template>
           <!-- bb) emit a set method if the attribute is read/write -->
           <xsl:if test="not($attrreadonly='yes')">
@@ -266,6 +277,7 @@ class <xsl:value-of select="$ifname"/>(<xsl:value-of select="$base" />):
               <xsl:with-param name="ifname" select="$ifname" />
               <xsl:with-param name="attrname" select="$attrname" />
               <xsl:with-param name="attrtype" select="$attrtype" />
+              <xsl:with-param name="attrsafearray" select="$attrsafearray" />
             </xsl:call-template>
           </xsl:if>
         </xsl:otherwise>
@@ -322,36 +334,36 @@ class <xsl:value-of select="$ifname"/>:
        return self.<xsl:value-of select="@name"/>
 
     def <xsl:call-template name="makeSetterName"><xsl:with-param name="attrname" select="@name"/></xsl:call-template>(self):
-       raise Error, 'setters not supported'
+       raise Error('setters not supported')
     </xsl:for-each>
 
     def __next(self):
       if self.isarray:
           return self.handle.__next()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
     def __size(self):
       if self.isarray:
           return self.handle.__size()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
     def __len__(self):
       if self.isarray:
           return self.handle.__len__()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
     def __getitem__(self, index):
       if self.isarray:
           return <xsl:value-of select="$ifname" />(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
-
+      raise TypeError("iteration over non-sequence")
+<xsl:call-template name="xsltprocNewlineOutputHack"/>
 </xsl:template>
 
 <xsl:template name="convertInParam">
   <xsl:param name="type" />
   <xsl:param name="safearray" />
   <xsl:param name="arg" />
-  
+
    <xsl:choose>
      <xsl:when test="$type='octet' and $safearray">
         <xsl:value-of select="concat('self.mgr.encodebase64(',$arg,')')" />
@@ -467,7 +479,7 @@ class <xsl:value-of select="@name"/>:
 </xsl:template>
 
 <xsl:template match="/">
-<xsl:text># Copyright (C) 2008-2014 Oracle Corporation
+<xsl:text># Copyright (C) 2008-2016 Oracle Corporation
 #
 # This file is part of a free software library; you can redistribute
 # it and/or modify it under the terms of the GNU Lesser General
@@ -487,39 +499,37 @@ class <xsl:value-of select="@name"/>:
 #
 # This file is autogenerated from VirtualBox.xidl, DO NOT EDIT!
 #
-from VirtualBox_services import *
 
-try:
-  from VirtualBox_client import *
-except:
-  pass
+# Works only with ZSI 2.0 generated stubs (part of the VirtualBox SDK).
+from VirtualBox_client import *
 
-class ManagedManager:
-  def __init__(self):
+class ObjectRefManager:
+  def __init__(self, sessionmgr):
      self.map = {}
+     self.sessionmgr = sessionmgr
 
-  def register(self,handle):
+  def register(self, handle):
      if handle == None:
         return
      c = self.map.get(handle,0)
      c = c + 1
      self.map[handle]=c
 
-  def unregister(self,handle):
+  def unregister(self, handle):
      if handle == None:
         return
      c = self.map.get(handle,-1)
      if c == -1:
-        raise Error, 'wrong refcount'
+        raise Error('wrong refcount')
      c = c - 1
      if c == 0:
         try:
             req=IManagedObjectRef_releaseRequestMsg()
             req._this=handle
-            self.mgr.getPort().IManagedObjectRef_release(req)
+            self.sessionmgr.getPort().IManagedObjectRef_release(req)
         except:
             pass
-        self.map[handle] = -1
+        del self.map[handle]
      else:
         self.map[handle] = c
 
@@ -532,22 +542,22 @@ class String:
   def __next(self):
       if self.isarray:
           return self.handle.__next()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __size(self):
       if self.isarray:
           return self.handle.__size()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __len__(self):
       if self.isarray:
           return self.handle.__len__()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __getitem__(self, index):
       if self.isarray:
           return String(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __str__(self):
       return str(self.handle)
@@ -623,22 +633,22 @@ class Boolean:
   def __next(self):
       if self.isarray:
           return self.handle.__next()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __size(self):
       if self.isarray:
           return self.handle.__size()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __len__(self):
       if self.isarray:
           return self.handle.__len__()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __getitem__(self, index):
       if self.isarray:
           return Boolean(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class Number:
   def __init__(self, mgr, handle, isarray = False):
@@ -649,17 +659,17 @@ class Number:
   def __next(self):
       if self.isarray:
           return self.handle.__next()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __size(self):
       if self.isarray:
           return self.handle.__size()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __len__(self):
       if self.isarray:
           return self.handle.__len__()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __str__(self):
        return str(self.handle)
@@ -710,7 +720,7 @@ class Octet:
        if isarray:
            self.handle = mgr.decodebase64(handle)
        else:
-           raise TypeError, "only octet arrays"
+           raise TypeError("only octet arrays")
 
   def __getitem__(self, index):
       return self.handle[index]
@@ -730,7 +740,7 @@ class UnsignedInt(Number):
   def __getitem__(self, index):
       if self.isarray:
           return UnsignedInt(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 
 class Int(Number):
@@ -742,7 +752,7 @@ class Int(Number):
   def __getitem__(self, index):
       if self.isarray:
           return Int(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class UnsignedShort(Number):
   def __init__(self, mgr, handle, isarray = False):
@@ -753,7 +763,7 @@ class UnsignedShort(Number):
   def __getitem__(self, index):
       if self.isarray:
           return UnsignedShort(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class Short(Number):
   def __init__(self, mgr, handle, isarray = False):
@@ -764,7 +774,7 @@ class Short(Number):
   def __getitem__(self, index):
       if self.isarray:
           return Short(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class UnsignedLong(Number):
   def __init__(self, mgr, handle, isarray = False):
@@ -775,7 +785,7 @@ class UnsignedLong(Number):
   def __getitem__(self, index):
       if self.isarray:
           return UnsignedLong(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class Long(Number):
   def __init__(self, mgr, handle, isarray = False):
@@ -786,7 +796,7 @@ class Long(Number):
   def __getitem__(self, index):
       if self.isarray:
           return Long(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class Double(Number):
   def __init__(self, mgr, handle, isarray = False):
@@ -797,7 +807,7 @@ class Double(Number):
   def __getitem__(self, index):
       if self.isarray:
           return Double(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class Float(Number):
   def __init__(self, mgr, handle, isarray = False):
@@ -808,7 +818,7 @@ class Float(Number):
   def __getitem__(self, index):
       if self.isarray:
           return Float(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
 class IUnknown:
   def __init__(self,  mgr, handle, isarray = False):
@@ -825,22 +835,22 @@ class IUnknown:
   def __next(self):
       if self.isarray:
           return self.handle.__next()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __size(self):
       if self.isarray:
           return self.handle.__size()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __len__(self):
       if self.isarray:
           return self.handle.__len__()
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __getitem__(self, index):
       if self.isarray:
           return IUnknown(self.mgr, self.handle[index])
-      raise TypeError, "iteration over non-sequence"
+      raise TypeError("iteration over non-sequence")
 
   def __str__(self):
        return str(self.handle)
@@ -868,15 +878,17 @@ class IUnknown:
   <xsl:for-each select="//enum">
        <xsl:call-template name="enum"/>
   </xsl:for-each>
+  <xsl:text>
 
 import base64
 
-class IWebsessionManager2(IWebsessionManager):
+class IWebsessionManager2(IWebsessionManager, ObjectRefManager):
   def __init__(self, url):
        self.url = url
        self.port = None
        self.handle = None
        self.mgr = self
+       ObjectRefManager.__init__(self, self.mgr)
 
   def getPort(self):
       if self.port is None:
@@ -891,7 +903,7 @@ class IWebsessionManager2(IWebsessionManager):
 
   def encodebase64(self, str):
       return base64.encodestring(str)
-
+</xsl:text>
 </xsl:template>
 
 </xsl:stylesheet>

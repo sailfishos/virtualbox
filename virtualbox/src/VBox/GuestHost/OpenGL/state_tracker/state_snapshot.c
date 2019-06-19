@@ -1,11 +1,10 @@
 /* $Id: state_snapshot.c $ */
-
 /** @file
  * VBox Context state saving/loading used by VM snapshot
  */
 
 /*
- * Copyright (C) 2008-2013 Oracle Corporation
+ * Copyright (C) 2008-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -29,19 +28,20 @@
 #include <iprt/types.h>
 #include <iprt/err.h>
 #include <VBox/err.h>
+#include <VBox/log.h>
 
-/* @todo
+/** @todo
  * We have two ways of saving/loading states.
  *
  * First which is being used atm, just pure saving/loading of structures.
  * The drawback is we have to deal with all the pointers around those structures,
  * we'd have to update this code if we'd change state tracking.
  * On the bright side it's fast, though it's not really needed as it's not that often operation.
- * It could also worth to split those functions into appropriate parts, 
+ * It could also worth to split those functions into appropriate parts,
  * similar to the way context creation is being done.
  *
  * Second way would be to implement full dispatch api table and substitute diff_api during saving/loading.
- * Then if we implement that api in a similar way to packer/unpacker with a change to store/load 
+ * Then if we implement that api in a similar way to packer/unpacker with a change to store/load
  * via provided pSSM handle instead of pack buffer,
  * saving state could be done by simple diffing against empty "dummy" context.
  * Restoring state in such case would look like unpacking commands from pSSM instead of network buffer.
@@ -54,7 +54,7 @@ static int32_t crStateAllocAndSSMR3GetMem(PSSMHANDLE pSSM, void **pBuffer, size_
 {
     CRASSERT(pSSM && pBuffer && cbBuffer>0);
 
-    *pBuffer = crAlloc(cbBuffer);
+    *pBuffer = crAlloc((unsigned int /* this case is just so stupid */)cbBuffer);
     if (!*pBuffer)
         return VERR_NO_MEMORY;
 
@@ -62,21 +62,21 @@ static int32_t crStateAllocAndSSMR3GetMem(PSSMHANDLE pSSM, void **pBuffer, size_
 }
 
 #define SHCROGL_GET_STRUCT_PART(_pPtr, _type, _from, _to) do { \
-            rc = SSMR3GetMem(pSSM, &(_pPtr)->_from, RT_OFFSETOF(_type, _to) - RT_OFFSETOF(_type, _from)); \
+            rc = SSMR3GetMem(pSSM, &(_pPtr)->_from, RT_UOFFSETOF(_type, _to) - RT_UOFFSETOF(_type, _from)); \
             AssertRCReturn(rc, rc); \
         } while (0)
 
 #define SHCROGL_GET_STRUCT_TAIL(_pPtr, _type, _from) do { \
-            rc = SSMR3GetMem(pSSM, &(_pPtr)->_from, sizeof (_type) - RT_OFFSETOF(_type, _from)); \
+            rc = SSMR3GetMem(pSSM, &(_pPtr)->_from, sizeof (_type) - RT_UOFFSETOF(_type, _from)); \
             AssertRCReturn(rc, rc); \
         } while (0)
 
 #define SHCROGL_GET_STRUCT_HEAD(_pPtr, _type, _to) do { \
-            rc = SSMR3GetMem(pSSM, (_pPtr), RT_OFFSETOF(_type, _to)); \
+            rc = SSMR3GetMem(pSSM, (_pPtr), RT_UOFFSETOF(_type, _to)); \
             AssertRCReturn(rc, rc); \
         } while (0)
 
-#define SHCROGL_CUT_FIELD_ALIGNMENT_SIZE(_type, _prevField, _field) (RT_OFFSETOF(_type, _field) - RT_OFFSETOF(_type, _prevField) - RT_SIZEOFMEMB(_type, _prevField))
+#define SHCROGL_CUT_FIELD_ALIGNMENT_SIZE(_type, _prevField, _field) (RT_UOFFSETOF(_type, _field) - RT_UOFFSETOF(_type, _prevField) - RT_SIZEOFMEMB(_type, _prevField))
 #define SHCROGL_CUT_FIELD_ALIGNMENT(_type, _prevField, _field) do { \
             const int32_t cbAlignment = SHCROGL_CUT_FIELD_ALIGNMENT_SIZE(_type, _prevField, _field) ; \
             /*AssertCompile(SHCROGL_CUT_FIELD_ALIGNMENT_SIZE(_type, _prevField, _field) >= 0 && SHCROGL_CUT_FIELD_ALIGNMENT_SIZE(_type, _prevField, _field) < sizeof (void*));*/ \
@@ -87,7 +87,7 @@ static int32_t crStateAllocAndSSMR3GetMem(PSSMHANDLE pSSM, void **pBuffer, size_
 
 #define SHCROGL_ROUNDBOUND(_v, _b) (((_v) + ((_b) - 1)) & ~((_b) - 1))
 #define SHCROGL_ALIGNTAILSIZE(_v, _b) (SHCROGL_ROUNDBOUND((_v),(_b)) - (_v))
-#define SHCROGL_CUT_FOR_OLD_TYPE_TO_ENSURE_ALIGNMENT_SIZE(_type, _field, _oldFieldType, _nextFieldAllignment) (SHCROGL_ALIGNTAILSIZE(((RT_OFFSETOF(_type, _field) + sizeof (_oldFieldType))), (_nextFieldAllignment)))
+#define SHCROGL_CUT_FOR_OLD_TYPE_TO_ENSURE_ALIGNMENT_SIZE(_type, _field, _oldFieldType, _nextFieldAllignment) (SHCROGL_ALIGNTAILSIZE(((RT_UOFFSETOF(_type, _field) + sizeof (_oldFieldType))), (_nextFieldAllignment)))
 #define SHCROGL_CUT_FOR_OLD_TYPE_TO_ENSURE_ALIGNMENT(_type, _field, _oldFieldType, _nextFieldAllignment)  do { \
         const int32_t cbAlignment = SHCROGL_CUT_FOR_OLD_TYPE_TO_ENSURE_ALIGNMENT_SIZE(_type, _field, _oldFieldType, _nextFieldAllignment); \
         /*AssertCompile(SHCROGL_CUT_TAIL_ALIGNMENT_SIZE(_type, _lastField) >= 0 && SHCROGL_CUT_TAIL_ALIGNMENT_SIZE(_type, _lastField) < sizeof (void*));*/ \
@@ -97,7 +97,7 @@ static int32_t crStateAllocAndSSMR3GetMem(PSSMHANDLE pSSM, void **pBuffer, size_
     } while (0)
 
 
-#define SHCROGL_CUT_TAIL_ALIGNMENT_SIZE(_type, _lastField) (sizeof (_type) - RT_OFFSETOF(_type, _lastField) - RT_SIZEOFMEMB(_type, _lastField))
+#define SHCROGL_CUT_TAIL_ALIGNMENT_SIZE(_type, _lastField) (sizeof (_type) - RT_UOFFSETOF(_type, _lastField) - RT_SIZEOFMEMB(_type, _lastField))
 #define SHCROGL_CUT_TAIL_ALIGNMENT(_type, _lastField) do { \
             const int32_t cbAlignment = SHCROGL_CUT_TAIL_ALIGNMENT_SIZE(_type, _lastField); \
             /*AssertCompile(SHCROGL_CUT_TAIL_ALIGNMENT_SIZE(_type, _lastField) >= 0 && SHCROGL_CUT_TAIL_ALIGNMENT_SIZE(_type, _lastField) < sizeof (void*));*/ \
@@ -109,7 +109,7 @@ static int32_t crStateAllocAndSSMR3GetMem(PSSMHANDLE pSSM, void **pBuffer, size_
 static int32_t crStateLoadTextureObj_v_BEFORE_CTXUSAGE_BITS(CRTextureObj *pTexture, PSSMHANDLE pSSM)
 {
     int32_t rc;
-    uint32_t cbObj = RT_OFFSETOF(CRTextureObj, ctxUsage);
+    uint32_t cbObj = RT_UOFFSETOF(CRTextureObj, ctxUsage);
     cbObj = ((cbObj + sizeof (void*) - 1) & ~(sizeof (void*) - 1));
     rc = SSMR3GetMem(pSSM, pTexture, cbObj);
     AssertRCReturn(rc, rc);
@@ -249,7 +249,8 @@ static int32_t crStateLoadTextureState_v_BEFORE_CTXUSAGE_BITS(CRTextureState *t,
 static int32_t crStateStencilBufferStack_v_33(CRStencilBufferStack *s, PSSMHANDLE pSSM)
 {
     CRStencilBufferStack_v_33 stackV33;
-    int32_t rc = SSMR3GetMem(pSSM, &stackV33, sizeof (stackV33));
+    int32_t rc = SSMR3GetMem(pSSM, &stackV33, sizeof(stackV33));
+    AssertLogRelReturn(rc, rc);
 
     s->stencilTest = stackV33.stencilTest;
     s->stencilTwoSideEXT = GL_FALSE;
@@ -336,7 +337,7 @@ static int32_t crStateLoadBufferObject(CRBufferObject *pBufferObj, PSSMHANDLE pS
     int32_t rc;
     if (u32Version == SHCROGL_SSM_VERSION_BEFORE_CTXUSAGE_BITS)
     {
-        uint32_t cbObj = RT_OFFSETOF(CRBufferObject, ctxUsage);
+        uint32_t cbObj = RT_UOFFSETOF(CRBufferObject, ctxUsage);
         cbObj = ((cbObj + sizeof (void*) - 1) & ~(sizeof (void*) - 1));
         rc = SSMR3GetMem(pSSM, pBufferObj, cbObj);
         AssertRCReturn(rc, rc);
@@ -357,7 +358,7 @@ static int32_t crStateLoadFramebufferObject(CRFramebufferObject *pFBO, PSSMHANDL
     int32_t rc;
     if (u32Version == SHCROGL_SSM_VERSION_BEFORE_CTXUSAGE_BITS)
     {
-        uint32_t cbObj = RT_OFFSETOF(CRFramebufferObject, ctxUsage);
+        uint32_t cbObj = RT_UOFFSETOF(CRFramebufferObject, ctxUsage);
         cbObj = ((cbObj + sizeof (void*) - 1) & ~(sizeof (void*) - 1));
         rc = SSMR3GetMem(pSSM, pFBO, cbObj);
         AssertRCReturn(rc, rc);
@@ -378,7 +379,7 @@ static int32_t crStateLoadRenderbufferObject(CRRenderbufferObject *pRBO, PSSMHAN
     int32_t rc;
     if (u32Version == SHCROGL_SSM_VERSION_BEFORE_CTXUSAGE_BITS)
     {
-        uint32_t cbObj = RT_OFFSETOF(CRRenderbufferObject, ctxUsage);
+        uint32_t cbObj = RT_UOFFSETOF(CRRenderbufferObject, ctxUsage);
         cbObj = ((cbObj + sizeof (void*) - 1) & ~(sizeof (void*) - 1));
         rc = SSMR3GetMem(pSSM, pRBO, cbObj);
         AssertRCReturn(rc, rc);
@@ -398,7 +399,7 @@ static int32_t crStateSaveTextureObjData(CRTextureObj *pTexture, PSSMHANDLE pSSM
 {
     int32_t rc, face, i;
     GLint bound = 0;
-    
+
     CRASSERT(pTexture && pSSM);
 
     crDebug("crStateSaveTextureObjData %u. START", pTexture->id);
@@ -417,7 +418,7 @@ static int32_t crStateSaveTextureObjData(CRTextureObj *pTexture, PSSMHANDLE pSSM
                 AssertRCReturn(rc, rc);
             }
 #ifdef CR_STATE_NO_TEXTURE_IMAGE_STORE
-            /* Note, this is not a bug. 
+            /* Note, this is not a bug.
              * Even with CR_STATE_NO_TEXTURE_IMAGE_STORE defined, it's possible that ptl->img!=NULL.
              * For ex. we're saving snapshot right after it was loaded
              * and some context hasn't been used by the guest application yet
@@ -464,7 +465,7 @@ static int32_t crStateSaveTextureObjData(CRTextureObj *pTexture, PSSMHANDLE pSSM
                     {
                         GLint curTex;
                         diff_api.GetIntegerv(getEnum, &curTex);
-                        if (curTex != pTexture->hwid)
+                        if ((GLuint)curTex != pTexture->hwid)
                         {
                             crWarning("texture not bound properly: expected %d, but was %d. Texture state data: target(0x%x), id(%d), w(%d), h(%d)",
                                     pTexture->hwid, curTex,
@@ -513,7 +514,7 @@ static int32_t crStateSaveTextureObjData(CRTextureObj *pTexture, PSSMHANDLE pSSM
                     }
 #endif
 
-                    /*@todo: ugly workaround for crashes inside ati driver,
+                    /** @todo ugly workaround for crashes inside ati driver,
                      *       they overwrite their own allocated memory in cases where texlevel >=4
                              and width or height <=2.
                      */
@@ -557,7 +558,7 @@ static int32_t crStateSaveTextureObjData(CRTextureObj *pTexture, PSSMHANDLE pSSM
 static int32_t crStateLoadTextureObjData(CRTextureObj *pTexture, PSSMHANDLE pSSM)
 {
     int32_t rc, face, i;
-    
+
     CRASSERT(pTexture && pSSM);
 
     for (face = 0; face < 6; face++) {
@@ -621,7 +622,7 @@ static int32_t crStateSaveMatrixStack(CRMatrixStack *pStack, PSSMHANDLE pSSM)
 static int32_t crStateLoadMatrixStack(CRMatrixStack *pStack, PSSMHANDLE pSSM)
 {
     int32_t rc;
-    
+
     CRASSERT(pStack && pSSM);
 
     rc = SSMR3GetMem(pSSM, pStack->stack, sizeof(CRmatrix) * pStack->maxDepth);
@@ -778,7 +779,7 @@ static int32_t crSateLoadEvalCoeffs1D(CREvaluator1D *pEval, GLboolean bReallocMe
             size = pEval[i].order * gleval_sizes[i] * sizeof(GLfloat);
             if (bReallocMem)
             {
-                pEval[i].coeff = (GLfloat*) crAlloc(size);
+                pEval[i].coeff = (GLfloat*) crAlloc((unsigned int /* this case is just so stupid */)size);
                 if (!pEval[i].coeff) return VERR_NO_MEMORY;
             }
             rc = SSMR3GetMem(pSSM, pEval[i].coeff, size);
@@ -801,7 +802,7 @@ static int32_t crSateLoadEvalCoeffs2D(CREvaluator2D *pEval, GLboolean bReallocMe
             size = pEval[i].uorder * pEval[i].vorder * gleval_sizes[i] * sizeof(GLfloat);
             if (bReallocMem)
             {
-                pEval[i].coeff = (GLfloat*) crAlloc(size);
+                pEval[i].coeff = (GLfloat*) crAlloc((unsigned int /* this case is just so stupid */)size);
                 if (!pEval[i].coeff) return VERR_NO_MEMORY;
             }
             rc = SSMR3GetMem(pSSM, pEval[i].coeff, size);
@@ -1100,7 +1101,7 @@ static CRGLSLShader* crStateLoadGLSLShader(PSSMHANDLE pSSM)
 
 static void crStateSaveGLSLShaderKeyCB(unsigned long key, void *data1, void *data2)
 {
-    CRGLSLShader *pShader = (CRGLSLShader*) data1;
+    //CRGLSLShader *pShader = (CRGLSLShader*) data1;
     PSSMHANDLE pSSM = (PSSMHANDLE) data2;
     int32_t rc;
 
@@ -1219,7 +1220,7 @@ static void crStateSaveGLSLProgramCB(unsigned long key, void *data1, void *data2
                 CRASSERT(rc == VINF_SUCCESS);
 
                 crStateSaveString(name, pSSM);
-            
+
                 if (crStateIsIntUniform(type))
                 {
                     diff_api.GetUniformiv(pProgram->hwid, location, &idata[0]);
@@ -1257,8 +1258,16 @@ static int32_t crStateSaveClientPointer(CRVertexArrays *pArrays, int32_t index, 
     if (cp->locked)
     {
         CRASSERT(cp->p);
-        rc = SSMR3PutMem(pSSM, cp->p, cp->stride*(pArrays->lockFirst+pArrays->lockCount));
-        AssertRCReturn(rc, rc);
+        if (cp->fRealPtr)
+        {
+            rc = SSMR3PutMem(pSSM, cp->p, cp->stride*(pArrays->lockFirst+pArrays->lockCount));
+            AssertRCReturn(rc, rc);
+        }
+        else
+        {
+            crError("crStateSaveClientPointer: cp=%#p doesn't point to host memory!\n", cp);
+            return VERR_INVALID_STATE;
+        }
     }
 #endif
 
@@ -1287,6 +1296,7 @@ static int32_t crStateLoadClientPointer(CRVertexArrays *pArrays, int32_t index, 
     {
         rc = crStateAllocAndSSMR3GetMem(pSSM, (void**)&cp->p, cp->stride*(pArrays->lockFirst+pArrays->lockCount));
         AssertRCReturn(rc, rc);
+        cp->fRealPtr = 1;
     }
 #endif
 
@@ -1447,15 +1457,14 @@ static int32_t crStateLoadKeys(CRHashTable *pHash, PSSMHANDLE pSSM, uint32_t u32
         {
             for (i = u32Key; i < u32Count + u32Key; ++i)
             {
-                GLboolean fIsNew = crHashtableAllocRegisterKey(pHash, i);
+                GLboolean fIsNew = crHashtableAllocRegisterKey(pHash, i); NOREF(fIsNew);
 #if 0 //def DEBUG_misha
                 CRASSERT(fIsNew);
 #endif
             }
         }
     }
-
-    return rc;
+    /* not reached*/
 }
 
 
@@ -1596,7 +1605,7 @@ int32_t crStateSaveContext(CRContext *pContext, PSSMHANDLE pSSM)
     AssertRCReturn(rc, rc);
 
     /* Save attrib stack*/
-    /*@todo could go up to used stack depth here?*/
+    /** @todo could go up to used stack depth here?*/
     for ( i = 0 ; i < CR_MAX_ATTRIB_STACK_DEPTH ; i++)
     {
         if (pContext->attrib.enableStack[i].clip)
@@ -1858,7 +1867,10 @@ int32_t crStateLoadGlobals(PSSMHANDLE pSSM, uint32_t u32Version)
 
 AssertCompile(VBOXTLSREFDATA_SIZE() <= CR_MAX_BITARRAY);
 AssertCompile(VBOXTLSREFDATA_STATE_INITIALIZED != 0);
-AssertCompile(RT_OFFSETOF(CRContext, shared) >= VBOXTLSREFDATA_OFFSET(CRContext) + VBOXTLSREFDATA_SIZE() + RT_SIZEOFMEMB(CRContext, bitid) + RT_SIZEOFMEMB(CRContext, neg_bitid));
+AssertCompile(RTASSERT_OFFSET_OF(CRContext, shared) >= VBOXTLSREFDATA_ASSERT_OFFSET(CRContext)
+                                                     + VBOXTLSREFDATA_SIZE()
+                                                     + RT_SIZEOFMEMB(CRContext, bitid)
+                                                     + RT_SIZEOFMEMB(CRContext, neg_bitid));
 
 int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRSTATE_CONTEXT_GET pfnCtxGet, PSSMHANDLE pSSM, uint32_t u32Version)
 {
@@ -1908,7 +1920,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
             AssertRCReturn(rc, rc);
 
             ui = VBOXTLSREFDATA_OFFSET(CRContext) + VBOXTLSREFDATA_SIZE() + sizeof (pTmpContext->bitid) + sizeof (pTmpContext->neg_bitid);
-            ui = RT_OFFSETOF(CRContext, shared) - ui;
+            ui = RT_UOFFSETOF(CRContext, shared) - ui;
         }
         else
         {
@@ -2108,12 +2120,12 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
 # endif
 #endif /*CR_ARB_vertex_buffer_object*/
 
-    /*@todo CR_NV_vertex_program*/
+    /** @todo CR_NV_vertex_program*/
     crStateCopyEvalPtrs1D(pTmpContext->eval.eval1D, pContext->eval.eval1D);
     crStateCopyEvalPtrs2D(pTmpContext->eval.eval2D, pContext->eval.eval2D);
-    
-    SLC_COPYPTR(feedback.buffer);  /*@todo*/
-    SLC_COPYPTR(selection.buffer); /*@todo*/
+
+    SLC_COPYPTR(feedback.buffer);  /** @todo */
+    SLC_COPYPTR(selection.buffer); /** @todo */
 
     SLC_COPYPTR(lighting.light);
 
@@ -2121,7 +2133,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
     SLC_COPYPTR(limits.extensions);
 
 #if CR_ARB_occlusion_query
-    SLC_COPYPTR(occlusion.objects); /*@todo*/
+    SLC_COPYPTR(occlusion.objects); /** @todo */
 #endif
 
     SLC_COPYPTR(program.errorString);
@@ -2383,7 +2395,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
             pBufferObj->data = crAlloc(pBufferObj->size);
             rc = SSMR3GetMem(pSSM, pBufferObj->data, pBufferObj->size);
             AssertRCReturn(rc, rc);
-        } 
+        }
         else if (pBufferObj->id!=0 && pBufferObj->size>0)
         {
             rc = SSMR3GetMem(pSSM, &pBufferObj->data, sizeof(pBufferObj->data));
@@ -2399,7 +2411,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
 
 
         if (key!=0)
-            crHashtableAdd(pContext->shared->buffersTable, key, pBufferObj);        
+            crHashtableAdd(pContext->shared->buffersTable, key, pBufferObj);
     }
     /* Load pointers */
 #define CRS_GET_BO(name) (((name)==0) ? (pContext->bufferobject.nullBuffer) : crHashtableSearch(pContext->shared->buffersTable, name))
@@ -2454,7 +2466,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
         AssertRCReturn(rc, rc);
         crHashtableAdd(pContext->program.programHash, pProgram->id, pProgram);
         //DIRTY(pProgram->dirtyProgram, pContext->neg_bitid);
-        
+
     }
     /* Load Pointers */
     rc = SSMR3GetU32(pSSM, &ui);
@@ -2524,17 +2536,17 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
 
     rc = SSMR3GetU32(pSSM, &ui);
     AssertRCReturn(rc, rc);
-    pContext->framebufferobject.drawFB = ui==0 ? NULL 
+    pContext->framebufferobject.drawFB = ui==0 ? NULL
                                                : crHashtableSearch(pContext->shared->fbTable, ui);
 
     rc = SSMR3GetU32(pSSM, &ui);
     AssertRCReturn(rc, rc);
-    pContext->framebufferobject.readFB = ui==0 ? NULL 
+    pContext->framebufferobject.readFB = ui==0 ? NULL
                                                : crHashtableSearch(pContext->shared->fbTable, ui);
 
     rc = SSMR3GetU32(pSSM, &ui);
     AssertRCReturn(rc, rc);
-    pContext->framebufferobject.renderbuffer = ui==0 ? NULL 
+    pContext->framebufferobject.renderbuffer = ui==0 ? NULL
                                                      : crHashtableSearch(pContext->shared->rbTable, ui);
 
     /* Mark FBOs/RBOs for resending to GPU */
@@ -2587,7 +2599,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
             crHashtableAdd(pProgram->currentState.attachedShaders, key, crHashtableSearch(pContext->glsl.shaders, key));
         }
 
-        if (pProgram->activeState.attachedShaders)  
+        if (pProgram->activeState.attachedShaders)
         {
             pProgram->activeState.attachedShaders = crAllocHashtable();
 
@@ -2602,7 +2614,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
             }
         }
 
-        if (pProgram->currentState.cAttribs) 
+        if (pProgram->currentState.cAttribs)
             pProgram->currentState.pAttribs = (CRGLSLAttrib*) crAlloc(pProgram->currentState.cAttribs*sizeof(CRGLSLAttrib));
         for (k=0; k<pProgram->currentState.cAttribs; ++k)
         {
@@ -2611,7 +2623,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
             pProgram->currentState.pAttribs[k].name = crStateLoadString(pSSM);
         }
 
-        if (pProgram->activeState.cAttribs) 
+        if (pProgram->activeState.cAttribs)
             pProgram->activeState.pAttribs = (CRGLSLAttrib*) crAlloc(pProgram->activeState.cAttribs*sizeof(CRGLSLAttrib));
         for (k=0; k<pProgram->activeState.cAttribs; ++k)
         {
@@ -2646,7 +2658,7 @@ int32_t crStateLoadContext(CRContext *pContext, CRHashTable * pCtxTable, PFNCRST
                 } else itemsize = sizeof(GLfloat);
 
                 datasize = crStateGetUniformSize(pProgram->pUniforms[k].type)*itemsize;
-                pProgram->pUniforms[k].data = crAlloc(datasize);
+                pProgram->pUniforms[k].data = crAlloc((unsigned int /* this case is just so stupid */)datasize);
                 if (!pProgram->pUniforms[k].data) return VERR_NO_MEMORY;
 
                 rc = SSMR3GetMem(pSSM, pProgram->pUniforms[k].data, datasize);

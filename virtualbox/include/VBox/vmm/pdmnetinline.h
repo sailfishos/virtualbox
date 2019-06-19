@@ -6,7 +6,7 @@
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -26,6 +26,9 @@
  * terms and conditions of either the GPL or the CDDL or both.
  */
 
+#ifndef ___VBox_vmm_pdmnetinline_h_
+#define ___VBox_vmm_pdmnetinline_h_
+
 
 /*******************************************************************************
 *   Header Files                                                               *
@@ -36,6 +39,12 @@
 #include <iprt/assert.h>
 #include <iprt/net.h>
 #include <iprt/string.h>
+
+
+/** @defgroup grp_pdm_net_inline    The PDM Networking Helper APIs
+ * @ingroup grp_pdm
+ * @{
+ */
 
 
 /**
@@ -67,38 +76,38 @@ DECLINLINE(bool) PDMNetGsoIsValid(PCPDMNETWORKGSO pGso, size_t cbGsoMax, size_t 
 {
     PDMNETWORKGSOTYPE enmType;
 
-    if (RT_UNLIKELY(cbGsoMax < sizeof(*pGso)))
-        return false;
+    if (RT_LIKELY(cbGsoMax >= sizeof(*pGso)))
+    { /* likely */ } else return false;
 
     enmType = (PDMNETWORKGSOTYPE)pGso->u8Type;
-    if (RT_UNLIKELY( enmType <= PDMNETWORKGSOTYPE_INVALID || enmType >= PDMNETWORKGSOTYPE_END ))
-        return false;
+    if (RT_LIKELY( enmType > PDMNETWORKGSOTYPE_INVALID && enmType < PDMNETWORKGSOTYPE_END ))
+    { /* likely */ } else return false;
 
     /* all types requires both headers. */
-    if (RT_UNLIKELY( pGso->offHdr1 < sizeof(RTNETETHERHDR) ))
-        return false;
-    if (RT_UNLIKELY( pGso->offHdr2 <= pGso->offHdr1 ))
-        return false;
-    if (RT_UNLIKELY( pGso->cbHdrsTotal  <= pGso->offHdr2 ))
-        return false;
+    if (RT_LIKELY( pGso->offHdr1 >= sizeof(RTNETETHERHDR) ))
+    { /* likely */ } else return false;
+    if (RT_LIKELY( pGso->offHdr2 > pGso->offHdr1 ))
+    { /* likely */ } else return false;
+    if (RT_LIKELY( pGso->cbHdrsTotal > pGso->offHdr2 ))
+    { /* likely */ } else return false;
 
     /* min size of the 1st header(s). */
     switch (enmType)
     {
         case PDMNETWORKGSOTYPE_IPV4_TCP:
         case PDMNETWORKGSOTYPE_IPV4_UDP:
-            if (RT_UNLIKELY( (unsigned)pGso->offHdr2 - pGso->offHdr1 < RTNETIPV4_MIN_LEN ))
-                return false;
+            if (RT_LIKELY( (unsigned)pGso->offHdr2 - pGso->offHdr1 >= RTNETIPV4_MIN_LEN ))
+            { /* likely */ } else return false;
             break;
         case PDMNETWORKGSOTYPE_IPV6_TCP:
         case PDMNETWORKGSOTYPE_IPV6_UDP:
-            if (RT_UNLIKELY( (unsigned)pGso->offHdr2 - pGso->offHdr1 < RTNETIPV6_MIN_LEN ))
-                return false;
+            if (RT_LIKELY( (unsigned)pGso->offHdr2 - pGso->offHdr1 >= RTNETIPV6_MIN_LEN ))
+            { /* likely */ } else return false;
             break;
         case PDMNETWORKGSOTYPE_IPV4_IPV6_TCP:
         case PDMNETWORKGSOTYPE_IPV4_IPV6_UDP:
-            if (RT_UNLIKELY( (unsigned)pGso->offHdr2 - pGso->offHdr1 < RTNETIPV4_MIN_LEN + RTNETIPV6_MIN_LEN ))
-                return false;
+            if (RT_LIKELY( (unsigned)pGso->offHdr2 - pGso->offHdr1 >= RTNETIPV4_MIN_LEN + RTNETIPV6_MIN_LEN ))
+            { /* likely */ } else return false;
             break;
         case PDMNETWORKGSOTYPE_INVALID:
         case PDMNETWORKGSOTYPE_END:
@@ -112,14 +121,14 @@ DECLINLINE(bool) PDMNetGsoIsValid(PCPDMNETWORKGSO pGso, size_t cbGsoMax, size_t 
         case PDMNETWORKGSOTYPE_IPV4_TCP:
         case PDMNETWORKGSOTYPE_IPV6_TCP:
         case PDMNETWORKGSOTYPE_IPV4_IPV6_TCP:
-            if (RT_UNLIKELY( (unsigned)pGso->cbHdrsTotal - pGso->offHdr2 < RTNETTCP_MIN_LEN ))
-                return false;
+            if (RT_LIKELY( (unsigned)pGso->cbHdrsTotal - pGso->offHdr2 >= RTNETTCP_MIN_LEN ))
+            { /* likely */ } else return false;
             break;
         case PDMNETWORKGSOTYPE_IPV4_UDP:
         case PDMNETWORKGSOTYPE_IPV6_UDP:
         case PDMNETWORKGSOTYPE_IPV4_IPV6_UDP:
-            if (RT_UNLIKELY( (unsigned)pGso->cbHdrsTotal - pGso->offHdr2 < RTNETUDP_MIN_LEN ))
-                return false;
+            if (RT_LIKELY( (unsigned)pGso->cbHdrsTotal - pGso->offHdr2 >= RTNETUDP_MIN_LEN ))
+            { /* likely */ } else return false;
             break;
         case PDMNETWORKGSOTYPE_INVALID:
         case PDMNETWORKGSOTYPE_END:
@@ -128,10 +137,10 @@ DECLINLINE(bool) PDMNetGsoIsValid(PCPDMNETWORKGSO pGso, size_t cbGsoMax, size_t 
     }
 
     /* There must be at more than one segment. */
-    if (RT_UNLIKELY( cbFrame <= pGso->cbHdrsTotal ))
-        return false;
-    if (RT_UNLIKELY( cbFrame - pGso->cbHdrsTotal < pGso->cbMaxSeg ))
-        return false;
+    if (RT_LIKELY( cbFrame > pGso->cbHdrsTotal ))
+    { /* likely */ } else return false;
+    if (RT_LIKELY( cbFrame - pGso->cbHdrsTotal >= pGso->cbMaxSeg ))
+    { /* likely */ } else return false;
 
     return true;
 }
@@ -172,8 +181,7 @@ DECLINLINE(uint32_t) pdmNetSegPayloadLen(PCPDMNETWORKGSO pGso, uint32_t iSeg, ui
 {
     if (iSeg + 1 == cSegs)
         return cbFrame - iSeg * pGso->cbMaxSeg - pdmNetSegHdrLen(pGso, iSeg);
-    else
-        return pGso->cbMaxSeg - (iSeg ? 0 : pGso->cbHdrsTotal - pGso->cbHdrsSeg);
+    return pGso->cbMaxSeg - (iSeg ? 0 : pGso->cbHdrsTotal - pGso->cbHdrsSeg);
 }
 
 /**
@@ -197,7 +205,7 @@ DECLINLINE(uint32_t) PDMNetGsoCalcSegmentCount(PCPDMNETWORKGSO pGso, size_t cbFr
  *
  * @returns Offset of the IPv6 header.
  * @param   pbSegHdrs           The headers / frame start.
- * @param   offIpHdr            The offset of the IPv4 header.
+ * @param   offIPv4Hdr          The offset of the IPv4 header.
  */
 DECLINLINE(uint8_t) pgmNetGsoCalcIpv6Offset(uint8_t *pbSegHdrs, uint8_t offIPv4Hdr)
 {
@@ -359,7 +367,6 @@ DECLINLINE(uint32_t) pdmNetGsoUpdateIPv4Hdr(uint8_t *pbSegHdrs, uint8_t offIpHdr
  * @param   offIpHdr            The offset into @a pbSegHdrs of the IP header.
  * @param   cbSegPayload        The amount of segmented payload.
  * @param   offFragment         The offset of this fragment for reassembly.
- * @param   iSeg                The segment index.
  * @param   cbHdrs              The size of all the headers.
  * @param   fLastFragment       True if this is the last fragment of datagram.
  * @internal
@@ -661,4 +668,8 @@ DECLINLINE(const char *) PDMNetGsoTypeName(PDMNETWORKGSOTYPE enmType)
     }
     return "bad-gso-type";
 }
+
+/** @} */
+
+#endif
 

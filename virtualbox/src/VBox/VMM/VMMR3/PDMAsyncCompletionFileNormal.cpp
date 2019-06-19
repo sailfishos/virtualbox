@@ -4,7 +4,7 @@
  */
 
 /*
- * Copyright (C) 2006-2013 Oracle Corporation
+ * Copyright (C) 2006-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -15,9 +15,10 @@
  * hope that it will be useful, but WITHOUT ANY WARRANTY of any kind.
  */
 
-/*******************************************************************************
-*   Header Files                                                               *
-*******************************************************************************/
+
+/*********************************************************************************************************************************
+*   Header Files                                                                                                                 *
+*********************************************************************************************************************************/
 #define LOG_GROUP LOG_GROUP_PDM_ASYNC_COMPLETION
 #include <iprt/types.h>
 #include <iprt/asm.h>
@@ -32,12 +33,12 @@
 /** The update period for the I/O load statistics in ms. */
 #define PDMACEPFILEMGR_LOAD_UPDATE_PERIOD   1000
 /** Maximum number of requests a manager will handle. */
-#define PDMACEPFILEMGR_REQS_STEP            512
+#define PDMACEPFILEMGR_REQS_STEP              64
 
 
-/*******************************************************************************
-*   Internal functions                                                         *
-*******************************************************************************/
+/*********************************************************************************************************************************
+*   Internal functions                                                                                                           *
+*********************************************************************************************************************************/
 static int pdmacFileAioMgrNormalProcessTaskList(PPDMACTASKFILE pTaskHead,
                                                 PPDMACEPFILEMGR pAioMgr,
                                                 PPDMASYNCCOMPLETIONENDPOINTFILE pEndpoint);
@@ -432,8 +433,9 @@ DECLINLINE(bool) pdmacFileAioMgrNormalRcIsFatal(int rcReq)
  * Error handler which will create the failsafe managers and destroy the failed I/O manager.
  *
  * @returns VBox status code
- * @param   pAioMgr    The I/O manager the error occurred on.
- * @param   rc         The error code.
+ * @param   pAioMgr     The I/O manager the error occurred on.
+ * @param   rc          The error code.
+ * @param   SRC_POS     The source location of the error (use RT_SRC_POS).
  */
 static int pdmacFileAioMgrNormalErrorHandler(PPDMACEPFILEMGR pAioMgr, int rc, RT_SRC_POS_DECL)
 {
@@ -723,7 +725,7 @@ static int pdmacFileAioMgrNormalRangeLock(PPDMACEPFILEMGR pAioMgr,
     pRangeLock->pWaitingTasksTail = NULL;
 
     bool fInserted = RTAvlrFileOffsetInsert(pEndpoint->AioMgr.pTreeRangesLocked, &pRangeLock->Core);
-    AssertMsg(fInserted, ("Range lock was not inserted!\n"));
+    AssertMsg(fInserted, ("Range lock was not inserted!\n")); NOREF(fInserted);
 
     /* Let the task point to its lock. */
     pTask->pRangeLock = pRangeLock;
@@ -895,7 +897,7 @@ static int pdmacFileAioMgrNormalTaskPrepareNonBuffered(PPDMACEPFILEMGR pAioMgr,
                       pTask->Off, offStart));
             pTask->offBounceBuffer = pTask->Off - offStart;
 
-            /** @todo: I think we need something like a RTMemAllocAligned method here.
+            /** @todo I think we need something like a RTMemAllocAligned method here.
              * Current assumption is that the maximum alignment is 4096byte
              * (GPT disk on Windows)
              * so we can use RTMemPageAlloc here.
@@ -1016,7 +1018,10 @@ static int pdmacFileAioMgrNormalProcessTaskList(PPDMACTASKFILE pTaskHead,
                     rc = RTFileAioReqPrepareFlush(hReq, pEndpoint->hFile, pCurr);
                     if (RT_FAILURE(rc))
                     {
-                        LogRel(("AIOMgr: Preparing flush failed with %Rrc, disabling async flushes\n", rc));
+                        if (rc == VERR_NOT_SUPPORTED)
+                            LogRel(("AIOMgr: Async flushes not supported\n"));
+                        else
+                            LogRel(("AIOMgr: Preparing flush failed with %Rrc, disabling async flushes\n", rc));
                         pEndpoint->fAsyncFlushSupported = false;
                         pdmacFileAioMgrNormalRequestFree(pAioMgr, hReq);
                         rc = VINF_SUCCESS; /* Fake success */
@@ -1424,7 +1429,7 @@ static void pdmacFileAioMgrNormalReqCompleteRc(PPDMACEPFILEMGR pAioMgr, RTFILEAI
                 if (!pEndpoint->AioMgr.cRequestsActive)
                 {
                     bool fReqsPending = pdmacFileAioMgrNormalRemoveEndpoint(pEndpoint);
-                    Assert(!fReqsPending);
+                    Assert(!fReqsPending); NOREF(fReqsPending);
 
                     rc = pdmacFileAioMgrAddEndpoint(pEndpoint->AioMgr.pAioMgrDst, pEndpoint);
                     AssertRC(rc);
@@ -1459,9 +1464,11 @@ static void pdmacFileAioMgrNormalReqCompleteRc(PPDMACEPFILEMGR pAioMgr, RTFILEAI
              * but to get the cause of the error (disk full, file too big, I/O error, ...)
              * the transfer needs to be continued.
              */
-            if (RT_UNLIKELY(   cbTransfered < pTask->DataSeg.cbSeg
+            pTask->cbTransfered += cbTransfered;
+
+            if (RT_UNLIKELY(   pTask->cbTransfered < pTask->DataSeg.cbSeg
                             || (   pTask->cbBounceBuffer
-                                && cbTransfered < pTask->cbBounceBuffer)))
+                                && pTask->cbTransfered < pTask->cbBounceBuffer)))
             {
                 RTFOFF offStart;
                 size_t cbToTransfer;
@@ -1474,16 +1481,16 @@ static void pdmacFileAioMgrNormalReqCompleteRc(PPDMACEPFILEMGR pAioMgr, RTFILEAI
                 if (pTask->cbBounceBuffer)
                 {
                     AssertPtr(pTask->pvBounceBuffer);
-                    offStart     = (pTask->Off & ~((RTFOFF)512-1)) + cbTransfered;
-                    cbToTransfer = pTask->cbBounceBuffer - cbTransfered;
-                    pbBuf        = (uint8_t *)pTask->pvBounceBuffer + cbTransfered;
+                    offStart     = (pTask->Off & ~((RTFOFF)512-1)) + pTask->cbTransfered;
+                    cbToTransfer = pTask->cbBounceBuffer - pTask->cbTransfered;
+                    pbBuf        = (uint8_t *)pTask->pvBounceBuffer + pTask->cbTransfered;
                 }
                 else
                 {
                     Assert(!pTask->pvBounceBuffer);
-                    offStart     = pTask->Off + cbTransfered;
-                    cbToTransfer = pTask->DataSeg.cbSeg - cbTransfered;
-                    pbBuf        = (uint8_t *)pTask->DataSeg.pvSeg + cbTransfered;
+                    offStart     = pTask->Off + pTask->cbTransfered;
+                    cbToTransfer = pTask->DataSeg.cbSeg - pTask->cbTransfered;
+                    pbBuf        = (uint8_t *)pTask->DataSeg.pvSeg + pTask->cbTransfered;
                 }
 
                 if (pTask->fPrefetch || pTask->enmTransferType == PDMACTASKFILETRANSFER_READ)
@@ -1518,6 +1525,8 @@ static void pdmacFileAioMgrNormalReqCompleteRc(PPDMACEPFILEMGR pAioMgr, RTFILEAI
                 pTask->fPrefetch = false;
                 RTFOFF offStart = pTask->Off & ~(RTFOFF)(512-1);
                 size_t cbToTransfer = RT_ALIGN_Z(pTask->DataSeg.cbSeg + (pTask->Off - offStart), 512);
+
+                pTask->cbTransfered = 0;
 
                 /* Grow the file if needed. */
                 if (RT_UNLIKELY((uint64_t)(pTask->Off + pTask->DataSeg.cbSeg) > pEndpoint->cbFile))
@@ -1581,7 +1590,7 @@ static void pdmacFileAioMgrNormalReqCompleteRc(PPDMACEPFILEMGR pAioMgr, RTFILEAI
                 {
                     /* If the endpoint is about to be migrated do it now. */
                     bool fReqsPending = pdmacFileAioMgrNormalRemoveEndpoint(pEndpoint);
-                    Assert(!fReqsPending);
+                    Assert(!fReqsPending); NOREF(fReqsPending);
 
                     rc = pdmacFileAioMgrAddEndpoint(pEndpoint->AioMgr.pAioMgrDst, pEndpoint);
                     AssertRC(rc);
@@ -1603,8 +1612,8 @@ static void pdmacFileAioMgrNormalReqCompleteRc(PPDMACEPFILEMGR pAioMgr, RTFILEAI
  * The normal I/O manager using the RTFileAio* API
  *
  * @returns VBox status code.
- * @param hThreadSelf   Handle of the thread.
- * @param pvUser        Opaque user data.
+ * @param   hThreadSelf Handle of the thread.
+ * @param   pvUser      Opaque user data.
  */
 DECLCALLBACK(int) pdmacFileAioMgrNormal(RTTHREAD hThreadSelf, void *pvUser)
 {

@@ -1,11 +1,10 @@
+/* $Id: UIMachineViewNormal.h $ */
 /** @file
- *
- * VBox frontends: Qt GUI ("VirtualBox"):
- * UIMachineViewNormal class declaration
+ * VBox Qt GUI - UIMachineViewNormal class declaration.
  */
 
 /*
- * Copyright (C) 2010-2011 Oracle Corporation
+ * Copyright (C) 2010-2017 Oracle Corporation
  *
  * This file is part of VirtualBox Open Source Edition (OSE), as
  * available from http://www.virtualbox.org. This file is free software;
@@ -36,7 +35,7 @@ protected:
 #endif
     );
     /* Normal machine-view destructor: */
-    virtual ~UIMachineViewNormal();
+    virtual ~UIMachineViewNormal() {}
 
 private slots:
 
@@ -52,24 +51,25 @@ private:
     void prepareCommon();
     void prepareFilters();
     void prepareConsoleConnections();
-    //void loadMachineViewSettings();
 
     /* Cleanup helpers: */
-    void saveMachineViewSettings();
     //void cleanupConsoleConnections() {}
     //void cleanupFilters() {}
     //void cleanupCommon() {}
 
-    /* Hidden setters: */
-    void setGuestAutoresizeEnabled(bool bEnabled);
+    /** Returns whether the guest-screen auto-resize is enabled. */
+    virtual bool isGuestAutoresizeEnabled() const /* override */ { return m_bIsGuestAutoresizeEnabled; }
+    /** Defines whether the guest-screen auto-resize is @a fEnabled. */
+    virtual void setGuestAutoresizeEnabled(bool bEnabled) /* override */;
 
-    /** Resends guest size-hint if necessary. */
-    void maybeResendSizeHint();
+    /** Resends guest size-hint. */
+    void resendSizeHint();
 
     /** Adjusts guest-screen size to correspond current <i>machine-window</i> size. */
     void adjustGuestScreenSize();
 
     /* Private helpers: */
+    QSize sizeHint() const;
     QRect workingArea() const;
     QSize calculateMaxGuestSize() const;
 
