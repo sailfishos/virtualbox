@@ -25,7 +25,7 @@ BuildRequires:  sed
 #BuildRequires:  gsoap-devel
 #BuildRequires:  java-devel >= 1.6.0
 #BuildRequires:  libgsoap-devel
-#BuildRequires:  libopenssl-devel
+BuildRequires:  pkgconfig(openssl)
 ##
 #BuildRequires:  LibVNCServer-devel
 #BuildRequires:  SDL-devel
@@ -35,8 +35,8 @@ BuildRequires:  boost-devel
 BuildRequires:  e2fsprogs-devel
 BuildRequires:  gcc
 BuildRequires:  gcc-c++
-BuildRequires:  kernel-adaptation-pc >= 3.6.1
-BuildRequires:  kernel-adaptation-pc-devel >= 3.6.1
+BuildRequires:  kernel-adaptation-pc >= 5.0.21
+BuildRequires:  kernel-adaptation-pc-devel >= 5.0.21
 %define kernel_version %{expand:%(rpm -q --qf '[%%{version}-%%{release}]' kernel-adaptation-pc-devel)}
 BuildRequires:  kbuild
 #BuildRequires:  kernel-syms
@@ -61,7 +61,7 @@ BuildRequires:  yasm
 # and just for the macro:
 BuildRequires:   systemd
 
-Version:        4.2.4
+Version:        5.2.30
 Release:        1
 Summary:        VirtualBox is an Emulator
 License:        GPL-2.0+
@@ -175,7 +175,7 @@ source env.sh
 # 	VBOX_WITH_REGISTRATION_REQUEST= VBOX_WITH_UPDATE_REQUEST= just disable some functionality in gui
 
 echo "build basic parts"
-/usr/bin/kmk %{?_smp_mflags} VBOX_GCC_WERR= KBUILD_VERBOSE=2 VBOX_WITH_REGISTRATION_REQUEST= VBOX_WITH_UPDATE_REQUEST= TOOL_YASM_AS=yasm VBOX_PATH_PACKAGE_DOCS=/usr/share/doc/packages/virtualbox VBOX_ONLY_ADDITIONS=1 vboxsf-mod vboxvideo_drm-mod mount VBoxControl VBoxService
+/usr/bin/kmk %{?_smp_mflags} VBOX_GCC_WERR= KBUILD_VERBOSE=2 VBOX_WITH_REGISTRATION_REQUEST= VBOX_WITH_UPDATE_REQUEST= TOOL_YASM_AS=yasm VBOX_PATH_PACKAGE_DOCS=/usr/share/doc/packages/virtualbox VBOX_ONLY_ADDITIONS=1 mount VBoxControl VBoxService
 
 
 # build kernel modules for guest and host (check novel-kmp package as example)
@@ -184,10 +184,10 @@ echo "build basic parts"
 echo "build kernel modules"
 
 mkdir -p modules_build_dir
-src/VBox/Additions/linux/export_modules modules_build_dir/modules.tar.gz
+src/VBox/Additions/linux/export_modules.sh modules_build_dir/modules.tar.gz
 pushd modules_build_dir
 tar xf modules.tar.gz
-KERN_DIR=/usr/src/kernels/%{kernel_version} make
+KERN_DIR=/usr/src/kernels/%{kernel_version} KERN_VER=%{kernel_version} make
 popd
 
 
@@ -217,6 +217,9 @@ do
 done
 # Clean up spurious stuff
 rm -f %{buildroot}/lib/modules/*/modules.*
+
+# Remove vboxvideo which is not needed with new kernel
+rm -f %{buildroot}/lib/modules/*/vbox/vboxvideo.ko
 
 ###########################################
 echo "entering guest-tools install section"
